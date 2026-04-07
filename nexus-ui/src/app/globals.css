@@ -1,0 +1,190 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains);
+  --font-heading: var(--font-inter);
+
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+
+  /* NexusUI 黑灰科技风调色板 */
+  --color-nexus-bg-base: #09090b;
+  --color-nexus-bg-surface: #111113;
+  --color-nexus-bg-elevated: #1a1a1e;
+  --color-nexus-bg-overlay: rgba(17, 17, 19, 0.92);
+  --color-nexus-border: rgba(255, 255, 255, 0.06);
+  --color-nexus-border-strong: rgba(255, 255, 255, 0.10);
+  --color-nexus-accent: #b0b4bc;
+  --color-nexus-accent-dim: #5a5d64;
+  --color-nexus-accent-glow: rgba(176, 180, 188, 0.06);
+  --color-nexus-hostile: #e8724a;
+  --color-nexus-suspect: #d4932a;
+  --color-nexus-unknown: #c9a82b;
+  --color-nexus-friendly: #5b9bd5;
+  --color-nexus-assumed-friend: #3bb87a;
+  --color-nexus-neutral: #737378;
+  --color-nexus-text-primary: #d4d4d8;
+  --color-nexus-text-secondary: #8b8b93;
+  --color-nexus-text-muted: #52525b;
+}
+
+:root {
+  --background: #09090b;
+  --foreground: #d4d4d8;
+  --card: #111113;
+  --card-foreground: #d4d4d8;
+  --popover: #111113;
+  --popover-foreground: #d4d4d8;
+  --primary: #b0b4bc;
+  --primary-foreground: #09090b;
+  --secondary: #1a1a1e;
+  --secondary-foreground: #d4d4d8;
+  --muted: #1a1a1e;
+  --muted-foreground: #52525b;
+  --accent: #1f1f24;
+  --accent-foreground: #d4d4d8;
+  --destructive: #dc2626;
+  --border: rgba(255, 255, 255, 0.06);
+  --input: rgba(255, 255, 255, 0.06);
+  --ring: #b0b4bc;
+  --chart-1: #b0b4bc;
+  --chart-2: #5b9bd5;
+  --chart-3: #e8724a;
+  --chart-4: #3bb87a;
+  --chart-5: #d4932a;
+  --radius: 0.375rem;
+  --sidebar: #111113;
+  --sidebar-foreground: #d4d4d8;
+  --sidebar-primary: #b0b4bc;
+  --sidebar-primary-foreground: #09090b;
+  --sidebar-accent: #1a1a1e;
+  --sidebar-accent-foreground: #d4d4d8;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-ring: #b0b4bc;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* MapLibre overrides */
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-logo {
+  display: none !important;
+}
+.maplibregl-canvas {
+  outline: none !important;
+}
+
+/* Cesium overrides */
+.cesium-viewer .cesium-viewer-toolbar,
+.cesium-viewer .cesium-viewer-animationContainer,
+.cesium-viewer .cesium-viewer-timelineContainer,
+.cesium-viewer .cesium-viewer-bottom,
+.cesium-viewer .cesium-viewer-fullscreenContainer,
+.cesium-viewer .cesium-viewer-vrContainer,
+.cesium-viewer .cesium-viewer-geocoderContainer,
+.cesium-viewer .cesium-viewer-infoBoxContainer,
+.cesium-viewer .cesium-viewer-selectionIndicatorContainer,
+.cesium-viewer .cesium-credit-logoContainer,
+.cesium-viewer .cesium-credit-expand-link,
+.cesium-viewer .cesium-widget-credits {
+  display: none !important;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 4px rgba(176, 180, 188, 0.2); }
+  50% { box-shadow: 0 0 12px rgba(176, 180, 188, 0.4); }
+}
+
+@keyframes blink-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-blink {
+  animation: blink-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}

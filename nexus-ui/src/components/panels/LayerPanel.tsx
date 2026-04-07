@@ -1,0 +1,93 @@
+"use client";
+
+import { useState } from "react";
+import { cn } from "@/lib/utils";
+import { MAP_LAYERS } from "@/lib/mock-data";
+import { Eye, EyeOff, Map, Database, Layers as LayersIcon } from "lucide-react";
+
+const TYPE_ICONS = {
+  base: Map,
+  overlay: LayersIcon,
+  data: Database,
+} as const;
+
+const TYPE_LABELS = {
+  base: "底图",
+  overlay: "叠加层",
+  data: "数据图层",
+};
+
+export function LayerPanel() {
+  const [layers, setLayers] = useState(MAP_LAYERS);
+
+  const toggleLayer = (id: string) => {
+    setLayers((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l))
+    );
+  };
+
+  const grouped = {
+    base: layers.filter((l) => l.type === "base"),
+    data: layers.filter((l) => l.type === "data"),
+    overlay: layers.filter((l) => l.type === "overlay"),
+  };
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b border-white/[0.06] p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">
+            图层管理
+          </span>
+          <span className="text-[10px] text-nexus-text-muted">
+            {layers.filter((l) => l.visible).length} 已启用
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {(Object.keys(grouped) as Array<keyof typeof grouped>).map((type) => (
+          <div key={type}>
+            <div className="flex items-center gap-2 border-b border-white/[0.04] bg-nexus-bg-surface/95 px-3 py-2">
+              {(() => {
+                const Icon = TYPE_ICONS[type];
+                return <Icon size={12} className="text-nexus-text-muted" />;
+              })()}
+              <span className="text-[10px] font-semibold tracking-widest text-nexus-text-muted">
+                {TYPE_LABELS[type]}
+              </span>
+            </div>
+            {grouped[type].map((layer) => (
+              <button
+                key={layer.id}
+                onClick={() => toggleLayer(layer.id)}
+                className="flex w-full items-center gap-3 border-b border-white/[0.03] px-3 py-2.5 text-left hover:bg-white/[0.02]"
+              >
+                <div
+                  className={cn(
+                    "flex h-5 w-5 items-center justify-center rounded border transition-colors",
+                    layer.visible
+                      ? "border-white/20 bg-white/[0.08] text-nexus-text-primary"
+                      : "border-white/10 bg-white/[0.03] text-nexus-text-muted"
+                  )}
+                >
+                  {layer.visible ? <Eye size={10} /> : <EyeOff size={10} />}
+                </div>
+                <span
+                  className={cn(
+                    "text-xs",
+                    layer.visible
+                      ? "text-nexus-text-primary"
+                      : "text-nexus-text-muted"
+                  )}
+                >
+                  {layer.name}
+                </span>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
