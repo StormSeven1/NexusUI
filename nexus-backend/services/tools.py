@@ -4,6 +4,7 @@ NexusUI 工具定义与服务端执行逻辑。
 """
 
 import json
+import math
 from typing import Any
 
 TRACKS = [
@@ -96,7 +97,97 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "highlight_tracks",
+            "description": "在地图上高亮显示一组目标（脉冲光晕效果），可按 ID 列表或按筛选条件批量高亮。传入空列表或不传参数可清除高亮。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trackIds": {"type": "array", "items": {"type": "string"}, "description": "要高亮的目标 ID 列表，如 [\"TRK-001\", \"TRK-002\"]"},
+                    "type": {"type": "string", "enum": ["air", "ground", "sea", "unknown", "all"], "description": "按目标类型批量高亮（与 trackIds 二选一）"},
+                    "disposition": {"type": "string", "enum": ["hostile", "friendly", "neutral", "suspect", "unknown", "assumed-friend", "all"], "description": "按敌我属性批量高亮（与 trackIds 二选一）"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fly_to_track",
+            "description": "飞行到指定目标并居中显示（带平滑动画），同时选中该目标",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trackId": {"type": "string", "description": "目标 ID，如 TRK-002"},
+                    "zoom": {"type": "number", "description": "到达后的缩放级别，1-18，默认 12"},
+                },
+                "required": ["trackId"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draw_route",
+            "description": "在地图上绘制一条路线（折线），可连接多个目标或自定义坐标点。路线会以醒目颜色标绘在地图上。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trackIds": {"type": "array", "items": {"type": "string"}, "description": "按目标 ID 顺序连线，如 [\"TRK-004\", \"TRK-002\"]"},
+                    "points": {"type": "array", "items": {"type": "object", "properties": {"lat": {"type": "number"}, "lng": {"type": "number"}}, "required": ["lat", "lng"]}, "description": "自定义坐标点列表（与 trackIds 二选一）"},
+                    "color": {"type": "string", "description": "路线颜色，CSS 颜色值，默认 #38bdf8（天蓝色）"},
+                    "label": {"type": "string", "description": "路线标注名称"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "measure_distance",
+            "description": "测量两个目标或坐标之间的直线距离",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string", "description": "起点目标 ID（如 TRK-001）或 'lat,lng' 格式坐标"},
+                    "to": {"type": "string", "description": "终点目标 ID（如 TRK-002）或 'lat,lng' 格式坐标"},
+                },
+                "required": ["from", "to"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_annotations",
+            "description": "清除地图上的所有标绘（路线、高亮等注记），恢复默认显示",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
+
+
+def _resolve_point(ref: str) -> dict[str, Any] | None:
+    """将 trackId 或 'lat,lng' 字符串解析为 {lat, lng} 字典"""
+    track = next((t for t in TRACKS if t["id"] == ref), None)
+    if track:
+        return {"lat": track["lat"], "lng": track["lng"], "name": track["name"]}
+    try:
+        parts = ref.split(",")
+        return {"lat": float(parts[0].strip()), "lng": float(parts[1].strip())}
+    except (ValueError, IndexError):
+        return None
+
+
+def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Haversine 公式计算两点间大圆距离（km）"""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -131,5 +222,91 @@ def execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         if d and d != "all":
             filtered = [tr for tr in filtered if tr["disposition"] == d]
         return {"action": "query_tracks", "count": len(filtered), "tracks": filtered, "message": f"查询到 {len(filtered)} 个目标"}
+
+    if name == "highlight_tracks":
+        track_ids = args.get("trackIds", [])
+        t = args.get("type")
+        d = args.get("disposition")
+        if not track_ids and (t or d):
+            filtered = TRACKS
+            if t and t != "all":
+                filtered = [tr for tr in filtered if tr["type"] == t]
+            if d and d != "all":
+                filtered = [tr for tr in filtered if tr["disposition"] == d]
+            track_ids = [tr["id"] for tr in filtered]
+        matched = [tr for tr in TRACKS if tr["id"] in track_ids]
+        if not track_ids:
+            return {"action": "highlight_tracks", "trackIds": [], "count": 0, "message": "已清除所有高亮"}
+        return {
+            "action": "highlight_tracks",
+            "trackIds": track_ids,
+            "count": len(matched),
+            "tracks": matched,
+            "message": f"已高亮 {len(matched)} 个目标",
+        }
+
+    if name == "fly_to_track":
+        track_id = args["trackId"]
+        zoom = args.get("zoom", 12)
+        track = next((t for t in TRACKS if t["id"] == track_id), None)
+        if not track:
+            return {"action": "fly_to_track", "success": False, "message": f"未找到目标 {track_id}"}
+        return {
+            "action": "fly_to_track",
+            "success": True,
+            "trackId": track_id,
+            "track": track,
+            "lat": track["lat"],
+            "lng": track["lng"],
+            "zoom": zoom,
+            "message": f"正在飞向 {track['name']} ({track_id})",
+        }
+
+    if name == "draw_route":
+        track_ids = args.get("trackIds", [])
+        points = args.get("points", [])
+        color = args.get("color", "#38bdf8")
+        label = args.get("label", "")
+        if track_ids:
+            resolved = []
+            for tid in track_ids:
+                tr = next((t for t in TRACKS if t["id"] == tid), None)
+                if tr:
+                    resolved.append({"lat": tr["lat"], "lng": tr["lng"], "trackId": tid, "name": tr["name"]})
+            points = resolved
+            if not label:
+                names = [p.get("name", p.get("trackId", "")) for p in resolved]
+                label = " → ".join(names)
+        if len(points) < 2:
+            return {"action": "draw_route", "success": False, "message": "路线至少需要 2 个点"}
+        return {
+            "action": "draw_route",
+            "success": True,
+            "points": points,
+            "color": color,
+            "label": label,
+            "message": f"已绘制路线: {label}" if label else f"已绘制 {len(points)} 点路线",
+        }
+
+    if name == "measure_distance":
+        from_arg, to_arg = args["from"], args["to"]
+        from_pt = _resolve_point(from_arg)
+        to_pt = _resolve_point(to_arg)
+        if not from_pt or not to_pt:
+            missing = from_arg if not from_pt else to_arg
+            return {"action": "measure_distance", "success": False, "message": f"无法解析坐标: {missing}"}
+        dist_km = _haversine(from_pt["lat"], from_pt["lng"], to_pt["lat"], to_pt["lng"])
+        return {
+            "action": "measure_distance",
+            "success": True,
+            "from": from_pt,
+            "to": to_pt,
+            "distanceKm": round(dist_km, 2),
+            "distanceNm": round(dist_km / 1.852, 2),
+            "message": f"距离: {dist_km:.2f} km ({dist_km / 1.852:.2f} 海里)",
+        }
+
+    if name == "clear_annotations":
+        return {"action": "clear_annotations", "message": "已清除所有地图标绘"}
 
     return {"action": name, "success": False, "message": f"未知工具: {name}"}

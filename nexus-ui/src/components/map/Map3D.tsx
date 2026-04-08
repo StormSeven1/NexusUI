@@ -9,6 +9,10 @@ import { AlertTriangle } from "lucide-react";
 export function Map3D() {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<unknown>(null);
+  const cesiumRef = useRef<any>(null);
+  const lastFlySeqRef = useRef<number>(-1);
+  const highlightEntitiesRef = useRef<any[]>([]);
+  const routeEntitiesRef = useRef<Map<string, any>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { selectTrack, setMouseCoords } = useAppStore();
@@ -22,6 +26,7 @@ export function Map3D() {
     const init = async () => {
       try {
         const Cesium = await import("cesium");
+        cesiumRef.current = Cesium;
 
         if (typeof window !== "undefined") {
           (window as any).CESIUM_BASE_URL = "/cesium/";
@@ -147,8 +152,117 @@ export function Map3D() {
         viewer.destroy();
       }
       viewerRef.current = null;
+      cesiumRef.current = null;
     };
   }, [selectTrack, setMouseCoords]);
+
+  /* ── 响应 flyToRequest ── */
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((state) => {
+      const req = state.flyToRequest;
+      if (!req || req.seq === lastFlySeqRef.current) return;
+      lastFlySeqRef.current = req.seq;
+      const viewer = viewerRef.current as any;
+      const Cesium = cesiumRef.current;
+      if (!viewer || !Cesium || viewer.isDestroyed()) return;
+
+      const zoomToHeight = req.zoom ? zoomToAltitude(req.zoom) : 80000;
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(req.lng, req.lat, zoomToHeight),
+        orientation: {
+          heading: 0,
+          pitch: Cesium.Math.toRadians(-45),
+          roll: 0,
+        },
+        duration: 1.8,
+      });
+      viewer.scene.requestRender();
+    });
+    return unsub;
+  }, []);
+
+  /* ── 响应 highlightedTrackIds ── */
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((state) => {
+      const viewer = viewerRef.current as any;
+      const Cesium = cesiumRef.current;
+      if (!viewer || !Cesium || viewer.isDestroyed()) return;
+
+      // 移除旧高亮
+      for (const ent of highlightEntitiesRef.current) {
+        viewer.entities.remove(ent);
+      }
+      highlightEntitiesRef.current = [];
+
+      const ids = new Set(state.highlightedTrackIds);
+      if (ids.size === 0) {
+        viewer.scene.requestRender();
+        return;
+      }
+
+      for (const track of MOCK_TRACKS) {
+        if (!ids.has(track.id)) continue;
+        const ent = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
+          ellipse: {
+            semiMajorAxis: 2000,
+            semiMinorAxis: 2000,
+            material: Cesium.Color.YELLOW.withAlpha(0.15),
+            outline: true,
+            outlineColor: Cesium.Color.YELLOW.withAlpha(0.8),
+            outlineWidth: 2,
+            height: 0,
+          },
+          properties: { _highlight: true },
+        });
+        highlightEntitiesRef.current.push(ent);
+      }
+      viewer.scene.requestRender();
+    });
+    return unsub;
+  }, []);
+
+  /* ── 响应 routeLines ── */
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((state) => {
+      const viewer = viewerRef.current as any;
+      const Cesium = cesiumRef.current;
+      if (!viewer || !Cesium || viewer.isDestroyed()) return;
+
+      const currentIds = new Set(state.routeLines.map((r) => r.id));
+
+      // 移除已不存在的路线
+      for (const [id, ent] of routeEntitiesRef.current) {
+        if (!currentIds.has(id)) {
+          viewer.entities.remove(ent);
+          routeEntitiesRef.current.delete(id);
+        }
+      }
+
+      // 添加新路线
+      for (const route of state.routeLines) {
+        if (routeEntitiesRef.current.has(route.id)) continue;
+        const positions = route.points.map((p) =>
+          Cesium.Cartesian3.fromDegrees(p.lng, p.lat, 0)
+        );
+        const ent = viewer.entities.add({
+          polyline: {
+            positions,
+            width: 3,
+            material: new Cesium.PolylineDashMaterialProperty({
+              color: Cesium.Color.fromCssColorString(route.color),
+              dashLength: 16,
+            }),
+            clampToGround: true,
+          },
+          properties: { _routeId: route.id },
+        });
+        routeEntitiesRef.current.set(route.id, ent);
+      }
+      viewer.scene.requestRender();
+    });
+    return unsub;
+  }, []);
 
   if (error) {
     return (
@@ -178,4 +292,9 @@ export function Map3D() {
       )}
     </div>
   );
+}
+
+/** 将 Web 地图 zoom level 粗略映射为 3D 相机高度（米） */
+function zoomToAltitude(zoom: number): number {
+  return Math.max(500, 40_000_000 / Math.pow(2, zoom));
 }

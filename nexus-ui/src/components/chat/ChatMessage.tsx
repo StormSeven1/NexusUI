@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils";
 import {
   Bot, User, MapPin, Target, Map, PanelRight, Search,
-  CheckCircle2, XCircle, Loader2,
+  CheckCircle2, XCircle, Loader2, Sparkles, Navigation, Route, Ruler, Eraser,
 } from "lucide-react";
 import { NxCard, NxBadge } from "@/components/nexus";
 import type { UIMessage } from "ai";
@@ -18,6 +18,11 @@ const TOOL_META: Record<string, { icon: typeof MapPin; label: string; color: str
   switch_map_mode:      { icon: Map, label: "切换视图", color: "text-emerald-400" },
   open_panel:           { icon: PanelRight, label: "打开面板", color: "text-purple-400" },
   query_tracks:         { icon: Search, label: "查询目标", color: "text-nexus-friendly" },
+  highlight_tracks:     { icon: Sparkles, label: "高亮目标", color: "text-yellow-400" },
+  fly_to_track:         { icon: Navigation, label: "飞向目标", color: "text-cyan-400" },
+  draw_route:           { icon: Route, label: "绘制路线", color: "text-orange-400" },
+  measure_distance:     { icon: Ruler, label: "测量距离", color: "text-teal-400" },
+  clear_annotations:    { icon: Eraser, label: "清除标绘", color: "text-zinc-400" },
 };
 
 interface ToolPartProps {

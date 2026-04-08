@@ -15,6 +15,9 @@ const DEFAULT_ZOOM = 8.5;
 const TRACK_SOURCE_ID = "tracks-source";
 const TRACK_CIRCLE_LAYER = "tracks-circle";
 const TRACK_LABEL_LAYER = "tracks-label";
+const HIGHLIGHT_CIRCLE_LAYER = "tracks-highlight";
+const ROUTE_SOURCE_PREFIX = "route-source-";
+const ROUTE_LAYER_PREFIX = "route-layer-";
 
 function buildGeoJSON(): GeoJSON.FeatureCollection {
   return {
@@ -43,11 +46,14 @@ export function Map2D() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+  const lastFlySeqRef = useRef<number>(-1);
+  const routeIdsRef = useRef<string[]>([]);
   const { setMouseCoords, setZoomLevel, selectTrack } = useAppStore();
 
   const selectTrackRef = useRef(selectTrack);
   selectTrackRef.current = selectTrack;
 
+  /* ── 初始化地图 ── */
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
@@ -75,6 +81,26 @@ export function Map2D() {
       map.addSource(TRACK_SOURCE_ID, {
         type: "geojson",
         data: buildGeoJSON(),
+      });
+
+      /* 高亮脉冲外圈（在普通圆下面先添加，初始隐藏） */
+      map.addLayer({
+        id: HIGHLIGHT_CIRCLE_LAYER,
+        type: "circle",
+        source: TRACK_SOURCE_ID,
+        filter: ["in", "id", ""],
+        paint: {
+          "circle-radius": [
+            "interpolate", ["linear"], ["zoom"],
+            5, 10,
+            10, 18,
+            15, 28,
+          ],
+          "circle-color": "transparent",
+          "circle-stroke-color": "#facc15",
+          "circle-stroke-width": 2.5,
+          "circle-stroke-opacity": 0.85,
+        },
       });
 
       map.addLayer({
@@ -171,6 +197,95 @@ export function Map2D() {
       mapRef.current = null;
     };
   }, [setMouseCoords, setZoomLevel]);
+
+  /* ── 响应 flyToRequest ── */
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((state) => {
+      const req = state.flyToRequest;
+      if (!req || req.seq === lastFlySeqRef.current) return;
+      lastFlySeqRef.current = req.seq;
+      const map = mapRef.current;
+      if (!map) return;
+      map.flyTo({
+        center: [req.lng, req.lat],
+        zoom: req.zoom ?? map.getZoom(),
+        duration: 1800,
+        essential: true,
+      });
+    });
+    return unsub;
+  }, []);
+
+  /* ── 响应 highlightedTrackIds ── */
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((state) => {
+      const map = mapRef.current;
+      if (!map || !map.getLayer(HIGHLIGHT_CIRCLE_LAYER)) return;
+      const ids = state.highlightedTrackIds;
+      if (ids.length === 0) {
+        map.setFilter(HIGHLIGHT_CIRCLE_LAYER, ["in", "id", ""]);
+      } else {
+        map.setFilter(HIGHLIGHT_CIRCLE_LAYER, ["in", "id", ...ids]);
+      }
+    });
+    return unsub;
+  }, []);
+
+  /* ── 响应 routeLines ── */
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((state) => {
+      const map = mapRef.current;
+      if (!map || !map.isStyleLoaded()) return;
+
+      const current = state.routeLines;
+      const currentIds = new Set(current.map((r) => r.id));
+
+      // 移除已不存在的路线
+      for (const oldId of routeIdsRef.current) {
+        if (!currentIds.has(oldId)) {
+          const layerId = ROUTE_LAYER_PREFIX + oldId;
+          const sourceId = ROUTE_SOURCE_PREFIX + oldId;
+          if (map.getLayer(layerId)) map.removeLayer(layerId);
+          if (map.getSource(sourceId)) map.removeSource(sourceId);
+        }
+      }
+
+      // 添加新路线
+      for (const route of current) {
+        const sourceId = ROUTE_SOURCE_PREFIX + route.id;
+        const layerId = ROUTE_LAYER_PREFIX + route.id;
+        if (map.getSource(sourceId)) continue;
+
+        const coordinates = route.points.map((p) => [p.lng, p.lat]);
+        map.addSource(sourceId, {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates },
+          },
+        });
+        map.addLayer(
+          {
+            id: layerId,
+            type: "line",
+            source: sourceId,
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": route.color,
+              "line-width": 3,
+              "line-opacity": 0.85,
+              "line-dasharray": [2, 3],
+            },
+          },
+          HIGHLIGHT_CIRCLE_LAYER,
+        );
+      }
+
+      routeIdsRef.current = [...currentIds];
+    });
+    return unsub;
+  }, []);
 
   return (
     <>

@@ -4,6 +4,21 @@ export type MapViewMode = "2d" | "3d";
 export type LeftPanelTab = "tracks" | "assets" | "layers" | "alerts";
 export type RightPanelTab = "overview" | "dashboard" | "comm" | "environment" | "eventlog" | "datatable" | "chat";
 
+export interface RouteLine {
+  id: string;
+  points: Array<{ lat: number; lng: number }>;
+  color: string;
+  label?: string;
+}
+
+export interface FlyToRequest {
+  lat: number;
+  lng: number;
+  zoom?: number;
+  /** 每次请求递增，用于区分同坐标的多次飞行 */
+  seq: number;
+}
+
 interface AppState {
   leftSidebarOpen: boolean;
   rightSidebarOpen: boolean;
@@ -15,6 +30,10 @@ interface AppState {
   zoomLevel: number;
   mapCenter: { lat: number; lng: number } | null;
 
+  highlightedTrackIds: string[];
+  routeLines: RouteLine[];
+  flyToRequest: FlyToRequest | null;
+
   toggleLeftSidebar: () => void;
   toggleRightSidebar: () => void;
   setLeftPanelTab: (tab: LeftPanelTab) => void;
@@ -24,7 +43,14 @@ interface AppState {
   setMouseCoords: (coords: { lat: number; lng: number } | null) => void;
   setZoomLevel: (level: number) => void;
   setMapCenter: (center: { lat: number; lng: number }) => void;
+
+  setHighlightedTrackIds: (ids: string[]) => void;
+  addRouteLine: (route: RouteLine) => void;
+  clearAnnotations: () => void;
+  requestFlyTo: (lat: number, lng: number, zoom?: number) => void;
 }
+
+let _flyToSeq = 0;
 
 export const useAppStore = create<AppState>((set) => ({
   leftSidebarOpen: true,
@@ -37,6 +63,10 @@ export const useAppStore = create<AppState>((set) => ({
   zoomLevel: 8,
   mapCenter: null,
 
+  highlightedTrackIds: [],
+  routeLines: [],
+  flyToRequest: null,
+
   toggleLeftSidebar: () =>
     set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
   toggleRightSidebar: () =>
@@ -48,4 +78,12 @@ export const useAppStore = create<AppState>((set) => ({
   setMouseCoords: (coords) => set({ mouseCoords: coords }),
   setZoomLevel: (level) => set({ zoomLevel: level }),
   setMapCenter: (center) => set({ mapCenter: center }),
+
+  setHighlightedTrackIds: (ids) => set({ highlightedTrackIds: ids }),
+  addRouteLine: (route) =>
+    set((s) => ({ routeLines: [...s.routeLines, route] })),
+  clearAnnotations: () =>
+    set({ highlightedTrackIds: [], routeLines: [] }),
+  requestFlyTo: (lat, lng, zoom) =>
+    set({ flyToRequest: { lat, lng, zoom, seq: ++_flyToSeq }, mapCenter: { lat, lng } }),
 }));
