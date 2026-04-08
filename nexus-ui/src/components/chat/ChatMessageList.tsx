@@ -3,14 +3,25 @@
 import { useRef, useEffect } from "react";
 import { ChatMessage } from "./ChatMessage";
 import type { UIMessage } from "ai";
-import { Bot } from "lucide-react";
+import { Bot, Sparkles } from "lucide-react";
+
+const HINTS = [
+  "显示所有敌方目标",
+  "导航到 SHARK-27",
+  "切换 3D 视图",
+  "打开通信面板",
+  "当前有多少个空中目标",
+  "选中 TRK-006 看详情",
+];
 
 export function ChatMessageList({
   messages,
   isStreaming,
+  onHintClick,
 }: {
   messages: UIMessage[];
   isStreaming: boolean;
+  onHintClick?: (text: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -31,13 +42,16 @@ export function ChatMessageList({
           </p>
         </div>
         <div className="mt-2 flex flex-wrap justify-center gap-1.5">
-          {["显示所有敌方目标", "导航到 SHARK-27", "切换 3D 视图", "打开通信面板"].map((hint) => (
-            <span
+          {HINTS.map((hint) => (
+            <button
               key={hint}
-              className="rounded-md border border-white/[0.06] bg-white/[0.02] px-2 py-1 text-[10px] text-nexus-text-muted"
+              type="button"
+              onClick={() => onHintClick?.(hint)}
+              className="group flex items-center gap-1 rounded-md border border-white/[0.06] bg-white/[0.02] px-2 py-1 text-[10px] text-nexus-text-muted transition-all hover:border-sky-500/20 hover:bg-sky-500/5 hover:text-sky-400"
             >
+              <Sparkles size={9} className="opacity-0 transition-opacity group-hover:opacity-100" />
               {hint}
-            </span>
+            </button>
           ))}
         </div>
       </div>
@@ -46,9 +60,16 @@ export function ChatMessageList({
 
   return (
     <div className="flex-1 overflow-y-auto">
-      {messages.map((msg) => (
-        <ChatMessage key={msg.id} message={msg} />
-      ))}
+      {messages.map((msg, i) => {
+        const isLastAssistant = msg.role === "assistant" && i === messages.length - 1;
+        return (
+          <ChatMessage
+            key={msg.id}
+            message={msg}
+            isStreaming={isLastAssistant && isStreaming}
+          />
+        );
+      })}
       {isStreaming && messages[messages.length - 1]?.role !== "assistant" && (
         <div className="flex items-center gap-2 px-3 py-2">
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-sky-500/15">

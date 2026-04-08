@@ -1,92 +1,164 @@
-import { streamText, tool, convertToModelMessages } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
-import { z } from "zod";
+import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  generateId,
+} from "ai";
 
-const openrouter = createOpenAI({
-  baseURL: process.env.OPENAI_BASE_URL ?? "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENAI_API_KEY ?? "",
-  headers: {
-    "HTTP-Referer": "https://nexusui.local",
-    "X-Title": "NexusUI",
-  },
-});
+const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8001";
 
-const SYSTEM_PROMPT = `你是 NexusUI 态势感知系统的 AI 助手，代号"Nexus"。你可以帮助操作员分析态势、查询目标信息、控制地图和系统面板。
-
-你的能力包括：
-- 在地图上导航到指定坐标位置
-- 选中并查看特定目标(track)的详细信息
-- 切换地图 2D/3D 显示模式
-- 打开系统面板（概览、仪表、通信、环境、日志、数据）
-- 查询目标列表和态势信息
-
-回复要求：
-- 使用中文回复
-- 回答简洁专业，适合态势感知场景
-- 执行操作后简要说明已完成的动作`;
-
-const NEXUS_TOOLS = {
-  navigate_to_location: tool({
-    description: "在地图上导航到指定经纬度坐标，可选缩放级别",
-    inputSchema: z.object({
-      lat: z.number().describe("纬度"),
-      lng: z.number().describe("经度"),
-      zoom: z.number().optional().describe("缩放级别，1-18"),
-    }),
-  }),
-  select_track: tool({
-    description: "选中指定 ID 的目标进行查看，ID 格式如 TRK-001",
-    inputSchema: z.object({
-      trackId: z.string().describe("目标 ID，如 TRK-001"),
-    }),
-  }),
-  switch_map_mode: tool({
-    description: "切换地图显示模式为 2D 或 3D",
-    inputSchema: z.object({
-      mode: z.enum(["2d", "3d"]).describe("地图模式"),
-    }),
-  }),
-  open_panel: tool({
-    description: "打开系统面板。可选面板：overview(概览)、dashboard(仪表)、comm(通信)、environment(环境)、eventlog(日志)、datatable(数据)",
-    inputSchema: z.object({
-      panel: z.enum(["overview", "dashboard", "comm", "environment", "eventlog", "datatable"]).describe("面板名称"),
-      side: z.enum(["left", "right"]).default("right").describe("左侧或右侧面板"),
-    }),
-  }),
-  query_tracks: tool({
-    description: "查询当前态势中的目标列表，可按类型或态势属性筛选",
-    inputSchema: z.object({
-      type: z.enum(["air", "ground", "sea", "unknown", "all"]).optional().describe("目标类型筛选"),
-      disposition: z.enum(["hostile", "friendly", "neutral", "suspect", "unknown", "assumed-friend", "all"]).optional().describe("敌我属性筛选"),
-    }),
-  }),
-};
-
-// 设为 "true" 禁用 tool calling（适用于不支持 tools 的模型）
-const toolsDisabled = process.env.DISABLE_TOOLS === "true";
-
+/**
+ * SSE proxy adapter：
+ * 接收 useChat 的请求 → 转发给 FastAPI → 读取 SSE 事件 → 转换为 AI SDK UIMessageStream
+ */
 export async function POST(req: Request) {
-  const { messages } = await req.json();
-  const modelMessages = await convertToModelMessages(messages);
-  const modelId = process.env.OPENAI_MODEL ?? "google/gemini-2.5-flash-preview";
+  const body = await req.json();
 
+  const messages = body.messages ?? [];
+  const lastUserMsg = [...messages].reverse().find((m: { role: string }) => m.role === "user");
+
+  const userText =
+    lastUserMsg?.parts
+      ?.filter((p: { type: string }) => p.type === "text")
+      .map((p: { text: string }) => p.text)
+      .join(" ") ?? "";
+
+  const userParts = lastUserMsg?.parts ?? [{ type: "text", text: userText }];
+  const conversationId = body.conversationId ?? body.conversation_id ?? null;
+
+  let backendRes: Response;
   try {
-    const result = streamText({
-      model: openrouter.chat(modelId),
-      system: SYSTEM_PROMPT,
-      messages: modelMessages,
-      ...(toolsDisabled ? {} : { tools: NEXUS_TOOLS }),
-      maxRetries: 1,
+    backendRes = await fetch(`${BACKEND_URL}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        message: userText,
+        parts: userParts,
+        model: body.model ?? null,
+      }),
     });
-
-    return result.toUIMessageStreamResponse();
-  } catch (err: unknown) {
-    const error = err as Error & { cause?: unknown; data?: unknown; statusCode?: number };
-    console.error("[NexusChat] Error:", error.message);
-    if (error.data) console.error("[NexusChat] Data:", JSON.stringify(error.data, null, 2));
-    return Response.json(
-      { error: error.message },
-      { status: error.statusCode ?? 500 }
-    );
+  } catch {
+    return Response.json({ error: "无法连接到后端服务" }, { status: 502 });
   }
+
+  if (!backendRes.ok || !backendRes.body) {
+    const text = await backendRes.text().catch(() => "unknown error");
+    return Response.json({ error: text }, { status: backendRes.status });
+  }
+
+  const reader = backendRes.body.getReader();
+  const decoder = new TextDecoder();
+
+  const stream = createUIMessageStream({
+    execute: async ({ writer }) => {
+      let buffer = "";
+      let textPartId = "";
+      let textActive = false;
+
+      const processEvent = (event: string, data: Record<string, unknown>) => {
+        switch (event) {
+          case "message_start":
+            writer.write({ type: "start", messageId: generateId() });
+            break;
+
+          case "text_delta": {
+            if (!textActive) {
+              textPartId = generateId();
+              writer.write({ type: "text-start", id: textPartId });
+              textActive = true;
+            }
+            writer.write({ type: "text-delta", delta: data.text as string, id: textPartId });
+            break;
+          }
+
+          case "tool_call":
+            if (textActive) {
+              writer.write({ type: "text-end", id: textPartId });
+              textActive = false;
+            }
+            writer.write({
+              type: "tool-input-available",
+              toolCallId: data.tool_call_id as string,
+              toolName: data.tool_name as string,
+              input: data.args as Record<string, unknown>,
+            });
+            break;
+
+          case "tool_result":
+            writer.write({
+              type: "tool-output-available",
+              toolCallId: data.tool_call_id as string,
+              output: data.result as Record<string, unknown>,
+            });
+            break;
+
+          case "step_done":
+            if (textActive) {
+              writer.write({ type: "text-end", id: textPartId });
+              textActive = false;
+            }
+            writer.write({ type: "finish-step" });
+            break;
+
+          case "message_done":
+            if (textActive) {
+              writer.write({ type: "text-end", id: textPartId });
+              textActive = false;
+            }
+            writer.write({ type: "finish-step" });
+            writer.write({ type: "finish", finishReason: "stop" });
+            break;
+
+          case "error":
+            writer.write({ type: "error", errorText: (data.message as string) ?? "unknown error" });
+            break;
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        let currentEvent = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ") && currentEvent) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              processEvent(currentEvent, data);
+            } catch { /* skip malformed */ }
+            currentEvent = "";
+          }
+        }
+      }
+
+      // 处理残余 buffer
+      if (buffer.trim()) {
+        const remaining = buffer.split("\n");
+        let currentEvent = "";
+        for (const line of remaining) {
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ") && currentEvent) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              processEvent(currentEvent, data);
+            } catch { /* skip */ }
+            currentEvent = "";
+          }
+        }
+      }
+    },
+    onError: (error) => {
+      console.error("[ChatProxy]", error);
+      return error instanceof Error ? error.message : "proxy error";
+    },
+  });
+
+  return createUIMessageStreamResponse({ stream });
 }

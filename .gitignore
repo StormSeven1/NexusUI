@@ -44,4 +44,11 @@ coverage/
 tmp/
 
 anduril/
+reference/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.db
 
