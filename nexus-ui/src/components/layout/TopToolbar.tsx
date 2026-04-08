@@ -58,7 +58,7 @@ export function TopToolbar() {
             <Radar size={16} />
           </div>
           <span className="text-sm font-semibold tracking-wide text-nexus-text-primary">
-            Nexus<span className="text-nexus-accent">UI</span>
+            Nexus<span className="text-white/70">UI</span>
           </span>
         </div>
       </div>

@@ -34,7 +34,7 @@ export function MiniMap() {
       <div ref={containerRef} className="h-full w-full" />
       {/* Viewport indicator */}
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <div className="h-4 w-6 border border-nexus-accent/60" />
+        <div className="h-4 w-6 border border-white/30" />
       </div>
     </div>
   );

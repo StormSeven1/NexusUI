@@ -21,7 +21,16 @@ const TABS = [
 ];
 
 export function LeftSidebar() {
-  const { leftSidebarOpen, leftPanelTab, setLeftPanelTab } = useAppStore();
+  const { leftSidebarOpen, toggleLeftSidebar, leftPanelTab, setLeftPanelTab } = useAppStore();
+
+  const handleTabClick = (tabId: typeof leftPanelTab) => {
+    if (leftPanelTab === tabId && leftSidebarOpen) {
+      toggleLeftSidebar();
+    } else {
+      setLeftPanelTab(tabId);
+      if (!leftSidebarOpen) toggleLeftSidebar();
+    }
+  };
 
   return (
     <aside
@@ -33,11 +42,11 @@ export function LeftSidebar() {
       {/* 图标轨道 */}
       <div className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-white/[0.06] py-2">
         {TABS.map((tab) => {
-          const isActive = leftPanelTab === tab.id;
+          const isActive = leftPanelTab === tab.id && leftSidebarOpen;
           return (
             <button
               key={tab.id}
-              onClick={() => setLeftPanelTab(tab.id)}
+              onClick={() => handleTabClick(tab.id)}
               className={cn(
                 "group relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
                 isActive

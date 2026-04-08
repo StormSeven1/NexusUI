@@ -7,14 +7,14 @@ import { Timeline } from "@/components/military/Timeline";
 import {
   Star,
   MapPin,
-  ExternalLink,
   Crosshair,
   Navigation,
   Gauge,
   Radio,
   Eye,
-  MoreHorizontal,
-  Video,
+  Clock,
+  Ruler,
+  Thermometer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +70,9 @@ export function TrackDetail({ trackId }: TrackDetailProps) {
 
       {/* 时间轴 */}
       <div className="border-b border-white/[0.06] p-4">
+        <h4 className="mb-3 text-[10px] font-semibold tracking-widest text-nexus-text-muted">
+          航迹时间线
+        </h4>
         <Timeline />
       </div>
 
@@ -78,93 +81,87 @@ export function TrackDetail({ trackId }: TrackDetailProps) {
         <h4 className="mb-3 text-[10px] font-semibold tracking-widest text-nexus-text-muted">
           航迹属性
         </h4>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-          <DetailRow icon={Gauge} label="速度" value={`${track.speed} ${track.type === "ground" ? "mph" : "kn"}`} />
-          <DetailRow icon={Navigation} label="航向" value={`${track.heading}°`} />
-          <DetailRow
+        <div className="grid grid-cols-2 gap-2">
+          <PropCard icon={Gauge} label="速度" value={`${track.speed}`} unit={track.type === "ground" ? "mph" : "kn"} />
+          <PropCard icon={Navigation} label="航向" value={`${track.heading}`} unit="°" />
+          <PropCard
             icon={MapPin}
-            label="位置"
-            value={`${track.lat.toFixed(4)}°N`}
-            subValue={`${Math.abs(track.lng).toFixed(4)}°${track.lng >= 0 ? "E" : "W"}`}
+            label="纬度"
+            value={`${track.lat.toFixed(4)}`}
+            unit="°N"
+          />
+          <PropCard
+            icon={MapPin}
+            label="经度"
+            value={`${Math.abs(track.lng).toFixed(4)}`}
+            unit={`°${track.lng >= 0 ? "E" : "W"}`}
           />
           {track.altitude && (
-            <DetailRow icon={Crosshair} label="高度" value={`${track.altitude} ft`} />
+            <PropCard icon={Crosshair} label="高度" value={`${track.altitude}`} unit="ft" />
           )}
-          <DetailRow icon={Radio} label="传感器" value={track.sensor} />
-          <DetailRow icon={Eye} label="最后更新" value={track.lastUpdate} />
+          <PropCard icon={Radio} label="传感器" value={track.sensor} />
+          <PropCard icon={Eye} label="最后更新" value={track.lastUpdate} />
+          <PropCard icon={Clock} label="追踪时长" value="10m22s" />
         </div>
       </div>
 
-      {/* 传感器画面占位 */}
-      <div className="border-b border-white/[0.06] p-4">
-        <h4 className="mb-3 text-[10px] font-semibold tracking-widest text-nexus-text-muted">
-          传感器画面
-        </h4>
-        <div className="relative aspect-video overflow-hidden rounded-md border border-white/[0.06] bg-black/40">
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <Video size={24} className="text-nexus-text-muted" />
-            <span className="text-[10px] text-nexus-text-muted">
-              {track.sensor}: EO
-            </span>
-          </div>
-          <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,rgba(0,0,0,0.03)_2px,rgba(0,0,0,0.03)_4px)]" />
-          {/* 角框标记 */}
-          <div className="absolute left-2 top-2 h-4 w-4 border-l-2 border-t-2 border-white/20" />
-          <div className="absolute right-2 top-2 h-4 w-4 border-r-2 border-t-2 border-white/20" />
-          <div className="absolute bottom-2 left-2 h-4 w-4 border-b-2 border-l-2 border-white/20" />
-          <div className="absolute bottom-2 right-2 h-4 w-4 border-b-2 border-r-2 border-white/20" />
-          <div className="absolute bottom-3 left-3 font-mono text-[9px] text-white/40">
-            <div>自动 · {track.sensor}</div>
-            <div>
-              {track.lat.toFixed(4)}, {track.lng.toFixed(4)}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 操作按钮 */}
+      {/* 轨迹历史 */}
       <div className="p-4">
-        <div className="flex gap-2">
-          <button className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border border-white/[0.10] bg-white/[0.06] text-xs font-medium text-nexus-text-primary hover:bg-white/[0.10]">
-            <Crosshair size={12} />
-            跟踪
-          </button>
-          <button className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.03] text-xs font-medium text-nexus-text-secondary hover:bg-white/[0.06]">
-            <ExternalLink size={12} />
-            任务
-          </button>
-          <button className="flex h-8 w-8 items-center justify-center rounded-md border border-white/[0.08] bg-white/[0.03] text-nexus-text-muted hover:bg-white/[0.06]">
-            <MoreHorizontal size={14} />
-          </button>
+        <h4 className="mb-3 text-[10px] font-semibold tracking-widest text-nexus-text-muted">
+          航迹历史
+        </h4>
+        <div className="space-y-0">
+          <HistoryRow time="14:02:41" event={`速度 ${track.speed} ${track.type === "ground" ? "mph" : "kn"} · 航向 ${track.heading}°`} />
+          <HistoryRow time="14:01:30" event="航向变更 → 当前方位" />
+          <HistoryRow time="14:00:15" event="速度变化检测" />
+          <HistoryRow time="13:58:00" event="传感器确认目标" />
+          <HistoryRow time="13:52:19" event="首次探测" highlight />
         </div>
       </div>
     </div>
   );
 }
 
-function DetailRow({
+function PropCard({
   icon: Icon,
   label,
   value,
-  subValue,
+  unit,
 }: {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   label: string;
   value: string;
-  subValue?: string;
+  unit?: string;
 }) {
   return (
-    <div className="flex items-start gap-2">
-      <Icon size={12} className="mt-0.5 shrink-0 text-nexus-text-muted" />
-      <div>
-        <div className="text-[10px] text-nexus-text-muted">{label}</div>
-        <div className="font-mono text-xs text-nexus-text-primary">{value}</div>
-        {subValue && (
-          <div className="font-mono text-[10px] text-nexus-text-secondary">
-            {subValue}
-          </div>
-        )}
+    <div className="rounded-md border border-white/[0.04] bg-white/[0.02] px-2.5 py-2">
+      <div className="flex items-center gap-1.5">
+        <Icon size={10} className="text-nexus-text-muted" />
+        <span className="text-[10px] text-nexus-text-muted">{label}</span>
       </div>
+      <div className="mt-1 flex items-baseline gap-0.5">
+        <span className="font-mono text-sm font-semibold text-nexus-text-primary">{value}</span>
+        {unit && <span className="font-mono text-[10px] text-nexus-text-muted">{unit}</span>}
+      </div>
+    </div>
+  );
+}
+
+function HistoryRow({
+  time,
+  event,
+  highlight,
+}: {
+  time: string;
+  event: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2.5 border-l border-white/[0.08] py-2 pl-3">
+      <span className="shrink-0 font-mono text-[10px] text-nexus-text-muted">{time}</span>
+      <span className={cn("text-[11px] leading-snug", highlight ? "text-nexus-text-primary font-medium" : "text-nexus-text-secondary")}>
+        {event}
+      </span>
     </div>
   );
 }

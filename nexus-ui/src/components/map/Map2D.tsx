@@ -12,32 +12,41 @@ const DARK_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.
 const CENTER: [number, number] = [-2.35, 51.35];
 const DEFAULT_ZOOM = 8.5;
 
+const TRACK_SOURCE_ID = "tracks-source";
+const TRACK_CIRCLE_LAYER = "tracks-circle";
+const TRACK_LABEL_LAYER = "tracks-label";
+
+function buildGeoJSON(): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: MOCK_TRACKS.map((track) => ({
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [track.lng, track.lat],
+      },
+      properties: {
+        id: track.id,
+        name: track.name,
+        type: track.type,
+        disposition: track.disposition,
+        speed: track.speed,
+        heading: track.heading,
+        altitude: track.altitude ?? null,
+        color: FORCE_COLORS[track.disposition],
+      },
+    })),
+  };
+}
+
 export function Map2D() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const markersRef = useRef<maplibregl.Marker[]>([]);
+  const popupRef = useRef<maplibregl.Popup | null>(null);
   const { setMouseCoords, setZoomLevel, selectTrack } = useAppStore();
 
-  const createMarkerElement = useCallback(
-    (disposition: ForceDisposition, type: string) => {
-      const color = FORCE_COLORS[disposition];
-      const el = document.createElement("div");
-      el.style.cssText = `
-      width: 24px; height: 24px; cursor: pointer; position: relative;
-    `;
-
-      const shapes: Record<string, string> = {
-        air: `<polygon points="12,2 22,20 12,16 2,20" fill="${color}" fill-opacity="0.25" stroke="${color}" stroke-width="1.5"/>`,
-        ground: `<rect x="3" y="3" width="18" height="18" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5"/>`,
-        sea: `<polygon points="12,2 22,12 12,22 2,12" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5"/>`,
-        unknown: `<circle cx="12" cy="12" r="9" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1.5"/>`,
-      };
-
-      el.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">${shapes[type] || shapes.unknown}</svg>`;
-      return el;
-    },
-    []
-  );
+  const selectTrackRef = useRef(selectTrack);
+  selectTrackRef.current = selectTrack;
 
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
@@ -63,33 +72,92 @@ export function Map2D() {
     });
 
     map.on("load", () => {
-      MOCK_TRACKS.forEach((track) => {
-        const el = createMarkerElement(track.disposition, track.type);
+      map.addSource(TRACK_SOURCE_ID, {
+        type: "geojson",
+        data: buildGeoJSON(),
+      });
 
-        el.addEventListener("click", (e) => {
-          e.stopPropagation();
-          selectTrack(track.id);
-        });
+      map.addLayer({
+        id: TRACK_CIRCLE_LAYER,
+        type: "circle",
+        source: TRACK_SOURCE_ID,
+        paint: {
+          "circle-radius": [
+            "interpolate", ["linear"], ["zoom"],
+            5, 4,
+            10, 8,
+            15, 14,
+          ],
+          "circle-color": ["get", "color"],
+          "circle-opacity": 0.25,
+          "circle-stroke-color": ["get", "color"],
+          "circle-stroke-width": 1.5,
+          "circle-stroke-opacity": 0.9,
+        },
+      });
 
-        const popup = new maplibregl.Popup({
-          offset: 16,
-          closeButton: false,
-          className: "nexus-popup",
-        }).setHTML(`
-          <div style="font-family: 'Inter', sans-serif; padding: 4px 0;">
-            <div style="font-size: 11px; font-weight: 600; color: #d4d4d8;">${track.name}</div>
-            <div style="font-size: 10px; color: #52525b; margin-top: 2px;">
-              ${track.id} · ${track.speed} ${track.type === "ground" ? "mph" : "kn"} · 航向 ${track.heading}°
-            </div>
-          </div>
-        `);
+      map.addLayer({
+        id: TRACK_LABEL_LAYER,
+        type: "symbol",
+        source: TRACK_SOURCE_ID,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-font": ["Open Sans Regular"],
+          "text-size": 10,
+          "text-offset": [0, 1.6],
+          "text-anchor": "top",
+          "text-max-width": 10,
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": "#a1a1aa",
+          "text-halo-color": "#09090b",
+          "text-halo-width": 1.5,
+        },
+      });
 
-        const marker = new maplibregl.Marker({ element: el })
-          .setLngLat([track.lng, track.lat])
-          .setPopup(popup)
-          .addTo(map);
+      map.on("click", TRACK_CIRCLE_LAYER, (e) => {
+        if (e.features && e.features.length > 0) {
+          const id = e.features[0].properties?.id;
+          if (id) selectTrackRef.current(id);
+        }
+      });
 
-        markersRef.current.push(marker);
+      map.on("mouseenter", TRACK_CIRCLE_LAYER, (e) => {
+        map.getCanvas().style.cursor = "pointer";
+
+        if (e.features && e.features.length > 0) {
+          const f = e.features[0];
+          const coords = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
+          const props = f.properties!;
+          const typeLabel = props.type === "ground" ? "mph" : "kn";
+
+          if (popupRef.current) popupRef.current.remove();
+
+          popupRef.current = new maplibregl.Popup({
+            offset: 12,
+            closeButton: false,
+            className: "nexus-popup",
+          })
+            .setLngLat(coords)
+            .setHTML(`
+              <div style="font-family: 'Inter', sans-serif; padding: 4px 0;">
+                <div style="font-size: 11px; font-weight: 600; color: #d4d4d8;">${props.name}</div>
+                <div style="font-size: 10px; color: #52525b; margin-top: 2px;">
+                  ${props.id} · ${props.speed} ${typeLabel} · 航向 ${props.heading}°
+                </div>
+              </div>
+            `)
+            .addTo(map);
+        }
+      });
+
+      map.on("mouseleave", TRACK_CIRCLE_LAYER, () => {
+        map.getCanvas().style.cursor = "";
+        if (popupRef.current) {
+          popupRef.current.remove();
+          popupRef.current = null;
+        }
       });
 
       setZoomLevel(Math.round(map.getZoom()));
@@ -98,12 +166,11 @@ export function Map2D() {
     mapRef.current = map;
 
     return () => {
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
+      if (popupRef.current) popupRef.current.remove();
       map.remove();
       mapRef.current = null;
     };
-  }, [createMarkerElement, selectTrack, setMouseCoords, setZoomLevel]);
+  }, [setMouseCoords, setZoomLevel]);
 
   return (
     <>

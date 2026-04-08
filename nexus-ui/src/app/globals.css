@@ -52,9 +52,9 @@
   --color-nexus-bg-overlay: rgba(17, 17, 19, 0.92);
   --color-nexus-border: rgba(255, 255, 255, 0.06);
   --color-nexus-border-strong: rgba(255, 255, 255, 0.10);
-  --color-nexus-accent: #b0b4bc;
-  --color-nexus-accent-dim: #5a5d64;
-  --color-nexus-accent-glow: rgba(176, 180, 188, 0.06);
+  --color-nexus-accent: #a1a1aa;
+  --color-nexus-accent-dim: #52525b;
+  --color-nexus-accent-glow: rgba(161, 161, 170, 0.06);
   --color-nexus-hostile: #e8724a;
   --color-nexus-suspect: #d4932a;
   --color-nexus-unknown: #c9a82b;
@@ -187,4 +187,74 @@
 
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
+}
+
+/* NexusChat Markdown 渲染 */
+.nexus-markdown p {
+  margin-bottom: 0.4em;
+}
+.nexus-markdown p:last-child {
+  margin-bottom: 0;
+}
+.nexus-markdown strong {
+  color: var(--color-nexus-text-primary);
+  font-weight: 600;
+}
+.nexus-markdown code {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.nexus-markdown pre {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 0.6em 0.8em;
+  margin: 0.5em 0;
+  overflow-x: auto;
+}
+.nexus-markdown pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.nexus-markdown ul, .nexus-markdown ol {
+  margin: 0.3em 0;
+  padding-left: 1.4em;
+}
+.nexus-markdown li {
+  margin-bottom: 0.15em;
+}
+.nexus-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 10px;
+}
+.nexus-markdown th, .nexus-markdown td {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 0.3em 0.5em;
+  text-align: left;
+}
+.nexus-markdown th {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+  color: var(--color-nexus-text-secondary);
+}
+.nexus-markdown blockquote {
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+  padding-left: 0.8em;
+  margin: 0.4em 0;
+  color: var(--color-nexus-text-secondary);
+}
+.nexus-markdown a {
+  color: #5b9bd5;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.nexus-markdown a:hover {
+  color: #7ab4e6;
 }
