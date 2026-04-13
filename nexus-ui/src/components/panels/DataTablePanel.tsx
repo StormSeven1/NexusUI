@@ -1,9 +1,8 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { cn } from "@/lib/utils";
 import { MOCK_TRACKS } from "@/lib/mock-data";
-import { FORCE_LABELS, type ForceDisposition } from "@/lib/colors";
+import { type ForceDisposition } from "@/lib/colors";
 import { useAppStore } from "@/stores/app-store";
 import {
   NxPanelHeader,
@@ -23,24 +22,20 @@ import {
   Download,
   Star,
   Plane,
-  Car,
   Ship,
-  HelpCircle,
+  Anchor,
   Eye,
 } from "lucide-react";
 
 type SortField = "id" | "name" | "disposition" | "type" | "speed" | "heading" | "altitude";
 type SortDir = "asc" | "desc";
 
-const TYPE_ICONS = { air: Plane, ground: Car, sea: Ship, unknown: HelpCircle };
-const TYPE_LABELS: Record<string, string> = { air: "空中", ground: "地面", sea: "海上", unknown: "不明" };
+const TYPE_ICONS = { air: Plane, sea: Ship, underwater: Anchor };
+const TYPE_LABELS: Record<string, string> = { air: "空中", sea: "水面", underwater: "水下" };
 
 const DISPOSITION_BADGE: Record<ForceDisposition, { variant: "danger" | "warning" | "info" | "success" | "muted" | "default"; label: string }> = {
   hostile: { variant: "danger", label: "敌方" },
-  suspect: { variant: "warning", label: "可疑" },
-  unknown: { variant: "default", label: "不明" },
   friendly: { variant: "info", label: "友方" },
-  "assumed-friend": { variant: "success", label: "假定友方" },
   neutral: { variant: "muted", label: "中立" },
 };
 

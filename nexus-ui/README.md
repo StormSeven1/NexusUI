@@ -75,7 +75,8 @@ src/
 ├── components/
 │   ├── layout/             # 布局框架
 │   │   ├── AppShell.tsx    # 主容器
-│   │   ├── TopToolbar.tsx  # 顶部导航栏
+│   │   ├── TopNav.tsx      # 顶部工作区导航
+│   │   ├── WorkspaceDetails.tsx # 工作区摘要条
 │   │   ├── LeftSidebar.tsx # 左侧边栏
 │   │   ├── RightSidebar.tsx# 右侧边栏
 │   │   └── StatusBar.tsx   # 底部状态条
@@ -83,17 +84,17 @@ src/
 │   │   ├── MapContainer.tsx# 2D/3D切换
 │   │   ├── Map2D.tsx       # MapLibre地图
 │   │   ├── Map3D.tsx       # Cesium地球
-│   │   └── MiniMap.tsx     # 鹰眼小地图
 │   ├── panels/             # 业务面板
 │   │   ├── TrackListPanel.tsx
 │   │   ├── TrackDetail.tsx
-│   │   ├── AssetPanel.tsx
+│   │   ├── ChatPanel.tsx
 │   │   ├── LayerPanel.tsx
-│   │   └── AlertPanel.tsx
+│   │   ├── EventLogPanel.tsx
+│   │   └── CommPanel.tsx
 │   ├── military/           # 军事专用组件
 │   │   ├── ForceTag.tsx    # 态势标签
 │   │   ├── MilSymbol.tsx   # 军标符号
-│   │   └── Timeline.tsx    # 时间轴回放
+│   ├── AgentMessageFloat.tsx # 智能体消息浮窗
 │   └── ui/                 # shadcn/ui 组件
 ├── stores/
 │   └── app-store.ts        # Zustand 全局状态
@@ -112,22 +113,19 @@ src/
 | 背景基色 | `#060a13` | `--nexus-bg-base` |
 | 面板背景 | `#0c1220` | `--nexus-bg-surface` |
 | 主强调色 | `#22d3ee` | `--nexus-accent` |
-| 敌方 | `#f97316` | `--nexus-hostile` |
-| 友方 | `#60a5fa` | `--nexus-friendly` |
-| 不明 | `#eab308` | `--nexus-unknown` |
+| 敌方 | `#4b9eff` | 组件样式内使用蓝色语义 |
+| 友方 | `#f97316` | 组件样式内使用橙色语义 |
+| 中立 | `#8b8b92` | `--color-nexus-neutral` |
 
 ### 态势颜色 (Force Disposition)
 
-- **HOSTILE** — 橙色 `#f97316`
-- **SUSPECT** — 琥珀 `#f59e0b`
-- **UNKNOWN** — 黄色 `#eab308`
-- **FRIENDLY** — 蓝色 `#60a5fa`
-- **ASSUMED FRIEND** — 绿色 `#34d399`
-- **NEUTRAL** — 灰色 `#94a3b8`
+- **HOSTILE** — 蓝色 `#4b9eff`
+- **FRIENDLY** — 橙色 `#f97316`
+- **NEUTRAL** — 灰色 `#8b8b92`
 
 ## 可复用组件
 
-- `ForceTag` — 态势标签，支持六种态势类型
-- `MilSymbol` — 军标符号，支持空/地/海/未知
-- `Timeline` — 时间轴回放控件
-- `TopToolbar` / `LeftSidebar` / `RightSidebar` / `StatusBar` — 布局壳组件
+- `ForceTag` — 态势标签，支持 `hostile / friendly / neutral`
+- `MilSymbol` — 军标符号，支持 `air / sea / underwater`
+- `TopNav` / `WorkspaceDetails` / `LeftSidebar` / `RightSidebar` / `StatusBar` — 布局壳组件
+- `AgentMessageFloat` — 智能体行为浮窗，与聊天面板联动

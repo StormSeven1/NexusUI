@@ -8,18 +8,15 @@ import math
 from typing import Any
 
 TRACKS = [
-    {"id": "TRK-001", "name": "不明车辆 : 疑似轿车", "type": "ground", "disposition": "unknown", "lat": 51.4545, "lng": -2.5879, "speed": 8.4, "heading": 25},
-    {"id": "TRK-002", "name": "SHARK-27", "type": "air", "disposition": "hostile", "lat": 51.3201, "lng": -2.2103, "speed": 420, "heading": 185},
-    {"id": "TRK-003", "name": "SHARK-31", "type": "air", "disposition": "hostile", "lat": 51.289, "lng": -1.9834, "speed": 385, "heading": 210},
-    {"id": "TRK-004", "name": "BLUEJAY-12", "type": "air", "disposition": "friendly", "lat": 51.5074, "lng": -2.3576, "speed": 550, "heading": 90},
-    {"id": "TRK-005", "name": "不明人员", "type": "ground", "disposition": "unknown", "lat": 51.18, "lng": -2.45, "speed": 1.0, "heading": 0},
-    {"id": "TRK-006", "name": "VIPER-03", "type": "sea", "disposition": "suspect", "lat": 50.72, "lng": -1.87, "speed": 18, "heading": 315},
-    {"id": "TRK-007", "name": "EAGLE-09", "type": "air", "disposition": "friendly", "lat": 51.4, "lng": -2.71, "speed": 480, "heading": 45},
-    {"id": "TRK-008", "name": "货轮 MV-Horizon", "type": "sea", "disposition": "neutral", "lat": 50.63, "lng": -2.15, "speed": 12, "heading": 270},
-    {"id": "TRK-009", "name": "SHADOW-15", "type": "ground", "disposition": "hostile", "lat": 51.1, "lng": -2.02, "speed": 35, "heading": 160},
-    {"id": "TRK-010", "name": "人员 (TX) TV天线", "type": "ground", "disposition": "unknown", "lat": 51.05, "lng": -2.38, "speed": 0.5, "heading": 0},
-    {"id": "TRK-011", "name": "FALCON-22", "type": "air", "disposition": "assumed-friend", "lat": 51.62, "lng": -2.1, "speed": 510, "heading": 120},
-    {"id": "TRK-012", "name": "渔船 FV-Lucky", "type": "sea", "disposition": "neutral", "lat": 50.58, "lng": -2.52, "speed": 6, "heading": 90},
+    {"id": "TRK-001", "name": "空中目标-001", "type": "air", "disposition": "hostile", "lat": 51.3201, "lng": -2.2103, "altitude": 3200, "speed": 420, "heading": 185, "sensor": "雷达 Alpha", "lastUpdate": "14:02:39", "starred": True},
+    {"id": "TRK-002", "name": "空中目标-002", "type": "air", "disposition": "hostile", "lat": 51.2890, "lng": -1.9834, "altitude": 2800, "speed": 385, "heading": 210, "sensor": "雷达 Alpha", "lastUpdate": "14:02:40", "starred": False},
+    {"id": "TRK-003", "name": "空中目标-003", "type": "air", "disposition": "friendly", "lat": 51.5074, "lng": -2.3576, "altitude": 5500, "speed": 550, "heading": 90, "sensor": "雷达 Bravo", "lastUpdate": "14:02:41", "starred": True},
+    {"id": "TRK-004", "name": "水中目标-001", "type": "underwater", "disposition": "hostile", "lat": 50.7200, "lng": -1.8700, "speed": 18, "heading": 315, "sensor": "声呐 A", "lastUpdate": "14:02:35", "starred": False},
+    {"id": "TRK-005", "name": "空中目标-004", "type": "air", "disposition": "friendly", "lat": 51.4000, "lng": -2.7100, "altitude": 4200, "speed": 480, "heading": 45, "sensor": "雷达 Bravo", "lastUpdate": "14:02:41", "starred": True},
+    {"id": "TRK-006", "name": "水面目标-001", "type": "sea", "disposition": "neutral", "lat": 50.6300, "lng": -2.1500, "speed": 12, "heading": 270, "sensor": "AIS 海岸站", "lastUpdate": "14:02:30", "starred": False},
+    {"id": "TRK-007", "name": "水中目标-002", "type": "underwater", "disposition": "friendly", "lat": 51.1000, "lng": -2.0200, "speed": 25, "heading": 160, "sensor": "声呐 B", "lastUpdate": "14:02:37", "starred": True},
+    {"id": "TRK-008", "name": "空中目标-005", "type": "air", "disposition": "friendly", "lat": 51.6200, "lng": -2.1000, "altitude": 6100, "speed": 510, "heading": 120, "sensor": "雷达 Charlie", "lastUpdate": "14:02:40", "starred": False},
+    {"id": "TRK-009", "name": "水面目标-002", "type": "sea", "disposition": "neutral", "lat": 50.5800, "lng": -2.5200, "speed": 6, "heading": 90, "sensor": "AIS 海岸站", "lastUpdate": "14:02:28", "starred": False},
 ]
 
 # OpenAI function-calling 格式的工具定义
@@ -91,8 +88,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "type": {"type": "string", "enum": ["air", "ground", "sea", "unknown", "all"], "description": "目标类型筛选"},
-                    "disposition": {"type": "string", "enum": ["hostile", "friendly", "neutral", "suspect", "unknown", "assumed-friend", "all"], "description": "敌我属性筛选"},
+                    "type": {"type": "string", "enum": ["air", "sea", "underwater", "all"], "description": "目标类型筛选"},
+                    "disposition": {"type": "string", "enum": ["hostile", "friendly", "neutral", "all"], "description": "敌我属性筛选"},
                 },
             },
         },
@@ -106,8 +103,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "trackIds": {"type": "array", "items": {"type": "string"}, "description": "要高亮的目标 ID 列表，如 [\"TRK-001\", \"TRK-002\"]"},
-                    "type": {"type": "string", "enum": ["air", "ground", "sea", "unknown", "all"], "description": "按目标类型批量高亮（与 trackIds 二选一）"},
-                    "disposition": {"type": "string", "enum": ["hostile", "friendly", "neutral", "suspect", "unknown", "assumed-friend", "all"], "description": "按敌我属性批量高亮（与 trackIds 二选一）"},
+                    "type": {"type": "string", "enum": ["air", "sea", "underwater", "all"], "description": "按目标类型批量高亮（与 trackIds 二选一）"},
+                    "disposition": {"type": "string", "enum": ["hostile", "friendly", "neutral", "all"], "description": "按敌我属性批量高亮（与 trackIds 二选一）"},
                 },
             },
         },

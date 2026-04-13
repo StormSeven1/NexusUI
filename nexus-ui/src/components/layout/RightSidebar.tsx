@@ -45,9 +45,10 @@ export function RightSidebar() {
   return (
     <aside
       className={cn(
-        "flex h-full shrink-0 border-l border-white/[0.06] bg-nexus-bg-surface/90 backdrop-blur-md transition-all duration-300",
+        "flex h-full shrink-0 border-l border-nexus-border transition-all duration-300",
         rightSidebarOpen ? "w-[360px]" : "w-12"
       )}
+      style={{ backgroundColor: rightSidebarOpen ? '#19191D' : '#19191D' }}
     >
       {/* 面板内容区 */}
       {rightSidebarOpen && (
@@ -63,7 +64,7 @@ export function RightSidebar() {
       )}
 
       {/* 图标轨道 */}
-      <div className="flex w-12 shrink-0 flex-col items-center gap-1 border-l border-white/[0.06] py-2">
+      <div className="flex w-12 shrink-0 flex-col items-center gap-1 border-l border-nexus-border py-2" style={{ backgroundColor: '#19191D' }}>
         {TABS.map((tab) => {
           const isActive = rightPanelTab === tab.id && rightSidebarOpen;
           return (
@@ -73,14 +74,14 @@ export function RightSidebar() {
               className={cn(
                 "group relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
                 isActive
-                  ? "bg-white/[0.08] text-nexus-text-primary"
-                  : "text-nexus-text-muted hover:bg-white/[0.04] hover:text-nexus-text-secondary"
+                  ? "bg-nexus-accent-glow text-nexus-text-primary border border-nexus-border-accent"
+                  : "text-nexus-text-muted hover:bg-nexus-bg-elevated hover:text-nexus-text-secondary"
               )}
               title={tab.label}
             >
               <tab.icon size={18} />
               {isActive && (
-                <span className="absolute right-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-l bg-nexus-text-primary" />
+                <span className="absolute right-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-l bg-nexus-accent" />
               )}
             </button>
           );

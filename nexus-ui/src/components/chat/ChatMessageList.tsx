@@ -7,11 +7,11 @@ import { Bot, Sparkles } from "lucide-react";
 
 const HINTS = [
   "显示所有敌方目标",
-  "导航到 SHARK-27",
+  "导航到 TRK-001",
   "切换 3D 视图",
   "打开通信面板",
   "当前有多少个空中目标",
-  "选中 TRK-006 看详情",
+  "选中 TRK-004 看详情",
 ];
 
 export function ChatMessageList({

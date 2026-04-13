@@ -11,9 +11,6 @@ import type { ForceDisposition } from "@/lib/colors";
 
 const DISPOSITION_ORDER: ForceDisposition[] = [
   "hostile",
-  "suspect",
-  "unknown",
-  "assumed-friend",
   "friendly",
   "neutral",
 ];
@@ -50,10 +47,10 @@ export function TrackListPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="space-y-2 border-b border-white/[0.06] p-3">
+      <div className="space-y-2 border-b border-nexus-border bg-nexus-bg-sidebar p-3">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">
-            航迹列表
+            目标列表
           </span>
           <div className="flex items-center gap-1">
             <button
@@ -82,19 +79,19 @@ export function TrackListPanel() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="按关键词搜索"
-            className="h-8 w-full rounded-md border border-white/[0.06] bg-white/[0.03] pl-8 pr-3 text-xs text-nexus-text-primary placeholder:text-nexus-text-muted focus:border-white/[0.12] focus:outline-none focus:ring-1 focus:ring-white/[0.08]"
+            className="h-8 w-full rounded-md border border-nexus-border bg-nexus-bg-sidebar pl-8 pr-3 text-xs text-nexus-text-primary placeholder:text-nexus-text-muted focus:border-nexus-border-accent focus:outline-none focus:ring-1 focus:ring-nexus-accent"
           />
         </div>
 
         <div className="text-[10px] text-nexus-text-muted">
-          共 {filtered.length} 条航迹
+          共 {filtered.length} 个目标
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {Object.entries(grouped).map(([disposition, tracks]) => (
           <div key={disposition}>
-            <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-white/[0.04] bg-nexus-bg-surface/95 px-3 py-1.5 backdrop-blur-sm">
+            <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-nexus-border bg-nexus-bg-elevated px-3 py-1.5 backdrop-blur-sm">
               <ForceTag disposition={disposition as ForceDisposition} />
               <span className="text-[10px] text-nexus-text-muted">
                 {tracks.length}
@@ -106,10 +103,10 @@ export function TrackListPanel() {
                 key={track.id}
                 onClick={() => selectTrack(track.id)}
                 className={cn(
-                  "flex w-full items-start gap-2.5 border-b border-white/[0.03] px-3 py-2.5 text-left transition-colors",
+                  "flex w-full items-start gap-2.5 border-b border-nexus-border px-3 py-2.5 text-left transition-colors",
                   selectedTrackId === track.id
-                    ? "bg-white/[0.05] border-l-2 border-l-nexus-text-primary"
-                    : "hover:bg-white/[0.02]"
+                    ? "bg-nexus-accent-glow/10 border-l-2 border-l-nexus-accent"
+                    : "hover:bg-nexus-bg-elevated"
                 )}
               >
                 <MilSymbol
@@ -140,9 +137,9 @@ export function TrackListPanel() {
                     </span>
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
-                    {track.speed} {track.type === "sea" ? "kn" : track.type === "air" ? "kn" : "mph"}{" "}
-                    · 航向 {track.heading}°
-                    {track.altitude ? ` · 高度 ${track.altitude}ft` : ""}
+                    {track.speed} kn · 航向 {track.heading}°
+                    {track.type === "air" && track.altitude ? ` · 高度 ${track.altitude}ft` : ""}
+                    {track.type === "underwater" ? ` · 深度 ${track.altitude || 0}m` : ""}
                   </div>
                 </div>
               </button>

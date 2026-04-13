@@ -5,9 +5,8 @@ import { FORCE_LABELS, type ForceDisposition } from "@/lib/colors";
 import { cn } from "@/lib/utils";
 import {
   Plane,
-  Car,
   Ship,
-  HelpCircle,
+  Anchor,
   AlertTriangle,
   AlertCircle,
   Info,
@@ -24,23 +23,18 @@ import {
   NxCard,
   NxProgress,
   NxStatusDot,
-  NxBadge,
 } from "@/components/nexus";
 
 const DISPOSITION_DOT: Record<ForceDisposition, string> = {
   hostile: "bg-orange-400",
-  suspect: "bg-amber-400",
-  unknown: "bg-yellow-400",
   friendly: "bg-sky-400",
-  "assumed-friend": "bg-emerald-400",
   neutral: "bg-zinc-400",
 };
 
 const TYPE_ICONS = {
   air: Plane,
-  ground: Car,
   sea: Ship,
-  unknown: HelpCircle,
+  underwater: Anchor,
 } as const;
 
 export function SituationOverview() {
@@ -85,8 +79,8 @@ export function SituationOverview() {
             <NxStatCard
               icon={<Shield size={12} />}
               label="威胁目标"
-              value={(dispositionCounts["hostile"] || 0) + (dispositionCounts["suspect"] || 0)}
-              sub="敌方 + 可疑"
+              value={dispositionCounts["hostile"] || 0}
+              sub="敌方目标"
               highlight
             />
             <NxStatCard
@@ -110,7 +104,7 @@ export function SituationOverview() {
           <NxSectionHeader className="mb-3">航迹分布</NxSectionHeader>
           <div className="mb-3 space-y-1.5">
             {(
-              ["hostile", "suspect", "unknown", "friendly", "assumed-friend", "neutral"] as ForceDisposition[]
+              ["hostile", "friendly", "neutral"] as ForceDisposition[]
             ).map((d) => {
               const count = dispositionCounts[d] || 0;
               if (count === 0) return null;
@@ -130,10 +124,10 @@ export function SituationOverview() {
 
           <NxCard padding="sm">
             <div className="flex items-center gap-3">
-              {(["air", "ground", "sea", "unknown"] as const).map((type) => {
+              {(["air", "sea", "underwater"] as const).map((type) => {
                 const Icon = TYPE_ICONS[type];
                 const count = typeCounts[type] || 0;
-                const labels = { air: "空中", ground: "地面", sea: "海上", unknown: "不明" };
+                const labels = { air: "空中", sea: "水面", underwater: "水下" };
                 return (
                   <div key={type} className="flex items-center gap-1.5">
                     <Icon size={12} className="text-nexus-text-muted" />

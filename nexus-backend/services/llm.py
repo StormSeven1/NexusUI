@@ -11,7 +11,7 @@ from openai import AsyncOpenAI
 from config import settings
 from services.tools import TOOL_DEFINITIONS, execute_tool
 
-SYSTEM_PROMPT = """你是 NexusUI 态势感知系统的 AI 助手，代号"Nexus"。你可以帮助操作员分析态势、查询目标信息、控制地图和系统面板。
+SYSTEM_PROMPT = """你是 NexusUI 态势感知系统的 AI 助手，代号"Nexus"。你可以帮助操作员分析空中、水面、水下目标态势，查询目标信息，并控制地图和系统面板。
 
 你的能力包括：
 - 在地图上导航到指定坐标位置

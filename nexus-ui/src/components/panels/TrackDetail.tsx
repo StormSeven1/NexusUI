@@ -13,8 +13,6 @@ import {
   Radio,
   Eye,
   Clock,
-  Ruler,
-  Thermometer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -82,7 +80,7 @@ export function TrackDetail({ trackId }: TrackDetailProps) {
           航迹属性
         </h4>
         <div className="grid grid-cols-2 gap-2">
-          <PropCard icon={Gauge} label="速度" value={`${track.speed}`} unit={track.type === "ground" ? "mph" : "kn"} />
+          <PropCard icon={Gauge} label="速度" value={`${track.speed}`} unit="kn" />
           <PropCard icon={Navigation} label="航向" value={`${track.heading}`} unit="°" />
           <PropCard
             icon={MapPin}
@@ -111,7 +109,7 @@ export function TrackDetail({ trackId }: TrackDetailProps) {
           航迹历史
         </h4>
         <div className="space-y-0">
-          <HistoryRow time="14:02:41" event={`速度 ${track.speed} ${track.type === "ground" ? "mph" : "kn"} · 航向 ${track.heading}°`} />
+          <HistoryRow time="14:02:41" event={`速度 ${track.speed} kn · 航向 ${track.heading}°`} />
           <HistoryRow time="14:01:30" event="航向变更 → 当前方位" />
           <HistoryRow time="14:00:15" event="速度变化检测" />
           <HistoryRow time="13:58:00" event="传感器确认目标" />

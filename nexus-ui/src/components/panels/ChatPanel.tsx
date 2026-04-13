@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { NxPanelHeader, NxIconButton } from "@/components/nexus";
@@ -8,7 +8,8 @@ import { ChatMessageList } from "@/components/chat/ChatMessageList";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ConversationList } from "@/components/chat/ConversationList";
 import { applyToolSideEffect } from "@/lib/tool-bridge";
-import { Trash2, SquarePen } from "lucide-react";
+import { useAppStore } from "@/stores/app-store";
+import { Trash2, SquarePen, X } from "lucide-react";
 import type { FileUIPart, UIMessage } from "ai";
 import type { ConversationSummary } from "@/lib/chat-api";
 
@@ -43,9 +44,10 @@ export function ChatPanel() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const processedToolIds = useRef(new Set<string>());
+  const { selectedAgentMessage, setSelectedAgentMessage } = useAppStore();
 
-  // 自定义 transport，在请求中注入 conversationId
-  const transport = useRef(
+  const transport = useMemo(
+    () =>
     new DefaultChatTransport({
       api: "/api/chat",
       prepareSendMessagesRequest(request) {
@@ -57,27 +59,12 @@ export function ChatPanel() {
           },
         };
       },
-    })
+    }),
+    [conversationId]
   );
 
-  // conversationId 变化时更新 transport
-  useEffect(() => {
-    transport.current = new DefaultChatTransport({
-      api: "/api/chat",
-      prepareSendMessagesRequest(request) {
-        return {
-          body: {
-            ...request.body,
-            messages: request.messages,
-            conversationId: conversationId,
-          },
-        };
-      },
-    });
-  }, [conversationId]);
-
   const { messages, setMessages, sendMessage, stop, status, error } = useChat({
-    transport: transport.current,
+    transport,
     onError: (err) => console.error("[NexusChat]", err),
     onFinish: () => {
       setRefreshKey((k) => k + 1);
@@ -186,6 +173,62 @@ export function ChatPanel() {
         onNew={handleNewChat}
         refreshKey={refreshKey}
       />
+
+      {/* 显示选中的智能体消息 */}
+      {selectedAgentMessage && (
+        <div className="mx-3 mb-2 rounded-md border border-nexus-border bg-nexus-bg-elevated p-3">
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-6 w-6 items-center justify-center rounded-md bg-nexus-accent/20 text-nexus-accent text-xs font-bold">
+                {selectedAgentMessage.agentType === "core" && "C"}
+                {selectedAgentMessage.agentType === "data" && "D"}
+                {selectedAgentMessage.agentType === "tactical" && "T"}
+                {selectedAgentMessage.agentType === "analysis" && "A"}
+              </div>
+              <div>
+                <div className="text-xs font-medium text-nexus-text-primary">{selectedAgentMessage.agentName}</div>
+                <div className="text-[10px] text-nexus-text-muted">
+                  {selectedAgentMessage.timestamp.toLocaleTimeString('zh-CN', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                  })}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setSelectedAgentMessage(null)}
+              className="h-5 w-5 rounded-md hover:bg-nexus-bg-elevated flex items-center justify-center text-nexus-text-muted hover:text-nexus-text-primary transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          <div className="mb-2">
+            <div className="text-xs font-medium text-nexus-text-primary mb-1">{selectedAgentMessage.title}</div>
+            <div className={`text-xs ${
+              selectedAgentMessage.status === 'error' ? 'text-red-400' :
+              selectedAgentMessage.status === 'warning' ? 'text-yellow-400' :
+              selectedAgentMessage.status === 'success' ? 'text-green-400' :
+              'text-nexus-text-secondary'
+            }`}>
+              {selectedAgentMessage.content}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+              selectedAgentMessage.status === 'error' ? 'bg-red-500/20 text-red-400' :
+              selectedAgentMessage.status === 'warning' ? 'bg-yellow-500/20 text-yellow-400' :
+              selectedAgentMessage.status === 'success' ? 'bg-green-500/20 text-green-400' :
+              'bg-blue-500/20 text-blue-400'
+            }`}>
+              {selectedAgentMessage.status === 'error' && '错误'}
+              {selectedAgentMessage.status === 'warning' && '需关注'}
+              {selectedAgentMessage.status === 'success' && '已完成'}
+              {selectedAgentMessage.status === 'info' && '进行中'}
+            </span>
+          </div>
+        </div>
+      )}
 
       <ChatMessageList
         messages={messages}

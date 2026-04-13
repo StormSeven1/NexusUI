@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 import {
   Bot, User, MapPin, Target, Map, PanelRight, Search,
@@ -187,10 +188,13 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
               const isImage = part.mediaType?.startsWith("image/");
               if (isImage) {
                 return (
-                  <img
+                  <Image
                     key={key}
                     src={part.url}
                     alt={part.filename ?? "附件"}
+                    width={320}
+                    height={160}
+                    unoptimized
                     className="mt-1 max-h-40 rounded-md border border-white/[0.06]"
                   />
                 );

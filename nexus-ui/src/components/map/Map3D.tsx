@@ -6,13 +6,19 @@ import { MOCK_TRACKS } from "@/lib/mock-data";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/colors";
 import { AlertTriangle } from "lucide-react";
 
+type CesiumModule = typeof import("cesium");
+type CesiumViewer = import("cesium").Viewer;
+type CesiumEntity = import("cesium").Entity;
+type PositionedEvent = import("cesium").ScreenSpaceEventHandler.PositionedEvent;
+type MotionEvent = import("cesium").ScreenSpaceEventHandler.MotionEvent;
+
 export function Map3D() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const viewerRef = useRef<unknown>(null);
-  const cesiumRef = useRef<any>(null);
+  const viewerRef = useRef<CesiumViewer | null>(null);
+  const cesiumRef = useRef<CesiumModule | null>(null);
   const lastFlySeqRef = useRef<number>(-1);
-  const highlightEntitiesRef = useRef<any[]>([]);
-  const routeEntitiesRef = useRef<Map<string, any>>(new Map());
+  const highlightEntitiesRef = useRef<CesiumEntity[]>([]);
+  const routeEntitiesRef = useRef<Map<string, CesiumEntity>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { selectTrack, setMouseCoords } = useAppStore();
@@ -20,7 +26,7 @@ export function Map3D() {
   useEffect(() => {
     if (!containerRef.current || viewerRef.current) return;
 
-    let viewer: any = null;
+    let viewer: CesiumViewer | null = null;
     let destroyed = false;
 
     const init = async () => {
@@ -29,7 +35,7 @@ export function Map3D() {
         cesiumRef.current = Cesium;
 
         if (typeof window !== "undefined") {
-          (window as any).CESIUM_BASE_URL = "/cesium/";
+          (window as typeof window & { CESIUM_BASE_URL?: string }).CESIUM_BASE_URL = "/cesium/";
         }
 
         if (destroyed || !containerRef.current) return;
@@ -55,8 +61,6 @@ export function Map3D() {
             })
           ),
           terrainProvider: undefined,
-          skyBox: false as any,
-          skyAtmosphere: false as any,
           requestRenderMode: true,
           maximumRenderTimeChange: Infinity,
         });
@@ -114,14 +118,14 @@ export function Map3D() {
         });
 
         const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-        handler.setInputAction((movement: any) => {
+        handler.setInputAction((movement: PositionedEvent) => {
           const picked = viewer.scene.pick(movement.position);
           if (Cesium.defined(picked) && picked.id?.properties?.trackId) {
             selectTrack(picked.id.properties.trackId.getValue());
           }
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-        handler.setInputAction((movement: any) => {
+        handler.setInputAction((movement: MotionEvent) => {
           const cartesian = viewer.camera.pickEllipsoid(
             movement.endPosition,
             viewer.scene.globe.ellipsoid
@@ -162,7 +166,7 @@ export function Map3D() {
       const req = state.flyToRequest;
       if (!req || req.seq === lastFlySeqRef.current) return;
       lastFlySeqRef.current = req.seq;
-      const viewer = viewerRef.current as any;
+      const viewer = viewerRef.current;
       const Cesium = cesiumRef.current;
       if (!viewer || !Cesium || viewer.isDestroyed()) return;
 
@@ -184,7 +188,7 @@ export function Map3D() {
   /* ── 响应 highlightedTrackIds ── */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
-      const viewer = viewerRef.current as any;
+      const viewer = viewerRef.current;
       const Cesium = cesiumRef.current;
       if (!viewer || !Cesium || viewer.isDestroyed()) return;
 
@@ -225,7 +229,7 @@ export function Map3D() {
   /* ── 响应 routeLines ── */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
-      const viewer = viewerRef.current as any;
+      const viewer = viewerRef.current;
       const Cesium = cesiumRef.current;
       if (!viewer || !Cesium || viewer.isDestroyed()) return;
 

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import "cesium/Build/Cesium/Widgets/widgets.css";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -24,9 +25,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className={`${inter.variable} ${jetbrainsMono.variable}`}>
-      <head>
-        <link rel="stylesheet" href="/cesium/Widgets/widgets.css" />
-      </head>
       <body className="h-screen w-screen overflow-hidden bg-nexus-bg-base text-nexus-text-primary antialiased">
         {children}
       </body>

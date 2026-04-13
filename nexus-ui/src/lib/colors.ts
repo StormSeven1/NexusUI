@@ -22,36 +22,24 @@ export const NEXUS_COLORS = {
   },
   force: {
     hostile: "#e8724a",
-    suspect: "#d4932a",
-    unknown: "#c9a82b",
     friendly: "#5b9bd5",
-    assumedFriend: "#3bb87a",
     neutral: "#737378",
   },
 } as const;
 
 export type ForceDisposition =
   | "hostile"
-  | "suspect"
-  | "unknown"
   | "friendly"
-  | "assumed-friend"
   | "neutral";
 
 export const FORCE_COLORS: Record<ForceDisposition, string> = {
   hostile: NEXUS_COLORS.force.hostile,
-  suspect: NEXUS_COLORS.force.suspect,
-  unknown: NEXUS_COLORS.force.unknown,
   friendly: NEXUS_COLORS.force.friendly,
-  "assumed-friend": NEXUS_COLORS.force.assumedFriend,
   neutral: NEXUS_COLORS.force.neutral,
 };
 
 export const FORCE_LABELS: Record<ForceDisposition, string> = {
   hostile: "敌方",
-  suspect: "可疑",
-  unknown: "不明",
   friendly: "友方",
-  "assumed-friend": "假定友方",
   neutral: "中立",
 };

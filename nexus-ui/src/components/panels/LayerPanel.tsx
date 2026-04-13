@@ -61,14 +61,14 @@ export function LayerPanel() {
               <button
                 key={layer.id}
                 onClick={() => toggleLayer(layer.id)}
-                className="flex w-full items-center gap-3 border-b border-white/[0.03] px-3 py-2.5 text-left hover:bg-white/[0.02]"
+                className="flex w-full items-center gap-3 border-b border-nexus-border px-3 py-2.5 text-left hover:bg-nexus-bg-elevated"
               >
                 <div
                   className={cn(
                     "flex h-5 w-5 items-center justify-center rounded border transition-colors",
                     layer.visible
-                      ? "border-white/20 bg-white/[0.08] text-nexus-text-primary"
-                      : "border-white/10 bg-white/[0.03] text-nexus-text-muted"
+                      ? "border-nexus-border-accent bg-nexus-accent-glow/20 text-nexus-text-primary"
+                      : "border-nexus-border bg-nexus-bg-sidebar text-nexus-text-muted"
                   )}
                 >
                   {layer.visible ? <Eye size={10} /> : <EyeOff size={10} />}

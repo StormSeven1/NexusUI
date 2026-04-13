@@ -37,27 +37,27 @@ export function MapContainer() {
       </div>
 
       {/* 2D/3D 切换 */}
-      <div className="absolute right-3 top-3 z-10 flex overflow-hidden rounded-md border border-white/[0.08] bg-nexus-bg-surface/90 backdrop-blur-md">
+      <div className="absolute right-3 top-3 z-10 flex overflow-hidden rounded-md border border-nexus-border nexus-glass">
         <button
           onClick={() => setMapViewMode("2d")}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors",
+            "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200",
             mapViewMode === "2d"
-              ? "bg-white/[0.08] text-nexus-text-primary"
-              : "text-nexus-text-muted hover:bg-white/[0.04] hover:text-nexus-text-secondary"
+              ? "bg-nexus-accent-glow text-nexus-text-primary border border-nexus-border-accent"
+              : "text-nexus-text-muted hover:bg-white/5 hover:text-nexus-text-secondary"
           )}
         >
           <MapIcon size={13} />
           2D
         </button>
-        <div className="w-px bg-white/[0.06]" />
+        <div className="w-px bg-nexus-border" />
         <button
           onClick={() => setMapViewMode("3d")}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors",
+            "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200",
             mapViewMode === "3d"
-              ? "bg-white/[0.08] text-nexus-text-primary"
-              : "text-nexus-text-muted hover:bg-white/[0.04] hover:text-nexus-text-secondary"
+              ? "bg-nexus-accent-glow text-nexus-text-primary border border-nexus-border-accent"
+              : "text-nexus-text-muted hover:bg-white/5 hover:text-nexus-text-secondary"
           )}
         >
           <Globe size={13} />
@@ -69,24 +69,24 @@ export function MapContainer() {
 
       {/* 比例尺 */}
       <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2">
-        <div className="flex items-center gap-1 rounded bg-nexus-bg-surface/80 px-2 py-1 backdrop-blur-sm">
-          <div className="h-px w-12 bg-nexus-text-muted" />
-          <span className="font-mono text-[9px] text-nexus-text-muted">10 km</span>
+        <div className="flex items-center gap-1 rounded nexus-glass px-2 py-1">
+          <div className="h-px w-12 bg-nexus-text-secondary" />
+          <span className="font-mono text-[9px] text-nexus-text-secondary">10 km</span>
         </div>
       </div>
 
       {/* 中心十字 */}
       <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center">
-        <div className="relative h-6 w-6 opacity-15">
-          <div className="absolute left-1/2 top-0 h-2 w-px -translate-x-1/2 bg-white" />
-          <div className="absolute bottom-0 left-1/2 h-2 w-px -translate-x-1/2 bg-white" />
-          <div className="absolute left-0 top-1/2 h-px w-2 -translate-y-1/2 bg-white" />
-          <div className="absolute right-0 top-1/2 h-px w-2 -translate-y-1/2 bg-white" />
+        <div className="relative h-6 w-6 opacity-20">
+          <div className="absolute left-1/2 top-0 h-2 w-px -translate-x-1/2 bg-nexus-text-primary" />
+          <div className="absolute bottom-0 left-1/2 h-2 w-px -translate-x-1/2 bg-nexus-text-primary" />
+          <div className="absolute left-0 top-1/2 h-px w-2 -translate-y-1/2 bg-nexus-text-primary" />
+          <div className="absolute right-0 top-1/2 h-px w-2 -translate-y-1/2 bg-nexus-text-primary" />
         </div>
       </div>
 
       {/* 边缘暗角 */}
-      <div className="pointer-events-none absolute inset-0 z-[4] shadow-[inset_0_0_80px_rgba(0,0,0,0.5)]" />
+      <div className="pointer-events-none absolute inset-0 z-[4] shadow-[inset_0_0_100px_rgba(10,10,15,0.8)]" />
     </div>
   );
 }

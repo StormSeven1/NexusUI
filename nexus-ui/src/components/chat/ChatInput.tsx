@@ -1,8 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import { Send, Paperclip, X, Image as ImageIcon, Loader2, Square } from "lucide-react";
+import { Send, Paperclip, X, Image as ImageIcon, Square } from "lucide-react";
 import { NxIconButton } from "@/components/nexus";
 import type { FileUIPart } from "ai";
 
@@ -73,9 +74,12 @@ export function ChatInput({ onSend, onStop, isLoading }: ChatInputProps) {
           {attachments.map((att, i) => (
             <div key={i} className="group relative">
               {att.mediaType.startsWith("image/") ? (
-                <img
+                <Image
                   src={att.url}
                   alt={att.filename}
+                  width={48}
+                  height={48}
+                  unoptimized
                   className="h-12 w-12 rounded-md border border-white/[0.06] object-cover"
                 />
               ) : (

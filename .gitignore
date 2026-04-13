@@ -45,10 +45,13 @@ tmp/
 
 anduril/
 reference/
+nexus-ui-old/
+__MACOSX/
+nexus-backend/.venv/
+nexus-ui/dev.log
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.db
-

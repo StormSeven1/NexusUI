@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 
 function easeOut(t: number) {
@@ -9,17 +9,25 @@ function easeOut(t: number) {
 
 function useAnimatedValue(target: number, duration = 1500) {
   const [value, setValue] = useState(0);
+  const valueRef = useRef(0);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+
   useEffect(() => {
     let start: number | null = null;
-    const initial = value;
+    let frameId = 0;
+    const initial = valueRef.current;
     const animate = (ts: number) => {
       if (!start) start = ts;
       const p = Math.min((ts - start) / duration, 1);
       setValue(initial + (target - initial) * easeOut(p));
-      if (p < 1) requestAnimationFrame(animate);
+      if (p < 1) frameId = requestAnimationFrame(animate);
     };
-    requestAnimationFrame(animate);
-  }, [target]);
+    frameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameId);
+  }, [duration, target]);
   return value;
 }
 

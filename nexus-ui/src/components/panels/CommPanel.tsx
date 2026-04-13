@@ -49,14 +49,14 @@ const CHANNELS: Channel[] = [
 ];
 
 const MESSAGES: Message[] = [
-  { id: "m1", sender: "指挥中心", callsign: "HQ", content: "所有单位注意，SHARK-27 已进入限制区域，启动二级响应", timestamp: "14:02:41", channel: "ch-cmd", priority: "urgent" },
-  { id: "m2", sender: "雷达站 Alpha", callsign: "RADAR-A", content: "确认探测到 SHARK-27，方位 185°，距离 42km，速度 420kn", timestamp: "14:02:39", channel: "ch-cmd", priority: "normal" },
-  { id: "m3", sender: "空中巡逻", callsign: "BLUEJAY-12", content: "收到，正在调整航向前往拦截区域", timestamp: "14:02:35", channel: "ch-cmd", priority: "normal" },
-  { id: "m4", sender: "地面观察", callsign: "TOWER-6", content: "SHADOW-15 继续向北移动，已接近围栏 200m", timestamp: "14:02:33", channel: "ch-tac1", priority: "urgent" },
-  { id: "m5", sender: "海岸监视", callsign: "COAST-1", content: "VIPER-03 航向偏移已确认，可能是设备故障", timestamp: "14:01:50", channel: "ch-tac2", priority: "normal" },
+  { id: "m1", sender: "指挥中心", callsign: "HQ", content: "所有单位注意，敌方空中目标 TRK-001 已进入限制区域，启动二级响应", timestamp: "14:02:41", channel: "ch-cmd", priority: "urgent" },
+  { id: "m2", sender: "雷达站 Alpha", callsign: "RADAR-A", content: "确认探测到 TRK-001，方位 185°，距离 42km，速度 420kn", timestamp: "14:02:39", channel: "ch-cmd", priority: "normal" },
+  { id: "m3", sender: "空中巡逻", callsign: "AIR-PATROL-3", content: "收到，正在调整航向前往 TRK-001 预计航路前方拦截点", timestamp: "14:02:35", channel: "ch-cmd", priority: "normal" },
+  { id: "m4", sender: "水下监视", callsign: "SONAR-B", content: "TRK-004 持续向东北机动，已接近警戒水域 200m", timestamp: "14:02:33", channel: "ch-tac1", priority: "urgent" },
+  { id: "m5", sender: "海岸监视", callsign: "COAST-1", content: "TRK-006 航向偏移已确认，可能受海流影响", timestamp: "14:01:50", channel: "ch-tac2", priority: "normal" },
   { id: "m6", sender: "指挥中心", callsign: "HQ", content: "各站注意：0200Z 起执行新频率跳变计划 DELTA-7", timestamp: "14:01:20", channel: "ch-bc", priority: "flash" },
   { id: "m7", sender: "保障组", callsign: "LOG-3", content: "雷达 Charlie 维修备件已到位，预计 30 分钟完成更换", timestamp: "14:00:45", channel: "ch-sup", priority: "normal" },
-  { id: "m8", sender: "空中巡逻", callsign: "EAGLE-09", content: "任务完成，返回基地，预计 15 分钟降落", timestamp: "14:00:30", channel: "ch-tac1", priority: "normal" },
+  { id: "m8", sender: "空中巡逻", callsign: "AIR-PATROL-1", content: "TRK-005 护航任务完成，返回基地，预计 15 分钟降落", timestamp: "14:00:30", channel: "ch-tac1", priority: "normal" },
 ];
 
 const CHANNEL_COLORS = {

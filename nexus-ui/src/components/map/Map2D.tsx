@@ -1,25 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useAppStore } from "@/stores/app-store";
 import { MOCK_TRACKS } from "@/lib/mock-data";
-import { FORCE_COLORS, type ForceDisposition } from "@/lib/colors";
+import { FORCE_COLORS } from "@/lib/colors";
 
 const DARK_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
-
 const CENTER: [number, number] = [-2.35, 51.35];
 const DEFAULT_ZOOM = 8.5;
 
 const TRACK_SOURCE_ID = "tracks-source";
-const TRACK_CIRCLE_LAYER = "tracks-circle";
+const TRACK_SYMBOL_LAYER = "tracks-symbol";
 const TRACK_LABEL_LAYER = "tracks-label";
-const HIGHLIGHT_CIRCLE_LAYER = "tracks-highlight";
-const ROUTE_SOURCE_PREFIX = "route-source-";
-const ROUTE_LAYER_PREFIX = "route-layer-";
+const HIGHLIGHT_SYMBOL_LAYER = "tracks-highlight";
 
-function buildGeoJSON(): GeoJSON.FeatureCollection {
+function buildGeoJSON() {
   return {
     type: "FeatureCollection",
     features: MOCK_TRACKS.map((track) => ({
@@ -51,9 +48,12 @@ export function Map2D() {
   const { setMouseCoords, setZoomLevel, selectTrack } = useAppStore();
 
   const selectTrackRef = useRef(selectTrack);
-  selectTrackRef.current = selectTrack;
 
-  /* ── 初始化地图 ── */
+  useEffect(() => {
+    selectTrackRef.current = selectTrack;
+  }, [selectTrack]);
+
+  // 初始化地图
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
@@ -78,33 +78,35 @@ export function Map2D() {
     });
 
     map.on("load", () => {
+      // 添加数据源
       map.addSource(TRACK_SOURCE_ID, {
         type: "geojson",
         data: buildGeoJSON(),
       });
 
-      /* 高亮脉冲外圈（在普通圆下面先添加，初始隐藏） */
+      // 高亮外圈
       map.addLayer({
-        id: HIGHLIGHT_CIRCLE_LAYER,
+        id: HIGHLIGHT_SYMBOL_LAYER,
         type: "circle",
         source: TRACK_SOURCE_ID,
         filter: ["in", "id", ""],
         paint: {
           "circle-radius": [
             "interpolate", ["linear"], ["zoom"],
-            5, 10,
-            10, 18,
-            15, 28,
+            5, 12,
+            10, 20,
+            15, 32,
           ],
           "circle-color": "transparent",
-          "circle-stroke-color": "#facc15",
+          "circle-stroke-color": "#60a5fa",
           "circle-stroke-width": 2.5,
           "circle-stroke-opacity": 0.85,
         },
       });
 
+      // 符号层 - 使用简单的圆圈
       map.addLayer({
-        id: TRACK_CIRCLE_LAYER,
+        id: TRACK_SYMBOL_LAYER,
         type: "circle",
         source: TRACK_SOURCE_ID,
         paint: {
@@ -115,13 +117,14 @@ export function Map2D() {
             15, 14,
           ],
           "circle-color": ["get", "color"],
-          "circle-opacity": 0.25,
+          "circle-opacity": 0.8,
           "circle-stroke-color": ["get", "color"],
           "circle-stroke-width": 1.5,
           "circle-stroke-opacity": 0.9,
         },
       });
 
+      // 标签层
       map.addLayer({
         id: TRACK_LABEL_LAYER,
         type: "symbol",
@@ -133,7 +136,6 @@ export function Map2D() {
           "text-offset": [0, 1.6],
           "text-anchor": "top",
           "text-max-width": 10,
-          "text-allow-overlap": false,
         },
         paint: {
           "text-color": "#a1a1aa",
@@ -142,21 +144,22 @@ export function Map2D() {
         },
       });
 
-      map.on("click", TRACK_CIRCLE_LAYER, (e) => {
+      // 点击事件
+      map.on("click", TRACK_SYMBOL_LAYER, (e) => {
         if (e.features && e.features.length > 0) {
           const id = e.features[0].properties?.id;
           if (id) selectTrackRef.current(id);
         }
       });
 
-      map.on("mouseenter", TRACK_CIRCLE_LAYER, (e) => {
+      // 鼠标悬停事件
+      map.on("mouseenter", TRACK_SYMBOL_LAYER, (e) => {
         map.getCanvas().style.cursor = "pointer";
 
         if (e.features && e.features.length > 0) {
           const f = e.features[0];
           const coords = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
           const props = f.properties!;
-          const typeLabel = props.type === "ground" ? "mph" : "kn";
 
           if (popupRef.current) popupRef.current.remove();
 
@@ -170,7 +173,7 @@ export function Map2D() {
               <div style="font-family: 'Inter', sans-serif; padding: 4px 0;">
                 <div style="font-size: 11px; font-weight: 600; color: #d4d4d8;">${props.name}</div>
                 <div style="font-size: 10px; color: #52525b; margin-top: 2px;">
-                  ${props.id} · ${props.speed} ${typeLabel} · 航向 ${props.heading}°
+                  ${props.id} · ${props.speed} kn · 航向 ${props.heading}°
                 </div>
               </div>
             `)
@@ -178,7 +181,7 @@ export function Map2D() {
         }
       });
 
-      map.on("mouseleave", TRACK_CIRCLE_LAYER, () => {
+      map.on("mouseleave", TRACK_SYMBOL_LAYER, () => {
         map.getCanvas().style.cursor = "";
         if (popupRef.current) {
           popupRef.current.remove();
@@ -198,7 +201,7 @@ export function Map2D() {
     };
   }, [setMouseCoords, setZoomLevel]);
 
-  /* ── 响应 flyToRequest ── */
+  // 响应 flyToRequest
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
       const req = state.flyToRequest;
@@ -216,22 +219,22 @@ export function Map2D() {
     return unsub;
   }, []);
 
-  /* ── 响应 highlightedTrackIds ── */
+  // 响应 highlightedTrackIds
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
       const map = mapRef.current;
-      if (!map || !map.getLayer(HIGHLIGHT_CIRCLE_LAYER)) return;
+      if (!map || !map.getLayer(HIGHLIGHT_SYMBOL_LAYER)) return;
       const ids = state.highlightedTrackIds;
       if (ids.length === 0) {
-        map.setFilter(HIGHLIGHT_CIRCLE_LAYER, ["in", "id", ""]);
+        map.setFilter(HIGHLIGHT_SYMBOL_LAYER, ["in", "id", ""]);
       } else {
-        map.setFilter(HIGHLIGHT_CIRCLE_LAYER, ["in", "id", ...ids]);
+        map.setFilter(HIGHLIGHT_SYMBOL_LAYER, ["in", "id", ...ids]);
       }
     });
     return unsub;
   }, []);
 
-  /* ── 响应 routeLines ── */
+  // 响应 routeLines
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
       const map = mapRef.current;
@@ -243,8 +246,8 @@ export function Map2D() {
       // 移除已不存在的路线
       for (const oldId of routeIdsRef.current) {
         if (!currentIds.has(oldId)) {
-          const layerId = ROUTE_LAYER_PREFIX + oldId;
-          const sourceId = ROUTE_SOURCE_PREFIX + oldId;
+          const layerId = "route-layer-" + oldId;
+          const sourceId = "route-source-" + oldId;
           if (map.getLayer(layerId)) map.removeLayer(layerId);
           if (map.getSource(sourceId)) map.removeSource(sourceId);
         }
@@ -252,8 +255,8 @@ export function Map2D() {
 
       // 添加新路线
       for (const route of current) {
-        const sourceId = ROUTE_SOURCE_PREFIX + route.id;
-        const layerId = ROUTE_LAYER_PREFIX + route.id;
+        const sourceId = "route-source-" + route.id;
+        const layerId = "route-layer-" + route.id;
         if (map.getSource(sourceId)) continue;
 
         const coordinates = route.points.map((p) => [p.lng, p.lat]);
@@ -278,7 +281,7 @@ export function Map2D() {
               "line-dasharray": [2, 3],
             },
           },
-          HIGHLIGHT_CIRCLE_LAYER,
+          HIGHLIGHT_SYMBOL_LAYER,
         );
       }
 

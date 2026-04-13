@@ -3,7 +3,7 @@ import type { ForceDisposition } from "./colors";
 export interface Track {
   id: string;
   name: string;
-  type: "air" | "ground" | "sea" | "unknown";
+  type: "air" | "underwater" | "sea";
   disposition: ForceDisposition;
   lat: number;
   lng: number;
@@ -36,20 +36,7 @@ export interface Alert {
 export const MOCK_TRACKS: Track[] = [
   {
     id: "TRK-001",
-    name: "不明车辆 : 疑似轿车",
-    type: "ground",
-    disposition: "unknown",
-    lat: 51.4545,
-    lng: -2.5879,
-    heading: 25,
-    speed: 8.4,
-    sensor: "Tower 6.5 Scope",
-    lastUpdate: "14:02:41",
-    starred: false,
-  },
-  {
-    id: "TRK-002",
-    name: "SHARK-27",
+    name: "空中目标-001",
     type: "air",
     disposition: "hostile",
     lat: 51.3201,
@@ -62,8 +49,8 @@ export const MOCK_TRACKS: Track[] = [
     starred: true,
   },
   {
-    id: "TRK-003",
-    name: "SHARK-31",
+    id: "TRK-002",
+    name: "空中目标-002",
     type: "air",
     disposition: "hostile",
     lat: 51.2890,
@@ -76,8 +63,8 @@ export const MOCK_TRACKS: Track[] = [
     starred: false,
   },
   {
-    id: "TRK-004",
-    name: "BLUEJAY-12",
+    id: "TRK-003",
+    name: "空中目标-003",
     type: "air",
     disposition: "friendly",
     lat: 51.5074,
@@ -90,34 +77,21 @@ export const MOCK_TRACKS: Track[] = [
     starred: true,
   },
   {
-    id: "TRK-005",
-    name: "不明人员",
-    type: "ground",
-    disposition: "unknown",
-    lat: 51.1800,
-    lng: -2.4500,
-    heading: 0,
-    speed: 1.0,
-    sensor: "TV 天线门禁",
-    lastUpdate: "14:02:38",
-    starred: false,
-  },
-  {
-    id: "TRK-006",
-    name: "VIPER-03",
-    type: "sea",
-    disposition: "suspect",
+    id: "TRK-004",
+    name: "水中目标-001",
+    type: "underwater",
+    disposition: "hostile",
     lat: 50.7200,
     lng: -1.8700,
     heading: 315,
     speed: 18,
-    sensor: "AIS 海岸站",
+    sensor: "声呐 A",
     lastUpdate: "14:02:35",
     starred: false,
   },
   {
-    id: "TRK-007",
-    name: "EAGLE-09",
+    id: "TRK-005",
+    name: "空中目标-004",
     type: "air",
     disposition: "friendly",
     lat: 51.4000,
@@ -130,8 +104,8 @@ export const MOCK_TRACKS: Track[] = [
     starred: true,
   },
   {
-    id: "TRK-008",
-    name: "货轮 MV-Horizon",
+    id: "TRK-006",
+    name: "水面目标-001",
     type: "sea",
     disposition: "neutral",
     lat: 50.6300,
@@ -143,36 +117,23 @@ export const MOCK_TRACKS: Track[] = [
     starred: false,
   },
   {
-    id: "TRK-009",
-    name: "SHADOW-15",
-    type: "ground",
-    disposition: "hostile",
+    id: "TRK-007",
+    name: "水中目标-002",
+    type: "underwater",
+    disposition: "friendly",
     lat: 51.1000,
     lng: -2.0200,
     heading: 160,
-    speed: 35,
-    sensor: "Tower 4.2 Scope",
+    speed: 25,
+    sensor: "声呐 B",
     lastUpdate: "14:02:37",
     starred: true,
   },
   {
-    id: "TRK-010",
-    name: "人员 (TX) TV天线",
-    type: "ground",
-    disposition: "unknown",
-    lat: 51.0500,
-    lng: -2.3800,
-    heading: 0,
-    speed: 0.5,
-    sensor: "TV Antenna (23d0)",
-    lastUpdate: "14:02:25",
-    starred: false,
-  },
-  {
-    id: "TRK-011",
-    name: "FALCON-22",
+    id: "TRK-008",
+    name: "空中目标-005",
     type: "air",
-    disposition: "assumed-friend",
+    disposition: "friendly",
     lat: 51.6200,
     lng: -2.1000,
     altitude: 6100,
@@ -183,8 +144,8 @@ export const MOCK_TRACKS: Track[] = [
     starred: false,
   },
   {
-    id: "TRK-012",
-    name: "渔船 FV-Lucky",
+    id: "TRK-009",
+    name: "水面目标-002",
     type: "sea",
     disposition: "neutral",
     lat: 50.5800,
@@ -209,11 +170,11 @@ export const MOCK_ASSETS: Asset[] = [
 ];
 
 export const MOCK_ALERTS: Alert[] = [
-  { id: "ALT-001", severity: "critical", message: "检测到新空中航迹 — SHARK-27 进入限制区域", timestamp: "14:02:39", trackId: "TRK-002" },
+  { id: "ALT-001", severity: "critical", message: "检测到敌方空中目标 TRK-002 进入限制区域", timestamp: "14:02:39", trackId: "TRK-002" },
   { id: "ALT-002", severity: "warning", message: "雷达 Charlie 信号衰减 — 覆盖范围降至 60km", timestamp: "14:01:15" },
-  { id: "ALT-003", severity: "critical", message: "SHADOW-15 正在接近周界围栏", timestamp: "14:02:37", trackId: "TRK-009" },
-  { id: "ALT-004", severity: "info", message: "BLUEJAY-12 已进入观察扇区", timestamp: "14:00:52", trackId: "TRK-004" },
-  { id: "ALT-005", severity: "warning", message: "VIPER-03 检测到航向偏离", timestamp: "13:58:20", trackId: "TRK-006" },
+  { id: "ALT-003", severity: "critical", message: "水中目标 TRK-004 接近警戒水域边界", timestamp: "14:02:37", trackId: "TRK-004" },
+  { id: "ALT-004", severity: "info", message: "友方空中目标 TRK-003 已进入观察扇区", timestamp: "14:00:52", trackId: "TRK-003" },
+  { id: "ALT-005", severity: "warning", message: "水面目标 TRK-006 检测到航向偏离", timestamp: "13:58:20", trackId: "TRK-006" },
 ];
 
 export const MAP_LAYERS = [
