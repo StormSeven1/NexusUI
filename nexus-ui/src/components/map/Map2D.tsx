@@ -6,6 +6,11 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useAppStore } from "@/stores/app-store";
 import { MOCK_TRACKS } from "@/lib/mock-data";
 import { FORCE_COLORS } from "@/lib/colors";
+import {
+  buildMarkerSymbolDataUrl,
+  getAllMarkerSymbolKeys,
+  getMarkerSymbolId,
+} from "@/lib/map-symbols";
 
 const DARK_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const CENTER: [number, number] = [-2.35, 51.35];
@@ -18,12 +23,12 @@ const HIGHLIGHT_SYMBOL_LAYER = "tracks-highlight";
 
 function buildGeoJSON() {
   return {
-    type: "FeatureCollection",
+    type: "FeatureCollection" as const,
     features: MOCK_TRACKS.map((track) => ({
-      type: "Feature",
+      type: "Feature" as const,
       geometry: {
-        type: "Point",
-        coordinates: [track.lng, track.lat],
+        type: "Point" as const,
+        coordinates: [track.lng, track.lat] as [number, number],
       },
       properties: {
         id: track.id,
@@ -34,9 +39,19 @@ function buildGeoJSON() {
         heading: track.heading,
         altitude: track.altitude ?? null,
         color: FORCE_COLORS[track.disposition],
+        symbolId: getMarkerSymbolId(track.type, track.disposition),
       },
     })),
-  };
+  } satisfies GeoJSON.FeatureCollection<GeoJSON.Point>;
+}
+
+async function loadSvgImage(src: string): Promise<HTMLImageElement> {
+  return await new Promise((resolve, reject) => {
+    const image = new Image(64, 64);
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`failed to load marker image: ${src.slice(0, 48)}`));
+    image.src = src;
+  });
 }
 
 export function Map2D() {
@@ -78,118 +93,125 @@ export function Map2D() {
     });
 
     map.on("load", () => {
-      // 添加数据源
-      map.addSource(TRACK_SOURCE_ID, {
-        type: "geojson",
-        data: buildGeoJSON(),
-      });
-
-      // 高亮外圈
-      map.addLayer({
-        id: HIGHLIGHT_SYMBOL_LAYER,
-        type: "circle",
-        source: TRACK_SOURCE_ID,
-        filter: ["in", "id", ""],
-        paint: {
-          "circle-radius": [
-            "interpolate", ["linear"], ["zoom"],
-            5, 12,
-            10, 20,
-            15, 32,
-          ],
-          "circle-color": "transparent",
-          "circle-stroke-color": "#60a5fa",
-          "circle-stroke-width": 2.5,
-          "circle-stroke-opacity": 0.85,
-        },
-      });
-
-      // 符号层 - 使用简单的圆圈
-      map.addLayer({
-        id: TRACK_SYMBOL_LAYER,
-        type: "circle",
-        source: TRACK_SOURCE_ID,
-        paint: {
-          "circle-radius": [
-            "interpolate", ["linear"], ["zoom"],
-            5, 4,
-            10, 8,
-            15, 14,
-          ],
-          "circle-color": ["get", "color"],
-          "circle-opacity": 0.8,
-          "circle-stroke-color": ["get", "color"],
-          "circle-stroke-width": 1.5,
-          "circle-stroke-opacity": 0.9,
-        },
-      });
-
-      // 标签层
-      map.addLayer({
-        id: TRACK_LABEL_LAYER,
-        type: "symbol",
-        source: TRACK_SOURCE_ID,
-        layout: {
-          "text-field": ["get", "name"],
-          "text-font": ["Open Sans Regular"],
-          "text-size": 10,
-          "text-offset": [0, 1.6],
-          "text-anchor": "top",
-          "text-max-width": 10,
-        },
-        paint: {
-          "text-color": "#a1a1aa",
-          "text-halo-color": "#09090b",
-          "text-halo-width": 1.5,
-        },
-      });
-
-      // 点击事件
-      map.on("click", TRACK_SYMBOL_LAYER, (e) => {
-        if (e.features && e.features.length > 0) {
-          const id = e.features[0].properties?.id;
-          if (id) selectTrackRef.current(id);
-        }
-      });
-
-      // 鼠标悬停事件
-      map.on("mouseenter", TRACK_SYMBOL_LAYER, (e) => {
-        map.getCanvas().style.cursor = "pointer";
-
-        if (e.features && e.features.length > 0) {
-          const f = e.features[0];
-          const coords = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
-          const props = f.properties!;
-
-          if (popupRef.current) popupRef.current.remove();
-
-          popupRef.current = new maplibregl.Popup({
-            offset: 12,
-            closeButton: false,
-            className: "nexus-popup",
+      const initializeMarkers = async () => {
+        await Promise.all(
+          getAllMarkerSymbolKeys().map(async ({ id, type, disposition }) => {
+            if (map.hasImage(id)) return;
+            const image = await loadSvgImage(buildMarkerSymbolDataUrl(type, disposition));
+            map.addImage(id, image, { pixelRatio: 2 });
           })
-            .setLngLat(coords)
-            .setHTML(`
-              <div style="font-family: 'Inter', sans-serif; padding: 4px 0;">
-                <div style="font-size: 11px; font-weight: 600; color: #d4d4d8;">${props.name}</div>
-                <div style="font-size: 10px; color: #52525b; margin-top: 2px;">
-                  ${props.id} · ${props.speed} kn · 航向 ${props.heading}°
-                </div>
-              </div>
-            `)
-            .addTo(map);
-        }
-      });
+        );
 
-      map.on("mouseleave", TRACK_SYMBOL_LAYER, () => {
-        map.getCanvas().style.cursor = "";
-        if (popupRef.current) {
-          popupRef.current.remove();
-          popupRef.current = null;
-        }
-      });
+          map.addSource(TRACK_SOURCE_ID, {
+            type: "geojson",
+            data: buildGeoJSON(),
+          });
 
-      setZoomLevel(Math.round(map.getZoom()));
+          // 高亮外圈
+          map.addLayer({
+            id: HIGHLIGHT_SYMBOL_LAYER,
+            type: "circle",
+            source: TRACK_SOURCE_ID,
+            filter: ["in", "id", ""],
+            paint: {
+              "circle-radius": [
+                "interpolate", ["linear"], ["zoom"],
+                5, 12,
+                10, 20,
+                15, 32,
+              ],
+              "circle-color": "transparent",
+              "circle-stroke-color": "#60a5fa",
+              "circle-stroke-width": 2.5,
+              "circle-stroke-opacity": 0.85,
+            },
+          });
+
+          map.addLayer({
+            id: TRACK_SYMBOL_LAYER,
+            type: "symbol",
+            source: TRACK_SOURCE_ID,
+            layout: {
+              "icon-image": ["get", "symbolId"],
+              "icon-size": [
+                "interpolate", ["linear"], ["zoom"],
+                5, 0.38,
+                10, 0.56,
+                15, 0.76,
+              ],
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+            },
+          });
+
+          map.addLayer({
+            id: TRACK_LABEL_LAYER,
+            type: "symbol",
+            source: TRACK_SOURCE_ID,
+            layout: {
+              "text-field": ["get", "name"],
+              "text-font": ["Open Sans Regular"],
+              "text-size": 10,
+              "text-offset": [0, 2.2],
+              "text-anchor": "top",
+              "text-max-width": 10,
+            },
+            paint: {
+              "text-color": "#a1a1aa",
+              "text-halo-color": "#09090b",
+              "text-halo-width": 1.5,
+            },
+          });
+
+          map.on("click", TRACK_SYMBOL_LAYER, (e) => {
+            if (e.features && e.features.length > 0) {
+              const id = e.features[0].properties?.id;
+              if (id) selectTrackRef.current(id);
+            }
+          });
+
+          map.on("mouseenter", TRACK_SYMBOL_LAYER, (e) => {
+            map.getCanvas().style.cursor = "pointer";
+
+            if (e.features && e.features.length > 0) {
+              const f = e.features[0];
+              const coords = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
+              const props = f.properties!;
+
+              if (popupRef.current) popupRef.current.remove();
+
+              popupRef.current = new maplibregl.Popup({
+                offset: 12,
+                closeButton: false,
+                className: "nexus-popup",
+              })
+                .setLngLat(coords)
+                .setHTML(`
+                  <div style="font-family: 'Inter', sans-serif; padding: 4px 0;">
+                    <div style="font-size: 11px; font-weight: 600; color: #d4d4d8;">${props.name}</div>
+                    <div style="font-size: 10px; color: #52525b; margin-top: 2px;">
+                      ${props.id} · ${props.speed} kn · 航向 ${props.heading}°
+                    </div>
+                  </div>
+                `)
+                .addTo(map);
+            }
+          });
+
+          map.on("mouseleave", TRACK_SYMBOL_LAYER, () => {
+            map.getCanvas().style.cursor = "";
+            if (popupRef.current) {
+              popupRef.current.remove();
+              popupRef.current = null;
+            }
+          });
+
+          setZoomLevel(Math.round(map.getZoom()));
+      };
+
+      initializeMarkers().catch((error: unknown) => {
+        console.error("Map marker initialization failed:", error);
+      });
     });
 
     mapRef.current = map;

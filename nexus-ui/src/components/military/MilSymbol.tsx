@@ -22,6 +22,18 @@ const DISPOSITION_BG: Record<ForceDisposition, string> = {
   neutral: "bg-zinc-400/10",
 };
 
+const TYPE_SHAPE_CLASS = {
+  air: "rounded-sm rotate-45",
+  sea: "rounded-md",
+  underwater: "rounded-[40%]",
+} as const;
+
+const TYPE_ICON_CLASS = {
+  air: "-rotate-45",
+  sea: "",
+  underwater: "",
+} as const;
+
 interface MilSymbolProps {
   type: "air" | "sea" | "underwater";
   disposition: ForceDisposition;
@@ -41,13 +53,17 @@ export function MilSymbol({ type, disposition, size = "md", className }: MilSymb
   return (
     <div
       className={cn(
-        "flex items-center justify-center rounded",
+        "flex items-center justify-center border border-current/15",
         sizeClasses[size],
+        TYPE_SHAPE_CLASS[type],
         DISPOSITION_BG[disposition],
         className
       )}
     >
-      <Icon className={DISPOSITION_RING[disposition]} size={iconSizes[size]} />
+      <Icon
+        className={cn(DISPOSITION_RING[disposition], TYPE_ICON_CLASS[type])}
+        size={iconSizes[size]}
+      />
     </div>
   );
 }

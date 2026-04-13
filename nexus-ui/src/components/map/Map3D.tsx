@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { MOCK_TRACKS } from "@/lib/mock-data";
-import { FORCE_COLORS, type ForceDisposition } from "@/lib/colors";
+import { buildMarkerSymbolDataUrl } from "@/lib/map-symbols";
 import { AlertTriangle } from "lucide-react";
 
 type CesiumModule = typeof import("cesium");
@@ -82,22 +82,21 @@ export function Map3D() {
           duration: 0,
         });
 
-        MOCK_TRACKS.forEach((track) => {
-          const color = Cesium.Color.fromCssColorString(
-            FORCE_COLORS[track.disposition as ForceDisposition]
-          );
+        const activeViewer = viewer;
+        if (!activeViewer) return;
 
-          viewer.entities.add({
+        MOCK_TRACKS.forEach((track) => {
+          activeViewer.entities.add({
             position: Cesium.Cartesian3.fromDegrees(
               track.lng,
               track.lat,
               track.altitude || 0
             ),
-            point: {
-              pixelSize: 8,
-              color: color.withAlpha(0.8),
-              outlineColor: color,
-              outlineWidth: 2,
+            billboard: {
+              image: buildMarkerSymbolDataUrl(track.type, track.disposition),
+              scale: 0.68,
+              verticalOrigin: Cesium.VerticalOrigin.CENTER,
+              heightReference: Cesium.HeightReference.NONE,
             },
             label: {
               text: track.name,
@@ -107,7 +106,7 @@ export function Map3D() {
               outlineWidth: 2,
               style: Cesium.LabelStyle.FILL_AND_OUTLINE,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              pixelOffset: new Cesium.Cartesian2(0, -14),
+              pixelOffset: new Cesium.Cartesian2(0, -26),
               scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.4),
               translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 8e5, 0.2),
             },
@@ -117,18 +116,18 @@ export function Map3D() {
           });
         });
 
-        const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+        const handler = new Cesium.ScreenSpaceEventHandler(activeViewer.scene.canvas);
         handler.setInputAction((movement: PositionedEvent) => {
-          const picked = viewer.scene.pick(movement.position);
+          const picked = activeViewer.scene.pick(movement.position);
           if (Cesium.defined(picked) && picked.id?.properties?.trackId) {
             selectTrack(picked.id.properties.trackId.getValue());
           }
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
         handler.setInputAction((movement: MotionEvent) => {
-          const cartesian = viewer.camera.pickEllipsoid(
+          const cartesian = activeViewer.camera.pickEllipsoid(
             movement.endPosition,
-            viewer.scene.globe.ellipsoid
+            activeViewer.scene.globe.ellipsoid
           );
           if (cartesian) {
             const carto = Cesium.Cartographic.fromCartesian(cartesian);
@@ -139,7 +138,7 @@ export function Map3D() {
           }
         }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-        viewerRef.current = viewer;
+        viewerRef.current = activeViewer;
         setLoading(false);
       } catch (err) {
         console.error("CesiumJS initialization failed:", err);

@@ -29,16 +29,14 @@ npm run dev
 
 ```bash
 cd ../nexus-backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync --extra dev
 ```
 
 ### 2) 启动服务（开发模式）
 
 ```bash
 cd ../nexus-backend
-uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 ### 3) 健康检查
@@ -55,7 +53,7 @@ curl http://localhost:8001/health
 
 ### 4) 常用环境变量（可选）
 
-后端使用 OpenAI 兼容接口（默认可配置为 OpenRouter 等）。常见配置项在 `nexus-backend/config.py` 中定义，你可以通过环境变量覆盖：
+后端使用 OpenAI 兼容接口（默认可配置为 OpenRouter 等）。常见配置项在 `nexus-backend/app/core/config.py` 中定义，你可以通过环境变量覆盖：
 
 - `OPENAI_API_KEY`: LLM 调用密钥
 - `OPENAI_BASE_URL`: OpenAI 兼容网关地址
@@ -63,6 +61,13 @@ curl http://localhost:8001/health
 - `DISABLE_TOOLS`: 设为 `true` 可禁用工具调用
 
 > 如果未配置密钥，聊天接口可能无法正常返回模型结果。
+
+### 5) 运行后端测试
+
+```bash
+cd ../nexus-backend
+uv run pytest -q
+```
 
 ## 项目结构
 

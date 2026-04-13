@@ -76,7 +76,7 @@ export function ChatInput({ onSend, onStop, isLoading }: ChatInputProps) {
               {att.mediaType.startsWith("image/") ? (
                 <Image
                   src={att.url}
-                  alt={att.filename}
+                  alt={att.filename ?? "attachment preview"}
                   width={48}
                   height={48}
                   unoptimized

@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.tools import TRACKS, execute_tool
+from app.services.tools import TRACKS, execute_tool
 
 
 class ToolsAlignmentTests(unittest.TestCase):

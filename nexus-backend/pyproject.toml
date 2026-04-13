@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nexus-backend"
+version = "0.1.0"
+description = "FastAPI backend for NexusUI"
+requires-python = ">=3.11"
+dependencies = [
+  "aiosqlite>=0.20",
+  "fastapi>=0.115",
+  "openai>=1.82",
+  "pydantic-settings>=2.7",
+  "sqlalchemy[asyncio]>=2.0",
+  "uvicorn[standard]>=0.34",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.uv]
+package = false
