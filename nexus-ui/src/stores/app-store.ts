@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { MAP_LAYERS } from "@/lib/mock-data";
 
 export type MapViewMode = "2d" | "3d";
 export type LeftPanelTab = "tracks" | "assets" | "layers" | "alerts";
@@ -40,6 +41,7 @@ interface AppState {
   topTab: TopTab;
   mapViewMode: MapViewMode;
   selectedTrackId: string | null;
+  selectedAssetId: string | null;
   mouseCoords: { lat: number; lng: number } | null;
   zoomLevel: number;
   mapCenter: { lat: number; lng: number } | null;
@@ -47,6 +49,9 @@ interface AppState {
   highlightedTrackIds: string[];
   routeLines: RouteLine[];
   flyToRequest: FlyToRequest | null;
+
+  /** key = MAP_LAYERS[].id, value = visible */
+  layerVisibility: Record<string, boolean>;
 
   // 智能体行为相关
   agentMessages: AgentMessage[];
@@ -59,6 +64,7 @@ interface AppState {
   setTopTab: (tab: TopTab) => void;
   setMapViewMode: (mode: MapViewMode) => void;
   selectTrack: (id: string | null) => void;
+  selectAsset: (id: string | null) => void;
   setMouseCoords: (coords: { lat: number; lng: number } | null) => void;
   setZoomLevel: (level: number) => void;
   setMapCenter: (center: { lat: number; lng: number }) => void;
@@ -67,6 +73,8 @@ interface AppState {
   addRouteLine: (route: RouteLine) => void;
   clearAnnotations: () => void;
   requestFlyTo: (lat: number, lng: number, zoom?: number) => void;
+
+  toggleLayerVisibility: (layerId: string) => void;
 
   // 智能体行为方法
   addAgentMessage: (message: Omit<AgentMessage, "id" | "timestamp">) => void;
@@ -86,6 +94,7 @@ export const useAppStore = create<AppState>((set) => ({
   topTab: "situation",
   mapViewMode: "2d",
   selectedTrackId: null,
+  selectedAssetId: null,
   mouseCoords: null,
   zoomLevel: 8,
   mapCenter: null,
@@ -93,6 +102,8 @@ export const useAppStore = create<AppState>((set) => ({
   highlightedTrackIds: [],
   routeLines: [],
   flyToRequest: null,
+
+  layerVisibility: Object.fromEntries(MAP_LAYERS.map((l) => [l.id, l.visible])),
 
   agentMessages: [],
   selectedAgentMessage: null,
@@ -106,6 +117,7 @@ export const useAppStore = create<AppState>((set) => ({
   setTopTab: (tab) => set({ topTab: tab }),
   setMapViewMode: (mode) => set({ mapViewMode: mode }),
   selectTrack: (id) => set({ selectedTrackId: id }),
+  selectAsset: (id) => set({ selectedAssetId: id }),
   setMouseCoords: (coords) => set({ mouseCoords: coords }),
   setZoomLevel: (level) => set({ zoomLevel: level }),
   setMapCenter: (center) => set({ mapCenter: center }),
@@ -117,6 +129,11 @@ export const useAppStore = create<AppState>((set) => ({
     set({ highlightedTrackIds: [], routeLines: [] }),
   requestFlyTo: (lat, lng, zoom) =>
     set({ flyToRequest: { lat, lng, zoom, seq: ++_flyToSeq }, mapCenter: { lat, lng } }),
+
+  toggleLayerVisibility: (layerId) =>
+    set((s) => ({
+      layerVisibility: { ...s.layerVisibility, [layerId]: !s.layerVisibility[layerId] },
+    })),
 
   // 智能体行为方法
   addAgentMessage: (message) =>

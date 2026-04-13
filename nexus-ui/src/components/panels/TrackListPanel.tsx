@@ -16,7 +16,7 @@ const DISPOSITION_ORDER: ForceDisposition[] = [
 ];
 
 export function TrackListPanel() {
-  const { selectTrack, selectedTrackId } = useAppStore();
+  const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
   const [search, setSearch] = useState("");
   const [filterStarred, setFilterStarred] = useState(false);
 
@@ -101,7 +101,10 @@ export function TrackListPanel() {
             {tracks.map((track) => (
               <button
                 key={track.id}
-                onClick={() => selectTrack(track.id)}
+                onClick={() => {
+                  selectTrack(track.id);
+                  requestFlyTo(track.lat, track.lng, 11);
+                }}
                 className={cn(
                   "flex w-full items-start gap-2.5 border-b border-nexus-border px-3 py-2.5 text-left transition-colors",
                   selectedTrackId === track.id

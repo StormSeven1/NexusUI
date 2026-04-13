@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { MAP_LAYERS } from "@/lib/mock-data";
+import { useAppStore } from "@/stores/app-store";
 import { Eye, EyeOff, Map, Database, Layers as LayersIcon } from "lucide-react";
 
 const TYPE_ICONS = {
@@ -18,19 +18,21 @@ const TYPE_LABELS = {
 };
 
 export function LayerPanel() {
-  const [layers, setLayers] = useState(MAP_LAYERS);
+  const layerVisibility = useAppStore((s) => s.layerVisibility);
+  const toggleLayerVisibility = useAppStore((s) => s.toggleLayerVisibility);
 
-  const toggleLayer = (id: string) => {
-    setLayers((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l))
-    );
-  };
+  const layers = MAP_LAYERS.map((l) => ({
+    ...l,
+    visible: layerVisibility[l.id] ?? l.visible,
+  }));
 
   const grouped = {
     base: layers.filter((l) => l.type === "base"),
     data: layers.filter((l) => l.type === "data"),
     overlay: layers.filter((l) => l.type === "overlay"),
   };
+
+  const enabledCount = layers.filter((l) => l.visible).length;
 
   return (
     <div className="flex h-full flex-col">
@@ -40,7 +42,7 @@ export function LayerPanel() {
             图层管理
           </span>
           <span className="text-[10px] text-nexus-text-muted">
-            {layers.filter((l) => l.visible).length} 已启用
+            {enabledCount} 已启用
           </span>
         </div>
       </div>
@@ -60,7 +62,7 @@ export function LayerPanel() {
             {grouped[type].map((layer) => (
               <button
                 key={layer.id}
-                onClick={() => toggleLayer(layer.id)}
+                onClick={() => toggleLayerVisibility(layer.id)}
                 className="flex w-full items-center gap-3 border-b border-nexus-border px-3 py-2.5 text-left hover:bg-nexus-bg-elevated"
               >
                 <div

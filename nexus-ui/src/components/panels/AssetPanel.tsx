@@ -2,6 +2,7 @@
 
 import { MOCK_ASSETS } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/stores/app-store";
 import {
   Radio,
   Camera,
@@ -9,6 +10,7 @@ import {
   Plane,
   Satellite,
   Search,
+  Crosshair,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -28,6 +30,9 @@ const STATUS_STYLES = {
 
 export function AssetPanel() {
   const [search, setSearch] = useState("");
+  const selectedAssetId = useAppStore((s) => s.selectedAssetId);
+  const selectAsset = useAppStore((s) => s.selectAsset);
+  const requestFlyTo = useAppStore((s) => s.requestFlyTo);
 
   const filtered = MOCK_ASSETS.filter((a) =>
     search
@@ -67,13 +72,30 @@ export function AssetPanel() {
         {filtered.map((asset) => {
           const Icon = ASSET_ICONS[asset.type];
           const status = STATUS_STYLES[asset.status];
+          const isSelected = selectedAssetId === asset.id;
 
           return (
-            <div
+            <button
               key={asset.id}
-              className="flex items-center gap-3 border-b border-white/[0.03] px-3 py-2.5 hover:bg-white/[0.02]"
+              onClick={() => {
+                selectAsset(isSelected ? null : asset.id);
+                if (!isSelected) {
+                  requestFlyTo(asset.lat, asset.lng, 11);
+                }
+              }}
+              className={cn(
+                "flex w-full items-center gap-3 border-b border-white/[0.03] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]",
+                isSelected && "bg-emerald-500/[0.08] border-emerald-500/20"
+              )}
             >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/[0.08] bg-white/[0.03] text-nexus-text-secondary">
+              <div
+                className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors",
+                  isSelected
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                    : "border-white/[0.08] bg-white/[0.03] text-nexus-text-secondary"
+                )}
+              >
                 <Icon size={16} />
               </div>
               <div className="min-w-0 flex-1">
@@ -93,7 +115,10 @@ export function AssetPanel() {
                   {asset.range ? ` · 覆盖 ${asset.range}km` : ""}
                 </div>
               </div>
-            </div>
+              {isSelected && (
+                <Crosshair size={14} className="shrink-0 text-emerald-400" />
+              )}
+            </button>
           );
         })}
       </div>

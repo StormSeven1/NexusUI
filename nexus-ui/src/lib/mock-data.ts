@@ -23,6 +23,10 @@ export interface Asset {
   lat: number;
   lng: number;
   range?: number;
+  /** 传感器朝向（从正北顺时针，度） */
+  heading?: number;
+  /** 视场角（度）；雷达为 360 表示全向扫描 */
+  fovAngle?: number;
 }
 
 export interface Alert {
@@ -159,14 +163,14 @@ export const MOCK_TRACKS: Track[] = [
 ];
 
 export const MOCK_ASSETS: Asset[] = [
-  { id: "AST-001", name: "Tower 6.5 光电", type: "tower", status: "online", lat: 51.3800, lng: -2.3590, range: 15 },
-  { id: "AST-002", name: "雷达 Alpha", type: "radar", status: "online", lat: 51.5000, lng: -2.5500, range: 80 },
-  { id: "AST-003", name: "雷达 Bravo", type: "radar", status: "online", lat: 51.4500, lng: -2.1000, range: 80 },
-  { id: "AST-004", name: "雷达 Charlie", type: "radar", status: "degraded", lat: 51.6500, lng: -1.9000, range: 60 },
-  { id: "AST-005", name: "摄像头 West-01", type: "camera", status: "online", lat: 51.2000, lng: -2.8000 },
-  { id: "AST-006", name: "侦察无人机", type: "drone", status: "online", lat: 51.3500, lng: -2.2000, range: 25 },
-  { id: "AST-007", name: "TV 天线门禁", type: "tower", status: "online", lat: 51.0500, lng: -2.4000, range: 10 },
-  { id: "AST-008", name: "AIS 海岸站", type: "tower", status: "online", lat: 50.7000, lng: -2.0000, range: 50 },
+  { id: "AST-001", name: "Tower 6.5 光电", type: "tower", status: "online", lat: 51.3800, lng: -2.3590, range: 15, heading: 45, fovAngle: 120 },
+  { id: "AST-002", name: "雷达 Alpha", type: "radar", status: "online", lat: 51.5000, lng: -2.5500, range: 80, fovAngle: 360 },
+  { id: "AST-003", name: "雷达 Bravo", type: "radar", status: "online", lat: 51.4500, lng: -2.1000, range: 80, fovAngle: 360 },
+  { id: "AST-004", name: "雷达 Charlie", type: "radar", status: "degraded", lat: 51.6500, lng: -1.9000, range: 60, fovAngle: 360 },
+  { id: "AST-005", name: "摄像头 West-01", type: "camera", status: "online", lat: 51.2000, lng: -2.8000, range: 8, heading: 160, fovAngle: 60 },
+  { id: "AST-006", name: "侦察无人机", type: "drone", status: "online", lat: 51.3500, lng: -2.2000, range: 25, heading: 270, fovAngle: 90 },
+  { id: "AST-007", name: "TV 天线门禁", type: "tower", status: "online", lat: 51.0500, lng: -2.4000, range: 10, heading: 0, fovAngle: 180 },
+  { id: "AST-008", name: "AIS 海岸站", type: "tower", status: "online", lat: 50.7000, lng: -2.0000, range: 50, fovAngle: 360 },
 ];
 
 export const MOCK_ALERTS: Alert[] = [
@@ -177,12 +181,48 @@ export const MOCK_ALERTS: Alert[] = [
   { id: "ALT-005", severity: "warning", message: "水面目标 TRK-006 检测到航向偏离", timestamp: "13:58:20", trackId: "TRK-006" },
 ];
 
+export interface RestrictedZone {
+  id: string;
+  name: string;
+  type: "no-fly" | "warning" | "exercise";
+  /** polygon 坐标环 [lng, lat][] */
+  coordinates: Array<[number, number]>;
+}
+
+export const MOCK_ZONES: RestrictedZone[] = [
+  {
+    id: "ZON-001",
+    name: "禁飞区 Alpha",
+    type: "no-fly",
+    coordinates: [
+      [-2.60, 51.10], [-2.30, 51.10], [-2.30, 51.25], [-2.60, 51.25], [-2.60, 51.10],
+    ],
+  },
+  {
+    id: "ZON-002",
+    name: "演习区 Bravo",
+    type: "exercise",
+    coordinates: [
+      [-1.95, 51.35], [-1.70, 51.35], [-1.70, 51.50], [-1.95, 51.50], [-1.95, 51.35],
+    ],
+  },
+  {
+    id: "ZON-003",
+    name: "警告区 Charlie",
+    type: "warning",
+    coordinates: [
+      [-2.80, 50.55], [-2.40, 50.55], [-2.35, 50.70], [-2.75, 50.75], [-2.80, 50.55],
+    ],
+  },
+];
+
 export const MAP_LAYERS = [
   { id: "lyr-sat", name: "卫星影像", visible: true, type: "base" as const },
   { id: "lyr-roads", name: "道路与基础设施", visible: false, type: "overlay" as const },
   { id: "lyr-terrain", name: "地形等高线", visible: false, type: "overlay" as const },
   { id: "lyr-tracks", name: "航迹标记", visible: true, type: "data" as const },
-  { id: "lyr-assets", name: "传感器覆盖", visible: true, type: "data" as const },
+  { id: "lyr-assets", name: "我方资产", visible: true, type: "data" as const },
+  { id: "lyr-coverage", name: "传感器覆盖", visible: true, type: "data" as const },
   { id: "lyr-zones", name: "限制区域", visible: true, type: "data" as const },
   { id: "lyr-grid", name: "MGRS 网格", visible: false, type: "overlay" as const },
   { id: "lyr-weather", name: "气象叠加", visible: false, type: "overlay" as const },

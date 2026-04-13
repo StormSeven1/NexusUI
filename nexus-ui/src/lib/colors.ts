@@ -21,8 +21,8 @@ export const NEXUS_COLORS = {
     glow: "rgba(176, 180, 188, 0.06)",
   },
   force: {
-    hostile: "#e8724a",
-    friendly: "#5b9bd5",
+    hostile: "#3b82f6",
+    friendly: "#ef4444",
     neutral: "#737378",
   },
 } as const;
