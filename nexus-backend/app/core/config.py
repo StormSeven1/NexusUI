@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "openai/gpt-oss-120b:free"
     disable_tools: bool = False
-    database_url: str = "sqlite+aiosqlite:///./nexus.db"
+    database_url: str = "sqlite+aiosqlite:///./data/nexus.db"
     cors_allow_origins: list[str] = ["*"]
     cors_allow_methods: list[str] = ["*"]
     cors_allow_headers: list[str] = ["*"]
