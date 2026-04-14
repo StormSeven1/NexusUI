@@ -1,3 +1,5 @@
+from .asset import Asset
 from .conversation import Conversation, Message
+from .zone import Zone
 
-__all__ = ["Conversation", "Message"]
+__all__ = ["Asset", "Conversation", "Message", "Zone"]

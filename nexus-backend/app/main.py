@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import api_router
 from app.core.config import settings
-from app.core.db import init_db
+from app.core.db import async_session, init_db
+from app.core.seed import seed_data
 from app.services.simulation import sim_engine
 from app.services.tool_registry import registry
 
@@ -13,6 +14,9 @@ from app.services.tool_registry import registry
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await init_db()
+
+    async with async_session() as session:
+        await seed_data(session)
 
     registry.load_yaml()
     import app.services.tool_handlers  # noqa: F401  触发装饰器注册

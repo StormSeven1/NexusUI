@@ -51,11 +51,24 @@ export function ChatPanel() {
     new DefaultChatTransport({
       api: "/api/chat",
       prepareSendMessagesRequest(request) {
+        const state = useAppStore.getState();
         return {
           body: {
             ...request.body,
             messages: request.messages,
             conversationId: conversationId,
+            situationalContext: {
+              selectedTrackId: state.selectedTrackId,
+              mapCenter: state.mapCenter ?? null,
+              zoomLevel: state.zoomLevel ?? null,
+              mapViewMode: state.mapViewMode,
+              highlightedTrackIds: state.highlightedTrackIds,
+              visibleLayers: state.layerVisibility
+                ? Object.entries(state.layerVisibility)
+                    .filter(([, v]) => v)
+                    .map(([k]) => k)
+                : [],
+            },
           },
         };
       },

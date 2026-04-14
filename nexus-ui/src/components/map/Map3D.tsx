@@ -3,8 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
-import { MOCK_TRACKS, MOCK_ASSETS, MOCK_ZONES } from "@/lib/mock-data";
-import type { Track } from "@/lib/mock-data";
+import { MOCK_TRACKS } from "@/lib/mock-data";
+import type { Asset, RestrictedZone, Track } from "@/lib/mock-data";
+import { useZoneStore } from "@/stores/zone-store";
+import { useAssetStore } from "@/stores/asset-store";
+import type { ZoneData } from "@/stores/zone-store";
+import type { AssetData } from "@/stores/asset-store";
 import { FORCE_COLORS } from "@/lib/colors";
 import {
   buildMarkerSymbolDataUrl,
@@ -58,6 +62,29 @@ const LAYER_GROUPS = {
 } as const;
 
 type GroupKey = (typeof LAYER_GROUPS)[keyof typeof LAYER_GROUPS];
+
+function adaptZones(zones: ZoneData[]): RestrictedZone[] {
+  return zones.map((z) => ({
+    id: z.id,
+    name: z.name,
+    type: z.zone_type as RestrictedZone["type"],
+    coordinates: z.coordinates,
+  }));
+}
+
+function adaptAssets(assets: AssetData[]): Asset[] {
+  return assets.map((a) => ({
+    id: a.id,
+    name: a.name,
+    type: a.asset_type as Asset["type"],
+    status: a.status as Asset["status"],
+    lat: a.lat,
+    lng: a.lng,
+    range: a.range_km ?? undefined,
+    heading: a.heading ?? undefined,
+    fovAngle: a.fov_angle ?? undefined,
+  }));
+}
 
 export function Map3D() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -131,7 +158,7 @@ export function Map3D() {
          * ═══════════════════════════════════════════ */
         const rgba = (c: RGBA) => new Cesium.Color(c[0], c[1], c[2], c[3]);
 
-        for (const zone of MOCK_ZONES) {
+        for (const zone of adaptZones(useZoneStore.getState().zones)) {
           const style = ZONE_STYLES[zone.type] ?? ZONE_STYLES["warning"];
           // 去掉闭合点（Cesium 自动闭合）
           const coords = zone.coordinates.slice(0, -1);
@@ -168,7 +195,8 @@ export function Map3D() {
         /* ═══════════════════════════════════════════
          *  2) 传感器覆盖
          * ═══════════════════════════════════════════ */
-        for (const asset of MOCK_ASSETS) {
+        const _assets = adaptAssets(useAssetStore.getState().assets);
+        for (const asset of _assets) {
           if (!asset.range || asset.range <= 0) continue;
           const sweepColor = STATUS_RGBA[asset.status] ?? STATUS_RGBA["online"];
           const covStyle = COVERAGE_STYLES[asset.type] ?? COVERAGE_STYLES["tower"];
@@ -265,7 +293,7 @@ export function Map3D() {
         /* ═══════════════════════════════════════════
          *  4) 资产图标
          * ═══════════════════════════════════════════ */
-        for (const asset of MOCK_ASSETS) {
+        for (const asset of _assets) {
           const ent = v.entities.add({
             position: Cesium.Cartesian3.fromDegrees(asset.lng, asset.lat, 0),
             billboard: {

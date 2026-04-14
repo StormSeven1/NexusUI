@@ -127,7 +127,8 @@ async def chat_endpoint(body: ChatRequest):
         collected_text = ""
         tool_parts: list[dict] = []
 
-        async for sse_event in stream_chat(history_messages, model=body.model, system_prompt=system_prompt or None):
+        sit_ctx = body.situational_context.model_dump(by_alias=False) if body.situational_context else None
+        async for sse_event in stream_chat(history_messages, model=body.model, system_prompt=system_prompt or None, situational_context=sit_ctx):
             if "event: text_delta" in sse_event:
                 try:
                     data = json.loads(sse_event.split("data: ", 1)[1].strip())

@@ -5,8 +5,12 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
-import { MOCK_ALERTS, MOCK_ASSETS, MOCK_TRACKS, MOCK_ZONES } from "@/lib/mock-data";
-import type { Track } from "@/lib/mock-data";
+import { MOCK_ALERTS, MOCK_TRACKS } from "@/lib/mock-data";
+import type { Asset, RestrictedZone, Track } from "@/lib/mock-data";
+import { useZoneStore } from "@/stores/zone-store";
+import { useAssetStore } from "@/stores/asset-store";
+import type { ZoneData } from "@/stores/zone-store";
+import type { AssetData } from "@/stores/asset-store";
 import { FORCE_COLORS } from "@/lib/colors";
 import {
   buildMarkerSymbolDataUrl,
@@ -80,6 +84,31 @@ const ZONE_COLORS: Record<string, { fill: string; line: string }> = {
   warning: { fill: "rgba(251,191,36,0.10)", line: "#fbbf24" },
 };
 
+/* ─── store→mock 适配器 ─── */
+
+function adaptZones(zones: ZoneData[]): RestrictedZone[] {
+  return zones.map((z) => ({
+    id: z.id,
+    name: z.name,
+    type: z.zone_type as RestrictedZone["type"],
+    coordinates: z.coordinates,
+  }));
+}
+
+function adaptAssets(assets: AssetData[]): Asset[] {
+  return assets.map((a) => ({
+    id: a.id,
+    name: a.name,
+    type: a.asset_type as Asset["type"],
+    status: a.status as Asset["status"],
+    lat: a.lat,
+    lng: a.lng,
+    range: a.range_km ?? undefined,
+    heading: a.heading ?? undefined,
+    fovAngle: a.fov_angle ?? undefined,
+  }));
+}
+
 /* ─── helpers ─── */
 
 const ALERT_RANK: Record<AlertSeverity, number> = { info: 1, warning: 2, critical: 3 };
@@ -115,10 +144,10 @@ function buildTrackGeoJSON(trackList?: Track[]) {
   } satisfies GeoJSON.FeatureCollection<GeoJSON.Point>;
 }
 
-function buildAssetGeoJSON() {
+function buildAssetGeoJSON(assetList: Asset[]) {
   return {
     type: "FeatureCollection" as const,
-    features: MOCK_ASSETS.map((a) => ({
+    features: assetList.map((a) => ({
       type: "Feature" as const,
       geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] as [number, number] },
       properties: {
@@ -131,8 +160,8 @@ function buildAssetGeoJSON() {
 }
 
 /** 非雷达资产的 FOV 扇形 / 全向覆盖 */
-function buildFovGeoJSON() {
-  const features = MOCK_ASSETS
+function buildFovGeoJSON(assetList: Asset[]) {
+  const features = assetList
     .filter((a) => a.range && a.range > 0 && a.type !== "radar")
     .map((a) => {
       const isSector = a.fovAngle !== undefined && a.fovAngle < 360 && a.heading !== undefined;
@@ -149,8 +178,8 @@ function buildFovGeoJSON() {
 }
 
 /** 雷达静态覆盖圆 */
-function buildRadarRangeGeoJSON() {
-  const features = MOCK_ASSETS
+function buildRadarRangeGeoJSON(assetList: Asset[]) {
+  const features = assetList
     .filter((a) => a.type === "radar" && a.range && a.range > 0)
     .map((a) => ({
       type: "Feature" as const,
@@ -161,8 +190,8 @@ function buildRadarRangeGeoJSON() {
 }
 
 /** 雷达扫描波束（每帧更新） */
-function buildRadarSweepGeoJSON(sweepAngle: number) {
-  const radars = MOCK_ASSETS.filter((a) => a.type === "radar" && a.range && a.range > 0 && a.status !== "offline");
+function buildRadarSweepGeoJSON(sweepAngle: number, assetList: Asset[]) {
+  const radars = assetList.filter((a) => a.type === "radar" && a.range && a.range > 0 && a.status !== "offline");
   const features = radars.map((a) => ({
     type: "Feature" as const,
     geometry: { type: "Polygon" as const, coordinates: [geoRadarSweepCoords(a.lng, a.lat, a.range!, sweepAngle)] },
@@ -171,10 +200,10 @@ function buildRadarSweepGeoJSON(sweepAngle: number) {
   return { type: "FeatureCollection" as const, features };
 }
 
-function buildZoneGeoJSON() {
+function buildZoneGeoJSON(zoneList: RestrictedZone[]) {
   return {
     type: "FeatureCollection" as const,
-    features: MOCK_ZONES.map((z) => ({
+    features: zoneList.map((z) => ({
       type: "Feature" as const,
       geometry: { type: "Polygon" as const, coordinates: [z.coordinates] },
       properties: {
@@ -257,7 +286,7 @@ export function Map2D() {
         /* ════════════════════════════════════════════
          *  1) 限制区域
          * ════════════════════════════════════════════ */
-        map.addSource(ZONE_SOURCE, { type: "geojson", data: buildZoneGeoJSON() });
+        map.addSource(ZONE_SOURCE, { type: "geojson", data: buildZoneGeoJSON(adaptZones(useZoneStore.getState().zones)) });
         map.addLayer({ id: ZONE_FILL, type: "fill", source: ZONE_SOURCE, paint: { "fill-color": ["get", "fillColor"] } });
         map.addLayer({ id: ZONE_LINE, type: "line", source: ZONE_SOURCE, paint: { "line-color": ["get", "lineColor"], "line-width": 1.5, "line-dasharray": [4, 3], "line-opacity": 0.7 } });
         map.addLayer({ id: ZONE_LABEL, type: "symbol", source: ZONE_SOURCE, layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Regular"], "text-size": 11 }, paint: { "text-color": ["get", "lineColor"], "text-halo-color": "#09090b", "text-halo-width": 1.5, "text-opacity": 0.8 } });
@@ -265,7 +294,8 @@ export function Map2D() {
         /* ════════════════════════════════════════════
          *  2) 雷达覆盖范围（静态圆 + 动态扫描波束）
          * ════════════════════════════════════════════ */
-        map.addSource(RADAR_RANGE_SOURCE, { type: "geojson", data: buildRadarRangeGeoJSON() });
+        const _assets = adaptAssets(useAssetStore.getState().assets);
+        map.addSource(RADAR_RANGE_SOURCE, { type: "geojson", data: buildRadarRangeGeoJSON(_assets) });
         map.addLayer({
           id: RADAR_RANGE_FILL, type: "fill", source: RADAR_RANGE_SOURCE,
           paint: {
@@ -280,7 +310,7 @@ export function Map2D() {
           },
         });
 
-        map.addSource(RADAR_SWEEP_SOURCE, { type: "geojson", data: buildRadarSweepGeoJSON(0) });
+        map.addSource(RADAR_SWEEP_SOURCE, { type: "geojson", data: buildRadarSweepGeoJSON(0, _assets) });
         map.addLayer({
           id: RADAR_SWEEP_FILL, type: "fill", source: RADAR_SWEEP_SOURCE,
           paint: {
@@ -291,7 +321,7 @@ export function Map2D() {
         /* ════════════════════════════════════════════
          *  3) FOV 扇形（camera / drone / tower 非雷达）
          * ════════════════════════════════════════════ */
-        map.addSource(FOV_SOURCE, { type: "geojson", data: buildFovGeoJSON() });
+        map.addSource(FOV_SOURCE, { type: "geojson", data: buildFovGeoJSON(_assets) });
         map.addLayer({
           id: FOV_FILL, type: "fill", source: FOV_SOURCE,
           paint: {
@@ -335,7 +365,7 @@ export function Map2D() {
         /* ════════════════════════════════════════════
          *  5) 资产图标（assets）
          * ════════════════════════════════════════════ */
-        map.addSource(ASSET_SOURCE, { type: "geojson", data: buildAssetGeoJSON() });
+        map.addSource(ASSET_SOURCE, { type: "geojson", data: buildAssetGeoJSON(_assets) });
 
         map.addLayer({ id: ASSET_SELECT, type: "symbol", source: ASSET_SOURCE, filter: ["in", "id", ""], layout: { "icon-image": ASSET_SELECT_IMAGE_ID, "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.5, 10, 0.75, 15, 1.0], "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-rotation-alignment": "viewport", "icon-pitch-alignment": "viewport" }, paint: { "icon-opacity": 0.9 } });
 
@@ -396,7 +426,7 @@ export function Map2D() {
           // 雷达扫描旋转
           sweepAngle = (sweepAngle + 0.8) % 360;
           const src = m.getSource(RADAR_SWEEP_SOURCE) as maplibregl.GeoJSONSource | undefined;
-          if (src) src.setData(buildRadarSweepGeoJSON(sweepAngle) as GeoJSON.FeatureCollection);
+          if (src) src.setData(buildRadarSweepGeoJSON(sweepAngle, adaptAssets(useAssetStore.getState().assets)) as GeoJSON.FeatureCollection);
 
           rafRef.current = requestAnimationFrame(animate);
         };
@@ -542,6 +572,28 @@ export function Map2D() {
       if (src) src.setData(buildTrackGeoJSON(s.tracks) as GeoJSON.FeatureCollection);
     });
     return unsub;
+  }, []);
+
+  /* ── zone-store / asset-store 数据变化时刷新地图图层 ── */
+  useEffect(() => {
+    const unsubZ = useZoneStore.subscribe((s) => {
+      const m = mapRef.current;
+      if (!m?.isStyleLoaded()) return;
+      const src = m.getSource(ZONE_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(buildZoneGeoJSON(adaptZones(s.zones)) as GeoJSON.FeatureCollection);
+    });
+    const unsubA = useAssetStore.subscribe((s) => {
+      const m = mapRef.current;
+      if (!m?.isStyleLoaded()) return;
+      const a = adaptAssets(s.assets);
+      const srcAsset = m.getSource(ASSET_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (srcAsset) srcAsset.setData(buildAssetGeoJSON(a) as GeoJSON.FeatureCollection);
+      const srcFov = m.getSource(FOV_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (srcFov) srcFov.setData(buildFovGeoJSON(a) as GeoJSON.FeatureCollection);
+      const srcRadar = m.getSource(RADAR_RANGE_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (srcRadar) srcRadar.setData(buildRadarRangeGeoJSON(a) as GeoJSON.FeatureCollection);
+    });
+    return () => { unsubZ(); unsubA(); };
   }, []);
 
   return (

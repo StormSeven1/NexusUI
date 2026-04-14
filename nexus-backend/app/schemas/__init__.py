@@ -1,4 +1,5 @@
-from .chat import ChatMessagePart, ChatRequest
+from .asset import AssetCreate, AssetOut, AssetUpdate
+from .chat import ChatMessagePart, ChatRequest, SituationalContext
 from .conversation import (
     ConversationCreate,
     ConversationDetail,
@@ -6,8 +7,12 @@ from .conversation import (
     ConversationUpdate,
     MessageOut,
 )
+from .zone import ZoneCreate, ZoneOut, ZoneUpdate
 
 __all__ = [
+    "AssetCreate",
+    "AssetOut",
+    "AssetUpdate",
     "ChatMessagePart",
     "ChatRequest",
     "ConversationCreate",
@@ -15,4 +20,8 @@ __all__ = [
     "ConversationOut",
     "ConversationUpdate",
     "MessageOut",
+    "SituationalContext",
+    "ZoneCreate",
+    "ZoneOut",
+    "ZoneUpdate",
 ]

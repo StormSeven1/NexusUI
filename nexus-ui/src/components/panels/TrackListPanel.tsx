@@ -16,6 +16,18 @@ const DISPOSITION_ORDER: ForceDisposition[] = [
   "neutral",
 ];
 
+/**
+ * 航向格式化（保留 2 位小数）
+ * Heading formatter (keep 2 decimals)
+ *
+ * @param heading 航向角度（度）/ heading in degrees
+ * @returns 格式化后的字符串；无效值返回 "--" / formatted string; "--" if invalid
+ */
+function formatHeading2(heading: unknown): string {
+  const n = typeof heading === "number" ? heading : Number(heading);
+  return Number.isFinite(n) ? n.toFixed(2) : "--";
+}
+
 export function TrackListPanel() {
   const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
   const liveTracks = useTrackStore((s) => s.tracks);
@@ -144,7 +156,7 @@ export function TrackListPanel() {
                     </span>
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
-                    {track.speed} kn · 航向 {track.heading}°
+                    {track.speed} kn · 航向 {formatHeading2(track.heading)}°
                     {track.type === "air" && track.altitude ? ` · 高度 ${track.altitude}ft` : ""}
                     {track.type === "underwater" ? ` · 深度 ${track.altitude || 0}m` : ""}
                   </div>

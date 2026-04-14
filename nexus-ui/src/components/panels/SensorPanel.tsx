@@ -1,6 +1,7 @@
 "use client";
 
-import { MOCK_TRACKS, MOCK_ASSETS } from "@/lib/mock-data";
+import { MOCK_TRACKS } from "@/lib/mock-data";
+import { useAssetStore } from "@/stores/asset-store";
 import { cn } from "@/lib/utils";
 import {
   Video,
@@ -27,7 +28,8 @@ export function SensorPanel({ trackId }: SensorPanelProps) {
     );
   }
 
-  const relatedAssets = MOCK_ASSETS.filter(
+  const allAssets = useAssetStore.getState().assets;
+  const relatedAssets = allAssets.filter(
     (a) => a.name.includes(track.sensor.split(" ")[0]) || a.status === "online"
   ).slice(0, 4);
 

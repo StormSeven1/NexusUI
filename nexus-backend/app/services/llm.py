@@ -83,39 +83,87 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 - 当操作员描述相对位置时，立即行动，绝不反问坐标"""
 
 
-def build_system_prompt() -> str:
-    """动态构建系统提示词，注入当前地图上下文（区域 + 目标摘要）。"""
+_TYPE_LABELS = {"no-fly": "禁飞区", "exercise": "演习区", "warning": "警告区", "search": "搜索区", "custom": "自定义区"}
+_DISP_MAP = {"hostile": "敌", "friendly": "友", "neutral": "中"}
+_TRACK_TYPE_MAP = {"air": "空", "sea": "海", "underwater": "潜"}
+_ASSET_TYPE_MAP = {"radar": "雷达", "camera": "摄像头", "tower": "塔台", "drone": "无人机", "satellite": "卫星"}
+
+
+def build_system_prompt(situational_context: dict[str, Any] | None = None) -> str:
+    """动态构建系统提示词，从 DB 读取区域和资产，从仿真引擎读取目标，注入 UI 上下文。"""
     from app.services.simulation import sim_engine
 
-    lines: list[str] = []
+    from app.core.db_sync import get_sync_session
+    from app.models.asset import Asset
+    from app.models.zone import Zone
+    from sqlalchemy import select
 
-    zones = sim_engine.get_zones()
+    lines: list[str] = ["## 当前地图上下文"]
+
+    # --- 区域（从 DB）---
+    with get_sync_session() as session:
+        zones = session.execute(select(Zone)).scalars().all()
+        assets = session.execute(select(Asset)).scalars().all()
+
     if zones:
-        lines.append("## 当前地图上下文")
-        lines.append("### 限制区域")
+        lines.append("### 限制区域与标绘区域")
         for z in zones:
-            bbox = z.get("bbox", {})
-            center = z.get("center", {})
-            type_label = {"no-fly": "禁飞区", "exercise": "演习区", "warning": "警告区"}.get(z["type"], z["type"])
-            lines.append(
-                f"- **{z['name']}** ({z['id']}, {type_label}): "
-                f"边界 [{bbox.get('west')},{bbox.get('south')}]~[{bbox.get('east')},{bbox.get('north')}], "
-                f"中心 ({center.get('lat')},{center.get('lng')})"
-            )
+            coords = json.loads(z.coordinates) if z.coordinates else []
+            if coords:
+                lngs = [c[0] for c in coords]
+                lats = [c[1] for c in coords]
+                bbox_str = f"边界 [{min(lngs)},{min(lats)}]~[{max(lngs)},{max(lats)}]"
+                center_str = f"中心 ({(min(lats)+max(lats))/2:.4f},{(min(lngs)+max(lngs))/2:.4f})"
+            else:
+                bbox_str = "无坐标"
+                center_str = ""
+            type_label = _TYPE_LABELS.get(z.zone_type, z.zone_type)
+            source_tag = f", {z.source}标绘" if z.source != "predefined" else ""
+            lines.append(f"- **{z.name}** ({z.id}, {type_label}{source_tag}): {bbox_str}, {center_str}")
 
+    # --- 资产（从 DB）---
+    if assets:
+        lines.append("### 我方资产")
+        for a in assets:
+            tp = _ASSET_TYPE_MAP.get(a.asset_type, a.asset_type)
+            parts = [f"位置({a.lat},{a.lng})"]
+            if a.range_km:
+                parts.append(f"探测距离{a.range_km}km")
+            if a.fov_angle:
+                fov = "全向" if a.fov_angle >= 360 else f"视场角{a.fov_angle}°"
+                parts.append(fov)
+            if a.heading is not None and a.fov_angle and a.fov_angle < 360:
+                parts.append(f"朝向{a.heading}°")
+            parts.append(f"状态:{a.status}")
+            lines.append(f"- **{a.name}** ({a.id}, {tp}): {', '.join(parts)}")
+
+    # --- 目标（从仿真引擎）---
     tracks = sim_engine.get_tracks()
+    selected_id = (situational_context or {}).get("selected_track_id")
     if tracks:
-        disp_map = {"hostile": "敌", "friendly": "友", "neutral": "中"}
-        type_map = {"air": "空", "sea": "海", "underwater": "潜"}
         lines.append("### 目标态势摘要")
         for t in tracks:
-            d = disp_map.get(t["disposition"], "?")
-            tp = type_map.get(t["type"], "?")
-            lines.append(
-                f"- {t['id']} {t['name']} [{tp}/{d}] 位置({t['lat']:.4f},{t['lng']:.4f})"
-            )
+            d = _DISP_MAP.get(t["disposition"], "?")
+            tp = _TRACK_TYPE_MAP.get(t["type"], "?")
+            marker = " ← **当前选中**" if t["id"] == selected_id else ""
+            lines.append(f"- {t['id']} {t['name']} [{tp}/{d}] 位置({t['lat']:.4f},{t['lng']:.4f}){marker}")
 
-    map_context = "\n".join(lines) if lines else ""
+    # --- 操作员当前视角（从前端 UI context）---
+    ctx = situational_context or {}
+    if any(ctx.get(k) for k in ["selected_track_id", "map_center", "map_view_mode", "highlighted_track_ids"]):
+        lines.append("### 操作员当前视角")
+        if selected_id:
+            track = next((t for t in tracks if t["id"] == selected_id), None)
+            name = track["name"] if track else selected_id
+            lines.append(f"- 选中目标: {selected_id} {name}")
+        mc = ctx.get("map_center")
+        if mc:
+            lines.append(f"- 地图中心: ({mc.get('lat')}, {mc.get('lng')}), 缩放: {ctx.get('zoom_level', '?')}, 模式: {ctx.get('map_view_mode', '?').upper()}")
+        hl = ctx.get("highlighted_track_ids")
+        if hl:
+            lines.append(f"- 高亮目标: {', '.join(hl)}")
+
+    map_context = "\n".join(lines)
     return _SYSTEM_PROMPT_TEMPLATE.format(map_context=map_context)
 
 
@@ -147,9 +195,10 @@ async def stream_chat(
     messages: list[dict[str, Any]],
     model: str | None = None,
     system_prompt: str | None = None,
+    situational_context: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     model_id = model or settings.openai_model
-    sys_prompt = system_prompt or build_system_prompt()
+    sys_prompt = system_prompt or build_system_prompt(situational_context)
     use_tools = not settings.disable_tools
 
     api_messages: list[dict[str, Any]] = [{"role": "system", "content": sys_prompt}, *messages]

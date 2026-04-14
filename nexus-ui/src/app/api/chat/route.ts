@@ -35,6 +35,7 @@ export async function POST(req: Request) {
         message: userText,
         parts: userParts,
         model: body.model ?? null,
+        situationalContext: body.situationalContext ?? null,
       }),
     });
   } catch {

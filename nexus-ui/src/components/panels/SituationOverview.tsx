@@ -1,6 +1,7 @@
 "use client";
 
-import { MOCK_TRACKS, MOCK_ASSETS, MOCK_ALERTS } from "@/lib/mock-data";
+import { MOCK_TRACKS, MOCK_ALERTS } from "@/lib/mock-data";
+import { useAssetStore } from "@/stores/asset-store";
 import { FORCE_LABELS, type ForceDisposition } from "@/lib/colors";
 import { cn } from "@/lib/utils";
 import {
@@ -56,8 +57,9 @@ export function SituationOverview() {
     {} as Record<string, number>
   );
 
-  const onlineAssets = MOCK_ASSETS.filter((a) => a.status === "online").length;
-  const degradedAssets = MOCK_ASSETS.filter((a) => a.status === "degraded").length;
+  const storeAssets = useAssetStore((s) => s.assets);
+  const onlineAssets = storeAssets.filter((a) => a.status === "online").length;
+  const degradedAssets = storeAssets.filter((a) => a.status === "degraded").length;
   const criticalAlerts = MOCK_ALERTS.filter((a) => a.severity === "critical").length;
   const warningAlerts = MOCK_ALERTS.filter((a) => a.severity === "warning").length;
 
@@ -86,7 +88,7 @@ export function SituationOverview() {
             <NxStatCard
               icon={<Radio size={12} />}
               label="传感器资产"
-              value={MOCK_ASSETS.length}
+              value={storeAssets.length}
               sub={`${onlineAssets} 在线${degradedAssets ? ` · ${degradedAssets} 降级` : ""}`}
             />
             <NxStatCard

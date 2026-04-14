@@ -239,7 +239,7 @@ tools:
       required: ["from", "to"]
 
   - name: query_map_context
-    description: "查询当前地图上下文信息，包括限制区域（禁飞区、演习区等）的坐标和边界、目标实时位置。用于获取空间参考信息以支持相对位置描述（如'在禁飞区Alpha左侧'）。"
+    description: "查询当前地图上下文信息，包括限制区域（禁飞区、演习区等）的坐标和边界、我方资产部署、目标实时位置。用于获取空间参考信息以支持相对位置描述（如'在禁飞区Alpha左侧'）。"
     enabled: true
     parameters:
       type: object
@@ -250,3 +250,21 @@ tools:
         include_tracks:
           type: boolean
           description: "是否包含目标位置信息，默认 true"
+        include_assets:
+          type: boolean
+          description: "是否包含我方资产信息，默认 true"
+
+  - name: query_assets
+    description: "查询我方资产（雷达、摄像头、无人机等），可按类型或状态筛选，返回位置、探测范围、覆盖角度等信息"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: ["radar", "camera", "tower", "drone", "satellite", "all"]
+          description: "资产类型筛选，默认 all"
+        status:
+          type: string
+          enum: ["online", "offline", "degraded", "all"]
+          description: "资产状态筛选，默认 all"

@@ -1,8 +1,8 @@
 "use client";
 
-import { MOCK_ASSETS } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
+import { useAssetStore, type AssetData } from "@/stores/asset-store";
 import {
   Radio,
   Camera,
@@ -33,8 +33,9 @@ export function AssetPanel() {
   const selectedAssetId = useAppStore((s) => s.selectedAssetId);
   const selectAsset = useAppStore((s) => s.selectAsset);
   const requestFlyTo = useAppStore((s) => s.requestFlyTo);
+  const assets = useAssetStore((s) => s.assets);
 
-  const filtered = MOCK_ASSETS.filter((a) =>
+  const filtered = assets.filter((a: AssetData) =>
     search
       ? a.name.toLowerCase().includes(search.toLowerCase())
       : true
@@ -70,8 +71,8 @@ export function AssetPanel() {
 
       <div className="flex-1 overflow-y-auto">
         {filtered.map((asset) => {
-          const Icon = ASSET_ICONS[asset.type];
-          const status = STATUS_STYLES[asset.status];
+          const Icon = ASSET_ICONS[asset.asset_type as keyof typeof ASSET_ICONS];
+          const status = STATUS_STYLES[asset.status as keyof typeof STATUS_STYLES];
           const isSelected = selectedAssetId === asset.id;
 
           return (
@@ -112,7 +113,7 @@ export function AssetPanel() {
                 </div>
                 <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
                   {asset.id} · {asset.lat.toFixed(2)}°N, {Math.abs(asset.lng).toFixed(2)}°W
-                  {asset.range ? ` · 覆盖 ${asset.range}km` : ""}
+                  {asset.range_km ? ` · 覆盖 ${asset.range_km}km` : ""}
                 </div>
               </div>
               {isSelected && (

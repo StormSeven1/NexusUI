@@ -91,9 +91,14 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
     /* 纯信息型工具，供 LLM 空间推理使用，无 UI 副作用 */
   },
 
+  query_assets: () => {
+    /* 纯信息型工具，供 LLM 查询资产使用，无 UI 副作用 */
+  },
+
   draw_area: (output) => {
     if (!output.success) return;
-    const { points, color, fillColor, fillOpacity, label } = output as {
+    const { zone_id, points, color, fillColor, fillOpacity, label } = output as {
+      zone_id?: string;
       points: Array<{ lat: number; lng: number }>;
       color?: string;
       fillColor?: string;
@@ -102,13 +107,15 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
     };
     if (!points?.length) return;
     useAppStore.getState().addDrawnArea({
-      id: `area-${++_areaIdSeq}`,
+      id: zone_id ?? `area-${++_areaIdSeq}`,
       points,
       color: color ?? "#f59e0b",
       fillColor: fillColor ?? color ?? "#f59e0b",
       fillOpacity: fillOpacity ?? 0.15,
       label,
     });
+    // 触发 zone-store 刷新以获取 DB 持久化后的完整数据
+    import("@/stores/zone-store").then((m) => m.useZoneStore.getState().fetchZones()).catch(() => {});
   },
 
   plan_route: () => {
