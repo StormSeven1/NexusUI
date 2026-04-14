@@ -61,7 +61,7 @@ export function AgentMessageFloat() {
     setRightPanelTab
   } = useAppStore();
   const statusBarHeight = 32;
-  const rightSidebarWidth = rightSidebarOpen ? 360 : 48;
+  const rightSidebarWidth = rightSidebarOpen ? 440 : 48;
 
   // 将 store 的消息转换为适合展示的格式
   const displayMessages = agentMessages.map(msg => ({

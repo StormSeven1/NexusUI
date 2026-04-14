@@ -18,6 +18,7 @@ import {
   geoRadarSweepCoords,
 } from "@/lib/map-symbols";
 import { AlertTriangle } from "lucide-react";
+import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 
 type CesiumModule = typeof import("cesium");
 type CesiumViewer = import("cesium").Viewer;
@@ -90,6 +91,8 @@ export function Map3D() {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<CesiumViewer | null>(null);
   const cesiumRef = useRef<CesiumModule | null>(null);
+  const placardEntityRef = useRef<CesiumEntity | null>(null);
+  const placardPostRenderCleanupRef = useRef<(() => void) | null>(null);
   const lastFlySeqRef = useRef<number>(-1);
   const highlightEntitiesRef = useRef<CesiumEntity[]>([]);
   const routeEntitiesRef = useRef<Map<string, CesiumEntity>>(new Map());
@@ -101,6 +104,12 @@ export function Map3D() {
   const rafRef = useRef<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [placard, setPlacard] = useState<{
+    kind: PlacardKind;
+    id: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const { selectTrack, selectAsset, setMouseCoords } = useAppStore();
 
   useEffect(() => {
@@ -177,7 +186,7 @@ export function Map3D() {
             },
             label: {
               text: zone.name,
-              font: "12px Inter, sans-serif",
+              font: '12px Roboto, "Noto Sans SC", sans-serif',
               fillColor: rgba(style.line),
               outlineColor: Cesium.Color.fromCssColorString("#09090b"),
               outlineWidth: 2,
@@ -275,7 +284,7 @@ export function Map3D() {
             },
             label: {
               text: track.name,
-              font: "11px Inter, sans-serif",
+              font: '11px Roboto, "Noto Sans SC", sans-serif',
               fillColor: Cesium.Color.fromCssColorString(FORCE_COLORS[track.disposition]),
               outlineColor: Cesium.Color.fromCssColorString("#09090b"),
               outlineWidth: 2,
@@ -304,7 +313,7 @@ export function Map3D() {
             },
             label: {
               text: asset.name,
-              font: "10px Inter, sans-serif",
+              font: '10px Roboto, "Noto Sans SC", sans-serif',
               fillColor: Cesium.Color.fromCssColorString("#6ee7b7"),
               outlineColor: Cesium.Color.fromCssColorString("#09090b"),
               outlineWidth: 2,
@@ -326,8 +335,15 @@ export function Map3D() {
           if (Cesium.defined(picked) && picked.id?.properties) {
             const trackId = picked.id.properties.trackId?.getValue();
             const assetId = picked.id.properties.assetId?.getValue();
-            if (trackId) selectTrack(trackId);
-            else if (assetId) selectAsset(assetId);
+            if (trackId) {
+              selectTrack(trackId);
+              placardEntityRef.current = picked.id as CesiumEntity;
+              setPlacard((prev) => (prev && prev.kind === "track" && prev.id === trackId ? prev : { kind: "track", id: trackId, x: movement.position.x, y: movement.position.y }));
+            } else if (assetId) {
+              selectAsset(assetId);
+              placardEntityRef.current = picked.id as CesiumEntity;
+              setPlacard((prev) => (prev && prev.kind === "asset" && prev.id === assetId ? prev : { kind: "asset", id: assetId, x: movement.position.x, y: movement.position.y }));
+            }
           }
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
@@ -385,6 +401,7 @@ export function Map3D() {
     return () => {
       destroyed = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (placardPostRenderCleanupRef.current) placardPostRenderCleanupRef.current();
       if (viewer && !viewer.isDestroyed()) viewer.destroy();
       viewerRef.current = null;
       cesiumRef.current = null;
@@ -392,6 +409,43 @@ export function Map3D() {
       entityGroupsRef.current = { tracks: [], assets: [], coverage: [], zones: [] };
     };
   }, [selectTrack, selectAsset, setMouseCoords]);
+
+  /**
+   * 标牌跟随：在每帧渲染后把 entity 的世界坐标投影到屏幕坐标，
+   * 让 DOM 标牌贴在目标上方。
+   */
+  useEffect(() => {
+    const v = viewerRef.current;
+    const C = cesiumRef.current;
+    if (!v || !C || v.isDestroyed()) return;
+
+    if (placardPostRenderCleanupRef.current) placardPostRenderCleanupRef.current();
+    placardPostRenderCleanupRef.current = null;
+
+    if (!placard || !placardEntityRef.current) return;
+
+    const onPostRender = () => {
+      const ent = placardEntityRef.current;
+      if (!ent || !placard) return;
+      const time = v.clock.currentTime;
+      const pos = ent.position?.getValue(time);
+      if (!pos) return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const win = (C.SceneTransforms as any).wgs84ToWindowCoordinates(v.scene, pos);
+      if (!win) return;
+      setPlacard((p) => (p ? { ...p, x: win.x, y: win.y } : p));
+    };
+
+    v.scene.postRender.addEventListener(onPostRender);
+    placardPostRenderCleanupRef.current = () => {
+      v.scene.postRender.removeEventListener(onPostRender);
+    };
+
+    return () => {
+      if (placardPostRenderCleanupRef.current) placardPostRenderCleanupRef.current();
+      placardPostRenderCleanupRef.current = null;
+    };
+  }, [placard]);
 
   /* ── flyTo：用 flyToBoundingSphere 让相机正确对准目标点 ── */
   useEffect(() => {
@@ -577,7 +631,7 @@ export function Map3D() {
             position: C.Cartesian3.fromDegrees(cLng, cLat, 100),
             label: {
               text: area.label,
-              font: "12px Inter, sans-serif",
+              font: '12px Roboto, "Noto Sans SC", sans-serif',
               fillColor: C.Color.fromCssColorString(area.color),
               outlineColor: C.Color.fromCssColorString("#09090b"),
               outlineWidth: 2,
@@ -613,6 +667,26 @@ export function Map3D() {
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-nexus-bg-base/90">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-white/40" />
           <span className="mt-3 text-xs text-nexus-text-muted">加载三维地球中...</span>
+        </div>
+      )}
+      {placard && (
+        <div
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-[calc(100%+14px)]"
+          style={{ left: placard.x, top: placard.y }}
+        >
+          <TargetPlacard
+            kind={placard.kind}
+            id={placard.id}
+            onClose={() => {
+              setPlacard(null);
+              placardEntityRef.current = null;
+            }}
+            className="pointer-events-auto"
+          />
+          <div
+            className="pointer-events-none absolute left-1/2 top-full h-0 w-0 -translate-x-1/2 border-x-[10px] border-t-[12px] border-x-transparent border-t-[#0c0c0e]/95"
+            aria-hidden="true"
+          />
         </div>
       )}
     </div>

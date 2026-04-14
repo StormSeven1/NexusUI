@@ -7,6 +7,7 @@ import { StatusBar } from "./StatusBar";
 import { MapContainer } from "@/components/map/MapContainer";
 import { AgentMessageFloat } from "@/components/AgentMessageFloat";
 import { WorkspaceDetails } from "./WorkspaceDetails";
+import { useAlertFeed } from "@/hooks/useAlertFeed";
 import { useAssetFeed } from "@/hooks/useAssetFeed";
 import { useTrackFeed } from "@/hooks/useTrackFeed";
 import { useZoneFeed } from "@/hooks/useZoneFeed";
@@ -15,6 +16,7 @@ export function AppShell() {
   useTrackFeed();
   useZoneFeed();
   useAssetFeed();
+  useAlertFeed();
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-nexus-bg-base">
       <TopNav />

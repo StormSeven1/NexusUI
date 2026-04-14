@@ -287,3 +287,148 @@ tools:
           type: string
           enum: ["online", "offline", "degraded", "all"]
           description: "资产状态筛选，默认 all"
+
+  - name: assess_threats
+    description: "评估当前态势中的威胁目标，综合敌我属性、速度、与敏感区域距离等因素打分排序，返回威胁等级和分析原因"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        scope:
+          type: string
+          enum: ["all", "air", "sea", "underwater"]
+          description: "评估范围，默认 all"
+        top_n:
+          type: number
+          description: "返回前 N 个最高威胁，默认 5"
+
+  - name: assign_asset
+    description: "将可用资产分配去监控指定目标。可指定资产ID或自动选择最优资产。无人机会飞向目标，相机会转向目标。"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          description: "指定资产 ID，如不指定则自动选择最近的可用资产"
+        target_id:
+          type: string
+          description: "要监控的目标 ID，如 TRK-001"
+        asset_type:
+          type: string
+          enum: ["drone", "camera", "any"]
+          description: "偏好的资产类型，默认 any"
+      required: ["target_id"]
+
+  - name: recall_asset
+    description: "召回指定资产，终止其当前监控任务"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          description: "要召回的资产 ID"
+      required: ["asset_id"]
+
+  - name: command_asset
+    description: "向资产下发指令：move_to（移动到坐标/目标）、aim_at（转向目标）、start_patrol（开始巡逻）"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          description: "资产 ID"
+        command:
+          type: string
+          enum: ["move_to", "aim_at", "start_patrol"]
+          description: "指令类型"
+        target:
+          type: string
+          description: "目标 ID（如 TRK-001）或 'lat,lng' 坐标（用于 move_to 和 aim_at）"
+        waypoints:
+          type: array
+          items:
+            type: object
+            properties:
+              lat:
+                type: number
+              lng:
+                type: number
+            required: ["lat", "lng"]
+          description: "巡逻航路点列表（用于 start_patrol）"
+      required: ["asset_id", "command"]
+
+  - name: create_task
+    description: "创建一个任务来跟踪多步骤操作的执行进度，如侦查任务、巡逻任务等"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        task_type:
+          type: string
+          enum: ["recon", "patrol", "assess", "monitor"]
+          description: "任务类型"
+        title:
+          type: string
+          description: "任务标题"
+        target_id:
+          type: string
+          description: "关联的目标 ID"
+        steps:
+          type: array
+          items:
+            type: string
+          description: "任务步骤描述列表"
+      required: ["title", "steps"]
+
+  - name: update_task
+    description: "更新任务状态或步骤进度"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        task_id:
+          type: string
+          description: "任务 ID"
+        step_index:
+          type: number
+          description: "要更新的步骤序号（从0开始）"
+        step_status:
+          type: string
+          enum: ["pending", "active", "completed", "failed"]
+          description: "步骤状态"
+        step_result:
+          type: string
+          description: "步骤执行结果描述"
+        task_status:
+          type: string
+          enum: ["pending", "active", "completed", "failed"]
+          description: "整体任务状态"
+      required: ["task_id"]
+
+  - name: get_task_status
+    description: "查询任务执行状态和进度，不传 task_id 则返回最近的任务列表"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        task_id:
+          type: string
+          description: "任务 ID，不传则返回最近10个任务"
+
+  - name: get_sensor_feed
+    description: "获取指定资产的传感器画面/数据。相机和无人机返回视频画面（含目标锁定信息），声呐返回音频探测信息，雷达返回扫描画面。用于在对话中向用户展示资产的实时侦查画面。"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          description: "资产 ID"
+        feed_type:
+          type: string
+          enum: ["video", "radar", "sonar"]
+          description: "画面类型，默认根据资产类型自动判断（相机/无人机→video，雷达→radar）"
+      required: ["asset_id"]

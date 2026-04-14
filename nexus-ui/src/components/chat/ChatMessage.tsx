@@ -5,11 +5,16 @@ import { cn } from "@/lib/utils";
 import {
   Bot, User, MapPin, Target, Map, PanelRight, Search,
   CheckCircle2, XCircle, Loader2, Sparkles, Navigation, Route, Ruler, Eraser,
-  BarChart3, CloudSun, Pentagon, Waypoints,
+  BarChart3, CloudSun, Pentagon, Waypoints, ShieldAlert, Plane, Radio,
+  RotateCcw, ListTodo, RefreshCw, ClipboardList, Camera,
 } from "lucide-react";
 import { NxCard, NxBadge } from "@/components/nexus";
 import { ChartCard } from "@/components/chat/ChartCard";
 import { WeatherCard } from "@/components/chat/WeatherCard";
+import { ThreatCard } from "@/components/chat/ThreatCard";
+import { TaskCard } from "@/components/chat/TaskCard";
+import { SurveillanceFeedCard } from "@/components/chat/SurveillanceFeedCard";
+import type { SensorFeedData } from "@/components/chat/SurveillanceFeedCard";
 import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -31,6 +36,14 @@ const TOOL_META: Record<string, { icon: typeof MapPin; label: string; color: str
   get_weather:          { icon: CloudSun, label: "天气查询", color: "text-sky-300" },
   draw_area:            { icon: Pentagon, label: "区域标绘", color: "text-amber-500" },
   plan_route:           { icon: Waypoints, label: "航路规划", color: "text-cyan-300" },
+  assess_threats:       { icon: ShieldAlert, label: "威胁评估", color: "text-red-400" },
+  assign_asset:         { icon: Plane, label: "分配资产", color: "text-emerald-400" },
+  recall_asset:         { icon: RotateCcw, label: "召回资产", color: "text-zinc-400" },
+  command_asset:        { icon: Radio, label: "资产指令", color: "text-violet-400" },
+  create_task:          { icon: ListTodo, label: "创建任务", color: "text-sky-400" },
+  update_task:          { icon: RefreshCw, label: "更新任务", color: "text-sky-300" },
+  get_task_status:      { icon: ClipboardList, label: "任务状态", color: "text-teal-400" },
+  get_sensor_feed:      { icon: Camera, label: "传感器画面", color: "text-rose-400" },
 };
 
 interface ToolPartProps {
@@ -98,6 +111,37 @@ function ToolCallCard({ part }: { part: ToolPartProps }) {
         }}
       />
     );
+  }
+
+  if (isDone && output?.action === "show_threats" && output.threats) {
+    return (
+      <ThreatCard
+        threats={output.threats as Array<{
+          trackId: string; name: string; typeLabel: string; dispositionLabel: string;
+          score: number; level: string; levelLabel: string; reasons: string[];
+          speed: number; nearestZone?: string; nearestZoneDist?: number | null;
+        }>}
+        totalAssessed={(output.total_assessed as number) ?? 0}
+        summary={(output.summary as Record<string, number>) ?? {}}
+      />
+    );
+  }
+
+  if (isDone && output?.action === "show_task" && output.steps) {
+    return (
+      <TaskCard
+        taskId={(output.taskId as string) ?? ""}
+        title={(output.title as string) ?? "任务"}
+        taskType={(output.taskType as string) ?? "recon"}
+        status={(output.status as string) ?? "active"}
+        steps={output.steps as Array<{ index: number; action: string; status: string; result?: string | null }>}
+        progress={output.progress as string | undefined}
+      />
+    );
+  }
+
+  if (isDone && output?.action === "show_sensor_feed" && output.feedType) {
+    return <SurveillanceFeedCard data={output as unknown as SensorFeedData} />;
   }
 
   return (

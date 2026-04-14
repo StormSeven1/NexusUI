@@ -35,7 +35,9 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
     const { panel, side } = output as { panel: string; side: "left" | "right" };
     const store = useAppStore.getState();
     if (side === "right") {
-      store.setRightPanelTab(panel as RightPanelTab);
+      // 右侧仅保留 AI 助手：任何 open_panel 请求都统一落到 chat
+      void panel;
+      store.setRightPanelTab("chat" as RightPanelTab);
       if (!store.rightSidebarOpen) store.toggleRightSidebar();
     } else {
       store.setLeftPanelTab(panel as LeftPanelTab);
@@ -114,12 +116,63 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
       fillOpacity: fillOpacity ?? 0.15,
       label,
     });
-    // 触发 zone-store 刷新以获取 DB 持久化后的完整数据
     import("@/stores/zone-store").then((m) => m.useZoneStore.getState().fetchZones()).catch(() => {});
   },
 
   plan_route: () => {
     /* plan_route 返回 action: "draw_route"，由 draw_route handler 处理 */
+  },
+
+  // ── 新增工具副作用 ──
+
+  show_threats: (output) => {
+    if (!output.success) return;
+    const threats = output.threats as Array<{ trackId: string; level: string }> | undefined;
+    if (!threats?.length) return;
+    const criticalIds = threats.filter((t) => t.level === "critical" || t.level === "high").map((t) => t.trackId);
+    if (criticalIds.length > 0) {
+      useAppStore.getState().setHighlightedTrackIds(criticalIds);
+    }
+  },
+
+  assign_asset: (output) => {
+    if (!output.success) return;
+    import("@/stores/asset-store").then((m) => m.useAssetStore.getState().fetchAssets()).catch(() => {});
+    const store = useAppStore.getState();
+    store.addAgentMessage({
+      agentType: "tactical",
+      agentName: "战术智能体",
+      title: "资产已分配",
+      content: output.message as string,
+      status: "success",
+      read: false,
+    });
+  },
+
+  recall_asset: (output) => {
+    if (!output.success) return;
+    import("@/stores/asset-store").then((m) => m.useAssetStore.getState().fetchAssets()).catch(() => {});
+  },
+
+  command_asset: (output) => {
+    if (!output.success) return;
+    import("@/stores/asset-store").then((m) => m.useAssetStore.getState().fetchAssets()).catch(() => {});
+  },
+
+  show_task: () => {
+    /* 任务卡片在聊天面板内联渲染 */
+  },
+
+  get_task_status: () => {
+    /* 纯信息型 */
+  },
+
+  update_task: () => {
+    /* 任务卡片在聊天面板内联渲染 */
+  },
+
+  show_sensor_feed: () => {
+    /* 传感器画面在聊天面板内联渲染 */
   },
 };
 

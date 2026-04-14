@@ -101,7 +101,7 @@ export const useAppStore = create<AppState>((set) => ({
   leftSidebarOpen: true,
   rightSidebarOpen: true,
   leftPanelTab: "tracks",
-  rightPanelTab: "overview",
+  rightPanelTab: "chat",
   topTab: "situation",
   mapViewMode: "2d",
   selectedTrackId: null,

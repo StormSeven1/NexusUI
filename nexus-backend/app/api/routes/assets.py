@@ -28,6 +28,10 @@ def _asset_to_out(asset: Asset) -> dict:
         "heading": asset.heading,
         "fov_angle": asset.fov_angle,
         "properties": json.loads(asset.properties) if asset.properties else None,
+        "mission_status": asset.mission_status,
+        "assigned_target_id": asset.assigned_target_id,
+        "target_lat": asset.target_lat,
+        "target_lng": asset.target_lng,
         "created_at": asset.created_at,
         "updated_at": asset.updated_at,
     }

@@ -39,6 +39,10 @@ class AssetOut(BaseModel):
     heading: float | None
     fov_angle: float | None
     properties: dict | None = None
+    mission_status: str = "idle"
+    assigned_target_id: str | None = None
+    target_lat: float | None = None
+    target_lng: float | None = None
     created_at: datetime
     updated_at: datetime
 

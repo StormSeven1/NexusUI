@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import {
   Map,
@@ -58,8 +59,41 @@ const TOP_TABS = [
   },
 ] as const;
 
+/**
+ * 获取当前时间的展示文本（本地时间 + 时区）。
+ * Get a human-readable clock label (local time + timezone).
+ *
+ * @param now - 当前时间 / Current time
+ * @param formatter - Intl 时间格式化器 / Intl time formatter
+ * @returns 格式化后的时间字符串 / Formatted time string
+ */
+function formatNowLabel(now: Date, formatter: Intl.DateTimeFormat): string {
+  return formatter.format(now);
+}
+
 export function TopNav() {
   const { topTab, setTopTab } = useAppStore();
+
+  const timeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZoneName: "short",
+      }),
+    []
+  );
+
+  const [nowLabel, setNowLabel] = useState(() => formatNowLabel(new Date(), timeFormatter));
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowLabel(formatNowLabel(new Date(), timeFormatter));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [timeFormatter]);
 
   // 点击Tab的处理函数
   const handleTabClick = (tabId: typeof topTab) => {
@@ -131,7 +165,7 @@ export function TopNav() {
       <div className="flex h-full items-center gap-3 border-l border-nexus-border px-4">
         {/* 时间显示 */}
         <div className="font-mono text-xs text-nexus-text-secondary">
-          12:00:00 UTC
+          {nowLabel}
         </div>
 
         {/* 通知和用户 */}

@@ -2,32 +2,12 @@
 
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
-import {
-  LayoutDashboard,
-  Gauge,
-  MessageSquare,
-  CloudSun,
-  ScrollText,
-  Table2,
-  BotMessageSquare,
-} from "lucide-react";
-import { SituationOverview } from "@/components/panels/SituationOverview";
-import { DashboardPanel } from "@/components/panels/DashboardPanel";
-import { CommPanel } from "@/components/panels/CommPanel";
-import { EnvironmentPanel } from "@/components/panels/EnvironmentPanel";
-import { EventLogPanel } from "@/components/panels/EventLogPanel";
-import { DataTablePanel } from "@/components/panels/DataTablePanel";
+import { BotMessageSquare } from "lucide-react";
 import { ChatPanel } from "@/components/panels/ChatPanel";
 import type { RightPanelTab } from "@/stores/app-store";
 
-const TABS: { id: RightPanelTab; icon: typeof LayoutDashboard; label: string }[] = [
+const TABS: { id: RightPanelTab; icon: typeof BotMessageSquare; label: string }[] = [
   { id: "chat", icon: BotMessageSquare, label: "AI 助手" },
-  { id: "overview", icon: LayoutDashboard, label: "概览" },
-  { id: "dashboard", icon: Gauge, label: "仪表" },
-  { id: "comm", icon: MessageSquare, label: "通信" },
-  { id: "environment", icon: CloudSun, label: "环境" },
-  { id: "eventlog", icon: ScrollText, label: "日志" },
-  { id: "datatable", icon: Table2, label: "数据" },
 ];
 
 export function RightSidebar() {
@@ -46,7 +26,7 @@ export function RightSidebar() {
     <aside
       className={cn(
         "flex h-full shrink-0 border-l border-nexus-border transition-all duration-300",
-        rightSidebarOpen ? "w-[360px]" : "w-12"
+        rightSidebarOpen ? "w-[440px]" : "w-12"
       )}
       style={{ backgroundColor: rightSidebarOpen ? '#19191D' : '#19191D' }}
     >
@@ -54,12 +34,6 @@ export function RightSidebar() {
       {rightSidebarOpen && (
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {rightPanelTab === "chat" && <ChatPanel />}
-          {rightPanelTab === "overview" && <SituationOverview />}
-          {rightPanelTab === "dashboard" && <DashboardPanel />}
-          {rightPanelTab === "comm" && <CommPanel />}
-          {rightPanelTab === "environment" && <EnvironmentPanel />}
-          {rightPanelTab === "eventlog" && <EventLogPanel />}
-          {rightPanelTab === "datatable" && <DataTablePanel />}
         </div>
       )}
 

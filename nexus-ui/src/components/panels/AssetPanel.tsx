@@ -28,6 +28,14 @@ const STATUS_STYLES = {
   degraded: { dot: "bg-amber-400", text: "text-amber-400", label: "降级" },
 };
 
+const MISSION_STYLES: Record<string, { label: string; color: string }> = {
+  idle: { label: "", color: "" },
+  assigned: { label: "已分配", color: "text-sky-400" },
+  en_route: { label: "前往中", color: "text-amber-400" },
+  monitoring: { label: "监控中", color: "text-emerald-400" },
+  returning: { label: "返回中", color: "text-zinc-400" },
+};
+
 export function AssetPanel() {
   const [search, setSearch] = useState("");
   const selectedAssetId = useAppStore((s) => s.selectedAssetId);
@@ -112,9 +120,24 @@ export function AssetPanel() {
                   </div>
                 </div>
                 <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
-                  {asset.id} · {asset.lat.toFixed(2)}°N, {Math.abs(asset.lng).toFixed(2)}°W
+                  {asset.id} · {asset.lat.toFixed(2)}°{asset.lat >= 0 ? "N" : "S"}, {Math.abs(asset.lng).toFixed(2)}°{asset.lng >= 0 ? "E" : "W"}
                   {asset.range_km ? ` · 覆盖 ${asset.range_km}km` : ""}
                 </div>
+                {asset.mission_status && asset.mission_status !== "idle" && (
+                  <div className="mt-0.5 flex items-center gap-1">
+                    <span className={cn(
+                      "text-[10px] font-semibold",
+                      MISSION_STYLES[asset.mission_status]?.color ?? "text-sky-400"
+                    )}>
+                      {MISSION_STYLES[asset.mission_status]?.label ?? asset.mission_status}
+                    </span>
+                    {asset.assigned_target_id && (
+                      <span className="text-[10px] text-nexus-text-muted">
+                        → {asset.assigned_target_id}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               {isSelected && (
                 <Crosshair size={14} className="shrink-0 text-emerald-400" />

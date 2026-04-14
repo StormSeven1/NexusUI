@@ -11,6 +11,10 @@ export interface AssetData {
   heading: number | null;
   fov_angle: number | null;
   properties: Record<string, unknown> | null;
+  mission_status: string;
+  assigned_target_id: string | null;
+  target_lat: number | null;
+  target_lng: number | null;
   created_at: string;
   updated_at: string;
 }

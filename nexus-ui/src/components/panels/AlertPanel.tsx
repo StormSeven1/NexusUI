@@ -2,8 +2,9 @@
 
 import { MOCK_ALERTS } from "@/lib/mock-data";
 import { useAppStore } from "@/stores/app-store";
+import { useAlertStore, type AlertData } from "@/stores/alert-store";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, AlertCircle, Info, ExternalLink } from "lucide-react";
+import { AlertTriangle, AlertCircle, Info, ExternalLink, Zap } from "lucide-react";
 
 const SEVERITY_STYLES = {
   critical: {
@@ -32,9 +33,31 @@ const SEVERITY_STYLES = {
   },
 };
 
+type SeverityKey = keyof typeof SEVERITY_STYLES;
+
+interface UnifiedAlert {
+  id: string;
+  severity: SeverityKey;
+  message: string;
+  timestamp: string;
+  trackId?: string;
+  isRealtime?: boolean;
+}
+
 export function AlertPanel() {
   const { selectTrack } = useAppStore();
-  const criticalCount = MOCK_ALERTS.filter((a) => a.severity === "critical").length;
+  const realtimeAlerts = useAlertStore((s) => s.alerts);
+
+  const allAlerts: UnifiedAlert[] = [
+    ...realtimeAlerts.map((a: AlertData) => ({
+      ...a,
+      severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
+      isRealtime: true,
+    })),
+    ...MOCK_ALERTS.map((a) => ({ ...a, isRealtime: false })),
+  ];
+
+  const criticalCount = allAlerts.filter((a) => a.severity === "critical").length;
 
   return (
     <div className="flex h-full flex-col">
@@ -50,7 +73,7 @@ export function AlertPanel() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {MOCK_ALERTS.map((alert) => {
+        {allAlerts.map((alert) => {
           const style = SEVERITY_STYLES[alert.severity];
           const Icon = style.icon;
 
@@ -70,6 +93,9 @@ export function AlertPanel() {
                     <span className={cn("text-[10px] font-bold", style.labelColor)}>
                       {style.label}
                     </span>
+                    {alert.isRealtime && (
+                      <Zap size={9} className="text-amber-400" />
+                    )}
                     <span className="font-mono text-[10px] text-nexus-text-muted">
                       {alert.timestamp}
                     </span>

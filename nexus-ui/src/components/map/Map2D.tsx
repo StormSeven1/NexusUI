@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useAppStore } from "@/stores/app-store";
@@ -12,6 +12,7 @@ import { useAssetStore } from "@/stores/asset-store";
 import type { ZoneData } from "@/stores/zone-store";
 import type { AssetData } from "@/stores/asset-store";
 import { FORCE_COLORS } from "@/lib/colors";
+import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 import {
   buildMarkerSymbolDataUrl,
   getAllMarkerSymbolKeys,
@@ -229,11 +230,19 @@ async function loadSvgImage(src: string, size: number): Promise<HTMLImageElement
 export function Map2D() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const popupRef = useRef<maplibregl.Popup | null>(null);
+  const hoverPopupRef = useRef<maplibregl.Popup | null>(null);
   const lastFlySeqRef = useRef<number>(-1);
   const routeIdsRef = useRef<string[]>([]);
   const areaIdsRef = useRef<string[]>([]);
   const rafRef = useRef<number | null>(null);
+  const [placard, setPlacard] = useState<{
+    kind: PlacardKind;
+    id: string;
+    lng: number;
+    lat: number;
+    x: number;
+    y: number;
+  } | null>(null);
   const { setMouseCoords, setZoomLevel, selectTrack, selectAsset } = useAppStore();
 
   const selectTrackRef = useRef(selectTrack);
@@ -244,6 +253,9 @@ export function Map2D() {
   const setVis = useCallback((map: maplibregl.Map, id: string, visible: boolean) => {
     if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
   }, []);
+
+  const placardRef = useRef(placard);
+  useEffect(() => { placardRef.current = placard; }, [placard]);
 
   /* ─── 初始化地图 ─── */
   useEffect(() => {
@@ -374,32 +386,72 @@ export function Map2D() {
         map.addLayer({ id: ASSET_LABEL, type: "symbol", source: ASSET_SOURCE, layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Regular"], "text-size": 10, "text-offset": [0, 1.8], "text-anchor": "top", "text-max-width": 10 }, paint: { "text-color": "#6ee7b7", "text-halo-color": "#09090b", "text-halo-width": 1.5, "text-opacity": 0.8 } });
 
         /* ── 交互 ── */
-        const showPopup = (coords: [number, number], html: string) => {
-          if (popupRef.current) popupRef.current.remove();
-          popupRef.current = new maplibregl.Popup({ offset: 12, closeButton: false, className: "nexus-popup" })
-            .setLngLat(coords).setHTML(html).addTo(map);
+        const showHoverPopup = (coords: [number, number], html: string) => {
+          if (hoverPopupRef.current) hoverPopupRef.current.remove();
+          hoverPopupRef.current = new maplibregl.Popup({ offset: 12, closeButton: false, className: "nexus-popup" })
+            .setLngLat(coords)
+            .setHTML(html)
+            .addTo(map);
         };
-        const clearPopup = () => { if (popupRef.current) { popupRef.current.remove(); popupRef.current = null; } };
+        const clearHoverPopup = () => {
+          if (hoverPopupRef.current) {
+            hoverPopupRef.current.remove();
+            hoverPopupRef.current = null;
+          }
+        };
+        const projectPlacard = (lng: number, lat: number) => {
+          const p = map.project({ lng, lat });
+          return { x: p.x, y: p.y };
+        };
+        const updatePlacardScreen = () => {
+          const cur = placardRef.current;
+          if (!cur) return;
+          const { x, y } = projectPlacard(cur.lng, cur.lat);
+          setPlacard((p) => (p ? { ...p, x, y } : p));
+        };
 
-        map.on("click", TRACK_SYMBOL, (e) => { if (e.features?.[0]?.properties?.id) selectTrackRef.current(e.features[0].properties.id); });
+        map.on("click", TRACK_SYMBOL, (e) => {
+          const f = e.features?.[0];
+          const id = f?.properties?.id as string | undefined;
+          if (!id || !f) return;
+          selectTrackRef.current(id);
+          const c = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
+          const { x, y } = projectPlacard(c[0], c[1]);
+          setPlacard({ kind: "track", id, lng: c[0], lat: c[1], x, y });
+        });
         map.on("mouseenter", TRACK_SYMBOL, (e) => {
           map.getCanvas().style.cursor = "pointer";
           const f = e.features?.[0]; if (!f) return;
           const c = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
           const p = f.properties!;
-          showPopup(c, `<div style="font-family:'Inter',sans-serif;padding:4px 0"><div style="font-size:11px;font-weight:600;color:#d4d4d8">${p.name}</div><div style="font-size:10px;color:#52525b;margin-top:2px">${p.id} · ${p.speed} kn · 航向 ${p.heading}°</div></div>`);
+          showHoverPopup(c, `<div style="font-family:var(--font-sans);padding:4px 0"><div style="font-size:11px;font-weight:600;color:#d4d4d4">${p.name}</div><div style="font-size:10px;color:#52525b;margin-top:2px">${p.id} · ${p.speed} kn · 航向 ${p.heading}°</div></div>`);
         });
-        map.on("mouseleave", TRACK_SYMBOL, () => { map.getCanvas().style.cursor = ""; clearPopup(); });
+        map.on("mouseleave", TRACK_SYMBOL, () => { map.getCanvas().style.cursor = ""; clearHoverPopup(); });
 
-        map.on("click", ASSET_SYMBOL, (e) => { if (e.features?.[0]?.properties?.id) selectAssetRef.current(e.features[0].properties.id); });
+        map.on("click", ASSET_SYMBOL, (e) => {
+          const f = e.features?.[0];
+          const id = f?.properties?.id as string | undefined;
+          if (!id || !f) return;
+          selectAssetRef.current(id);
+          const c = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
+          const { x, y } = projectPlacard(c[0], c[1]);
+          setPlacard({ kind: "asset", id, lng: c[0], lat: c[1], x, y });
+        });
         map.on("mouseenter", ASSET_SYMBOL, (e) => {
           map.getCanvas().style.cursor = "pointer";
           const f = e.features?.[0]; if (!f) return;
           const c = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
           const p = f.properties!;
-          showPopup(c, `<div style="font-family:'Inter',sans-serif;padding:4px 0"><div style="font-size:11px;font-weight:600;color:#6ee7b7">${p.name}</div><div style="font-size:10px;color:#52525b;margin-top:2px">${p.id} · ${p.status}${p.range ? ` · 覆盖 ${p.range}km` : ""}</div></div>`);
+          showHoverPopup(c, `<div style="font-family:var(--font-sans);padding:4px 0"><div style="font-size:11px;font-weight:600;color:#6ee7b7">${p.name}</div><div style="font-size:10px;color:#52525b;margin-top:2px">${p.id} · ${p.status}${p.range ? ` · 覆盖 ${p.range}km` : ""}</div></div>`);
         });
-        map.on("mouseleave", ASSET_SYMBOL, () => { map.getCanvas().style.cursor = ""; clearPopup(); });
+        map.on("mouseleave", ASSET_SYMBOL, () => { map.getCanvas().style.cursor = ""; clearHoverPopup(); });
+
+        // 地图移动/缩放时，标牌跟随
+        const onMove = () => updatePlacardScreen();
+        map.on("move", onMove);
+        map.on("zoom", onMove);
+        map.on("rotate", onMove);
+        map.on("pitch", onMove);
 
         setZoomLevel(Math.round(map.getZoom()));
 
@@ -439,7 +491,7 @@ export function Map2D() {
     mapRef.current = map;
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      if (popupRef.current) popupRef.current.remove();
+      if (hoverPopupRef.current) hoverPopupRef.current.remove();
       map.remove();
       mapRef.current = null;
     };
@@ -597,8 +649,25 @@ export function Map2D() {
   }, []);
 
   return (
-    <>
+    <div className="relative h-full w-full">
       <div ref={mapContainer} className="h-full w-full" />
+      {placard && (
+        <div
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-[calc(100%+14px)]"
+          style={{ left: placard.x, top: placard.y }}
+        >
+          <TargetPlacard
+            kind={placard.kind}
+            id={placard.id}
+            onClose={() => setPlacard(null)}
+            className="pointer-events-auto"
+          />
+          <div
+            className="pointer-events-none absolute left-1/2 top-full h-0 w-0 -translate-x-1/2 border-x-[10px] border-t-[12px] border-x-transparent border-t-[#0c0c0e]/95"
+            aria-hidden="true"
+          />
+        </div>
+      )}
       <style jsx global>{`
         .nexus-popup .maplibregl-popup-content {
           background: rgba(17, 17, 19, 0.95);
@@ -629,6 +698,6 @@ export function Map2D() {
           filter: invert(0.8);
         }
       `}</style>
-    </>
+    </div>
   );
 }

@@ -31,5 +31,12 @@ class Asset(Base):
     heading: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     fov_angle: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     properties: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # 任务相关字段
+    mission_status: Mapped[str] = mapped_column(Text, default="idle")  # idle/assigned/en_route/monitoring/returning
+    assigned_target_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    target_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    target_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=_utcnow)

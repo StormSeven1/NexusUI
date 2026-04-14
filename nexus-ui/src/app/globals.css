@@ -1,3 +1,11 @@
+/* 字体 / Fonts
+ * - 中文优先：思源黑体（Web 场景用 Noto Sans SC 作为等价字体）
+ * - 英文与数字优先：Roboto
+ *
+ * 注意：`@import url(...)` 必须尽可能放在文件最前，避免构建期 CSS 优化器报 “@import rules must precede...” 警告。
+ */
+@import url("https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap");
+
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -85,7 +93,9 @@
 }
 
 :root {
-  --font-inter: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* 英文/数字优先 Roboto；中文回退 Noto Sans SC（思源黑体等价） */
+  --font-inter: "Roboto", "Noto Sans SC", "Source Han Sans SC", "Source Han Sans", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-jetbrains: "JetBrains Mono", "SFMono-Regular", "Cascadia Code", "Fira Code", monospace;
   --background: #151519;
   --foreground: #f9fafb;

@@ -33,6 +33,7 @@ def handle_query_assets(args: dict[str, Any]) -> dict[str, Any]:
             "status": a.status,
             "lat": a.lat,
             "lng": a.lng,
+            "mission_status": a.mission_status,
         }
         if a.range_km is not None:
             entry["range_km"] = a.range_km
@@ -40,6 +41,8 @@ def handle_query_assets(args: dict[str, Any]) -> dict[str, Any]:
             entry["heading"] = a.heading
         if a.fov_angle is not None:
             entry["fov_angle"] = a.fov_angle
+        if a.assigned_target_id:
+            entry["assigned_target_id"] = a.assigned_target_id
         result_assets.append(entry)
 
     return {
