@@ -4,7 +4,9 @@ import { useEffect, useRef, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useAppStore } from "@/stores/app-store";
+import { useTrackStore } from "@/stores/track-store";
 import { MOCK_ALERTS, MOCK_ASSETS, MOCK_TRACKS, MOCK_ZONES } from "@/lib/mock-data";
+import type { Track } from "@/lib/mock-data";
 import { FORCE_COLORS } from "@/lib/colors";
 import {
   buildMarkerSymbolDataUrl,
@@ -91,10 +93,11 @@ function getTrackMaxSeverity(trackId: string): AlertSeverity | null {
   return max;
 }
 
-function buildTrackGeoJSON() {
+function buildTrackGeoJSON(trackList?: Track[]) {
+  const tracks = trackList ?? MOCK_TRACKS;
   return {
     type: "FeatureCollection" as const,
-    features: MOCK_TRACKS.map((t) => {
+    features: tracks.map((t) => {
       const sev = getTrackMaxSeverity(t.id);
       return {
         type: "Feature" as const,
@@ -200,6 +203,7 @@ export function Map2D() {
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const lastFlySeqRef = useRef<number>(-1);
   const routeIdsRef = useRef<string[]>([]);
+  const areaIdsRef = useRef<string[]>([]);
   const rafRef = useRef<number | null>(null);
   const { setMouseCoords, setZoomLevel, selectTrack, selectAsset } = useAppStore();
 
@@ -313,9 +317,10 @@ export function Map2D() {
         });
 
         /* ════════════════════════════════════════════
-         *  4) 航迹（tracks）
+         *  4) 航迹（tracks）— 优先使用实时数据
          * ════════════════════════════════════════════ */
-        map.addSource(TRACK_SOURCE, { type: "geojson", data: buildTrackGeoJSON() });
+        const liveTracks = useTrackStore.getState().tracks;
+        map.addSource(TRACK_SOURCE, { type: "geojson", data: buildTrackGeoJSON(liveTracks.length ? liveTracks : undefined) });
 
         map.addLayer({ id: HIGHLIGHT_LAYER, type: "circle", source: TRACK_SOURCE, filter: ["in", "id", ""], paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 12, 10, 20, 15, 32], "circle-color": "transparent", "circle-stroke-color": "#60a5fa", "circle-stroke-width": 2.5, "circle-stroke-opacity": 0.85 } });
 
@@ -489,6 +494,52 @@ export function Map2D() {
         m.addLayer({ id: "route-layer-" + route.id, type: "line", source: sid, layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": route.color, "line-width": 3, "line-opacity": 0.85, "line-dasharray": [2, 3] } }, HIGHLIGHT_LAYER);
       }
       routeIdsRef.current = [...currentIds];
+    });
+    return unsub;
+  }, []);
+
+  /* ── drawnAreas ── */
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((s) => {
+      const m = mapRef.current;
+      if (!m?.isStyleLoaded()) return;
+      const current = s.drawnAreas;
+      const currentIds = new Set(current.map((a) => a.id));
+
+      for (const oldId of areaIdsRef.current) {
+        if (!currentIds.has(oldId)) {
+          if (m.getLayer("area-fill-" + oldId)) m.removeLayer("area-fill-" + oldId);
+          if (m.getLayer("area-line-" + oldId)) m.removeLayer("area-line-" + oldId);
+          if (m.getLayer("area-label-" + oldId)) m.removeLayer("area-label-" + oldId);
+          if (m.getSource("area-source-" + oldId)) m.removeSource("area-source-" + oldId);
+        }
+      }
+      for (const area of current) {
+        const sid = "area-source-" + area.id;
+        if (m.getSource(sid)) continue;
+        const ring = [...area.points.map((p) => [p.lng, p.lat]), [area.points[0].lng, area.points[0].lat]];
+        m.addSource(sid, {
+          type: "geojson",
+          data: { type: "Feature", properties: { label: area.label ?? "" }, geometry: { type: "Polygon", coordinates: [ring] } },
+        });
+        m.addLayer({ id: "area-fill-" + area.id, type: "fill", source: sid, paint: { "fill-color": area.fillColor, "fill-opacity": area.fillOpacity } }, HIGHLIGHT_LAYER);
+        m.addLayer({ id: "area-line-" + area.id, type: "line", source: sid, paint: { "line-color": area.color, "line-width": 2, "line-opacity": 0.7, "line-dasharray": [4, 3] } }, HIGHLIGHT_LAYER);
+        if (area.label) {
+          m.addLayer({ id: "area-label-" + area.id, type: "symbol", source: sid, layout: { "text-field": area.label, "text-font": ["Open Sans Regular"], "text-size": 11 }, paint: { "text-color": area.color, "text-halo-color": "#09090b", "text-halo-width": 1.5, "text-opacity": 0.8 } });
+        }
+      }
+      areaIdsRef.current = [...currentIds];
+    });
+    return unsub;
+  }, []);
+
+  /* ── 实时 track 数据更新 ── */
+  useEffect(() => {
+    const unsub = useTrackStore.subscribe((s) => {
+      const m = mapRef.current;
+      if (!m?.isStyleLoaded() || !s.tracks.length) return;
+      const src = m.getSource(TRACK_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(buildTrackGeoJSON(s.tracks) as GeoJSON.FeatureCollection);
     });
     return unsub;
   }, []);

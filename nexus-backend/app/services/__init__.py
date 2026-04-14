@@ -11,7 +11,7 @@ from .llm import (
     _sse,
     stream_chat,
 )
-from .tools import TOOL_DEFINITIONS, TRACKS, execute_tool
+from .tool_registry import registry
 
 __all__ = [
     "MAX_TOOL_STEPS",
@@ -23,9 +23,7 @@ __all__ = [
     "SSE_TOOL_CALL",
     "SSE_TOOL_RESULT",
     "SYSTEM_PROMPT",
-    "TOOL_DEFINITIONS",
-    "TRACKS",
     "_sse",
-    "execute_tool",
+    "registry",
     "stream_chat",
 ]

@@ -25,6 +25,15 @@ export interface RouteLine {
   label?: string;
 }
 
+export interface DrawnArea {
+  id: string;
+  points: Array<{ lat: number; lng: number }>;
+  color: string;
+  fillColor: string;
+  fillOpacity: number;
+  label?: string;
+}
+
 export interface FlyToRequest {
   lat: number;
   lng: number;
@@ -48,6 +57,7 @@ interface AppState {
 
   highlightedTrackIds: string[];
   routeLines: RouteLine[];
+  drawnAreas: DrawnArea[];
   flyToRequest: FlyToRequest | null;
 
   /** key = MAP_LAYERS[].id, value = visible */
@@ -71,6 +81,7 @@ interface AppState {
 
   setHighlightedTrackIds: (ids: string[]) => void;
   addRouteLine: (route: RouteLine) => void;
+  addDrawnArea: (area: DrawnArea) => void;
   clearAnnotations: () => void;
   requestFlyTo: (lat: number, lng: number, zoom?: number) => void;
 
@@ -101,6 +112,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   highlightedTrackIds: [],
   routeLines: [],
+  drawnAreas: [],
   flyToRequest: null,
 
   layerVisibility: Object.fromEntries(MAP_LAYERS.map((l) => [l.id, l.visible])),
@@ -125,8 +137,10 @@ export const useAppStore = create<AppState>((set) => ({
   setHighlightedTrackIds: (ids) => set({ highlightedTrackIds: ids }),
   addRouteLine: (route) =>
     set((s) => ({ routeLines: [...s.routeLines, route] })),
+  addDrawnArea: (area) =>
+    set((s) => ({ drawnAreas: [...s.drawnAreas, area] })),
   clearAnnotations: () =>
-    set({ highlightedTrackIds: [], routeLines: [] }),
+    set({ highlightedTrackIds: [], routeLines: [], drawnAreas: [] }),
   requestFlyTo: (lat, lng, zoom) =>
     set({ flyToRequest: { lat, lng, zoom, seq: ++_flyToSeq }, mapCenter: { lat, lng } }),
 

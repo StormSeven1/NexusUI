@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { Search, Star, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
+import { useTrackStore } from "@/stores/track-store";
 import { MOCK_TRACKS } from "@/lib/mock-data";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
@@ -17,11 +18,14 @@ const DISPOSITION_ORDER: ForceDisposition[] = [
 
 export function TrackListPanel() {
   const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
+  const liveTracks = useTrackStore((s) => s.tracks);
   const [search, setSearch] = useState("");
   const [filterStarred, setFilterStarred] = useState(false);
 
+  const allTracks = liveTracks.length ? liveTracks : MOCK_TRACKS;
+
   const filtered = useMemo(() => {
-    let tracks = MOCK_TRACKS;
+    let tracks = allTracks;
     if (search) {
       const q = search.toLowerCase();
       tracks = tracks.filter(
@@ -34,7 +38,7 @@ export function TrackListPanel() {
       tracks = tracks.filter((t) => t.starred);
     }
     return tracks;
-  }, [search, filterStarred]);
+  }, [search, filterStarred, allTracks]);
 
   const grouped = useMemo(() => {
     const groups: Record<string, typeof filtered> = {};

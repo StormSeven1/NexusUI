@@ -5,8 +5,11 @@ import { cn } from "@/lib/utils";
 import {
   Bot, User, MapPin, Target, Map, PanelRight, Search,
   CheckCircle2, XCircle, Loader2, Sparkles, Navigation, Route, Ruler, Eraser,
+  BarChart3, CloudSun, Pentagon, Waypoints,
 } from "lucide-react";
 import { NxCard, NxBadge } from "@/components/nexus";
+import { ChartCard } from "@/components/chat/ChartCard";
+import { WeatherCard } from "@/components/chat/WeatherCard";
 import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -24,6 +27,10 @@ const TOOL_META: Record<string, { icon: typeof MapPin; label: string; color: str
   draw_route:           { icon: Route, label: "绘制路线", color: "text-orange-400" },
   measure_distance:     { icon: Ruler, label: "测量距离", color: "text-teal-400" },
   clear_annotations:    { icon: Eraser, label: "清除标绘", color: "text-zinc-400" },
+  query_data_chart:     { icon: BarChart3, label: "数据图表", color: "text-indigo-400" },
+  get_weather:          { icon: CloudSun, label: "天气查询", color: "text-sky-300" },
+  draw_area:            { icon: Pentagon, label: "区域标绘", color: "text-amber-500" },
+  plan_route:           { icon: Waypoints, label: "航路规划", color: "text-cyan-300" },
 };
 
 interface ToolPartProps {
@@ -64,7 +71,34 @@ function ToolCallCard({ part }: { part: ToolPartProps }) {
   const isDone = part.state === "output-available";
   const isError = part.state === "output-error";
 
-  const output = part.output as Record<string, string | undefined> | undefined;
+  const output = part.output as Record<string, unknown> | undefined;
+
+  if (isDone && output?.action === "show_chart" && output.data) {
+    return (
+      <ChartCard
+        chartType={(output.chartType as "bar" | "pie") ?? "bar"}
+        data={output.data as Array<{ label: string; value: number; key?: string; group?: string }>}
+        title={(output.title as string) ?? "数据图表"}
+      />
+    );
+  }
+
+  if (isDone && output?.action === "show_weather" && output.temperature != null) {
+    return (
+      <WeatherCard
+        data={{
+          location: output.location as string,
+          temperature: output.temperature as number,
+          condition: output.condition as string,
+          icon: output.icon as string | undefined,
+          humidity: output.humidity as number | undefined,
+          wind: output.wind as string | undefined,
+          visibilityKm: output.visibilityKm as number | undefined,
+          pressureHpa: output.pressureHpa as number | undefined,
+        }}
+      />
+    );
+  }
 
   return (
     <NxCard padding="sm" className="my-1.5 transition-all duration-200">
@@ -81,7 +115,7 @@ function ToolCallCard({ part }: { part: ToolPartProps }) {
           {isError && <XCircle size={11} className="text-red-400" />}
         </span>
       </div>
-      {isDone && output?.message && (
+      {isDone && typeof output?.message === "string" && (
         <p className="mt-1.5 text-[10px] leading-relaxed text-nexus-text-secondary">{output.message}</p>
       )}
       {isError && part.errorText && (

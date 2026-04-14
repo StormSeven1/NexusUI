@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
+import { useTrackStore } from "@/stores/track-store";
 import { MOCK_TRACKS, MOCK_ASSETS, MOCK_ZONES } from "@/lib/mock-data";
+import type { Track } from "@/lib/mock-data";
 import { FORCE_COLORS } from "@/lib/colors";
 import {
   buildMarkerSymbolDataUrl,
@@ -64,6 +66,7 @@ export function Map3D() {
   const lastFlySeqRef = useRef<number>(-1);
   const highlightEntitiesRef = useRef<CesiumEntity[]>([]);
   const routeEntitiesRef = useRef<Map<string, CesiumEntity>>(new Map());
+  const areaEntitiesRef = useRef<Map<string, CesiumEntity[]>>(new Map());
   const entityGroupsRef = useRef<Record<GroupKey, CesiumEntity[]>>({
     tracks: [], assets: [], coverage: [], zones: [],
   });
@@ -227,9 +230,11 @@ export function Map3D() {
         }
 
         /* ═══════════════════════════════════════════
-         *  3) 航迹
+         *  3) 航迹 — 优先使用实时数据
          * ═══════════════════════════════════════════ */
-        for (const track of MOCK_TRACKS) {
+        const liveTracks = useTrackStore.getState().tracks;
+        const initialTracks: Track[] = liveTracks.length ? liveTracks : MOCK_TRACKS;
+        for (const track of initialTracks) {
           const ent = v.entities.add({
             position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
             billboard: {
@@ -396,7 +401,8 @@ export function Map3D() {
       const ids = new Set(state.highlightedTrackIds);
       if (ids.size === 0) return;
 
-      for (const track of MOCK_TRACKS) {
+      const trackList = useTrackStore.getState().tracks.length ? useTrackStore.getState().tracks : MOCK_TRACKS;
+      for (const track of trackList) {
         if (!ids.has(track.id)) continue;
         const ent = v.entities.add({
           position: C.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
@@ -476,6 +482,85 @@ export function Map3D() {
         if (ent.billboard) {
           ent.billboard.scale = new (cesiumRef.current!.ConstantProperty)(tid === id ? 0.9 : 0.68);
         }
+      }
+    });
+    return unsub;
+  }, []);
+
+  /* ── 实时 track 数据更新 ── */
+  useEffect(() => {
+    const unsub = useTrackStore.subscribe((state) => {
+      const v = viewerRef.current;
+      const C = cesiumRef.current;
+      if (!v || !C || v.isDestroyed() || !state.tracks.length) return;
+
+      const groups = entityGroupsRef.current;
+      const trackMap = new Map(state.tracks.map((t) => [t.id, t]));
+
+      for (const ent of groups.tracks) {
+        const tid = ent.properties?.trackId?.getValue() as string;
+        const t = trackMap.get(tid);
+        if (!t) continue;
+        ent.position = new C.ConstantPositionProperty(
+          C.Cartesian3.fromDegrees(t.lng, t.lat, t.altitude || 0)
+        );
+        if (ent.billboard) {
+          ent.billboard.rotation = new C.ConstantProperty(-C.Math.toRadians(t.heading ?? 0));
+        }
+      }
+    });
+    return unsub;
+  }, []);
+
+  /* ── drawnAreas ── */
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((state) => {
+      const v = viewerRef.current;
+      const C = cesiumRef.current;
+      if (!v || !C || v.isDestroyed()) return;
+
+      const currentIds = new Set(state.drawnAreas.map((a) => a.id));
+      for (const [id, ents] of areaEntitiesRef.current) {
+        if (!currentIds.has(id)) {
+          for (const e of ents) v.entities.remove(e);
+          areaEntitiesRef.current.delete(id);
+        }
+      }
+      for (const area of state.drawnAreas) {
+        if (areaEntitiesRef.current.has(area.id)) continue;
+        const positions = area.points.map((p) => C.Cartesian3.fromDegrees(p.lng, p.lat));
+        const ents: CesiumEntity[] = [];
+        const polyEnt = v.entities.add({
+          polygon: {
+            hierarchy: new C.PolygonHierarchy(positions),
+            material: C.Color.fromCssColorString(area.fillColor).withAlpha(area.fillOpacity),
+            outline: true,
+            outlineColor: C.Color.fromCssColorString(area.color).withAlpha(0.7),
+            outlineWidth: 2,
+            heightReference: C.HeightReference.CLAMP_TO_GROUND,
+          },
+          properties: { _areaId: area.id },
+        });
+        ents.push(polyEnt);
+        if (area.label) {
+          const cLng = area.points.reduce((s, p) => s + p.lng, 0) / area.points.length;
+          const cLat = area.points.reduce((s, p) => s + p.lat, 0) / area.points.length;
+          const lblEnt = v.entities.add({
+            position: C.Cartesian3.fromDegrees(cLng, cLat, 100),
+            label: {
+              text: area.label,
+              font: "12px Inter, sans-serif",
+              fillColor: C.Color.fromCssColorString(area.color),
+              outlineColor: C.Color.fromCssColorString("#09090b"),
+              outlineWidth: 2,
+              style: C.LabelStyle.FILL_AND_OUTLINE,
+              verticalOrigin: C.VerticalOrigin.CENTER,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+          });
+          ents.push(lblEnt);
+        }
+        areaEntitiesRef.current.set(area.id, ents);
       }
     });
     return unsub;

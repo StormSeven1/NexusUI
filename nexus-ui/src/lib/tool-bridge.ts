@@ -10,6 +10,7 @@ import type { LeftPanelTab, RightPanelTab } from "@/stores/app-store";
 type ToolOutput = Record<string, unknown>;
 
 let _routeIdSeq = 0;
+let _areaIdSeq = 0;
 
 const sideEffects: Record<string, (output: ToolOutput) => void> = {
   navigate_to_location: (output) => {
@@ -56,12 +57,12 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
   },
 
   draw_route: (output) => {
-    if (!output.success) return;
     const { points, color, label } = output as {
       points: Array<{ lat: number; lng: number }>;
       color?: string;
       label?: string;
     };
+    if (!points?.length) return;
     useAppStore.getState().addRouteLine({
       id: `route-${++_routeIdSeq}`,
       points,
@@ -71,11 +72,47 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
   },
 
   measure_distance: () => {
-    /* 纯信息型工具，无 UI 副作用 — 结果由 LLM 回复展示 */
+    /* 纯信息型工具，无 UI 副作用 */
   },
 
   clear_annotations: () => {
     useAppStore.getState().clearAnnotations();
+  },
+
+  show_chart: () => {
+    /* 图表在聊天面板内联渲染，无地图副作用 */
+  },
+
+  show_weather: () => {
+    /* 天气卡片在聊天面板内联渲染，无地图副作用 */
+  },
+
+  query_map_context: () => {
+    /* 纯信息型工具，供 LLM 空间推理使用，无 UI 副作用 */
+  },
+
+  draw_area: (output) => {
+    if (!output.success) return;
+    const { points, color, fillColor, fillOpacity, label } = output as {
+      points: Array<{ lat: number; lng: number }>;
+      color?: string;
+      fillColor?: string;
+      fillOpacity?: number;
+      label?: string;
+    };
+    if (!points?.length) return;
+    useAppStore.getState().addDrawnArea({
+      id: `area-${++_areaIdSeq}`,
+      points,
+      color: color ?? "#f59e0b",
+      fillColor: fillColor ?? color ?? "#f59e0b",
+      fillOpacity: fillOpacity ?? 0.15,
+      label,
+    });
+  },
+
+  plan_route: () => {
+    /* plan_route 返回 action: "draw_route"，由 draw_route handler 处理 */
   },
 };
 

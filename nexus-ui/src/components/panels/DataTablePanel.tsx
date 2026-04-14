@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { MOCK_TRACKS } from "@/lib/mock-data";
 import { type ForceDisposition } from "@/lib/colors";
 import { useAppStore } from "@/stores/app-store";
+import { useTrackStore } from "@/stores/track-store";
 import {
   NxPanelHeader,
   NxSearchInput,
@@ -41,11 +42,14 @@ const DISPOSITION_BADGE: Record<ForceDisposition, { variant: "danger" | "warning
 
 export function DataTablePanel() {
   const { selectTrack, selectedTrackId } = useAppStore();
+  const liveTracks = useTrackStore((s) => s.tracks);
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("id");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(0);
   const pageSize = 10;
+
+  const allTracks = liveTracks.length ? liveTracks : MOCK_TRACKS;
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -57,7 +61,7 @@ export function DataTablePanel() {
   };
 
   const filtered = useMemo(() => {
-    let tracks = [...MOCK_TRACKS];
+    let tracks = [...allTracks];
     if (search) {
       const q = search.toLowerCase();
       tracks = tracks.filter(
@@ -73,7 +77,7 @@ export function DataTablePanel() {
       return sortDir === "asc" ? Number(aVal) - Number(bVal) : Number(bVal) - Number(aVal);
     });
     return tracks;
-  }, [search, sortField, sortDir]);
+  }, [search, sortField, sortDir, allTracks]);
 
   const totalPages = Math.ceil(filtered.length / pageSize);
   const pageData = filtered.slice(page * pageSize, (page + 1) * pageSize);

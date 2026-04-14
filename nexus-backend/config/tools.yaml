@@ -1,0 +1,252 @@
+# NexusUI 工具配置
+# 每个工具包含: name, description, enabled, parameters (OpenAI function calling schema)
+
+tools:
+  - name: navigate_to_location
+    description: "在地图上导航到指定经纬度坐标，可选缩放级别"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        lat:
+          type: number
+          description: "纬度"
+        lng:
+          type: number
+          description: "经度"
+        zoom:
+          type: number
+          description: "缩放级别，1-18"
+      required: ["lat", "lng"]
+
+  - name: select_track
+    description: "选中指定 ID 的目标进行查看，ID 格式如 TRK-001"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        trackId:
+          type: string
+          description: "目标 ID，如 TRK-001"
+      required: ["trackId"]
+
+  - name: switch_map_mode
+    description: "切换地图显示模式为 2D 或 3D"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: ["2d", "3d"]
+          description: "地图模式"
+      required: ["mode"]
+
+  - name: open_panel
+    description: "打开系统面板。可选面板：overview(概览)、dashboard(仪表)、comm(通信)、environment(环境)、eventlog(日志)、datatable(数据)"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        panel:
+          type: string
+          enum: ["overview", "dashboard", "comm", "environment", "eventlog", "datatable"]
+          description: "面板名称"
+        side:
+          type: string
+          enum: ["left", "right"]
+          description: "左侧或右侧面板"
+          default: "right"
+      required: ["panel"]
+
+  - name: query_tracks
+    description: "查询当前态势中的目标列表，可按类型或态势属性筛选"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: ["air", "sea", "underwater", "all"]
+          description: "目标类型筛选"
+        disposition:
+          type: string
+          enum: ["hostile", "friendly", "neutral", "all"]
+          description: "敌我属性筛选"
+
+  - name: highlight_tracks
+    description: "在地图上高亮显示一组目标（脉冲光晕效果），可按 ID 列表或按筛选条件批量高亮。传入空列表或不传参数可清除高亮。"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        trackIds:
+          type: array
+          items:
+            type: string
+          description: '要高亮的目标 ID 列表，如 ["TRK-001", "TRK-002"]'
+        type:
+          type: string
+          enum: ["air", "sea", "underwater", "all"]
+          description: "按目标类型批量高亮（与 trackIds 二选一）"
+        disposition:
+          type: string
+          enum: ["hostile", "friendly", "neutral", "all"]
+          description: "按敌我属性批量高亮（与 trackIds 二选一）"
+
+  - name: fly_to_track
+    description: "飞行到指定目标并居中显示（带平滑动画），同时选中该目标"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        trackId:
+          type: string
+          description: "目标 ID，如 TRK-002"
+        zoom:
+          type: number
+          description: "到达后的缩放级别，1-18，默认 12"
+      required: ["trackId"]
+
+  - name: draw_route
+    description: "在地图上绘制一条路线（折线），可连接多个目标或自定义坐标点。路线会以醒目颜色标绘在地图上。"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        trackIds:
+          type: array
+          items:
+            type: string
+          description: '按目标 ID 顺序连线，如 ["TRK-004", "TRK-002"]'
+        points:
+          type: array
+          items:
+            type: object
+            properties:
+              lat:
+                type: number
+              lng:
+                type: number
+            required: ["lat", "lng"]
+          description: "自定义坐标点列表（与 trackIds 二选一）"
+        color:
+          type: string
+          description: "路线颜色，CSS 颜色值，默认 #38bdf8（天蓝色）"
+        label:
+          type: string
+          description: "路线标注名称"
+
+  - name: measure_distance
+    description: "测量两个目标或坐标之间的直线距离"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        from:
+          type: string
+          description: "起点目标 ID（如 TRK-001）或 'lat,lng' 格式坐标"
+        to:
+          type: string
+          description: "终点目标 ID（如 TRK-002）或 'lat,lng' 格式坐标"
+      required: ["from", "to"]
+
+  - name: clear_annotations
+    description: "清除地图上的所有标绘（路线、高亮等注记），恢复默认显示"
+    enabled: true
+    parameters:
+      type: object
+      properties: {}
+
+  - name: query_data_chart
+    description: "查询态势数据并生成图表。支持按目标类型、敌我属性等维度统计，输出柱状图或饼状图数据。"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        query_type:
+          type: string
+          enum: ["tracks_by_type", "tracks_by_disposition", "tracks_by_speed", "tracks_summary"]
+          description: "查询类型：按目标类型、按敌我属性、按速度分段、综合摘要"
+        chart_type:
+          type: string
+          enum: ["bar", "pie"]
+          description: "图表类型：柱状图或饼状图"
+      required: ["query_type", "chart_type"]
+
+  - name: get_weather
+    description: "获取指定位置的天气信息，包括温度、天气状况、风力、湿度等"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        location:
+          type: string
+          description: "地点名称（如'北京'、'伦敦'）或 'lat,lng' 格式坐标"
+      required: ["location"]
+
+  - name: draw_area
+    description: "在地图上标绘一个多边形区域，可用于标记警戒区、搜索区域、作战区域等"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        points:
+          type: array
+          items:
+            type: object
+            properties:
+              lat:
+                type: number
+              lng:
+                type: number
+            required: ["lat", "lng"]
+          description: "多边形顶点坐标列表（至少3个点）"
+        color:
+          type: string
+          description: "区域边框颜色，CSS 颜色值，默认 #f59e0b（琥珀色）"
+        fillColor:
+          type: string
+          description: "区域填充颜色，默认与边框同色"
+        fillOpacity:
+          type: number
+          description: "填充透明度 0-1，默认 0.15"
+        label:
+          type: string
+          description: "区域标注名称"
+      required: ["points"]
+
+  - name: plan_route
+    description: "规划从起点到终点的航路，支持途经点和规避区域。返回完整的航路点列表、各航段距离和预计总距离/时间。"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        from:
+          type: string
+          description: "起点：目标 ID（如 TRK-001）或 'lat,lng' 格式坐标"
+        to:
+          type: string
+          description: "终点：目标 ID 或 'lat,lng' 格式坐标"
+        waypoints:
+          type: array
+          items:
+            type: string
+          description: "途经点列表，每项为目标 ID 或 'lat,lng' 格式坐标"
+        speed_knots:
+          type: number
+          description: "预计航速（节），用于计算预计时间，默认 15"
+      required: ["from", "to"]
+
+  - name: query_map_context
+    description: "查询当前地图上下文信息，包括限制区域（禁飞区、演习区等）的坐标和边界、目标实时位置。用于获取空间参考信息以支持相对位置描述（如'在禁飞区Alpha左侧'）。"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        include_zones:
+          type: boolean
+          description: "是否包含限制区域信息，默认 true"
+        include_tracks:
+          type: boolean
+          description: "是否包含目标位置信息，默认 true"

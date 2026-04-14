@@ -1,3 +1,3 @@
-from . import chat, conversations
+from . import chat, conversations, simulation
 
-__all__ = ["chat", "conversations"]
+__all__ = ["chat", "conversations", "simulation"]

@@ -6,12 +6,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import api_router
 from app.core.config import settings
 from app.core.db import init_db
+from app.services.simulation import sim_engine
+from app.services.tool_registry import registry
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await init_db()
+
+    registry.load_yaml()
+    import app.services.tool_handlers  # noqa: F401  触发装饰器注册
+
+    sim_engine.load_config()
+    sim_engine.start()
+
     yield
+    sim_engine.stop()
 
 
 def create_app() -> FastAPI:
