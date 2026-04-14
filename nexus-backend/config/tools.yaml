@@ -186,11 +186,15 @@ tools:
       required: ["location"]
 
   - name: draw_area
-    description: "在地图上标绘一个多边形区域，可用于标记警戒区、搜索区域、作战区域等"
+    description: "在地图上标绘一个区域。支持多边形(points)和圆形(shape=circle + center + radius_km)，用于标记警戒区、搜索区域、作战区域等"
     enabled: true
     parameters:
       type: object
       properties:
+        shape:
+          type: string
+          enum: ["polygon", "circle"]
+          description: "区域形状：polygon=多边形（默认），circle=圆形"
         points:
           type: array
           items:
@@ -201,7 +205,22 @@ tools:
               lng:
                 type: number
             required: ["lat", "lng"]
-          description: "多边形顶点坐标列表（至少3个点）"
+          description: "多边形顶点坐标列表（shape=polygon 时使用，至少3个点）"
+        center:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+          required: ["lat", "lng"]
+          description: "圆心坐标（shape=circle 时使用）"
+        radius_km:
+          type: number
+          description: "圆形半径（千米，shape=circle 时使用）"
+        segments:
+          type: number
+          description: "圆形分段数（默认 256，越大越圆）"
         color:
           type: string
           description: "区域边框颜色，CSS 颜色值，默认 #f59e0b（琥珀色）"
@@ -214,7 +233,7 @@ tools:
         label:
           type: string
           description: "区域标注名称"
-      required: ["points"]
+      required: []
 
   - name: plan_route
     description: "规划从起点到终点的航路，支持途经点和规避区域。返回完整的航路点列表、各航段距离和预计总距离/时间。"

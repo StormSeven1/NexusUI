@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.core.db_sync import get_sync_session
 from app.models.asset import Asset
 from app.models.zone import Zone
-from app.services.tool_handlers._geo import resolve_point
+from app.services.tool_handlers._geo import resolve_point, circle_points
 from app.services.tool_registry import registry
 
 
@@ -157,17 +157,61 @@ def handle_query_map_context(args: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _is_circle_intent(args: dict[str, Any]) -> bool:
+    """
+    判断 LLM 是否想画圆：显式 shape=circle，或提供了 center+radius_km。
+    Detect circle intent: explicit shape=circle or center+radius_km present.
+    """
+    if (args.get("shape") or "").lower() == "circle":
+        return True
+    if args.get("center") and args.get("radius_km") is not None:
+        return True
+    return False
+
+
+def _filter_bad_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    过滤掉明显异常的坐标点（如 lat=0 且 lng=0），防止 LLM 生成残缺数据。
+    Filter obviously invalid coords (e.g. (0,0)) produced by LLM truncation.
+    """
+    return [
+        p for p in points
+        if not (abs(p.get("lat", 0)) < 0.0001 and abs(p.get("lng", 0)) < 0.0001)
+    ]
+
+
 @registry.handler("draw_area")
 def handle_draw_area(args: dict[str, Any]) -> dict[str, Any]:
-    points = args.get("points", [])
-    if len(points) < 3:
-        return {"action": "draw_area", "success": False, "message": "多边形至少需要 3 个顶点"}
+    """
+    区域标绘：支持多边形(points)以及圆形(shape=circle / center+radius_km)。
+    自动检测圆形意图，过滤 (0,0) 异常点。
+    """
+    segments = args.get("segments", 256)
+
+    if _is_circle_intent(args):
+        center = args.get("center") or {}
+        radius_km = args.get("radius_km")
+        try:
+            c_lat = float(center.get("lat"))  # type: ignore[union-attr]
+            c_lng = float(center.get("lng"))  # type: ignore[union-attr]
+            r_km = float(radius_km)  # type: ignore[arg-type]
+        except (TypeError, ValueError, AttributeError):
+            return {"action": "draw_area", "success": False,
+                    "message": "圆形标绘需要 center{lat,lng} 与 radius_km"}
+        if r_km <= 0:
+            return {"action": "draw_area", "success": False, "message": "radius_km 必须大于 0"}
+        points = circle_points(c_lat, c_lng, r_km, int(segments) if segments is not None else 256)
+    else:
+        points = _filter_bad_points(args.get("points") or [])
+        if len(points) < 3:
+            return {"action": "draw_area", "success": False,
+                    "message": "多边形至少需要 3 个有效顶点（已过滤 (0,0) 等异常坐标）"}
+
     color = args.get("color", "#f59e0b")
     fill_color = args.get("fillColor", color)
     fill_opacity = args.get("fillOpacity", 0.15)
     label = args.get("label", "标绘区域")
 
-    # 将 {lat, lng} 列表转换为 [lng, lat] 存储格式
     coords_lnglat = [[p["lng"], p["lat"]] for p in points]
 
     zone_id = f"area-{uuid.uuid4().hex[:8]}"
