@@ -113,6 +113,23 @@ _SYSTEM_PROMPT_TEMPLATE = """\
 
 {map_context}
 
+## 思考过程要求（极其重要）
+- 你的内部思考过程（reasoning/thinking）必须全程使用**中文**
+- 思考时要清晰地分析任务需求，评估当前态势，制定执行策略
+- 每一步执行前都要简要思考下一步该做什么、为什么
+
+## 执行计划声明（极其重要）
+当任务涉及3个以上的工具调用时（如复合任务、多步骤操作），你必须：
+1. **首先**单独调用 `declare_plan` 工具声明完整的执行计划（不要同时调用其他工具）
+2. 步骤标签要简短清晰，使用中文（如"评估威胁"、"查询可用资产"、"分配无人机"）
+3. 计划确认后，再开始逐步调用实际工具执行
+
+示例 — 操作员说"分析态势并派无人机去侦查威胁"：
+第一轮响应：仅调用 declare_plan(goal="分析态势并派无人机侦查最高威胁", steps=["评估威胁", "查询可用资产", "创建侦查任务", "分配无人机", "高亮威胁目标", "飞向目标区域", "获取侦查画面"])
+后续响应：逐步调用 assess_threats → query_assets → create_task → assign_asset → highlight_tracks → fly_to_track → get_sensor_feed
+
+对于简单任务（1-2个工具调用），无需 declare_plan，直接执行即可。
+
 回复要求：
 - 使用中文回复
 - 回答简洁专业，适合态势感知场景
@@ -224,17 +241,76 @@ client = AsyncOpenAI(
 
 SSE_MSG_START = "message_start"
 SSE_TEXT_DELTA = "text_delta"
+SSE_THINKING_DELTA = "thinking_delta"
 SSE_TOOL_CALL = "tool_call"
 SSE_TOOL_RESULT = "tool_result"
+SSE_PLAN_UPDATE = "plan_update"
+SSE_APPROVAL_REQUIRED = "approval_required"
+SSE_APPROVAL_RESULT = "approval_result"
 SSE_STEP_DONE = "step_done"
 SSE_MSG_DONE = "message_done"
 SSE_ERROR = "error"
 
 MAX_TOOL_STEPS = 10
 
+# 等待用户审批的 pending futures: approval_id → asyncio.Event
+import asyncio
+import uuid as _uuid
+
+_pending_approvals: dict[str, asyncio.Event] = {}
+_approval_results: dict[str, dict[str, Any]] = {}
+
+APPROVAL_TIMEOUT_S = 120
+
 
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def resolve_approval(approval_id: str, approved: bool, reason: str | None = None) -> bool:
+    """由 API 端点调用，唤醒等待审批的流。"""
+    evt = _pending_approvals.get(approval_id)
+    if not evt:
+        return False
+    _approval_results[approval_id] = {"approved": approved, "reason": reason}
+    evt.set()
+    return True
+
+
+_TOOL_LABELS: dict[str, str] = {
+    "declare_plan": "声明计划",
+    "assess_threats": "评估威胁",
+    "query_tracks": "查询目标",
+    "query_assets": "查询资产",
+    "assign_asset": "分配资产",
+    "recall_asset": "召回资产",
+    "command_asset": "指挥资产",
+    "highlight_tracks": "高亮目标",
+    "fly_to_track": "飞向目标",
+    "create_task": "创建任务",
+    "update_task": "更新任务",
+    "get_sensor_feed": "获取画面",
+    "navigate_to_location": "地图导航",
+    "draw_area": "区域标绘",
+    "plan_route": "航路规划",
+    "draw_route": "绘制路线",
+    "get_weather": "天气查询",
+    "query_data_chart": "数据图表",
+}
+
+
+def _build_plan_steps(tool_calls: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+    """从积累的 tool_calls 构建计划步骤列表。"""
+    steps = []
+    for idx in sorted(tool_calls):
+        tc = tool_calls[idx]
+        name = tc["name"]
+        steps.append({
+            "toolName": name,
+            "label": _TOOL_LABELS.get(name, name),
+            "status": "pending",
+        })
+    return steps
 
 
 async def stream_chat(
@@ -251,7 +327,13 @@ async def stream_chat(
 
     yield _sse(SSE_MSG_START, {"message_id": ""})
 
-    for _ in range(MAX_TOOL_STEPS):
+    plan_id: str | None = None
+    all_plan_steps: list[dict[str, Any]] = []
+    global_step_offset = 0
+    declared_plan_mode = False
+    plan_exec_cursor = 0
+
+    for loop_idx in range(MAX_TOOL_STEPS):
         try:
             request_kwargs: dict[str, Any] = {
                 "model": model_id,
@@ -267,6 +349,7 @@ async def stream_chat(
             return
 
         collected_text = ""
+        collected_thinking = ""
         tool_calls_acc: dict[int, dict[str, Any]] = {}
         finish_reason = None
 
@@ -277,6 +360,12 @@ async def stream_chat(
 
             if chunk.choices[0].finish_reason:
                 finish_reason = chunk.choices[0].finish_reason
+
+            # --- 思考过程提取 ---
+            reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+            if reasoning:
+                collected_thinking += reasoning
+                yield _sse(SSE_THINKING_DELTA, {"text": reasoning})
 
             if delta.content:
                 collected_text += delta.content
@@ -299,6 +388,17 @@ async def stream_chat(
             yield _sse(SSE_MSG_DONE, {"finish_reason": finish_reason or "stop", "text": collected_text})
             return
 
+        # --- 分离 declare_plan 和常规工具调用 ---
+        declare_plan_call: dict[str, Any] | None = None
+        regular_calls: list[tuple[int, dict[str, Any]]] = []
+        for idx in sorted(tool_calls_acc):
+            tc = tool_calls_acc[idx]
+            if tc["name"] == "declare_plan":
+                declare_plan_call = tc
+            else:
+                regular_calls.append((idx, tc))
+
+        # --- 构建 assistant message（包含所有工具调用） ---
         assistant_message: dict[str, Any] = {"role": "assistant", "content": collected_text or None, "tool_calls": []}
         for idx in sorted(tool_calls_acc):
             tool_call = tool_calls_acc[idx]
@@ -309,17 +409,159 @@ async def stream_chat(
             })
         api_messages.append(assistant_message)
 
-        for idx in sorted(tool_calls_acc):
-            tool_call = tool_calls_acc[idx]
+        # --- 处理 declare_plan：初始化完整计划 ---
+        if declare_plan_call is not None:
+            try:
+                dp_args = json.loads(declare_plan_call["arguments"]) if declare_plan_call["arguments"] else {}
+            except json.JSONDecodeError:
+                dp_args = {}
+
+            declared_steps = dp_args.get("steps", [])
+            if declared_steps:
+                declared_plan_mode = True
+                plan_id = _uuid.uuid4().hex[:12]
+                all_plan_steps = [
+                    {"toolName": "", "label": s, "status": "pending"}
+                    for s in declared_steps
+                ]
+                yield _sse(SSE_PLAN_UPDATE, {
+                    "planId": plan_id,
+                    "steps": [{"index": i, **s} for i, s in enumerate(all_plan_steps)],
+                    "currentStep": 0,
+                })
+
+            dp_result = {"success": True, "message": f"执行计划已确认，共 {len(declared_steps)} 步"}
+            api_messages.append({
+                "role": "tool",
+                "tool_call_id": declare_plan_call["id"],
+                "content": json.dumps(dp_result, ensure_ascii=False),
+            })
+
+        # --- 非 declared 模式：从工具调用动态构建计划 ---
+        if not declared_plan_mode and regular_calls:
+            new_steps = _build_plan_steps(dict(regular_calls))
+            if plan_id is None:
+                plan_id = _uuid.uuid4().hex[:12]
+            all_plan_steps.extend(new_steps)
+            yield _sse(SSE_PLAN_UPDATE, {
+                "planId": plan_id,
+                "steps": [{"index": i, **s} for i, s in enumerate(all_plan_steps)],
+                "currentStep": global_step_offset,
+            })
+
+        # --- 执行常规工具调用 ---
+        for step_i, (idx, tool_call) in enumerate(regular_calls):
             try:
                 args = json.loads(tool_call["arguments"]) if tool_call["arguments"] else {}
             except json.JSONDecodeError:
                 args = {}
 
-            yield _sse(SSE_TOOL_CALL, {"tool_call_id": tool_call["id"], "tool_name": tool_call["name"], "args": args})
+            tool_name = tool_call["name"]
 
-            result = registry.execute(tool_call["name"], args)
-            yield _sse(SSE_TOOL_RESULT, {"tool_call_id": tool_call["id"], "tool_name": tool_call["name"], "result": result})
+            # 确定此工具对应的 plan step 索引
+            if declared_plan_mode:
+                if plan_exec_cursor < len(all_plan_steps):
+                    abs_step = plan_exec_cursor
+                    all_plan_steps[abs_step]["toolName"] = tool_name
+                else:
+                    abs_step = len(all_plan_steps)
+                    all_plan_steps.append({"toolName": tool_name, "label": _TOOL_LABELS.get(tool_name, tool_name), "status": "pending"})
+                    yield _sse(SSE_PLAN_UPDATE, {
+                        "planId": plan_id,
+                        "steps": [{"index": i, **s} for i, s in enumerate(all_plan_steps)],
+                        "currentStep": abs_step,
+                    })
+            else:
+                abs_step = global_step_offset + step_i
+
+            # --- Plan update: 标记 running ---
+            all_plan_steps[abs_step]["status"] = "running"
+            yield _sse(SSE_PLAN_UPDATE, {
+                "planId": plan_id,
+                "steps": [{"index": i, **s} for i, s in enumerate(all_plan_steps)],
+                "currentStep": abs_step,
+            })
+
+            yield _sse(SSE_TOOL_CALL, {"tool_call_id": tool_call["id"], "tool_name": tool_name, "args": args})
+
+            # --- Approval check ---
+            if registry.needs_approval(tool_name, args):
+                approval_id = _uuid.uuid4().hex[:12]
+                approval_evt = asyncio.Event()
+                _pending_approvals[approval_id] = approval_evt
+
+                yield _sse(SSE_APPROVAL_REQUIRED, {
+                    "approval_id": approval_id,
+                    "tool_name": tool_name,
+                    "tool_call_id": tool_call["id"],
+                    "args": args,
+                    "description": registry.approval_description(tool_name, args),
+                })
+
+                try:
+                    await asyncio.wait_for(approval_evt.wait(), timeout=APPROVAL_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    _pending_approvals.pop(approval_id, None)
+                    result = {"action": tool_name, "success": False, "message": "操作审批超时，已取消"}
+                    all_plan_steps[abs_step]["status"] = "error"
+                    all_plan_steps[abs_step]["result"] = "超时"
+                    yield _sse(SSE_APPROVAL_RESULT, {"approval_id": approval_id, "approved": False, "reason": "timeout"})
+                    yield _sse(SSE_TOOL_RESULT, {"tool_call_id": tool_call["id"], "tool_name": tool_name, "result": result})
+                    yield _sse(SSE_PLAN_UPDATE, {
+                        "planId": plan_id,
+                        "steps": [{"index": i, **s} for i, s in enumerate(all_plan_steps)],
+                        "currentStep": abs_step,
+                    })
+                    api_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": json.dumps(result, ensure_ascii=False),
+                    })
+                    if declared_plan_mode:
+                        plan_exec_cursor += 1
+                    continue
+
+                _pending_approvals.pop(approval_id, None)
+                approval = _approval_results.pop(approval_id, {"approved": False})
+                yield _sse(SSE_APPROVAL_RESULT, {
+                    "approval_id": approval_id,
+                    "approved": approval["approved"],
+                    "reason": approval.get("reason"),
+                })
+
+                if not approval["approved"]:
+                    reason = approval.get("reason") or "操作员拒绝"
+                    result = {"action": tool_name, "success": False, "message": f"操作被拒绝：{reason}"}
+                    all_plan_steps[abs_step]["status"] = "rejected"
+                    all_plan_steps[abs_step]["result"] = reason
+                    yield _sse(SSE_TOOL_RESULT, {"tool_call_id": tool_call["id"], "tool_name": tool_name, "result": result})
+                    yield _sse(SSE_PLAN_UPDATE, {
+                        "planId": plan_id,
+                        "steps": [{"index": i, **s} for i, s in enumerate(all_plan_steps)],
+                        "currentStep": abs_step,
+                    })
+                    api_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": json.dumps(result, ensure_ascii=False),
+                    })
+                    if declared_plan_mode:
+                        plan_exec_cursor += 1
+                    continue
+
+            result = registry.execute(tool_name, args)
+
+            # --- Plan update: 标记 done/error ---
+            success = result.get("success", True)
+            all_plan_steps[abs_step]["status"] = "done" if success else "error"
+            all_plan_steps[abs_step]["result"] = result.get("message", "")
+
+            yield _sse(SSE_TOOL_RESULT, {"tool_call_id": tool_call["id"], "tool_name": tool_name, "result": result})
+            yield _sse(SSE_PLAN_UPDATE, {
+                "planId": plan_id,
+                "steps": [{"index": i, **s} for i, s in enumerate(all_plan_steps)],
+                "currentStep": abs_step,
+            })
 
             api_messages.append({
                 "role": "tool",
@@ -327,6 +569,11 @@ async def stream_chat(
                 "content": json.dumps(result, ensure_ascii=False),
             })
 
+            if declared_plan_mode:
+                plan_exec_cursor += 1
+
+        if not declared_plan_mode:
+            global_step_offset += len(regular_calls)
         yield _sse(SSE_STEP_DONE, {})
 
     yield _sse(SSE_MSG_DONE, {"finish_reason": "max_steps", "text": collected_text})

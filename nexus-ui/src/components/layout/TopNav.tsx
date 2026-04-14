@@ -86,13 +86,20 @@ export function TopNav() {
     []
   );
 
-  const [nowLabel, setNowLabel] = useState(() => formatNowLabel(new Date(), timeFormatter));
+  const [nowLabel, setNowLabel] = useState<string>("");
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      setNowLabel(formatNowLabel(new Date(), timeFormatter));
-    }, 1000);
-    return () => window.clearInterval(timer);
+    // 避免 SSR/CSR 首屏时间不一致导致 hydration mismatch：
+    // 首屏渲染时先输出占位符，挂载后再异步更新真实时间。
+    // Avoid hydration mismatch by rendering a placeholder on first paint, then updating async after mount.
+    const update = () => setNowLabel(formatNowLabel(new Date(), timeFormatter));
+
+    const t0 = window.setTimeout(update, 0);
+    const timer = window.setInterval(update, 1000);
+    return () => {
+      window.clearTimeout(t0);
+      window.clearInterval(timer);
+    };
   }, [timeFormatter]);
 
   // 点击Tab的处理函数
@@ -164,8 +171,11 @@ export function TopNav() {
       {/* 右侧功能区 */}
       <div className="flex h-full items-center gap-3 border-l border-nexus-border px-4">
         {/* 时间显示 */}
-        <div className="font-mono text-xs text-nexus-text-secondary">
-          {nowLabel}
+        <div
+          className="font-mono text-xs text-nexus-text-secondary"
+          aria-label="local-time"
+        >
+          {nowLabel || "--:--:--"}
         </div>
 
         {/* 通知和用户 */}

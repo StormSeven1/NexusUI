@@ -4,15 +4,22 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.db import async_session
 from app.models import Conversation, Message
 from app.schemas import ChatRequest
-from app.services.llm import SSE_MSG_DONE, SSE_MSG_START, _sse, stream_chat
+from app.services.llm import SSE_MSG_DONE, SSE_MSG_START, _sse, stream_chat, resolve_approval
 
 router = APIRouter(tags=["chat"])
+
+
+class ApprovalRequest(BaseModel):
+    approval_id: str
+    approved: bool
+    reason: str | None = None
 
 
 def _build_openai_messages(db_messages: list[Message]) -> list[dict]:
@@ -125,11 +132,18 @@ async def chat_endpoint(body: ChatRequest):
 
     async def event_stream():
         collected_text = ""
+        collected_thinking = ""
         tool_parts: list[dict] = []
 
         sit_ctx = body.situational_context.model_dump(by_alias=False) if body.situational_context else None
         async for sse_event in stream_chat(history_messages, model=body.model, system_prompt=system_prompt or None, situational_context=sit_ctx):
-            if "event: text_delta" in sse_event:
+            if "event: thinking_delta" in sse_event:
+                try:
+                    data = json.loads(sse_event.split("data: ", 1)[1].strip())
+                    collected_thinking += data.get("text", "")
+                except (json.JSONDecodeError, IndexError):
+                    pass
+            elif "event: text_delta" in sse_event:
                 try:
                     data = json.loads(sse_event.split("data: ", 1)[1].strip())
                     collected_text += data.get("text", "")
@@ -177,6 +191,8 @@ async def chat_endpoint(body: ChatRequest):
             yield sse_event
 
         parts: list[dict] = []
+        if collected_thinking:
+            parts.append({"type": "reasoning", "text": collected_thinking})
         if collected_text:
             parts.append({"type": "text", "text": collected_text})
         parts.extend(tool_parts)
@@ -196,3 +212,11 @@ async def chat_endpoint(body: ChatRequest):
                 await db.commit()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.post("/chat/approve")
+async def approve_endpoint(body: ApprovalRequest):
+    ok = resolve_approval(body.approval_id, body.approved, body.reason)
+    if not ok:
+        return {"success": False, "message": f"审批 {body.approval_id} 不存在或已过期"}
+    return {"success": True, "approved": body.approved}

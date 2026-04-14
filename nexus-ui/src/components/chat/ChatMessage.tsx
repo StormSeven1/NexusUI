@@ -15,6 +15,10 @@ import { ThreatCard } from "@/components/chat/ThreatCard";
 import { TaskCard } from "@/components/chat/TaskCard";
 import { SurveillanceFeedCard } from "@/components/chat/SurveillanceFeedCard";
 import type { SensorFeedData } from "@/components/chat/SurveillanceFeedCard";
+import { AgentPlanCard } from "@/components/chat/AgentPlanCard";
+import type { PlanStep } from "@/components/chat/AgentPlanCard";
+import { ApprovalCard, ApprovalResultCard } from "@/components/chat/ApprovalCard";
+import type { ApprovalCardProps } from "@/components/chat/ApprovalCard";
 import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -144,6 +148,45 @@ function ToolCallCard({ part }: { part: ToolPartProps }) {
     return <SurveillanceFeedCard data={output as unknown as SensorFeedData} />;
   }
 
+  if (output?.action === "show_plan" && output.steps) {
+    return (
+      <AgentPlanCard
+        planId={(output.planId as string) ?? ""}
+        steps={output.steps as PlanStep[]}
+        currentStep={(output.currentStep as number) ?? 0}
+      />
+    );
+  }
+
+  if (toolName === "__approval__" && !isDone) {
+    const input = part.input as Record<string, unknown> | undefined;
+    if (input?.approval_id) {
+      return (
+        <ApprovalCard
+          approvalId={input.approval_id as string}
+          toolName={input.tool_name as string}
+          toolCallId={input.tool_call_id as string}
+          args={(input.args as Record<string, unknown>) ?? {}}
+          description={(input.description as string) ?? "是否批准此操作？"}
+        />
+      );
+    }
+  }
+
+  if (isDone && output?.action === "show_approval_result") {
+    return (
+      <ApprovalResultCard
+        approvalId={(output.approval_id as string) ?? ""}
+        approved={(output.approved as boolean) ?? false}
+        reason={output.reason as string | undefined}
+      />
+    );
+  }
+
+  if (toolName === "__approval__" || toolName === "__plan__" || toolName === "declare_plan") {
+    return null;
+  }
+
   return (
     <NxCard padding="sm" className="my-1.5 transition-all duration-200">
       <div className="flex items-center gap-2">
@@ -183,20 +226,7 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
   );
   const isThinking = isAssistant && isStreaming && !hasAnyContent;
 
-  // 合并连续的 reasoning parts
-  const mergedReasoning = message.parts?.reduce(
-    (acc, part) => {
-      if (part.type === "reasoning" && "text" in part && (part.text as string)?.trim().length > 0) {
-        return {
-          text: acc.text ? `${acc.text}\n\n${part.text}` : (part.text as string),
-          isStreaming: "state" in part ? (part as { state: string }).state === "streaming" : false,
-          rendered: false,
-        };
-      }
-      return acc;
-    },
-    { text: "", isStreaming: false, rendered: false }
-  ) ?? { text: "", isStreaming: false, rendered: false };
+  // reasoning parts 不再合并，每步独立渲染
 
   return (
     <div className={cn("flex gap-2 px-3 py-2 animate-fade-in", isUser && "flex-row-reverse")}>
@@ -224,22 +254,20 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
           message.parts.map((part, i) => {
             const key = `${message.id}-${i}`;
 
-            // 推理过程（合并后只渲染一次）
             if (part.type === "reasoning") {
-              if (!mergedReasoning.rendered && mergedReasoning.text) {
-                mergedReasoning.rendered = true;
-                return (
-                  <details key={key} className="mt-1">
-                    <summary className="cursor-pointer text-[10px] text-nexus-text-muted hover:text-nexus-text-secondary">
-                      {mergedReasoning.isStreaming ? "思考中..." : "思考过程"}
-                    </summary>
-                    <p className="mt-1 rounded-md bg-white/[0.02] p-2 text-[10px] italic leading-relaxed text-nexus-text-muted">
-                      {mergedReasoning.text}
-                    </p>
-                  </details>
-                );
-              }
-              return null;
+              const rText = (part as { text: string }).text;
+              if (!rText?.trim()) return null;
+              const rStreaming = "state" in part && (part as { state: string }).state === "streaming";
+              return (
+                <details key={key} className="mt-1" open={rStreaming}>
+                  <summary className="cursor-pointer text-[10px] text-nexus-text-muted hover:text-nexus-text-secondary transition-colors">
+                    {rStreaming ? "▸ 思考中..." : "▸ 思考过程"}
+                  </summary>
+                  <p className="mt-1 rounded-md bg-white/[0.02] p-2 text-[10px] italic leading-relaxed text-nexus-text-muted whitespace-pre-wrap">
+                    {rText}
+                  </p>
+                </details>
+              );
             }
 
             // 文本

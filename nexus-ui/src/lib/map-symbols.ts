@@ -46,10 +46,9 @@ function getMarkerColor(disposition: ForceDisposition): string {
 }
 
 /**
- * 生成用于 2D/3D 的目标图标 SVG（64x64）。
+ * 生成用于 2D/3D 的目标图标 SVG（64x64），无底板圆形，直接渲染目标轮廓。
  *
- * 使用嵌套 SVG 将 public/icons/ 中的实际目标轮廓缩放到圆形底板内，
- * 颜色随态势（敌/友/中立）动态注入。
+ * 颜色随态势（敌/友/中立）动态注入，黑色投影保证在浅色地图上的可见性。
  * 约定：图标默认朝"正北/向上"，旋转由地图层/引擎根据 heading 处理。
  */
 export function buildMarkerSymbolSvg(type: TrackType, disposition: ForceDisposition): string {
@@ -59,16 +58,14 @@ export function buildMarkerSymbolSvg(type: TrackType, disposition: ForceDisposit
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">`,
     `<defs>`,
-    `<filter id="glow">`,
-    `<feDropShadow dx="0" dy="0" stdDeviation="1.8" flood-color="${color}" flood-opacity="0.55"/>`,
-    `<feDropShadow dx="0" dy="2" stdDeviation="1.6" flood-color="#000000" flood-opacity="0.45"/>`,
+    `<filter id="sh" x="-25%" y="-25%" width="150%" height="150%">`,
+    `<feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#000" flood-opacity="0.85"/>`,
     `</filter>`,
     `</defs>`,
-    `<circle cx="32" cy="32" r="29" fill="rgba(9,9,11,0.88)" stroke="${color}" stroke-width="2.5" filter="url(#glow)"/>`,
-    `<svg x="10" y="10" width="44" height="44" viewBox="${icon.viewBox}">`,
+    `<svg x="4" y="6" width="56" height="54" viewBox="${icon.viewBox}" filter="url(#sh)">`,
     `<path d="${icon.pathD}" fill="${color}"/>`,
     `</svg>`,
-    `<path d="M32 3 L32 10" stroke="${color}" stroke-width="2.4" stroke-linecap="round" opacity="0.9"/>`,
+    `<path d="M32 2 L32 7" stroke="${color}" stroke-width="2.2" stroke-linecap="round" opacity="0.9"/>`,
     `</svg>`,
   ].join("");
 }
@@ -210,8 +207,9 @@ const ASSET_SVG_ICONS: Partial<Record<AssetType, AssetIconDef>> = {
 
 /* drone / satellite 保留旧路径方案（48×48 坐标系，描边风格） */
 const ASSET_ICON_PATHS: Partial<Record<AssetType, string>> = {
+  // 无人机：使用两段半圆弧组成完整圆（替代之前有兼容性问题的近零弧写法）
   drone:
-    "M14 14 L20 20 M34 14 L28 20 M14 34 L20 28 M34 34 L28 28 M20 20 L28 20 L28 28 L20 28 Z M14 14 A4 4 0 1 0 14 14.01 M34 14 A4 4 0 1 0 34 14.01 M14 34 A4 4 0 1 0 14 34.01 M34 34 A4 4 0 1 0 34 34.01",
+    "M14 14 L20 20 M34 14 L28 20 M14 34 L20 28 M34 34 L28 28 M20 20 L28 20 L28 28 L20 28 Z M10 14 A4 4 0 1 0 18 14 A4 4 0 1 0 10 14 Z M30 14 A4 4 0 1 0 38 14 A4 4 0 1 0 30 14 Z M10 34 A4 4 0 1 0 18 34 A4 4 0 1 0 10 34 Z M30 34 A4 4 0 1 0 38 34 A4 4 0 1 0 30 34 Z",
   satellite:
     "M16 32 L22 26 M26 22 L32 16 M22 26 L26 22 M18 18 L14 14 M30 30 L34 34 M13 28 Q10 24 14 20 M20 34 Q24 38 28 35 M19 24 L24 19 L29 24 L24 29 Z",
 };
@@ -221,10 +219,11 @@ export function getAssetSymbolId(type: AssetType, status: AssetStatus): string {
 }
 
 /**
- * 生成 48x48 资产图标 SVG，颜色随运行状态（在线/离线/降级）动态注入。
+ * 生成 56x56 资产图标 SVG，颜色随运行状态（在线/离线/降级）动态注入。
  *
  * - radar / camera / tower：使用 public/icons/ 中的实际 SVG 路径，嵌套 svg 自动缩放
- * - drone / satellite：使用旧版描边路径方案
+ *   camera 给予更大内边距避免图标过于拥挤
+ * - drone / satellite：使用描边路径方案，嵌入 48×48 坐标系的嵌套 svg 保持居中
  */
 export function buildAssetSymbolSvg(type: AssetType, status: AssetStatus): string {
   const color = ASSET_STATUS_COLORS[status];
@@ -232,27 +231,33 @@ export function buildAssetSymbolSvg(type: AssetType, status: AssetStatus): strin
 
   if (svgIcon) {
     const fillRuleAttr = svgIcon.fillRule ? ` fill-rule="${svgIcon.fillRule}"` : "";
+    // camera 图标宽高比约 27:24（横向略宽），给更大边距以避免拥挤感
+    const pad = type === "camera" ? 12 : 8;
+    const inner = 56 - pad * 2;
     return [
-      `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 56 56">`,
       `<defs>`,
-      `<filter id="ag"><feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="${color}" flood-opacity="0.5"/></filter>`,
+      `<filter id="ag" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="${color}" flood-opacity="0.5"/></filter>`,
       `</defs>`,
-      `<rect x="4" y="4" width="40" height="40" rx="6" fill="rgba(9,9,11,0.9)" stroke="${color}" stroke-width="2" filter="url(#ag)"/>`,
-      `<svg x="8" y="8" width="32" height="32" viewBox="${svgIcon.viewBox}">`,
+      `<rect x="3" y="3" width="50" height="50" rx="7" fill="rgba(9,9,11,0.9)" stroke="${color}" stroke-width="2" filter="url(#ag)"/>`,
+      `<svg x="${pad}" y="${pad}" width="${inner}" height="${inner}" viewBox="${svgIcon.viewBox}">`,
       `<path d="${svgIcon.pathD}" fill="${color}"${fillRuleAttr}/>`,
       `</svg>`,
       `</svg>`,
     ].join("");
   }
 
+  // drone / satellite：路径在 48×48 坐标系，嵌套 svg 映射到 50×50 区域
   const iconPath = ASSET_ICON_PATHS[type] ?? "";
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 56 56">`,
     `<defs>`,
-    `<filter id="ag"><feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="${color}" flood-opacity="0.5"/></filter>`,
+    `<filter id="ag" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="${color}" flood-opacity="0.5"/></filter>`,
     `</defs>`,
-    `<rect x="4" y="4" width="40" height="40" rx="6" fill="rgba(9,9,11,0.9)" stroke="${color}" stroke-width="2" filter="url(#ag)"/>`,
-    `<path d="${iconPath}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
+    `<rect x="3" y="3" width="50" height="50" rx="7" fill="rgba(9,9,11,0.9)" stroke="${color}" stroke-width="2" filter="url(#ag)"/>`,
+    `<svg x="3" y="3" width="50" height="50" viewBox="0 0 48 48">`,
+    `<path d="${iconPath}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`,
+    `</svg>`,
     `</svg>`,
   ].join("");
 }
@@ -267,6 +272,40 @@ export function getAllAssetSymbolKeys(): Array<{ id: string; type: AssetType; st
   return types.flatMap((type) =>
     statuses.map((status) => ({ id: getAssetSymbolId(type, status), type, status }))
   );
+}
+
+/* ── 选中目标高亮环（Track selection ring）96x96 SVG ── */
+
+export const TRACK_SELECT_RING_ID = "track-select-ring";
+
+/**
+ * 生成目标选中高亮环 SVG：蓝色静态瞄准环，取代原来的大透明圆圈。
+ *
+ * 设计：外层低透明度晕圈 + 内层主环 + 4 个刻度线，风格参考瞄准镜。
+ */
+export function buildSelectionRingSvg(): string {
+  const c = "#60a5fa";
+  const s = 96;
+  const half = s / 2;
+  const rO = 40;
+  const rI = 33;
+  const tA = half - rO;      // 8  刻度起（外环边缘）
+  const tB = tA + 9;         // 17 刻度终（向内 9px）
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">`,
+    `<circle cx="${half}" cy="${half}" r="${rO}" fill="none" stroke="${c}" stroke-width="5" opacity="0.1"/>`,
+    `<circle cx="${half}" cy="${half}" r="${rI}" fill="none" stroke="${c}" stroke-width="1.8" opacity="0.8"/>`,
+    `<line x1="${half}" y1="${tA}" x2="${half}" y2="${tB}" stroke="${c}" stroke-width="2" stroke-linecap="round" opacity="0.85"/>`,
+    `<line x1="${half}" y1="${s - tA}" x2="${half}" y2="${s - tB}" stroke="${c}" stroke-width="2" stroke-linecap="round" opacity="0.85"/>`,
+    `<line x1="${tA}" y1="${half}" x2="${tB}" y2="${half}" stroke="${c}" stroke-width="2" stroke-linecap="round" opacity="0.85"/>`,
+    `<line x1="${s - tA}" y1="${half}" x2="${s - tB}" y2="${half}" stroke="${c}" stroke-width="2" stroke-linecap="round" opacity="0.85"/>`,
+    `</svg>`,
+  ].join("");
+}
+
+export function buildSelectionRingDataUrl(): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(buildSelectionRingSvg())}`;
 }
 
 /* ── 选中资产高亮框 52x52 SVG ── */

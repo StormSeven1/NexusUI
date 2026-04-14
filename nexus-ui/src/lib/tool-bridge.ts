@@ -174,6 +174,14 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
   show_sensor_feed: () => {
     /* 传感器画面在聊天面板内联渲染 */
   },
+
+  show_plan: () => {
+    /* 执行计划在聊天面板内联渲染 */
+  },
+
+  show_approval_result: () => {
+    /* 审批结果在聊天面板内联渲染 */
+  },
 };
 
 /**

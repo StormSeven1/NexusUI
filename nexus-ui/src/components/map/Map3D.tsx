@@ -276,7 +276,7 @@ export function Map3D() {
             position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
             billboard: {
               image: buildMarkerSymbolDataUrl(track.type, track.disposition),
-              scale: 0.68,
+              scale: 0.90,
               verticalOrigin: Cesium.VerticalOrigin.CENTER,
               heightReference: Cesium.HeightReference.NONE,
               rotation: -Cesium.Math.toRadians(track.heading ?? 0),
@@ -307,7 +307,7 @@ export function Map3D() {
             position: Cesium.Cartesian3.fromDegrees(asset.lng, asset.lat, 0),
             billboard: {
               image: buildAssetSymbolDataUrl(asset.type, asset.status),
-              scale: 0.62,
+              scale: 0.82,
               verticalOrigin: Cesium.VerticalOrigin.CENTER,
               heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             },
@@ -548,7 +548,7 @@ export function Map3D() {
       for (const ent of entityGroupsRef.current.assets) {
         const aid = ent.properties?.assetId?.getValue();
         if (ent.billboard) {
-          ent.billboard.scale = new (cesiumRef.current!.ConstantProperty)(aid === id ? 0.85 : 0.62);
+          ent.billboard.scale = new (cesiumRef.current!.ConstantProperty)(aid === id ? 1.05 : 0.82);
         }
       }
     });
@@ -562,7 +562,7 @@ export function Map3D() {
       for (const ent of entityGroupsRef.current.tracks) {
         const tid = ent.properties?.trackId?.getValue();
         if (ent.billboard) {
-          ent.billboard.scale = new (cesiumRef.current!.ConstantProperty)(tid === id ? 0.9 : 0.68);
+          ent.billboard.scale = new (cesiumRef.current!.ConstantProperty)(tid === id ? 1.12 : 0.90);
         }
       }
     });

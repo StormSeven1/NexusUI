@@ -2,6 +2,24 @@
 # 每个工具包含: name, description, enabled, parameters (OpenAI function calling schema)
 
 tools:
+  - name: declare_plan
+    description: "在执行复杂多步骤任务前，先声明完整的执行计划。当任务需要调用3个以上的工具时，必须首先单独调用此工具声明所有步骤，然后再开始逐步执行。"
+    enabled: true
+    parameters:
+      type: object
+      properties:
+        goal:
+          type: string
+          description: "任务总目标的简短描述"
+        steps:
+          type: array
+          description: "按执行顺序列出的步骤标签列表，每项为简短的中文描述（如'评估威胁'、'查询可用资产'）"
+          items:
+            type: string
+      required:
+        - goal
+        - steps
+
   - name: navigate_to_location
     description: "在地图上导航到指定经纬度坐标，可选缩放级别"
     enabled: true
@@ -305,6 +323,8 @@ tools:
   - name: assign_asset
     description: "将可用资产分配去监控指定目标。可指定资产ID或自动选择最优资产。无人机会飞向目标，相机会转向目标。"
     enabled: true
+    requires_approval:
+      when_asset_type: ["drone"]
     parameters:
       type: object
       properties:
@@ -334,6 +354,8 @@ tools:
   - name: command_asset
     description: "向资产下发指令：move_to（移动到坐标/目标）、aim_at（转向目标）、start_patrol（开始巡逻）"
     enabled: true
+    requires_approval:
+      when_action: ["move_to", "start_patrol"]
     parameters:
       type: object
       properties:

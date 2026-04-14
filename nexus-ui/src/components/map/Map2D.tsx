@@ -5,7 +5,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
-import { MOCK_ALERTS, MOCK_TRACKS } from "@/lib/mock-data";
+import { MOCK_TRACKS } from "@/lib/mock-data";
 import type { Asset, RestrictedZone, Track } from "@/lib/mock-data";
 import { useZoneStore } from "@/stores/zone-store";
 import { useAssetStore } from "@/stores/asset-store";
@@ -19,10 +19,8 @@ import {
   getMarkerSymbolId,
   buildLockOnDataUrl,
   LOCK_ON_IMAGE_ID,
-  buildAlertRingDataUrl,
-  getAllAlertRingKeys,
-  getAlertRingImageId,
-  type AlertSeverity,
+  buildSelectionRingDataUrl,
+  TRACK_SELECT_RING_ID,
   buildAssetSymbolDataUrl,
   getAllAssetSymbolKeys,
   getAssetSymbolId,
@@ -51,7 +49,6 @@ const ZONE_SOURCE = "zones-source";
 const TRACK_SYMBOL = "tracks-symbol";
 const TRACK_LABEL = "tracks-label";
 const HIGHLIGHT_LAYER = "tracks-highlight";
-const ALERT_RING = "tracks-alert-ring";
 const LOCK_ON = "tracks-lock-on";
 
 /* layer ids — 资产位置 */
@@ -73,7 +70,7 @@ const ZONE_LABEL = "zones-label";
 
 /* 图层面板 ID → 地图 layer 映射 */
 const LAYER_MAPPING: Record<string, string[]> = {
-  "lyr-tracks": [TRACK_SYMBOL, TRACK_LABEL, HIGHLIGHT_LAYER, ALERT_RING, LOCK_ON],
+  "lyr-tracks": [TRACK_SYMBOL, TRACK_LABEL, HIGHLIGHT_LAYER, LOCK_ON],
   "lyr-assets": [ASSET_SYMBOL, ASSET_LABEL, ASSET_SELECT],
   "lyr-coverage": [FOV_FILL, FOV_LINE, RADAR_RANGE_FILL, RADAR_RANGE_LINE, RADAR_SWEEP_FILL],
   "lyr-zones": [ZONE_FILL, ZONE_LINE, ZONE_LABEL],
@@ -112,23 +109,12 @@ function adaptAssets(assets: AssetData[]): Asset[] {
 
 /* ─── helpers ─── */
 
-const ALERT_RANK: Record<AlertSeverity, number> = { info: 1, warning: 2, critical: 3 };
-
-function getTrackMaxSeverity(trackId: string): AlertSeverity | null {
-  let max: AlertSeverity | null = null;
-  for (const a of MOCK_ALERTS) {
-    if (a.trackId !== trackId) continue;
-    if (!max || ALERT_RANK[a.severity] > ALERT_RANK[max]) max = a.severity;
-  }
-  return max;
-}
 
 function buildTrackGeoJSON(trackList?: Track[]) {
   const tracks = trackList ?? MOCK_TRACKS;
   return {
     type: "FeatureCollection" as const,
     features: tracks.map((t) => {
-      const sev = getTrackMaxSeverity(t.id);
       return {
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [t.lng, t.lat] as [number, number] },
@@ -137,8 +123,6 @@ function buildTrackGeoJSON(trackList?: Track[]) {
           speed: t.speed, heading: t.heading, altitude: t.altitude ?? null,
           color: FORCE_COLORS[t.disposition],
           symbolId: getMarkerSymbolId(t.type, t.disposition),
-          alertRingId: sev ? getAlertRingImageId(sev) : "",
-          hasAlert: sev ? "yes" : "",
         },
       };
     }),
@@ -281,11 +265,11 @@ export function Map2D() {
           ...getAllMarkerSymbolKeys().map(async ({ id, type, disposition }) => {
             if (!map.hasImage(id)) map.addImage(id, await loadSvgImage(buildMarkerSymbolDataUrl(type, disposition), 64), { pixelRatio: 2 });
           }),
-          ...getAllAlertRingKeys().map(async ({ id, severity }) => {
-            if (!map.hasImage(id)) map.addImage(id, await loadSvgImage(buildAlertRingDataUrl(severity), 96), { pixelRatio: 2 });
-          }),
+          (async () => {
+            if (!map.hasImage(TRACK_SELECT_RING_ID)) map.addImage(TRACK_SELECT_RING_ID, await loadSvgImage(buildSelectionRingDataUrl(), 96), { pixelRatio: 2 });
+          })(),
           ...getAllAssetSymbolKeys().map(async ({ id, type, status }) => {
-            if (!map.hasImage(id)) map.addImage(id, await loadSvgImage(buildAssetSymbolDataUrl(type, status), 48), { pixelRatio: 2 });
+            if (!map.hasImage(id)) map.addImage(id, await loadSvgImage(buildAssetSymbolDataUrl(type, status), 56), { pixelRatio: 2 });
           }),
           (async () => {
             if (!map.hasImage(LOCK_ON_IMAGE_ID)) map.addImage(LOCK_ON_IMAGE_ID, await loadSvgImage(buildLockOnDataUrl(), 128), { pixelRatio: 2 });
@@ -364,13 +348,11 @@ export function Map2D() {
         const liveTracks = useTrackStore.getState().tracks;
         map.addSource(TRACK_SOURCE, { type: "geojson", data: buildTrackGeoJSON(liveTracks.length ? liveTracks : undefined) });
 
-        map.addLayer({ id: HIGHLIGHT_LAYER, type: "circle", source: TRACK_SOURCE, filter: ["in", "id", ""], paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 12, 10, 20, 15, 32], "circle-color": "transparent", "circle-stroke-color": "#60a5fa", "circle-stroke-width": 2.5, "circle-stroke-opacity": 0.85 } });
-
-        map.addLayer({ id: ALERT_RING, type: "symbol", source: TRACK_SOURCE, filter: ["==", ["get", "hasAlert"], "yes"], layout: { "icon-image": ["get", "alertRingId"], "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.35, 10, 0.55, 15, 0.8], "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-rotation-alignment": "viewport", "icon-pitch-alignment": "viewport" }, paint: { "icon-opacity": 0.85 } });
+        map.addLayer({ id: HIGHLIGHT_LAYER, type: "symbol", source: TRACK_SOURCE, filter: ["in", "id", ""], layout: { "icon-image": TRACK_SELECT_RING_ID, "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.58, 10, 0.86, 15, 1.12], "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-rotation-alignment": "viewport", "icon-pitch-alignment": "viewport" }, paint: { "icon-opacity": 0.88 } });
 
         map.addLayer({ id: LOCK_ON, type: "symbol", source: TRACK_SOURCE, filter: ["in", "id", ""], layout: { "icon-image": LOCK_ON_IMAGE_ID, "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.4, 10, 0.65, 15, 0.95], "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-rotation-alignment": "viewport", "icon-pitch-alignment": "viewport" }, paint: { "icon-opacity": 0.9 } });
 
-        map.addLayer({ id: TRACK_SYMBOL, type: "symbol", source: TRACK_SOURCE, layout: { "icon-image": ["get", "symbolId"], "icon-rotate": ["coalesce", ["get", "heading"], 0], "icon-rotation-alignment": "map", "icon-pitch-alignment": "map", "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.38, 10, 0.56, 15, 0.76], "icon-allow-overlap": true, "icon-ignore-placement": true } });
+        map.addLayer({ id: TRACK_SYMBOL, type: "symbol", source: TRACK_SOURCE, layout: { "icon-image": ["get", "symbolId"], "icon-rotate": ["coalesce", ["get", "heading"], 0], "icon-rotation-alignment": "map", "icon-pitch-alignment": "map", "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.55, 10, 0.80, 15, 1.05], "icon-allow-overlap": true, "icon-ignore-placement": true } });
 
         map.addLayer({ id: TRACK_LABEL, type: "symbol", source: TRACK_SOURCE, layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Regular"], "text-size": 10, "text-offset": [0, 2.2], "text-anchor": "top", "text-max-width": 10 }, paint: { "text-color": "#a1a1aa", "text-halo-color": "#09090b", "text-halo-width": 1.5 } });
 
@@ -381,7 +363,7 @@ export function Map2D() {
 
         map.addLayer({ id: ASSET_SELECT, type: "symbol", source: ASSET_SOURCE, filter: ["in", "id", ""], layout: { "icon-image": ASSET_SELECT_IMAGE_ID, "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.5, 10, 0.75, 15, 1.0], "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-rotation-alignment": "viewport", "icon-pitch-alignment": "viewport" }, paint: { "icon-opacity": 0.9 } });
 
-        map.addLayer({ id: ASSET_SYMBOL, type: "symbol", source: ASSET_SOURCE, layout: { "icon-image": ["get", "symbolId"], "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.42, 10, 0.62, 15, 0.82], "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-rotation-alignment": "viewport", "icon-pitch-alignment": "viewport" } });
+        map.addLayer({ id: ASSET_SYMBOL, type: "symbol", source: ASSET_SOURCE, layout: { "icon-image": ["get", "symbolId"], "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.65, 10, 0.92, 15, 1.18], "icon-allow-overlap": true, "icon-ignore-placement": true, "icon-rotation-alignment": "viewport", "icon-pitch-alignment": "viewport" } });
 
         map.addLayer({ id: ASSET_LABEL, type: "symbol", source: ASSET_SOURCE, layout: { "text-field": ["get", "name"], "text-font": ["Open Sans Regular"], "text-size": 10, "text-offset": [0, 1.8], "text-anchor": "top", "text-max-width": 10 }, paint: { "text-color": "#6ee7b7", "text-halo-color": "#09090b", "text-halo-width": 1.5, "text-opacity": 0.8 } });
 
@@ -462,18 +444,11 @@ export function Map2D() {
           for (const ml of mlIds) setVis(map, ml, v);
         }
 
-        /* ── 动画循环：告警脉冲 + 雷达扫描 ── */
-        let alertPhase = 0;
+        /* ── 动画循环：雷达扫描 ── */
         let sweepAngle = 0;
         const animate = () => {
           if (!mapRef.current) return;
           const m = mapRef.current;
-
-          // 告警环呼吸
-          alertPhase += 0.06;
-          if (alertPhase > Math.PI * 2) alertPhase -= Math.PI * 2;
-          const opacity = 0.3 + 0.6 * ((Math.sin(alertPhase) + 1) / 2);
-          if (m.getLayer(ALERT_RING)) m.setPaintProperty(ALERT_RING, "icon-opacity", opacity);
 
           // 雷达扫描旋转
           sweepAngle = (sweepAngle + 0.8) % 360;

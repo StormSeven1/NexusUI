@@ -55,6 +55,9 @@ export async function POST(req: Request) {
       let buffer = "";
       let textPartId = "";
       let textActive = false;
+      let reasoningPartId = "";
+      let reasoningActive = false;
+      const registeredPlanIds = new Set<string>();
 
       const processEvent = (event: string, data: Record<string, unknown>) => {
         switch (event) {
@@ -62,7 +65,25 @@ export async function POST(req: Request) {
             writer.write({ type: "start", messageId: generateId() });
             break;
 
+          case "thinking_delta": {
+            if (textActive) {
+              writer.write({ type: "text-end", id: textPartId });
+              textActive = false;
+            }
+            if (!reasoningActive) {
+              reasoningPartId = generateId();
+              writer.write({ type: "reasoning-start", id: reasoningPartId });
+              reasoningActive = true;
+            }
+            writer.write({ type: "reasoning-delta", delta: data.text as string, id: reasoningPartId });
+            break;
+          }
+
           case "text_delta": {
+            if (reasoningActive) {
+              writer.write({ type: "reasoning-end", id: reasoningPartId });
+              reasoningActive = false;
+            }
             if (!textActive) {
               textPartId = generateId();
               writer.write({ type: "text-start", id: textPartId });
@@ -73,6 +94,11 @@ export async function POST(req: Request) {
           }
 
           case "tool_call":
+            if ((data.tool_name as string) === "declare_plan") break;
+            if (reasoningActive) {
+              writer.write({ type: "reasoning-end", id: reasoningPartId });
+              reasoningActive = false;
+            }
             if (textActive) {
               writer.write({ type: "text-end", id: textPartId });
               textActive = false;
@@ -86,6 +112,7 @@ export async function POST(req: Request) {
             break;
 
           case "tool_result":
+            if ((data.tool_name as string) === "declare_plan") break;
             writer.write({
               type: "tool-output-available",
               toolCallId: data.tool_call_id as string,
@@ -93,7 +120,51 @@ export async function POST(req: Request) {
             });
             break;
 
+          case "plan_update": {
+            const planToolCallId = `plan-${data.planId as string}`;
+            if (!registeredPlanIds.has(planToolCallId)) {
+              registeredPlanIds.add(planToolCallId);
+              writer.write({
+                type: "tool-input-available",
+                toolCallId: planToolCallId,
+                toolName: "__plan__",
+                input: {},
+              });
+            }
+            writer.write({
+              type: "tool-output-available",
+              toolCallId: planToolCallId,
+              output: { action: "show_plan", ...data } as Record<string, unknown>,
+            });
+            break;
+          }
+
+          case "approval_required": {
+            const approvalToolCallId = `approval-${data.approval_id as string}`;
+            writer.write({
+              type: "tool-input-available",
+              toolCallId: approvalToolCallId,
+              toolName: "__approval__",
+              input: data as Record<string, unknown>,
+            });
+            break;
+          }
+
+          case "approval_result": {
+            const approvalToolCallId = `approval-${data.approval_id as string}`;
+            writer.write({
+              type: "tool-output-available",
+              toolCallId: approvalToolCallId,
+              output: { action: "show_approval_result", ...data } as Record<string, unknown>,
+            });
+            break;
+          }
+
           case "step_done":
+            if (reasoningActive) {
+              writer.write({ type: "reasoning-end", id: reasoningPartId });
+              reasoningActive = false;
+            }
             if (textActive) {
               writer.write({ type: "text-end", id: textPartId });
               textActive = false;
@@ -102,6 +173,10 @@ export async function POST(req: Request) {
             break;
 
           case "message_done":
+            if (reasoningActive) {
+              writer.write({ type: "reasoning-end", id: reasoningPartId });
+              reasoningActive = false;
+            }
             if (textActive) {
               writer.write({ type: "text-end", id: textPartId });
               textActive = false;
