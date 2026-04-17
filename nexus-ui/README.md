@@ -21,6 +21,12 @@ npm run dev
 
 访问 `http://localhost:3000`
 
+## 地图环境变量
+
+二维底图来源（MapLibre 样式 URL 等）在 `src/lib/map-libre-basemap.ts`：`NEXT_PUBLIC_MAP2D_STYLE_URL`、`NEXT_PUBLIC_MAP2D_MINI_STYLE_URL`、`NEXT_PUBLIC_MAP2D_INITIAL_*`。三维 Cesium 底图与初始视角在 `src/lib/map-3d-config.ts`：`NEXT_PUBLIC_MAP3D_IMAGERY_URL`（必填 XYZ 模板）、`NEXT_PUBLIC_MAP3D_INITIAL_*`。全部以 `MAP2D_*` 与 `MAP3D_*` 区分，示例见 `.env.example`。
+
+离线样式 `offline-map.json` 的文字字形走同源 **`public/fonts/<字体名>/`**（见 `public/fonts/README.txt`）；亦可自行从 OpenMapTiles Release 解压整包字体目录到该路径。
+
 ## 后端（FastAPI）启动方式
 
 本仓库的后端在 `../nexus-backend/`，默认由前端通过 `/api/chat`（Next.js 代理）转发到后端 `http://localhost:8001`。
@@ -104,7 +110,7 @@ src/
 ├── stores/
 │   └── app-store.ts        # Zustand 全局状态
 └── lib/
-    ├── colors.ts           # 色彩 Token
+    ├── theme-colors.ts     # 主题色与敌我色
     ├── mock-data.ts        # 演示数据
     └── utils.ts            # 工具函数
 ```

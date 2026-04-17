@@ -1,6 +1,11 @@
 "use client";
 
-import { MOCK_ALERTS } from "@/lib/mock-data";
+/**
+ * 告警面板 — 消费 alert-store 的实时数据。
+ *
+ * 【数据流】`useUnifiedWsFeed`（`alert_batch` / `map_command` alert / `alert`）经 `ws-alert-normalize` 归一化 → `addAlerts` → 本列表。
+ */
+
 import { useAppStore } from "@/stores/app-store";
 import { useAlertStore, type AlertData } from "@/stores/alert-store";
 import { cn } from "@/lib/utils";
@@ -35,27 +40,14 @@ const SEVERITY_STYLES = {
 
 type SeverityKey = keyof typeof SEVERITY_STYLES;
 
-interface UnifiedAlert {
-  id: string;
-  severity: SeverityKey;
-  message: string;
-  timestamp: string;
-  trackId?: string;
-  isRealtime?: boolean;
-}
-
 export function AlertPanel() {
   const { selectTrack } = useAppStore();
-  const realtimeAlerts = useAlertStore((s) => s.alerts);
+  const alerts = useAlertStore((s) => s.alerts);
 
-  const allAlerts: UnifiedAlert[] = [
-    ...realtimeAlerts.map((a: AlertData) => ({
-      ...a,
-      severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
-      isRealtime: true,
-    })),
-    ...MOCK_ALERTS.map((a) => ({ ...a, isRealtime: false })),
-  ];
+  const allAlerts = alerts.map((a: AlertData) => ({
+    ...a,
+    severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
+  }));
 
   const criticalCount = allAlerts.filter((a) => a.severity === "critical").length;
 
@@ -93,9 +85,6 @@ export function AlertPanel() {
                     <span className={cn("text-[10px] font-bold", style.labelColor)}>
                       {style.label}
                     </span>
-                    {alert.isRealtime && (
-                      <Zap size={9} className="text-amber-400" />
-                    )}
                     <span className="font-mono text-[10px] text-nexus-text-muted">
                       {alert.timestamp}
                     </span>

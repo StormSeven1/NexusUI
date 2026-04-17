@@ -1,3 +1,7 @@
+/**
+ * 右侧 AI 对话：DefaultChatTransport 走 `api` → `src/app/api/chat/route.ts`
+ */
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -7,15 +11,13 @@ import { NxPanelHeader, NxIconButton } from "@/components/nexus";
 import { ChatMessageList } from "@/components/chat/ChatMessageList";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ConversationList } from "@/components/chat/ConversationList";
-import { applyToolSideEffect } from "@/lib/tool-bridge";
+import { applyToolSideEffect } from "@/lib/chat-tool-bridge";
 import { useAppStore } from "@/stores/app-store";
 import { Trash2, SquarePen, X } from "lucide-react";
 import type { FileUIPart, UIMessage } from "ai";
 import type { ConversationSummary } from "@/lib/chat-api";
 
-/**
- * 从 assistant 消息中提取已完成的工具调用，用于触发客户端副作用
- */
+/** 从 assistant 消息里收集已完成工具的 output.action，交给 chat-tool-bridge */
 function extractCompletedTools(messages: UIMessage[]) {
   const results: { toolCallId: string; action: string; output: Record<string, unknown> }[] = [];
   for (const msg of messages) {
@@ -86,7 +88,6 @@ export function ChatPanel() {
 
   const isLoading = status === "submitted" || status === "streaming";
 
-  // 监听工具完成事件，触发客户端副作用
   useEffect(() => {
     const tools = extractCompletedTools(messages);
     for (const { toolCallId, action, output } of tools) {
@@ -115,14 +116,13 @@ export function ChatPanel() {
     [sendMessage]
   );
 
-  // 新建对话
+  // 新会话
   const handleNewChat = useCallback(() => {
     setConversationId(null);
     setMessages([]);
     processedToolIds.current.clear();
   }, [setMessages]);
 
-  // 切换对话：加载历史消息
   const handleSelectConversation = useCallback(
     async (conv: ConversationSummary) => {
       setConversationId(conv.id);
@@ -148,7 +148,7 @@ export function ChatPanel() {
         );
         setMessages(uiMessages);
       } catch {
-        /* 静默处理 */
+        /* 加载会话失败 */
       }
     },
     [setMessages]
@@ -169,11 +169,11 @@ export function ChatPanel() {
         right={
           <div className="flex items-center gap-1">
             {messages.length > 0 && (
-              <NxIconButton size="xs" onClick={handleClear} title="清空对话">
+              <NxIconButton size="xs" onClick={handleClear} title="清空会话">
                 <Trash2 size={12} />
               </NxIconButton>
             )}
-            <NxIconButton size="xs" onClick={handleNewChat} title="新建对话">
+            <NxIconButton size="xs" onClick={handleNewChat} title="新会话">
               <SquarePen size={12} />
             </NxIconButton>
           </div>
@@ -187,7 +187,7 @@ export function ChatPanel() {
         refreshKey={refreshKey}
       />
 
-      {/* 显示选中的智能体消息 */}
+      {/* 选中一条智能体消息时展示详情 */}
       {selectedAgentMessage && (
         <div className="mx-3 mb-2 rounded-md border border-nexus-border bg-nexus-bg-elevated p-3">
           <div className="flex items-start justify-between gap-2 mb-2">
@@ -234,10 +234,10 @@ export function ChatPanel() {
               selectedAgentMessage.status === 'success' ? 'bg-green-500/20 text-green-400' :
               'bg-blue-500/20 text-blue-400'
             }`}>
-              {selectedAgentMessage.status === 'error' && '错误'}
-              {selectedAgentMessage.status === 'warning' && '需关注'}
-              {selectedAgentMessage.status === 'success' && '已完成'}
-              {selectedAgentMessage.status === 'info' && '进行中'}
+              {selectedAgentMessage.status === "error" && "错误"}
+              {selectedAgentMessage.status === "warning" && "需关注"}
+              {selectedAgentMessage.status === "success" && "已完成"}
+              {selectedAgentMessage.status === "info" && "进行中"}
             </span>
           </div>
         </div>

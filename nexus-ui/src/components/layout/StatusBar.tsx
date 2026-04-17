@@ -1,6 +1,7 @@
 "use client";
 
 import { useAppStore } from "@/stores/app-store";
+import { useMapPointerStore } from "@/stores/map-pointer-store";
 import {
   Wifi,
   MapPin,
@@ -11,7 +12,8 @@ import {
 import { cn } from "@/lib/utils";
 
 export function StatusBar() {
-  const { mouseCoords, zoomLevel, mapViewMode, setMapViewMode } = useAppStore();
+  const { zoomLevel, mapViewMode, setMapViewMode } = useAppStore();
+  const mouseCoords = useMapPointerStore((s) => s.mouseCoords);
 
   return (
     <footer className="flex h-8 shrink-0 items-center justify-between border-t border-nexus-border bg-nexus-bg-elevated px-3">

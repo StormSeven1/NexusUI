@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useAppStore } from "@/stores/app-store";
 import { Map as MapIcon, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MiniMap } from "./MiniMap";
+// import { MiniMap } from "./MiniMap"; // 小地图暂隐藏，恢复时取消注释
 
 const Map2D = dynamic(() => import("./Map2D").then((m) => m.Map2D), {
   ssr: false,
@@ -65,7 +65,8 @@ export function MapContainer() {
         </button>
       </div>
 
-      <MiniMap />
+      {/* 小地图暂隐藏；恢复：取消上面 MiniMap import 注释并取消下一行注释 */}
+      {/* <MiniMap /> */}
 
       {/* 比例尺 */}
       <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2">

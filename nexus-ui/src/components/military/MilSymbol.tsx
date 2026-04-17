@@ -1,8 +1,8 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { ForceDisposition } from "@/lib/colors";
-import { buildMarkerSymbolDataUrl } from "@/lib/map-symbols";
+import type { ForceDisposition } from "@/lib/theme-colors";
+import { buildMarkerSymbolDataUrl } from "@/lib/map-icons";
 import Image from "next/image";
 
 interface MilSymbolProps {
@@ -13,8 +13,7 @@ interface MilSymbolProps {
 }
 
 /**
- * 统一的目标符号组件：与地图标绘使用同一套 SVG 资产，保证“列表/详情/地图”视觉一致。
- *
+ * 统一的目标符号组件：与地图标绘使用同一 SVG 资产，保证“列表/详情/地图”视觉一致 *
  * Unified marker symbol used across panels and maps (same SVG generator as MapLibre/Cesium).
  */
 export function MilSymbol({ type, disposition, size = "md", className }: MilSymbolProps) {

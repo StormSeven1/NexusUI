@@ -1,10 +1,13 @@
 import { create } from "zustand";
+import type { ForceDisposition } from "@/lib/theme-colors";
 
 export interface AssetData {
   id: string;
   name: string;
   asset_type: string;
   status: string;
+  /** 敌我：友方/敌方/中立；未写时解析为友方（与静态配置默认一致） */
+  disposition?: ForceDisposition;
   lat: number;
   lng: number;
   range_km: number | null;
@@ -19,33 +22,46 @@ export interface AssetData {
   updated_at: string;
 }
 
-const API_BASE =
-  typeof window !== "undefined"
-    ? `http://${window.location.hostname}:8001/api`
-    : "";
-
 interface AssetState {
   assets: AssetData[];
-  loading: boolean;
-  fetchAssets: () => Promise<void>;
+  /** WebSocket 全量实体列表（如 `Assets` / `assetBatch` / `entity_status`），由 `useUnifiedWsFeed` */
+  setAssets: (assets: AssetData[]) => void;
+  /** id 合并字段（如 `asset_events` 单条）*/
+  mergeAssetFields: (id: string, patch: Partial<AssetData>) => void;
+  /** 新增或覆盖整条实体（如 `DockStatus` / `DroneStatus` 单条）*/
+  upsertAsset: (asset: AssetData) => void;
 }
 
 export const useAssetStore = create<AssetState>((set) => ({
   assets: [],
-  loading: false,
 
-  fetchAssets: async () => {
-    set({ loading: true });
-    try {
-      const res = await fetch(`${API_BASE}/assets`);
-      if (res.ok) {
-        const data: AssetData[] = await res.json();
-        set({ assets: data });
+  setAssets: (assets) => set({ assets }),
+
+  mergeAssetFields: (id, patch) =>
+    set((s) => ({
+      assets: s.assets.map((a) =>
+        a.id === id ? { ...a, ...patch, updated_at: new Date().toISOString() } : a
+      ),
+    })),
+
+  upsertAsset: (asset) =>
+    set((s) => {
+      const ts = new Date().toISOString();
+      const i = s.assets.findIndex((a) => a.id === asset.id);
+      if (i >= 0) {
+        const next = [...s.assets];
+        next[i] = { ...next[i], ...asset, updated_at: ts };
+        return { assets: next };
       }
-    } catch {
-      /* 静默失败，保留旧数据 */
-    } finally {
-      set({ loading: false });
-    }
-  },
+      return {
+        assets: [
+          ...s.assets,
+          {
+            ...asset,
+            created_at: asset.created_at || ts,
+            updated_at: ts,
+          },
+        ],
+      };
+    }),
 }));

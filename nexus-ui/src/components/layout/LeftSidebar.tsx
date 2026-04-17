@@ -1,6 +1,7 @@
 "use client";
 
 import { useAppStore } from "@/stores/app-store";
+import { useAlertStore } from "@/stores/alert-store";
 import { cn } from "@/lib/utils";
 import {
   Crosshair,
@@ -22,6 +23,7 @@ const TABS = [
 
 export function LeftSidebar() {
   const { leftSidebarOpen, toggleLeftSidebar, leftPanelTab, setLeftPanelTab } = useAppStore();
+  const alertTotal = useAlertStore((s) => s.alerts.length);
 
   const handleTabClick = (tabId: typeof leftPanelTab) => {
     if (leftPanelTab === tabId && leftSidebarOpen) {
@@ -60,9 +62,9 @@ export function LeftSidebar() {
               {isActive && (
                 <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-nexus-accent" />
               )}
-              {tab.id === "alerts" && (
-                <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-nexus-error text-[8px] font-bold text-nexus-text-inverse">
-                  3
+              {tab.id === "alerts" && alertTotal > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex min-h-3.5 min-w-3.5 items-center justify-center rounded-full bg-nexus-error px-0.5 text-[8px] font-bold leading-none text-nexus-text-inverse">
+                  {alertTotal > 99 ? "99+" : alertTotal}
                 </span>
               )}
             </button>

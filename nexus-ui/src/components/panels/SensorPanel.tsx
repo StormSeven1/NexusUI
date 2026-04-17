@@ -1,6 +1,6 @@
 "use client";
 
-import { MOCK_TRACKS } from "@/lib/mock-data";
+import { useTrackStore } from "@/stores/track-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { cn } from "@/lib/utils";
 import {
@@ -19,7 +19,7 @@ interface SensorPanelProps {
 }
 
 export function SensorPanel({ trackId }: SensorPanelProps) {
-  const track = MOCK_TRACKS.find((t) => t.id === trackId);
+  const track = useTrackStore((s) => s.tracks.find((t) => t.id === trackId));
   if (!track) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-xs text-nexus-text-muted">

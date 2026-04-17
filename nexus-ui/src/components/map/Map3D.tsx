@@ -2,23 +2,36 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
+import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { useTrackStore } from "@/stores/track-store";
-import { MOCK_TRACKS } from "@/lib/mock-data";
-import type { Asset, RestrictedZone, Track } from "@/lib/mock-data";
+import { isVirtualFromProperties, normalizeAssetType } from "@/lib/map-entity-model";
+import type { Asset, RestrictedZone, Track } from "@/lib/map-entity-model";
 import { useZoneStore } from "@/stores/zone-store";
 import { useAssetStore } from "@/stores/asset-store";
 import type { ZoneData } from "@/stores/zone-store";
 import type { AssetData } from "@/stores/asset-store";
-import { FORCE_COLORS } from "@/lib/colors";
 import {
+  dispositionFromAssetData,
+  getTrackRenderingConfig,
+  laserLabelStyleFromBundle,
+  loadResolvedAppConfig,
+} from "@/lib/map-app-config";
+import type { AssetDispositionIconAccent } from "@/lib/map-icons";
+import { trackMapDrawHistoryTrails } from "@/components/map/modules/tracks-maplibre";
+import {
+  assetMapLabelTextColor,
   buildMarkerSymbolDataUrl,
   buildAssetSymbolDataUrl,
+  preloadPublicMapAssetFragments,
   geoCircleCoords,
   geoSectorCoords,
   geoRadarSweepCoords,
-} from "@/lib/map-symbols";
+  resolveTrackMarkerFill,
+  friendlyColorFromAssetProperties,
+} from "@/lib/map-icons";
 import { AlertTriangle } from "lucide-react";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
+import { createCesiumBaseImageryProvider, getMap3DInitialViewFromEnv } from "@/lib/map-3d-config";
 
 type CesiumModule = typeof import("cesium");
 type CesiumViewer = import("cesium").Viewer;
@@ -27,7 +40,7 @@ type PositionedEvent = import("cesium").ScreenSpaceEventHandler.PositionedEvent;
 type MotionEvent = import("cesium").ScreenSpaceEventHandler.MotionEvent;
 
 /**
- * 颜色配置使用 [r, g, b, a] 元组，兼容 Cesium Color 构造函数（0-1 范围）。
+ * RGBA 元组 [r,g,b,a]，用于 Cesium.Color，分量范围 0–1
  */
 type RGBA = [number, number, number, number];
 
@@ -38,11 +51,13 @@ const ZONE_STYLES: Record<string, { fill: RGBA; line: RGBA }> = {
 };
 
 const COVERAGE_STYLES: Record<string, { fill: RGBA; line: RGBA }> = {
-  camera:    { fill: [0.58, 0.20, 0.92, 0.12], line: [0.58, 0.20, 0.92, 0.4] },
-  drone:     { fill: [0.23, 0.51, 0.96, 0.12], line: [0.23, 0.51, 0.96, 0.4] },
-  radar:     { fill: [0.20, 0.83, 0.60, 0.06], line: [0.20, 0.83, 0.60, 0.25] },
-  tower:     { fill: [0.20, 0.83, 0.60, 0.08], line: [0.20, 0.83, 0.60, 0.3] },
-  satellite: { fill: [0.20, 0.83, 0.60, 0.08], line: [0.20, 0.83, 0.60, 0.3] },
+  camera: { fill: [0.58, 0.2, 0.92, 0.12], line: [0.58, 0.2, 0.92, 0.4] },
+  radar: { fill: [0.2, 0.83, 0.6, 0.06], line: [0.2, 0.83, 0.6, 0.25] },
+  tower: { fill: [0.2, 0.83, 0.6, 0.08], line: [0.2, 0.83, 0.6, 0.3] },
+  airport: { fill: [0.58, 0.64, 0.72, 0.1], line: [0.58, 0.64, 0.72, 0.35] },
+  drone: { fill: [0.22, 0.74, 0.97, 0.1], line: [0.22, 0.74, 0.97, 0.35] },
+  laser: { fill: [0.98, 0.55, 0.16, 0.1], line: [0.98, 0.55, 0.16, 0.38] },
+  tdoa: { fill: [0.08, 0.72, 0.82, 0.1], line: [0.08, 0.72, 0.82, 0.38] },
 };
 
 const STATUS_RGBA: Record<string, RGBA> = {
@@ -51,18 +66,30 @@ const STATUS_RGBA: Record<string, RGBA> = {
   offline:  [0.97, 0.44, 0.44, 0.12],
 };
 
-/**
- * 图层 → 对应的 entity group key。
- * 和 Map2D 中的 LAYER_MAPPING 保持对应。
- */
-const LAYER_GROUPS = {
-  "lyr-tracks": "tracks",
-  "lyr-assets": "assets",
-  "lyr-coverage": "coverage",
-  "lyr-zones": "zones",
-} as const;
+type GroupKey =
+  | "tracks"
+  | "trackTrails"
+  | "assets"
+  | "radarCoverage"
+  | "optoFov"
+  | "airportFov"
+  | "droneFov"
+  | "zones";
 
-type GroupKey = (typeof LAYER_GROUPS)[keyof typeof LAYER_GROUPS];
+type DroneLabelStyleResolved = ReturnType<typeof laserLabelStyleFromBundle>;
+
+function cesiumFontFromDroneLabelBundle(L: DroneLabelStyleResolved): string {
+  const parts = L.textFont.map((f) => (/\s/.test(f) ? `"${f}"` : f));
+  return `${L.fontSize}px ${parts.join(", ")}, "Noto Sans SC", sans-serif`;
+}
+
+/** 与 2D `text-offset`（em）大致对齐：`verticalOrigin: BOTTOM` 时 y 为负表示整体上移 */
+function cesiumDroneLabelPixelOffset(Cesium: CesiumModule, L: DroneLabelStyleResolved) {
+  const [ox, oy] = L.textOffset;
+  const x = Math.round(L.fontSize * Number(ox) * 0.95);
+  const y = -Math.round(4 + L.fontSize * Math.max(0.25, Number(oy)) * 1.45);
+  return new Cesium.Cartesian2(x, y);
+}
 
 function adaptZones(zones: ZoneData[]): RestrictedZone[] {
   return zones.map((z) => ({
@@ -74,17 +101,146 @@ function adaptZones(zones: ZoneData[]): RestrictedZone[] {
 }
 
 function adaptAssets(assets: AssetData[]): Asset[] {
-  return assets.map((a) => ({
-    id: a.id,
-    name: a.name,
-    type: a.asset_type as Asset["type"],
-    status: a.status as Asset["status"],
-    lat: a.lat,
-    lng: a.lng,
-    range: a.range_km ?? undefined,
-    heading: a.heading ?? undefined,
-    fovAngle: a.fov_angle ?? undefined,
-  }));
+  return assets.map((a) => {
+    const p = a.properties as Record<string, unknown> | null | undefined;
+    const isRadar = String(a.asset_type ?? "").toLowerCase() === "radar";
+    let showRings: boolean | undefined;
+    if (isRadar) {
+      if (p && typeof p.showRings === "boolean") showRings = p.showRings;
+      else showRings = true;
+    }
+    const centerIconVisible = p?.center_icon_visible === false ? false : undefined;
+    let nameLabelVisible: boolean | undefined;
+    if (!isRadar && p?.center_name_visible === false) nameLabelVisible = false;
+    const showFov = p?.fov_sector_visible === false ? false : undefined;
+    const friendlyMapColor = friendlyColorFromAssetProperties(p ?? null);
+    return {
+      id: a.id,
+      name: a.name,
+      type: normalizeAssetType(a.asset_type),
+      status: a.status as Asset["status"],
+      disposition: dispositionFromAssetData(a),
+      lat: a.lat,
+      lng: a.lng,
+      range: a.range_km ?? undefined,
+      heading: a.heading ?? undefined,
+      fovAngle: a.fov_angle ?? undefined,
+      isVirtual: isVirtualFromProperties(a.properties),
+      ...(showRings !== undefined ? { showRings } : {}),
+      ...(centerIconVisible === false ? { centerIconVisible: false } : {}),
+      ...(nameLabelVisible === false ? { nameLabelVisible: false } : {}),
+      ...(showFov === false ? { showFov: false } : {}),
+      ...(friendlyMapColor ? { friendlyMapColor } : {}),
+    };
+  });
+}
+
+/** 与 Map2D 一致：store 全量画 billboard；折线仅在 `trackMapDrawHistoryTrails` 为真时画（超预算只跳过折线，不删 store） */
+async function syncCesiumTrackBillboards(
+  viewer: CesiumViewer,
+  Cesium: CesiumModule,
+  groups: { tracks: CesiumEntity[]; trackTrails: CesiumEntity[] },
+  allTracks: Track[],
+  accent: AssetDispositionIconAccent,
+) {
+  const drawTrails = trackMapDrawHistoryTrails(allTracks);
+  const visibleIds = new Set(allTracks.map((t) => t.id));
+  const fullMap = new Map(allTracks.map((t) => [t.id, t]));
+
+  for (const ent of groups.trackTrails) {
+    viewer.entities.remove(ent);
+  }
+  groups.trackTrails = [];
+
+  const kept: CesiumEntity[] = [];
+  for (const ent of groups.tracks) {
+    const tid = ent.properties?.trackId?.getValue() as string | undefined;
+    if (tid && visibleIds.has(tid)) kept.push(ent);
+    else viewer.entities.remove(ent);
+  }
+  groups.tracks = kept;
+
+  const existing = new Set(
+    kept
+      .map((e) => e.properties?.trackId?.getValue() as string | undefined)
+      .filter((x): x is string => typeof x === "string" && x.length > 0),
+  );
+
+  const trCfg = getTrackRenderingConfig();
+  for (const track of allTracks) {
+    if (existing.has(track.id)) continue;
+    const ts = trCfg.trackTypeStyles[track.type] ?? trCfg.trackTypeStyles.sea;
+    const friendlyFill = track.disposition === "friendly" ? ts.idColor : undefined;
+    const image = await buildMarkerSymbolDataUrl(
+      track.type,
+      track.disposition,
+      accent,
+      track.isVirtual === true,
+      friendlyFill,
+    );
+    const ent = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
+      billboard: {
+        image,
+        scale: 0.90,
+        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+        heightReference: Cesium.HeightReference.NONE,
+        rotation: -Cesium.Math.toRadians(track.heading ?? 0),
+        color: Cesium.Color.WHITE,
+      },
+      label: {
+        text: track.name,
+        font: '11px Roboto, "Noto Sans SC", sans-serif',
+        fillColor: Cesium.Color.fromCssColorString(
+          resolveTrackMarkerFill(track.disposition, accent, friendlyFill),
+        ),
+        outlineColor: Cesium.Color.fromCssColorString("#09090b"),
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -26),
+        scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.4),
+        translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 8e5, 0.2),
+      },
+      properties: { trackId: track.id },
+    });
+    groups.tracks.push(ent);
+    existing.add(track.id);
+  }
+
+  for (const ent of groups.tracks) {
+    const tid = ent.properties?.trackId?.getValue() as string;
+    const t = fullMap.get(tid);
+    if (!t) continue;
+    ent.position = new Cesium.ConstantPositionProperty(
+      Cesium.Cartesian3.fromDegrees(t.lng, t.lat, t.altitude || 0),
+    );
+    if (ent.billboard) {
+      ent.billboard.rotation = new Cesium.ConstantProperty(-Cesium.Math.toRadians(t.heading ?? 0));
+    }
+  }
+
+  const alt = (z: number | undefined) => (Number.isFinite(z) ? (z as number) : 0);
+  if (!drawTrails) return;
+  for (const t of allTracks) {
+    const trail = t.historyTrail;
+    if (!trail || trail.length < 1) continue;
+    const ts2 = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
+    const friendlyFill2 = t.disposition === "friendly" ? ts2.idColor : undefined;
+    const positions = [...trail, [t.lng, t.lat] as [number, number]].map(([lng, lat]) =>
+      Cesium.Cartesian3.fromDegrees(lng, lat, alt(t.altitude)),
+    );
+    const lineEnt = viewer.entities.add({
+      polyline: {
+        positions,
+        width: 2,
+        material: Cesium.Color.fromCssColorString(resolveTrackMarkerFill(t.disposition, accent, friendlyFill2)).withAlpha(0.48),
+        clampToGround: true,
+      },
+      properties: { trackTrailFor: t.id },
+    });
+    groups.trackTrails.push(lineEnt);
+  }
 }
 
 export function Map3D() {
@@ -98,8 +254,17 @@ export function Map3D() {
   const routeEntitiesRef = useRef<Map<string, CesiumEntity>>(new Map());
   const areaEntitiesRef = useRef<Map<string, CesiumEntity[]>>(new Map());
   const entityGroupsRef = useRef<Record<GroupKey, CesiumEntity[]>>({
-    tracks: [], assets: [], coverage: [], zones: [],
+    tracks: [],
+    trackTrails: [],
+    assets: [],
+    radarCoverage: [],
+    optoFov: [],
+    airportFov: [],
+    droneFov: [],
+    zones: [],
   });
+  /** 供 `syncCesiumTrackBillboards` 与订阅 flush 使用（`loadResolvedAppConfig` 的 `assetDispositionIconAccent`） */
+  const cesiumTrackAccentRef = useRef<AssetDispositionIconAccent>({});
   const radarSweepRef = useRef<CesiumEntity[]>([]);
   const rafRef = useRef<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -110,7 +275,7 @@ export function Map3D() {
     x: number;
     y: number;
   } | null>(null);
-  const { selectTrack, selectAsset, setMouseCoords } = useAppStore();
+  const { selectTrack, selectAsset } = useAppStore();
 
   useEffect(() => {
     if (!containerRef.current || viewerRef.current) return;
@@ -128,18 +293,20 @@ export function Map3D() {
         }
         if (destroyed || !containerRef.current) return;
 
+        const appCfg = await loadResolvedAppConfig();
+        const droneLabelStyle = laserLabelStyleFromBundle(appCfg.drones);
+        const assetIconAccent: AssetDispositionIconAccent = appCfg.assetDispositionIconAccent ?? {};
+        await preloadPublicMapAssetFragments();
+
+        const baseImagery = createCesiumBaseImageryProvider(Cesium);
+
         viewer = new Cesium.Viewer(containerRef.current, {
           baseLayerPicker: false, geocoder: false, homeButton: false,
           sceneModePicker: false, selectionIndicator: false, infoBox: false,
           timeline: false, animation: false, navigationHelpButton: false,
           fullscreenButton: false,
           creditContainer: document.createElement("div"),
-          baseLayer: new Cesium.ImageryLayer(
-            new Cesium.UrlTemplateImageryProvider({
-              url: "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-              credit: "CartoDB", minimumLevel: 0, maximumLevel: 18,
-            })
-          ),
+          baseLayer: new Cesium.ImageryLayer(baseImagery),
           terrainProvider: undefined,
           requestRenderMode: false,
         });
@@ -151,10 +318,11 @@ export function Map3D() {
         viewer.scene.globe.enableLighting = false;
         viewer.scene.highDynamicRange = false;
 
+        const { center, zoom } = getMap3DInitialViewFromEnv();
         viewer.camera.flyToBoundingSphere(
-          new Cesium.BoundingSphere(Cesium.Cartesian3.fromDegrees(-2.35, 51.35, 0), 0),
+          new Cesium.BoundingSphere(Cesium.Cartesian3.fromDegrees(center[0], center[1], 0), 0),
           {
-            offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-45), 500000),
+            offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-45), zoomToAltitude(zoom)),
             duration: 0,
           },
         );
@@ -162,14 +330,12 @@ export function Map3D() {
         const v = viewer;
         const groups = entityGroupsRef.current;
 
-        /* ═══════════════════════════════════════════
-         *  1) 限制区域
-         * ═══════════════════════════════════════════ */
+        /* 1) 限制区 */
         const rgba = (c: RGBA) => new Cesium.Color(c[0], c[1], c[2], c[3]);
 
         for (const zone of adaptZones(useZoneStore.getState().zones)) {
           const style = ZONE_STYLES[zone.type] ?? ZONE_STYLES["warning"];
-          // 去掉闭合点（Cesium 自动闭合）
+          // 闭合多边形：去掉重复闭合点
           const coords = zone.coordinates.slice(0, -1);
           const positions = coords.map(([lng, lat]) => Cesium.Cartesian3.fromDegrees(lng, lat));
           const centerLng = coords.reduce((s, c) => s + c[0], 0) / coords.length;
@@ -179,9 +345,8 @@ export function Map3D() {
             polygon: {
               hierarchy: new Cesium.PolygonHierarchy(positions),
               material: rgba(style.fill),
-              outline: true,
-              outlineColor: rgba(style.line),
-              outlineWidth: 2,
+              /* 贴地多边形 + outline 在 Cesium 地形上不支持描边，会触发 oneTimeWarning 且无轮廓 */
+              outline: false,
               heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             },
             label: {
@@ -201,9 +366,7 @@ export function Map3D() {
           groups.zones.push(ent);
         }
 
-        /* ═══════════════════════════════════════════
-         *  2) 传感器覆盖
-         * ═══════════════════════════════════════════ */
+        /* 2) 雷达覆盖（圆/扫描）与光电 FOV（扇形/圆）分开展示，与 2D 图层面板两项一致 */
         const _assets = adaptAssets(useAssetStore.getState().assets);
         for (const asset of _assets) {
           if (!asset.range || asset.range <= 0) continue;
@@ -217,14 +380,12 @@ export function Map3D() {
               polygon: {
                 hierarchy: new Cesium.PolygonHierarchy(positions),
                 material: rgba(covStyle.fill),
-                outline: true,
-                outlineColor: rgba(covStyle.line),
-                outlineWidth: 1,
+                outline: false,
                 heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
               },
               properties: { assetId: asset.id, _coverage: true },
             });
-            groups.coverage.push(rangeEnt);
+            groups.radarCoverage.push(rangeEnt);
 
             if (asset.status !== "offline") {
               const sweepCoords = geoRadarSweepCoords(asset.lng, asset.lat, asset.range, 0);
@@ -242,7 +403,7 @@ export function Map3D() {
                   _status: asset.status,
                 },
               });
-              groups.coverage.push(sweepEnt);
+              groups.radarCoverage.push(sweepEnt);
               radarSweepRef.current.push(sweepEnt);
             }
           } else {
@@ -255,95 +416,99 @@ export function Map3D() {
               polygon: {
                 hierarchy: new Cesium.PolygonHierarchy(positions),
                 material: rgba(covStyle.fill),
-                outline: true,
-                outlineColor: rgba(covStyle.line),
-                outlineWidth: 1,
+                outline: false,
                 heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
               },
               properties: { assetId: asset.id, _coverage: true },
             });
-            groups.coverage.push(ent);
+            if (asset.type === "airport") groups.airportFov.push(ent);
+            else if (asset.type === "drone") groups.droneFov.push(ent);
+            else groups.optoFov.push(ent);
           }
         }
 
-        /* ═══════════════════════════════════════════
-         *  3) 航迹 — 优先使用实时数据
-         * ═══════════════════════════════════════════ */
-        const liveTracks = useTrackStore.getState().tracks;
-        const initialTracks: Track[] = liveTracks.length ? liveTracks : MOCK_TRACKS;
-        for (const track of initialTracks) {
-          const ent = v.entities.add({
-            position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
-            billboard: {
-              image: buildMarkerSymbolDataUrl(track.type, track.disposition),
-              scale: 0.90,
-              verticalOrigin: Cesium.VerticalOrigin.CENTER,
-              heightReference: Cesium.HeightReference.NONE,
-              rotation: -Cesium.Math.toRadians(track.heading ?? 0),
-              color: Cesium.Color.WHITE,
-            },
-            label: {
-              text: track.name,
-              font: '11px Roboto, "Noto Sans SC", sans-serif',
-              fillColor: Cesium.Color.fromCssColorString(FORCE_COLORS[track.disposition]),
-              outlineColor: Cesium.Color.fromCssColorString("#09090b"),
-              outlineWidth: 2,
-              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-              verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              pixelOffset: new Cesium.Cartesian2(0, -26),
-              scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.4),
-              translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 8e5, 0.2),
-            },
-            properties: { trackId: track.id },
-          });
-          groups.tracks.push(ent);
-        }
+        /* 3) 航迹：store 全量；折线受 `maxViewportPoints` 顶点预算（与 Map2D `buildTrackGeoJSON` 一致） */
+        cesiumTrackAccentRef.current = assetIconAccent;
+        await syncCesiumTrackBillboards(v, Cesium, groups, useTrackStore.getState().tracks, assetIconAccent);
 
-        /* ═══════════════════════════════════════════
-         *  4) 资产图标
-         * ═══════════════════════════════════════════ */
+        /* 4) 资产 billboard（无人机名称样式与 2D 一致：`drones.label` → `laserLabelStyleFromBundle`） */
+        const defaultAssetLabelFont = '10px Roboto, "Noto Sans SC", sans-serif';
         for (const asset of _assets) {
+          const disp = asset.disposition ?? "friendly";
+          const isDrone = asset.type === "drone";
+          const labelHex = assetMapLabelTextColor(
+            disp,
+            asset.status,
+            assetIconAccent,
+            disp === "friendly" ? asset.friendlyMapColor : undefined,
+          );
+          const assetImage = await buildAssetSymbolDataUrl(
+            asset.type,
+            asset.status,
+            asset.isVirtual ?? false,
+            disp,
+            assetIconAccent,
+            disp === "friendly" ? asset.friendlyMapColor : undefined,
+          );
           const ent = v.entities.add({
             position: Cesium.Cartesian3.fromDegrees(asset.lng, asset.lat, 0),
             billboard: {
-              image: buildAssetSymbolDataUrl(asset.type, asset.status),
+              image: assetImage,
               scale: 0.82,
               verticalOrigin: Cesium.VerticalOrigin.CENTER,
               heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             },
             label: {
               text: asset.name,
-              font: '10px Roboto, "Noto Sans SC", sans-serif',
-              fillColor: Cesium.Color.fromCssColorString("#6ee7b7"),
-              outlineColor: Cesium.Color.fromCssColorString("#09090b"),
-              outlineWidth: 2,
+              show: asset.nameLabelVisible !== false,
+              font: isDrone ? cesiumFontFromDroneLabelBundle(droneLabelStyle) : defaultAssetLabelFont,
+              fillColor: Cesium.Color.fromCssColorString(labelHex),
+              outlineColor: isDrone
+                ? Cesium.Color.fromCssColorString(droneLabelStyle.haloColor)
+                : Cesium.Color.fromCssColorString("#09090b"),
+              outlineWidth: isDrone ? droneLabelStyle.haloWidth : 2,
               style: Cesium.LabelStyle.FILL_AND_OUTLINE,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              pixelOffset: new Cesium.Cartesian2(0, -22),
+              pixelOffset: isDrone
+                ? cesiumDroneLabelPixelOffset(Cesium, droneLabelStyle)
+                : new Cesium.Cartesian2(0, -22),
               scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.35),
               translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 8e5, 0.2),
             },
-            properties: { assetId: asset.id },
+            properties: { assetId: asset.id, assetType: asset.type },
           });
           groups.assets.push(ent);
         }
 
-        /* ── 交互 ── */
+        /* 点击拾取航迹/资产；未命中则关标牌并清空 store 选中与高亮 */
         const handler = new Cesium.ScreenSpaceEventHandler(v.scene.canvas);
+        const clearMapSelection = () => {
+          placardEntityRef.current = null;
+          setPlacard(null);
+          selectTrack(null);
+          selectAsset(null);
+          useAppStore.getState().setHighlightedTrackIds([]);
+        };
         handler.setInputAction((movement: PositionedEvent) => {
           const picked = v.scene.pick(movement.position);
           if (Cesium.defined(picked) && picked.id?.properties) {
             const trackId = picked.id.properties.trackId?.getValue();
             const assetId = picked.id.properties.assetId?.getValue();
             if (trackId) {
+              selectAsset(null);
               selectTrack(trackId);
               placardEntityRef.current = picked.id as CesiumEntity;
               setPlacard((prev) => (prev && prev.kind === "track" && prev.id === trackId ? prev : { kind: "track", id: trackId, x: movement.position.x, y: movement.position.y }));
             } else if (assetId) {
+              selectTrack(null);
               selectAsset(assetId);
               placardEntityRef.current = picked.id as CesiumEntity;
               setPlacard((prev) => (prev && prev.kind === "asset" && prev.id === assetId ? prev : { kind: "asset", id: assetId, x: movement.position.x, y: movement.position.y }));
+            } else {
+              clearMapSelection();
             }
+          } else {
+            clearMapSelection();
           }
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
@@ -351,20 +516,43 @@ export function Map3D() {
           const cartesian = v.camera.pickEllipsoid(movement.endPosition, v.scene.globe.ellipsoid);
           if (cartesian) {
             const carto = Cesium.Cartographic.fromCartesian(cartesian);
-            setMouseCoords({ lat: Cesium.Math.toDegrees(carto.latitude), lng: Cesium.Math.toDegrees(carto.longitude) });
+            useMapPointerStore.getState().setMouseCoords({
+              lat: Cesium.Math.toDegrees(carto.latitude),
+              lng: Cesium.Math.toDegrees(carto.longitude),
+            });
           }
         }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
         viewerRef.current = v;
 
-        /* ── 同步初始图层可见性 ── */
-        const vis = useAppStore.getState().layerVisibility;
-        for (const [layerId, groupKey] of Object.entries(LAYER_GROUPS)) {
-          const visible = vis[layerId] ?? true;
-          for (const ent of groups[groupKey]) ent.show = visible;
+        /* 按 layerVisibility 设置各组 entity 显隐（资产 billboard 按 `assetType` 分键，与 Map2D 一致） */
+        const layerVis = useAppStore.getState().layerVisibility;
+        const layerOn = (k: string) => layerVis[k] !== false;
+        for (const ent of groups.tracks) ent.show = layerOn("lyr-tracks");
+        for (const ent of groups.trackTrails) ent.show = layerOn("lyr-tracks");
+        for (const ent of groups.radarCoverage) ent.show = layerOn("lyr-radar-coverage");
+        for (const ent of groups.optoFov) ent.show = layerOn("lyr-opto-fov");
+        for (const ent of groups.airportFov) ent.show = layerOn("lyr-airport");
+        for (const ent of groups.droneFov) ent.show = layerOn("lyr-drones");
+        for (const ent of groups.zones) ent.show = layerOn("lyr-zones");
+        for (const ent of groups.assets) {
+          const at = ent.properties?.assetType?.getValue() as string | undefined;
+          const layerKey =
+            at === "radar"
+              ? "lyr-radar-coverage"
+              : at === "laser"
+                ? "lyr-laser"
+                : at === "tdoa"
+                  ? "lyr-tdoa"
+                  : at === "airport"
+                    ? "lyr-airport"
+                    : at === "drone"
+                      ? "lyr-drones"
+                      : "lyr-opto-fov";
+          ent.show = layerOn(layerKey);
         }
 
-        /* ── 雷达扫描动画 ── */
+        /* 雷达扫描扇动画 */
         let sweepAngle = 0;
         const animate = () => {
           if (!viewerRef.current || viewerRef.current.isDestroyed()) return;
@@ -406,13 +594,21 @@ export function Map3D() {
       viewerRef.current = null;
       cesiumRef.current = null;
       radarSweepRef.current = [];
-      entityGroupsRef.current = { tracks: [], assets: [], coverage: [], zones: [] };
+      entityGroupsRef.current = {
+        tracks: [],
+        trackTrails: [],
+        assets: [],
+        radarCoverage: [],
+        optoFov: [],
+        airportFov: [],
+        droneFov: [],
+        zones: [],
+      };
     };
-  }, [selectTrack, selectAsset, setMouseCoords]);
+  }, [selectTrack, selectAsset]);
 
   /**
-   * 标牌跟随：在每帧渲染后把 entity 的世界坐标投影到屏幕坐标，
-   * 让 DOM 标牌贴在目标上方。
+   * 将选中 entity 的世界坐标投影到屏幕，驱动标牌 DOM 位置
    */
   useEffect(() => {
     const v = viewerRef.current;
@@ -447,7 +643,7 @@ export function Map3D() {
     };
   }, [placard]);
 
-  /* ── flyTo：用 flyToBoundingSphere 让相机正确对准目标点 ── */
+  /* flyTo：flyToBoundingSphere 与 zoom→高度 */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
       const req = state.flyToRequest;
@@ -470,7 +666,7 @@ export function Map3D() {
     return unsub;
   }, []);
 
-  /* ── highlightedTrackIds ── */
+  /* 高亮：highlightedTrackIds */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
       const v = viewerRef.current;
@@ -483,7 +679,7 @@ export function Map3D() {
       const ids = new Set(state.highlightedTrackIds);
       if (ids.size === 0) return;
 
-      const trackList = useTrackStore.getState().tracks.length ? useTrackStore.getState().tracks : MOCK_TRACKS;
+      const trackList = useTrackStore.getState().tracks;
       for (const track of trackList) {
         if (!ids.has(track.id)) continue;
         const ent = v.entities.add({
@@ -501,7 +697,7 @@ export function Map3D() {
     return unsub;
   }, []);
 
-  /* ── routeLines ── */
+  /* 同步 routeLines */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
       const v = viewerRef.current;
@@ -529,19 +725,40 @@ export function Map3D() {
     return unsub;
   }, []);
 
-  /* ── layerVisibility ── */
+  /* 订阅 layerVisibility（与 Map2D `ALL_DATA_LAYER_IDS` 一致；资产 billboard 按 `assetType` 分键） */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
-      const vis = state.layerVisibility;
-      for (const [layerId, groupKey] of Object.entries(LAYER_GROUPS)) {
-        const visible = vis[layerId] ?? true;
-        for (const ent of entityGroupsRef.current[groupKey as GroupKey]) ent.show = visible;
+      const layerVis = state.layerVisibility;
+      const layerOn = (k: string) => layerVis[k] !== false;
+      const g = entityGroupsRef.current;
+      for (const ent of g.tracks) ent.show = layerOn("lyr-tracks");
+      for (const ent of g.trackTrails) ent.show = layerOn("lyr-tracks");
+      for (const ent of g.radarCoverage) ent.show = layerOn("lyr-radar-coverage");
+      for (const ent of g.optoFov) ent.show = layerOn("lyr-opto-fov");
+      for (const ent of g.airportFov) ent.show = layerOn("lyr-airport");
+      for (const ent of g.droneFov) ent.show = layerOn("lyr-drones");
+      for (const ent of g.zones) ent.show = layerOn("lyr-zones");
+      for (const ent of g.assets) {
+        const at = ent.properties?.assetType?.getValue() as string | undefined;
+        const layerKey =
+          at === "radar"
+            ? "lyr-radar-coverage"
+            : at === "laser"
+              ? "lyr-laser"
+              : at === "tdoa"
+                ? "lyr-tdoa"
+                : at === "airport"
+                  ? "lyr-airport"
+                  : at === "drone"
+                    ? "lyr-drones"
+                    : "lyr-opto-fov";
+        ent.show = layerOn(layerKey);
       }
     });
     return unsub;
   }, []);
 
-  /* ── selectedAssetId ── */
+  /* 选中放大：selectedAssetId */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
       const id = state.selectedAssetId;
@@ -555,7 +772,7 @@ export function Map3D() {
     return unsub;
   }, []);
 
-  /* ── selectedTrackId ── */
+  /* 选中放大：selectedTrackId */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
       const id = state.selectedTrackId;
@@ -569,32 +786,43 @@ export function Map3D() {
     return unsub;
   }, []);
 
-  /* ── 实时 track 数据更新 ── */
+  /* 航迹：store 全量 → billboard；折线按 `trackMapDrawHistoryTrails`（异步 flush） */
   useEffect(() => {
-    const unsub = useTrackStore.subscribe((state) => {
+    let cancelled = false;
+    let flushRunning = false;
+    let flushAgain = false;
+
+    const flush = async () => {
       const v = viewerRef.current;
       const C = cesiumRef.current;
-      if (!v || !C || v.isDestroyed() || !state.tracks.length) return;
-
-      const groups = entityGroupsRef.current;
-      const trackMap = new Map(state.tracks.map((t) => [t.id, t]));
-
-      for (const ent of groups.tracks) {
-        const tid = ent.properties?.trackId?.getValue() as string;
-        const t = trackMap.get(tid);
-        if (!t) continue;
-        ent.position = new C.ConstantPositionProperty(
-          C.Cartesian3.fromDegrees(t.lng, t.lat, t.altitude || 0)
-        );
-        if (ent.billboard) {
-          ent.billboard.rotation = new C.ConstantProperty(-C.Math.toRadians(t.heading ?? 0));
-        }
+      if (!v || !C || v.isDestroyed() || cancelled) return;
+      if (flushRunning) {
+        flushAgain = true;
+        return;
       }
+      flushRunning = true;
+      try {
+        do {
+          flushAgain = false;
+          const snap = useTrackStore.getState().tracks;
+          await syncCesiumTrackBillboards(v, C, entityGroupsRef.current, snap, cesiumTrackAccentRef.current);
+        } while (flushAgain && !cancelled);
+      } finally {
+        flushRunning = false;
+      }
+      if (flushAgain && !cancelled) void flush();
+    };
+
+    const unsub = useTrackStore.subscribe(() => {
+      void flush();
     });
-    return unsub;
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, []);
 
-  /* ── drawnAreas ── */
+  /* 同步 drawnAreas */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
       const v = viewerRef.current;
@@ -616,9 +844,7 @@ export function Map3D() {
           polygon: {
             hierarchy: new C.PolygonHierarchy(positions),
             material: C.Color.fromCssColorString(area.fillColor).withAlpha(area.fillOpacity),
-            outline: true,
-            outlineColor: C.Color.fromCssColorString(area.color).withAlpha(0.7),
-            outlineWidth: 2,
+            outline: false,
             heightReference: C.HeightReference.CLAMP_TO_GROUND,
           },
           properties: { _areaId: area.id },
@@ -652,7 +878,7 @@ export function Map3D() {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-nexus-bg-base">
         <AlertTriangle size={24} className="text-amber-400" />
-        <p className="text-sm text-nexus-text-secondary">3D 视图加载失败，请重试</p>
+        <p className="text-sm text-nexus-text-secondary">3D 视图初始化失败，请刷新重试</p>
         <button onClick={() => window.location.reload()} className="rounded-md border border-white/[0.10] bg-white/[0.06] px-4 py-1.5 text-xs font-medium text-nexus-text-primary hover:bg-white/[0.10]">
           重新加载
         </button>
@@ -666,7 +892,7 @@ export function Map3D() {
       {loading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-nexus-bg-base/90">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-white/40" />
-          <span className="mt-3 text-xs text-nexus-text-muted">加载三维地球中...</span>
+          <span className="mt-3 text-xs text-nexus-text-muted">正在加载三维场景…</span>
         </div>
       )}
       {placard && (

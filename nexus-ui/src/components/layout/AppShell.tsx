@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * 数据入口：`useUnifiedWsFeed`（仅 hooks/useUnifiedWsFeed.ts）负责 WebSocket + 区域/资产轮询。
+ */
+
 import { TopNav } from "./TopNav";
 import { LeftSidebar } from "./LeftSidebar";
 import { RightSidebar } from "./RightSidebar";
@@ -7,16 +11,11 @@ import { StatusBar } from "./StatusBar";
 import { MapContainer } from "@/components/map/MapContainer";
 import { AgentMessageFloat } from "@/components/AgentMessageFloat";
 import { WorkspaceDetails } from "./WorkspaceDetails";
-import { useAlertFeed } from "@/hooks/useAlertFeed";
-import { useAssetFeed } from "@/hooks/useAssetFeed";
-import { useTrackFeed } from "@/hooks/useTrackFeed";
-import { useZoneFeed } from "@/hooks/useZoneFeed";
+import { useUnifiedWsFeed } from "@/hooks/useUnifiedWsFeed";
 
 export function AppShell() {
-  useTrackFeed();
-  useZoneFeed();
-  useAssetFeed();
-  useAlertFeed();
+  useUnifiedWsFeed();
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-nexus-bg-base">
       <TopNav />

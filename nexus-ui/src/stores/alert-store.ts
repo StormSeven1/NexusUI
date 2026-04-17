@@ -1,3 +1,18 @@
+/**
+ * ============================================================================
+ * alert-store — 实时告警列表（合并 + 截断策略）
+ * ============================================================================
+ *
+ * 【谁写入】`useUnifiedWsFeed` 内 WS 收到 `alert_batch` 时调用 `addAlerts`。
+ *
+ * 【分配 / 合并策略】`addAlerts` 把新数组 **拼到旧列表前面**：`[...newAlerts, ...s.alerts]`，
+ * 再 `.slice(0, MAX_ALERTS)`，防止无限增长（内存「缓存」上限）。
+ *
+ * 【谁读取】`AlertPanel` / `LeftSidebar` 角标 / `WorkspaceDetails` 态势栏等：`useAlertStore(s => s.alerts)`。
+ *
+ * 【与 track-store 对比】航迹是全量替换；告警是增量前置 + 截断，适合事件流。
+ */
+
 import { create } from "zustand";
 
 export interface AlertData {

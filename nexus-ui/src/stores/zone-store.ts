@@ -7,41 +7,25 @@ export interface ZoneData {
   source: string;
   /** [lng, lat][] 多边形坐标 */
   coordinates: Array<[number, number]>;
+  /** 边线/标签字色来源：WS 见 `vueZoneItemToZoneData`（`strokeColor`）；2D 渲染见 `buildZonesFeatureCollection` 的 `lineColor` */
   color: string | null;
+  /** 填充色：WS 见 `fillColor`；2D 当前写入 GeoJSON `fillColor` 属性，与 `polygon-draw-maplibre` 的 fill 图层一致 */
   fill_color: string | null;
+  /** WS 解析写入；注意 2D `POLY_ZONES_FILL` 若未绑 `fill-opacity`，主要依赖 `fill_color` 字符串里的 alpha 或纯色与默认 paint */
   fill_opacity: number;
   properties: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
 
-const API_BASE =
-  typeof window !== "undefined"
-    ? `http://${window.location.hostname}:8001/api`
-    : "";
-
 interface ZoneState {
   zones: ZoneData[];
-  loading: boolean;
-  fetchZones: () => Promise<void>;
+  /** WebSocket 全量/同步（如 Vue `Zones` / `zones` 的 message.data 数组），见 `useUnifiedWsFeed` */
+  setZones: (zones: ZoneData[]) => void;
 }
 
 export const useZoneStore = create<ZoneState>((set) => ({
   zones: [],
-  loading: false,
 
-  fetchZones: async () => {
-    set({ loading: true });
-    try {
-      const res = await fetch(`${API_BASE}/zones`);
-      if (res.ok) {
-        const data: ZoneData[] = await res.json();
-        set({ zones: data });
-      }
-    } catch {
-      /* 静默失败，保留旧数据 */
-    } finally {
-      set({ loading: false });
-    }
-  },
+  setZones: (zones) => set({ zones }),
 }));

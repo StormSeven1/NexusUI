@@ -3,24 +3,10 @@
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useAssetStore, type AssetData } from "@/stores/asset-store";
-import {
-  Radio,
-  Camera,
-  Antenna,
-  Plane,
-  Satellite,
-  Search,
-  Crosshair,
-} from "lucide-react";
+import { Search, Crosshair } from "lucide-react";
 import { useState } from "react";
-
-const ASSET_ICONS = {
-  radar: Radio,
-  camera: Camera,
-  tower: Antenna,
-  drone: Plane,
-  satellite: Satellite,
-} as const;
+import { PUBLIC_MAP_SVG_FILES, publicIconFileUrl } from "@/lib/map-icons";
+import { normalizeAssetType } from "@/lib/map-entity-model";
 
 const STATUS_STYLES = {
   online: { dot: "bg-emerald-400", text: "text-emerald-400", label: "在线" },
@@ -31,9 +17,9 @@ const STATUS_STYLES = {
 const MISSION_STYLES: Record<string, { label: string; color: string }> = {
   idle: { label: "", color: "" },
   assigned: { label: "已分配", color: "text-sky-400" },
-  en_route: { label: "前往中", color: "text-amber-400" },
+  en_route: { label: "航行中", color: "text-amber-400" },
   monitoring: { label: "监控中", color: "text-emerald-400" },
-  returning: { label: "返回中", color: "text-zinc-400" },
+  returning: { label: "返航", color: "text-zinc-400" },
 };
 
 export function AssetPanel() {
@@ -79,7 +65,7 @@ export function AssetPanel() {
 
       <div className="flex-1 overflow-y-auto">
         {filtered.map((asset) => {
-          const Icon = ASSET_ICONS[asset.asset_type as keyof typeof ASSET_ICONS];
+          const iconSrc = publicIconFileUrl(PUBLIC_MAP_SVG_FILES[normalizeAssetType(asset.asset_type)]);
           const status = STATUS_STYLES[asset.status as keyof typeof STATUS_STYLES];
           const isSelected = selectedAssetId === asset.id;
 
@@ -89,7 +75,7 @@ export function AssetPanel() {
               onClick={() => {
                 selectAsset(isSelected ? null : asset.id);
                 if (!isSelected) {
-                  requestFlyTo(asset.lat, asset.lng, 11);
+                  requestFlyTo(asset.lat, asset.lng, 14);
                 }
               }}
               className={cn(
@@ -105,7 +91,8 @@ export function AssetPanel() {
                     : "border-white/[0.08] bg-white/[0.03] text-nexus-text-secondary"
                 )}
               >
-                <Icon size={16} />
+                {/* eslint-disable-next-line @next/next/no-img-element -- 本地 SVG 文件名含中文，用原生 img 避免 loader 配置 */}
+                <img src={iconSrc} alt="" className="h-4 w-4 object-contain opacity-90" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between">
@@ -133,7 +120,7 @@ export function AssetPanel() {
                     </span>
                     {asset.assigned_target_id && (
                       <span className="text-[10px] text-nexus-text-muted">
-                        → {asset.assigned_target_id}
+                        目标 {asset.assigned_target_id}
                       </span>
                     )}
                   </div>

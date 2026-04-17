@@ -1,14 +1,17 @@
 "use client";
 
+/**
+ * 目标列表面板 消费 track-store 的实时数据 *
+ * 【数据流】WS(useUnifiedWsFeed) setTracks `useTrackStore(s => s.tracks)` 列表渲染 */
+
 import { useState, useMemo } from "react";
 import { Search, Star, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
-import { MOCK_TRACKS } from "@/lib/mock-data";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
-import type { ForceDisposition } from "@/lib/colors";
+import type { ForceDisposition } from "@/lib/theme-colors";
 
 const DISPOSITION_ORDER: ForceDisposition[] = [
   "hostile",
@@ -20,7 +23,7 @@ const DISPOSITION_ORDER: ForceDisposition[] = [
  * 航向格式化（保留 2 位小数）
  * Heading formatter (keep 2 decimals)
  *
- * @param heading 航向角度（度）/ heading in degrees
+ * @param heading 航向角度（度） heading in degrees
  * @returns 格式化后的字符串；无效值返回 "--" / formatted string; "--" if invalid
  */
 function formatHeading2(heading: unknown): string {
@@ -34,7 +37,7 @@ export function TrackListPanel() {
   const [search, setSearch] = useState("");
   const [filterStarred, setFilterStarred] = useState(false);
 
-  const allTracks = liveTracks.length ? liveTracks : MOCK_TRACKS;
+  const allTracks = liveTracks;
 
   const filtered = useMemo(() => {
     let tracks = allTracks;
@@ -100,8 +103,7 @@ export function TrackListPanel() {
         </div>
 
         <div className="text-[10px] text-nexus-text-muted">
-          共 {filtered.length} 个目标
-        </div>
+          {filtered.length} 个目标        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">

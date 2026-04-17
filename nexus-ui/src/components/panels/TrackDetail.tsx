@@ -1,6 +1,6 @@
 "use client";
 
-import { MOCK_TRACKS } from "@/lib/mock-data";
+import { useTrackStore } from "@/stores/track-store";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
 import { Timeline } from "@/components/military/Timeline";
@@ -21,7 +21,7 @@ interface TrackDetailProps {
 }
 
 export function TrackDetail({ trackId }: TrackDetailProps) {
-  const track = MOCK_TRACKS.find((t) => t.id === trackId);
+  const track = useTrackStore((s) => s.tracks.find((t) => t.id === trackId));
   if (!track) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-xs text-nexus-text-muted">

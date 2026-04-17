@@ -1,13 +1,14 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl } from "@/lib/map-symbols";
-import { FORCE_COLORS, type ForceDisposition } from "@/lib/colors";
-import { MOCK_TRACKS, type Track } from "@/lib/mock-data";
+import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, friendlyColorFromAssetProperties } from "@/lib/map-icons";
+import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
+import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
+import { dispositionFromAssetData, getTrackRenderingConfig } from "@/lib/map-app-config";
 import { useAlertStore } from "@/stores/alert-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export type PlacardKind = "track" | "asset";
 
@@ -74,11 +75,6 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const [showAllProps, setShowAllProps] = useState(false);
 
   const track = useTrackStore((s) => s.tracks.find((t) => t.id === id)) as Track | undefined;
-  const trackFallback = useMemo(
-    () => (track ? undefined : MOCK_TRACKS.find((t) => t.id === id)),
-    [id, track],
-  );
-  const t = track ?? trackFallback;
 
   const asset = useAssetStore((s) => s.assets.find((a) => a.id === id));
   const alerts = useAlertStore((s) => s.alerts);
@@ -88,20 +84,47 @@ export function TargetPlacard(props: TargetPlacardProps) {
     return alerts.filter((a) => a.trackId === id).slice(0, 5);
   }, [alerts, id, kind]);
 
-  const title = kind === "track" ? (t?.name ?? id) : (asset?.name ?? id);
-  const subtitle = kind === "track" ? "目标航迹" : "资产";
+  const title = kind === "track" ? (track?.name ?? id) : (asset?.name ?? id);
+  const subtitle = kind === "track" ? "航迹" : "资产";
 
-  const symbolUrl = useMemo(() => {
-    if (kind === "track") {
-      if (!t) return null;
-      return buildMarkerSymbolDataUrl(t.type, t.disposition);
-    }
-    if (!asset) return null;
-    return buildAssetSymbolDataUrl(asset.asset_type as never, asset.status as never);
-  }, [asset, kind, t]);
+  const trackSymbolUrl = useMemo(() => {
+    if (kind !== "track" || !track) return null;
+    const tr = getTrackRenderingConfig();
+    const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
+    const friendlyFill = track.disposition === "friendly" ? ts.idColor : undefined;
+    return buildMarkerSymbolDataUrl(track.type, track.disposition, undefined, track.isVirtual === true, friendlyFill);
+  }, [kind, track]);
+
+  const [assetIconLoaded, setAssetIconLoaded] = useState<{ id: string; url: string } | null>(null);
+
+  useEffect(() => {
+    if (kind !== "asset" || !asset) return;
+    let cancelled = false;
+    const aid = asset.id;
+    void buildAssetSymbolDataUrl(
+      normalizeAssetType(asset.asset_type),
+      asset.status as AssetStatus,
+      isVirtualFromProperties(asset.properties),
+      dispositionFromAssetData(asset),
+      undefined,
+      friendlyColorFromAssetProperties(asset.properties as Record<string, unknown> | null),
+    ).then((url) => {
+      if (!cancelled) setAssetIconLoaded({ id: aid, url });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, asset]);
+
+  const symbolUrl =
+    kind === "track"
+      ? trackSymbolUrl
+      : kind === "asset" && asset && assetIconLoaded?.id === asset.id
+        ? assetIconLoaded.url
+        : null;
 
   const headerColor = kind === "track"
-    ? (t ? (FORCE_COLORS[t.disposition] ?? "#a1a1aa") : "#a1a1aa")
+    ? (track ? (FORCE_COLORS[track.disposition] ?? "#a1a1aa") : "#a1a1aa")
     : "#6ee7b7";
 
   const propEntries = useMemo(() => {
@@ -117,7 +140,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
         className,
       )}
       role="dialog"
-      aria-label="目标标牌"
+      aria-label="目标信息"
     >
       <div className="mb-2 flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2.5">
@@ -137,8 +160,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
               <div className="truncate text-xs font-semibold text-nexus-text-primary">
                 {title}
               </div>
-              {kind === "track" && t?.disposition && (
-                <DispositionBadge d={t.disposition} />
+              {kind === "track" && track?.disposition && (
+                <DispositionBadge d={track.disposition} />
               )}
               <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-nexus-text-muted">
                 {subtitle}
@@ -153,7 +176,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
         <button
           onClick={onClose}
           className="shrink-0 rounded-md px-2 py-1 text-xs text-nexus-text-secondary hover:bg-white/5 hover:text-nexus-text-primary"
-          aria-label="关闭标牌"
+          aria-label="关闭"
           title="关闭"
         >
           ×
@@ -162,19 +185,19 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
       {kind === "track" ? (
         <>
-          <SectionTitle>发现信息</SectionTitle>
+          <SectionTitle>概况</SectionTitle>
           <div className="mt-1 space-y-1.5">
-            <Row k="发现来源" v={t?.sensor ?? "-"} />
-            <Row k="发现时间" v={t?.lastUpdate ?? "-"} />
-            <Row k="位置" v={formatLatLng(t?.lat, t?.lng)} />
+            <Row k="传感器" v={track?.sensor ?? "-"} />
+            <Row k="最后更新" v={track?.lastUpdate ?? "-"} />
+            <Row k="坐标" v={formatLatLng(track?.lat, track?.lng)} />
           </div>
 
-          <SectionTitle>运动属性</SectionTitle>
+          <SectionTitle>运动</SectionTitle>
           <div className="mt-1 space-y-1.5">
-            <Row k="速度" v={t ? `${t.speed} kn` : "-"} />
-            <Row k="航向" v={t ? `${t.heading}°` : "-"} />
-            <Row k="高度" v={t?.altitude != null ? `${t.altitude}` : "-"} />
-            <Row k="类型" v={t?.type ?? "-"} />
+            <Row k="航速" v={track ? `${track.speed} kn` : "-"} />
+            <Row k="航向" v={track ? `${track.heading}°` : "-"} />
+            <Row k="高度" v={track?.altitude != null ? `${track.altitude}` : "-"} />
+            <Row k="类型" v={track?.type ?? "-"} />
           </div>
 
           <SectionTitle>关联告警</SectionTitle>
@@ -197,21 +220,21 @@ export function TargetPlacard(props: TargetPlacardProps) {
                 </div>
               ))
             ) : (
-              <div className="text-[11px] text-nexus-text-muted">暂无告警</div>
+              <div className="text-[11px] text-nexus-text-muted">暂无关联告警</div>
             )}
           </div>
         </>
       ) : (
         <>
-          <SectionTitle>资产信息</SectionTitle>
+          <SectionTitle>概况</SectionTitle>
           <div className="mt-1 space-y-1.5">
             <Row k="状态" v={asset?.status ?? "-"} />
             <Row k="类型" v={asset?.asset_type ?? "-"} />
-            <Row k="位置" v={formatLatLng(asset?.lat, asset?.lng)} />
-            <Row k="覆盖" v={asset?.range_km ? `${asset.range_km} km` : "-"} />
+            <Row k="坐标" v={formatLatLng(asset?.lat, asset?.lng)} />
+            <Row k="射程" v={asset?.range_km ? `${asset.range_km} km` : "-"} />
             <Row k="任务状态" v={asset?.mission_status ?? "-"} />
-            <Row k="指派目标" v={asset?.assigned_target_id ?? "-"} />
-            <Row k="目标位置" v={formatLatLng(asset?.target_lat, asset?.target_lng)} />
+            <Row k="分配目标" v={asset?.assigned_target_id ?? "-"} />
+            <Row k="目标坐标" v={formatLatLng(asset?.target_lat, asset?.target_lng)} />
             <Row k="更新时间" v={asset?.updated_at ?? "-"} />
           </div>
 
@@ -241,7 +264,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
                     onClick={() => setShowAllProps((s) => !s)}
                     className="mt-2 w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-nexus-text-secondary hover:bg-white/10"
                   >
-                    {showAllProps ? "收起属性" : "展开更多属性"}
+                    {showAllProps ? "收起" : "展开全部"}
                   </button>
                 )}
               </>
@@ -254,4 +277,3 @@ export function TargetPlacard(props: TargetPlacardProps) {
     </div>
   );
 }
-

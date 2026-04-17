@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { FORCE_LABELS, type ForceDisposition } from "@/lib/colors";
+import { FORCE_LABELS, type ForceDisposition } from "@/lib/theme-colors";
 
 const TAG_STYLES: Record<ForceDisposition, string> = {
   hostile: "bg-blue-500/15 text-blue-400 border-blue-500/30",

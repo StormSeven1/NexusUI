@@ -1,0 +1,131 @@
+{
+  "version": 8,
+  "name": "本地地图",
+  "metadata": {
+    "maputnik:renderer": "mlgljs",
+    "nexus:note": "默认指向本机 npm run dev (3000)。部署到别的域名时请把 sources.openmaptiles.url 里的 http://localhost:3000 改成你的站点根地址。",
+    "nexus:glyphs": "字形放在 public/fonts/<字体名>/*.pbf，样式 glyphs 为 ../fonts/{fontstack}/{range}.pbf；图层 text-font 须与文件夹名一致（如 Noto Sans Regular）",
+    "nexus:sprite": "与 glyphs 相同可写相对样式路径如 ../map-sprites/.../sprite；由 map-libre-basemap transformStyle 按样式 JSON URL 转为绝对地址"
+  },
+  "sprite": "../map-sprites/dark-matter/sprite",
+  "glyphs": "../fonts/{fontstack}/{range}.pbf",
+  "sources": {
+    "openmaptiles": {
+      "type": "vector",
+      "url": "pmtiles://http://localhost:3000/tiles/map.pmtiles"
+    }
+  },
+  "layers": [
+    { "id": "background", "type": "background", "paint": { "background-color": "#0e0e0e" } },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "water",
+      "paint": { "fill-color": "#2C353C", "fill-opacity": 1 }
+    },
+    {
+      "id": "landcover",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "landcover",
+      "paint": { "fill-color": "#0e0e0e", "fill-opacity": 0.85 }
+    },
+    {
+      "id": "park",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "park",
+      "paint": { "fill-color": "rgba(14,14,14,0.92)" }
+    },
+    {
+      "id": "landuse",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "landuse",
+      "paint": { "fill-color": "rgba(0,0,0,0.35)", "fill-opacity": 0.55 }
+    },
+    {
+      "id": "transportation",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "paint": {
+        "line-color": "rgba(65, 71, 88, 1)",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.4, 10, 1.2, 14, 3, 18, 10]
+      }
+    },
+    {
+      "id": "transportation_major",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "motorway", "trunk", "primary"],
+      "paint": {
+        "line-color": "rgba(73, 73, 73, 1)",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 12, 3, 16, 8]
+      }
+    },
+    {
+      "id": "building",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "building",
+      "minzoom": 12,
+      "paint": {
+        "fill-color": "rgba(57, 57, 57, 0.85)",
+        "fill-opacity": 0.88,
+        "fill-outline-color": "#0e0e0e"
+      }
+    },
+    {
+      "id": "boundary",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "minzoom": 3,
+      "paint": {
+        "line-color": "rgba(103, 103, 114, 0.55)",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 0.3, 8, 1]
+      }
+    },
+    {
+      "id": "place_label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "minzoom": 3,
+      "layout": {
+        "text-field": ["coalesce", ["get", "name:zh"], ["get", "name:en"], ["get", "name"]],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 3, 10, 8, 13, 12, 15],
+        "text-max-width": 8,
+        "text-padding": 4
+      },
+      "paint": {
+        "text-color": "#c8c8d0",
+        "text-halo-color": "#0e0e0e",
+        "text-halo-width": 1.2
+      }
+    },
+    {
+      "id": "road_label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "transportation_name",
+      "minzoom": 12,
+      "layout": {
+        "symbol-placement": "line",
+        "text-field": ["coalesce", ["get", "name:zh"], ["get", "name:en"], ["get", "name"]],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 10,
+        "text-rotation-alignment": "map"
+      },
+      "paint": {
+        "text-color": "#8f8f9a",
+        "text-halo-color": "#0e0e0e",
+        "text-halo-width": 1
+      }
+    }
+  ]
+}
