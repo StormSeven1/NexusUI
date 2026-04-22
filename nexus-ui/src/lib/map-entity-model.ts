@@ -15,7 +15,14 @@ export function isVirtualFromProperties(properties: Record<string, unknown> | nu
 }
 
 export interface Track {
+  /** 缓存主键（= uniqueID），整个工程用此字段做 key */
   id: string;
+  /** 缓存主键，与 id 同值；显式标记以便区分 */
+  showID: string;
+  /** 后端唯一标识（报文 uniqueID / uniqueId） */
+  uniqueID: string;
+  /** 业务 trackId（告警匹配用；18.141 全部走此字段，28.9 仅对空走此字段） */
+  trackId?: string;
   name: string;
   type: "air" | "underwater" | "sea";
   disposition: ForceDisposition;
@@ -27,15 +34,29 @@ export interface Track {
   sensor: string;
   lastUpdate: string;
   starred: boolean;
+  /** 对空 / 对海（is_air_track） */
+  isAirTrack?: boolean;
+  /** 目标类型（target_type，如目标名称/分类） */
+  targetType?: string;
+  /** 原始航向（degree，未经对空偏移） */
+  course?: number;
+  /** 方位角 */
+  azimuth?: number;
+  /** 距离（range） */
+  distance?: number;
+  /** 数据源标识 */
+  dataSourceId?: string;
   /** 虚兵：航迹符号外框为虚线样式（与资产 `virtual_troop` 一致） */
   isVirtual?: boolean;
   /** 无人机等目标：为 true 时超时阈值用 `trackRendering.trackTimeout.uavSeconds` */
   isUav?: boolean;
   /**
    * 前端在相邻 WS 报文之间累积的**历史采样点** `[lng, lat]`（不含当前 `lng/lat`），存在 **`useTrackStore` 每条 `Track` 上**。
-   * 地图在 `maxViewportPoints` 顶点预算内才画折线；超预算时**仅不绘制**折线，**不**从本字段删除数据。
+   * 条数上限由 `trackRendering.trackDisplay.maxHistoryPointsPerTrack` 控制；地图在 `maxViewportPoints` 全图顶点预算内才画折线，超预算时**仅不绘制**折线，**不**从本字段删除数据。
    */
   historyTrail?: [number, number][];
+  /** 查证图片 data URL（由 image polling 写入） */
+  verificationImage?: string;
 }
 
 /** 与 `map-icons.PUBLIC_MAP_SVG_FILES` 键一致；含 WS 动态机场 / 无人机 */
@@ -55,12 +76,23 @@ export function parseMapAssetTypeStrict(raw: unknown, ctx: string): PublicMapAss
   return s as PublicMapAssetType;
 }
 
-/** 将 WS 等动态字符串规范为 `Asset.type`；未知值回退为 tower（避免脏数据拖垮渲染） */
+/**
+ * 将 WS 等动态字符串规范为 `Asset.type`。
+ *
+ * 注意："tower" 是电侦（电子侦察）专用类型，不要和 camera（光电）混用。
+ * 空值或未知类型直接抛错，不回退——回退只会掩盖数据问题。
+ */
 export function normalizeAssetType(raw: string | undefined | null): PublicMapAssetType {
-  const s = String(raw ?? "tower").toLowerCase().trim();
+  const s = String(raw ?? "").toLowerCase().trim();
+  if (!s) {
+    console.trace("[normalizeAssetType] ✘ 资产类型为空，raw=", JSON.stringify(raw));
+    throw new Error("[normalizeAssetType] ✘ 资产类型为空，调用方应确保 asset_type 有值");
+  }
   if (s === "dock" || s === "gateway" || s === "airport" || s === "无人机机场") return "airport";
   if (s === "uav" || s === "drone" || s === "无人机") return "drone";
-  return (PUBLIC_MAP_ASSET_TYPES as readonly string[]).includes(s) ? (s as PublicMapAssetType) : "tower";
+  if ((PUBLIC_MAP_ASSET_TYPES as readonly string[]).includes(s)) return s as PublicMapAssetType;
+  /* 不在已知类型列表中 —— 直接抛错 */
+  throw new Error(`[normalizeAssetType] ✘ 未知资产类型 "${raw}"，不在已知类型 ${PUBLIC_MAP_ASSET_TYPES.join("/")} 中`);
 }
 
 export interface Asset {
@@ -109,6 +141,11 @@ export interface RestrictedZone {
   type: "no-fly" | "warning" | "exercise";
   /** polygon 坐标环 [lng, lat][] */
   coordinates: Array<[number, number]>;
+  /** WS `fill_color`；与 `fillOpacity` 在 3D 中合并，缺省用内置 `ZONE_STYLES` */
+  fillColor?: string | null;
+  /** WS `color`（边线/标签） */
+  lineColor?: string | null;
+  fillOpacity?: number;
 }
 
 /** 图层面板「数据图层」行：仅 `buildDataLayerPanelRows` 返回的项 */
@@ -123,6 +160,8 @@ export const LYR_OPTO_FOV = "lyr-opto-fov";
 export const LYR_AIRPORT = "lyr-airport";
 export const LYR_LASER = "lyr-laser";
 export const LYR_TDOA = "lyr-tdoa";
+/** 电侦（电子侦察）图标图层；与光电（LYR_OPTO_FOV）为不同类型 */
+export const LYR_TOWER = "lyr-tower";
 export const LYR_ZONES = "lyr-zones";
 /** Map2D 量算/标绘图层分组 id（**不进** `layerVisibility` 初始键；显隐用 `applyLayerPanelVisibilityFromStore` 的 `?? true`） */
 export const LYR_MEASURE = "lyr-measure";
@@ -133,6 +172,7 @@ export const ALL_DATA_LAYER_IDS = [
   LYR_DRONES,
   LYR_RADAR_COVERAGE,
   LYR_OPTO_FOV,
+  LYR_TOWER,
   LYR_AIRPORT,
   LYR_LASER,
   LYR_TDOA,
@@ -140,7 +180,8 @@ export const ALL_DATA_LAYER_IDS = [
 ] as const;
 
 /**
- * 按当前资产列表生成**数据图层**面板行（航迹、按类型出现的专题、限制区）。**光电**仅在有 camera/tower 时出现；**无人机**单独一行，不与光电混条件。
+ * 按当前资产列表生成**数据图层**面板行（航迹、按类型出现的专题、限制区）。
+ * **光电**（camera）和**电侦**（tower）为不同类型，分别显示。
  */
 export function buildDataLayerPanelRows(assets: ReadonlyArray<{ asset_type: string }>): DataLayerPanelRow[] {
   const types = new Set<PublicMapAssetType>();
@@ -152,8 +193,11 @@ export function buildDataLayerPanelRows(assets: ReadonlyArray<{ asset_type: stri
     { id: LYR_DRONES, name: "无人机" },
   ];
   if (types.has("radar")) rows.push({ id: LYR_RADAR_COVERAGE, name: "雷达装备" });
-  if (types.has("camera") || types.has("tower")) {
+  if (types.has("camera")) {
     rows.push({ id: LYR_OPTO_FOV, name: "光电装备" });
+  }
+  if (types.has("tower")) {
+    rows.push({ id: LYR_TOWER, name: "电侦装备" });
   }
   if (types.has("airport")) {
     rows.push({ id: LYR_AIRPORT, name: "无人机场" });

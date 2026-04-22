@@ -66,6 +66,22 @@ export function TrackDetail({ trackId }: TrackDetailProps) {
         </div>
       </div>
 
+      {/* 查证图片 */}
+      {track.verificationImage && (
+        <div className="border-b border-white/[0.06] p-4">
+          <h4 className="mb-3 text-[10px] font-semibold tracking-widest text-nexus-text-muted">
+            查证图片
+          </h4>
+          <div className="overflow-hidden rounded-md border border-white/[0.06]">
+            <img
+              src={track.verificationImage}
+              alt="查证图片"
+              className="w-full object-cover"
+            />
+          </div>
+        </div>
+      )}
+
       {/* 时间轴 */}
       <div className="border-b border-white/[0.06] p-4">
         <h4 className="mb-3 text-[10px] font-semibold tracking-widest text-nexus-text-muted">

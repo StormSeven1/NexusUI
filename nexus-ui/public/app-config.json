@@ -1,6 +1,6 @@
 {
   "_字段说明": {
-    "_关于本块": "以下键名均以 _ 开头，仅作文档，程序加载配置时会忽略。正式配置从下面的 radar、cameras、**airports**（含 Dock 默认显隐 + 静态 `devices`）、**drones**（含无人机地图渲染参数 + 静态 `devices`）、laserWeapons、tdoa、trackRendering、factory（**仅**敌方/中立配色覆盖）等开始。",
+    "_关于本块": "以下键名均以 _ 开头，仅作文档，程序加载配置时会忽略。正式配置从下面的 radar、cameras、**airports**、**drones**、laserWeapons、tdoa、trackRendering、factory（**仅**敌方/中立配色覆盖）等开始。**友方**各资产类型默认着色由**各根键根级** `friendlyColor`（`cameras` 另有 `friendlyColorTower`）提供，见 `map-app-config` 的 `getFriendlyColorForAssetType`。**显示过滤**（相机/机场/无人机黑名单、区域白名单）在源码 `src/lib/map-display-filters.ts` 硬编码，不在本文件配置。",
     "_数据流_资产与资产列表": "启动时 `loadResolvedAppConfig` 将 **radar、cameras.devices、laserWeapons.devices、tdoa.devices、airports.devices、drones.devices** 合并为 `configAssetBase`，再与 WebSocket 推送实体在 `mergeDynamicAndStaticAssets` 里按 **id** 合并（同 id 一般以动态为准；含静态 **airport / drone** 与 WS 同 id 时亦以动态为准；对 radar / camera / laser / tdoa 等与 WS **asset_type** 明显冲突时有保护逻辑）。结果写入 **`useAssetStore`**，**资产列表**只读该 store。**地图**：图层面板由 `buildDataLayerPanelRows(assets)` 按 **`asset_type`** 列出 `lyr-radar-coverage` / `lyr-opto-fov` / `lyr-laser` / `lyr-tdoa` 等；资产 billboard 依类型、在线态、敌我、实兵/虚兵选图标；**雷达距离环、光电 FOV、激光/TDOA 扇区** 由各自专题层绘制。激光/TDOA 在 store 里的行带 `properties.center_icon_visible: false`，中心点只在专题层画，避免与资产图标叠两个标。",
 
     "factory": {
@@ -10,6 +10,29 @@
         "hostile": "敌方 / 地方目标主色（航迹、资产符号、名称等）。",
         "neutral": "中立目标主色。"
       }
+    },
+
+    "websocket": {
+      "url": "WebSocket 连接地址（V2 后端只有单条 WS，如 ws://192.168.18.141:8001/ws）。",
+      "reconnectInterval": "重连基础间隔（毫秒），实际使用指数退避。",
+      "heartbeatInterval": "心跳 ping 发送间隔（毫秒）。",
+      "maxReconnectAttempts": "最大连续重连次数，超过后停止重连。",
+      "initialReconnectMs": "首次重连等待时间（毫秒）。",
+      "maxReconnectMs": "重连等待时间上限（毫秒）。"
+    },
+
+    "coordinateTransform": {
+      "enabled": "是否启用 WGS84→GCJ02 坐标偏移。国内地图（高德/腾讯瓦片）需设为 true，国外或使用 WGS84 瓦片时设为 false。默认 true。"
+    },
+
+    "http": {
+      "backendUrl": "后端 HTTP 基地址，用于查证图片轮询等 HTTP 请求（如 http://192.168.18.141:8001）。",
+      "imagePollIntervalMs": "查证图片轮询间隔（毫秒），仅对已通过告警匹配的渲染层航迹轮询 GET /api/image/{uniqueID}。默认 3000。",
+      "imageFetchTimeoutMs": "单次图片请求超时（毫秒）。默认 1000。"
+    },
+
+    "trackIdMode": {
+      "distinguishSeaAir": "告警匹配模式。false = 18.141 模式（统一用 trackId 匹配）；true = 28.9 模式（对海用 uniqueID，对空用 trackId）。默认 false。"
     },
 
     "radar": {
@@ -264,69 +287,56 @@
   },
 
   "radar": {
+    "friendlyColor": "#6ee7b7",
+    "defaultMaxRange": 12000,
+    "defaultInterval": 12000,
+    "defaultShowRings": true,
+    "defaultOpacity": 0.4,
+    "defaultRingFillOpacity": 0.08,
+    "defaultRingFillColor": "#00FF00",
+    "defaultColor": "#00FF00",
+    "defaultRingLineWidth": 1,
+    "defaultRingLineDash": [4,4],
+    "defaultVirtualTroop": false,
+    "defaultDistanceLabelsVisible": false,
+    "defaultAngleLabelsVisible": false,
+    "defaultAngleLabelInterval": 30,
+    "defaultCrosshairVisible": true,
     "visibility": {
       "centerNameVisible": true,
       "centerIconVisible": true
     },
-    "devices": [
-    {
-      "id": "radar-1",
-      "name": "雷达1",
-      "assetType": "radar",
-      "center": [122.091, 37.5489],
-      "maxRange": 12000,
-      "interval": 12000,
-      "ringCount": null,
-      "showRings": true,
-      "opacity": 0.4,
-      "ringFillOpacity": 0.08,
-      "ringFillColor": "#00FF00",
-      "color": "#00FF00",
-      "ringLineWidth": 1,
-      "ringLineDash": [4,4],
-      "virtualTroop": false,
-      "distanceLabelsVisible": false,
-      "distanceLabelColor": null,
-      "angleLabelsVisible": false,
-      "angleLabelInterval": 30,
-      "angleLabelColor": null,
-      "crosshairVisible": true,
-      "centerIconVisible": true,
-      "centerNameVisible": true,
-      "label": {
-        "fontSize": 10,
-        "fontColor": "#6ee7b7",
-        "haloColor": "#09090b",
-        "haloWidth": 1.5,
-        "textOffset": [0, 1.8],
-        "textFont": ["Open Sans Regular"]
-      },
-      "distanceLabel": {
-        "fontSize": 12,
-        "fontColor": "#FFFFFF",
-        "haloColor": "#000000",
-        "haloWidth": 1.5,
-        "textOffset": [0, -0.2],
-        "textFont": ["Open Sans Regular"]
-      },
-      "angleLabel": {
-        "fontSize": 11,
-        "fontColor": "#FFFF00",
-        "haloColor": "#000000",
-        "haloWidth": 1,
-        "textOffset": [0, 0],
-        "textFont": ["Open Sans Regular"]
-      },
-      "crosshair": {
-        "lineWidth": 1,
-        "lineDash": [4, 4],
-        "lineOpacity": 0.6,
-        "color": "#FFFFFF"
-      },
-      "status": "online",
-      "disposition": "friendly",
-      "heading": null
+    "label": {
+      "fontSize": 10,
+      "fontColor": "#6ee7b7",
+      "haloColor": "#09090b",
+      "haloWidth": 1.5,
+      "textOffset": [0, 1.8],
+      "textFont": ["Open Sans Regular"]
     },
+    "distanceLabel": {
+      "fontSize": 12,
+      "fontColor": "#FFFFFF",
+      "haloColor": "#000000",
+      "haloWidth": 1.5,
+      "textOffset": [0, -0.2],
+      "textFont": ["Open Sans Regular"]
+    },
+    "angleLabel": {
+      "fontSize": 11,
+      "fontColor": "#FFFF00",
+      "haloColor": "#000000",
+      "haloWidth": 1,
+      "textOffset": [0, 0],
+      "textFont": ["Open Sans Regular"]
+    },
+    "crosshair": {
+      "lineWidth": 1,
+      "lineDash": [4, 4],
+      "lineOpacity": 0.6,
+      "color": "#FFFFFF"
+    },
+   "devices": [
     {
       "id": "home",
       "name": "home",
@@ -388,8 +398,16 @@
     ]
   },
 
+  
   "cameras": {
+    "friendlyColor": "#6ee7b7",
     "defaultRange": 15000,
+    "sectorFill":  "#c6d7a7",
+    "sectorLine": "#aaea33",
+    "sectorLineWidth": 1.2,
+    "sectorLineOpacity": 0.4,
+    "sectorLineDashVirtual": [6, 4],
+    "sectorLineDashReal": [3, 3],
     "sectorBorder": {
       "lineWidth": 0,
       "lineColor": null,
@@ -409,42 +427,43 @@
       "textFont": ["Open Sans Regular"]
     },
     "devices": [
-      {
-        "deviceId": "STATIC-TOWER-001",
-        "name": "静态光电塔（配置）",
-        "assetType": "tower",
-        "center": [122.092, 37.5485],
-        "bearing": 45,
-        "range": 15000,
-        "fovAngle": 120,
-        "status": "online",
-        "disposition": "friendly",
-        "virtualTroop": false,
-        "showSector": true,
-        "centerNameVisible": true,
-        "centerIconVisible": true,
-        "properties": {}
-      },
-      {
-        "deviceId": "STATIC-CAM-VIRT-001",
-        "name": "静态虚兵摄像头（配置）",
-        "assetType": "camera",
-        "center": [122.085, 37.547],
-        "bearing": 160,
-        "range": 8000,
-        "fovAngle": 60,
-        "status": "online",
-        "disposition": "friendly",
-        "virtualTroop": true,
-        "showSector": true,
-        "centerNameVisible": true,
-        "centerIconVisible": true,
-        "properties": {}
-      }
     ]
   },
 
+  "tower": {
+    "friendlyColor": "#6ee7b7",
+    "defaultRange": 15000,
+    "sectorFill": "rgba(52,211,153,0.10)",
+    "sectorLine": "#34d399",
+    "sectorLineWidth": 1.2,
+    "sectorLineOpacity": 0.4,
+    "sectorLineDashVirtual": [6, 4],
+    "sectorLineDashReal": [3, 3],
+    "sectorBorder": {
+      "lineWidth": 0,
+      "lineColor": null,
+      "lineDash": []
+    },
+    "visibility": {
+      "sectorFillVisible": true,
+      "centerIconVisible": true,
+      "centerNameVisible": true
+    },
+    "label": {
+      "fontSize": 10,
+      "fontColor": "#6ee7b7",
+      "haloColor": "#09090b",
+      "haloWidth": 1.5,
+      "textOffset": [0, 1.8],
+      "textFont": ["Open Sans Regular"]
+    },
+    "devices": [
+    ]
+  },
+
+
   "airports": {
+    "friendlyColor": "#6ee7b7",
     "centerIconVisible": true,
     "centerNameVisible": true,
     "defaultRange": 15000,
@@ -467,42 +486,11 @@
       "textFont": ["Open Sans Regular"]
     },
     "devices": [
-      {
-        "deviceId": "STATIC-AIRPORT-REAL-001",
-        "name": "实兵机场（配置）",
-        "assetType": "airport",
-        "center": [122.088, 37.5492],
-        "bearing": 0,
-        "range": 2000,
-        "fovAngle": 360,
-        "status": "online",
-        "disposition": "friendly",
-        "virtualTroop": false,
-        "showSector": false,
-        "centerNameVisible": true,
-        "centerIconVisible": true,
-        "properties": {}
-      },
-      {
-        "deviceId": "STATIC-AIRPORT-VIRT-001",
-        "name": "虚兵机场（配置）",
-        "assetType": "airport",
-        "center": [122.0895, 37.5492],
-        "bearing": 0,
-        "range": 2000,
-        "fovAngle": 360,
-        "status": "online",
-        "disposition": "friendly",
-        "virtualTroop": true,
-        "showSector": false,
-        "centerNameVisible": true,
-        "centerIconVisible": true,
-        "properties": {}
-      }
     ]
   },
 
   "drones": {
+    "friendlyColor": "#6ee7b7",
     "defaultRange": 15000,
     "maxFovRange": 3000,
     "horizontalFov": 30,
@@ -539,43 +527,14 @@
       "textFont": ["Open Sans Regular"]
     },
     "devices": [
-      {
-        "deviceId": "STATIC-DRONE-REAL-001",
-        "name": "实兵无人机（配置）",
-        "assetType": "drone",
-        "center": [122.0865, 37.5462],
-        "bearing": 270,
-        "range": 3000,
-        "fovAngle": 90,
-        "status": "online",
-        "disposition": "friendly",
-        "virtualTroop": false,
-        "showSector": false,
-        "centerNameVisible": true,
-        "centerIconVisible": true,
-        "properties": {}
-      },
-      {
-        "deviceId": "STATIC-DRONE-VIRT-001",
-        "name": "虚兵无人机（配置）",
-        "assetType": "drone",
-        "center": [122.088, 37.5462],
-        "bearing": 90,
-        "range": 3000,
-        "fovAngle": 90,
-        "status": "online",
-        "disposition": "hostile",
-        "virtualTroop": true,
-        "showSector": false,
-        "centerNameVisible": true,
-        "centerIconVisible": true,
-        "properties": {}
-      }
     ]
   },
 
   "tdoa": {
+    "friendlyColor": "#6ee7b7",
     "defaultSectorRange": 15000,
+    "defaultColor": "#fb923c",
+    "defaultOpacity": 0.30,
     "label": {
       "fontSize": 10,
       "fontColor": "#6ee7b7",
@@ -607,7 +566,7 @@
         "deviceId": "tdoa-1",
         "name": "TDOA",
         "assetType": "tdoa",
-        "center": [122.098, 37.5489],
+        "center": [122.098000, 37.548900],
         "bearing": 0,
         "angle": 60,
         "range": 5000,
@@ -629,7 +588,10 @@
   },
 
   "laserWeapons": {
+    "friendlyColor": "#6ee7b7",
     "defaultRange": 12000,
+    "defaultColor": "#fb7185",
+    "defaultOpacity": 0.35,
     "label": {
       "fontSize": 10,
       "fontColor": "#6ee7b7",
@@ -663,7 +625,7 @@
         "deviceId": "laser-1",
         "name": "激光武器",
         "assetType": "laser",
-        "center": [122.0872, 37.5463],
+        "center": [122.0872,37.5463],
         "bearing": 0,
         "angle": 3,
         "range": 1500,
@@ -687,9 +649,9 @@
 
   "trackRendering": {
     "trackTypeStyles": {
-      "sea": { "idColor": "#FFFFFF", "pointSize": 2, "idSize": 8 },
-      "air": { "idColor": "#FFFF00", "pointSize": 2, "idSize": 8 },
-      "underwater": { "idColor": "#FFFFFF", "pointSize": 2, "idSize": 8 }
+      "sea": { "idColor": "#FFFFFF", "pointSize": 3, "idSize": 8 },
+      "air": { "idColor": "#FFFF00", "pointSize": 3, "idSize": 8 },
+      "underwater": { "idColor": "#FFFFFF", "pointSize": 3, "idSize": 8 }
     },
     "trackDisplay": {
       "showTrackId": true,
@@ -701,14 +663,42 @@
       "uavSeconds": 60,
       "checkIntervalMs": 2000
     },
-    "airIconHeadingOffsetDeg": 45,
-    "airDefaultCourseDeg": 45
+    "airIconHeadingOffsetDeg": -45,
+    "airDefaultCourseDeg": -45
   },
 
   "factory": {
     "assetIcons": {
       "hostile": "#3b82f6",
       "neutral": "#737378"
-    }
+    },
+    "iconSize": [
+      [5, 0.62],
+      [10, 0.88],
+      [15, 1.12]
+    ]
+  },
+
+  "websocket": {
+    "url": "ws://192.168.18.141:26003/ws",
+    "reconnectInterval": 3000,
+    "heartbeatInterval": 25000,
+    "maxReconnectAttempts": 12,
+    "initialReconnectMs": 2000,
+    "maxReconnectMs": 30000
+  },
+
+  "coordinateTransform": {
+    "enabled": false
+  },
+
+  "http": {
+    "backendUrl": "http://192.168.18.141:26003",
+    "imagePollIntervalMs": 3000,
+    "imageFetchTimeoutMs": 1000
+  },
+
+  "trackIdMode": {
+    "distinguishSeaAir": false
   }
 }

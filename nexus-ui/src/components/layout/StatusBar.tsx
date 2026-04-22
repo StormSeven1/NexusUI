@@ -2,6 +2,7 @@
 
 import { useAppStore } from "@/stores/app-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
+import { useTrackStore } from "@/stores/track-store";
 import {
   Wifi,
   MapPin,
@@ -14,18 +15,27 @@ import { cn } from "@/lib/utils";
 export function StatusBar() {
   const { zoomLevel, mapViewMode, setMapViewMode } = useAppStore();
   const mouseCoords = useMapPointerStore((s) => s.mouseCoords);
+  const wsConnected = useTrackStore((s) => s.connected);
 
   return (
     <footer className="flex h-8 shrink-0 items-center justify-between border-t border-nexus-border bg-nexus-bg-elevated px-3">
       {/* 连接状态 */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full nexus-status-active" />
-          <span className="text-[10px] font-medium text-nexus-success">已连接</span>
+          <span className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            wsConnected ? "nexus-status-active" : "bg-nexus-danger",
+          )} />
+          <span className={cn(
+            "text-[10px] font-medium",
+            wsConnected ? "text-nexus-success" : "text-nexus-danger",
+          )}>
+            {wsConnected ? "已连接" : "未连接"}
+          </span>
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-nexus-text-secondary">
           <Wifi size={10} />
-          <span>延迟 12ms</span>
+          <span>{wsConnected ? "WebSocket" : "—"}</span>
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-nexus-text-secondary">
           <Monitor size={10} />

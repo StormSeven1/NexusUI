@@ -16,6 +16,7 @@ import {
   LYR_OPTO_FOV,
   LYR_RADAR_COVERAGE,
   LYR_TDOA,
+  LYR_TOWER,
   LYR_TRACKS,
   LYR_ZONES,
   type Track,
@@ -34,13 +35,11 @@ import {
   TRACK_SELECT_RING_ID,
   buildAssetSymbolDataUrl,
   getAllAssetSymbolKeysForPrereg,
-  getAllSectorCenterSymbolKeys,
-  buildFramedPublicGlyphSvgDataUrl,
-  sectorCenterGlyphColor,
-  fetchPublicMapAssetFragment,
-  friendlyColorFromAssetProperties,
+  assetFriendlyColorFromProperties,
+  buildIconSizeExpr,
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
+import { FORCE_COLORS } from "@/lib/theme-colors";
 import { getMaplibreBaseMapOptions } from "@/lib/map-2d-basemap";
 import { parseVectorLayersForPanel } from "@/lib/map-2d-basemap-layer-panel";
 import {
@@ -54,7 +53,13 @@ import {
   laserLabelStyleFromBundle,
   tdoaSectorBorderFromBundle,
   tdoaLabelStyleFromBundle,
+  resolveLaserDefaults,
+  resolveTdoaDefaults,
   dispositionFromAssetData,
+  formatCameraTowerMapLabel,
+  formatTowerMapLabel,
+  getAssetFriendlyColorForAssetType,
+  shouldDisplayAssetId,
 } from "@/lib/map-app-config";
 import {
   RadarCoverageModule,
@@ -67,11 +72,12 @@ import {
   AIRPORT_LABEL_LAYER,
 } from "@/components/map/modules/airport-maplibre";
 import { OptoelectronicFovModule, FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER } from "@/components/map/modules/optoelectronic-fov-maplibre";
+import { TowerMaplibre, TOWER_LAYER_IDS, TOWER_ICON_LAYER } from "@/components/map/modules/tower-maplibre";
 import { DistanceMeasureMaplibre, DIST_MEASURE_LAYER_IDS } from "@/components/map/modules/distance-measure-maplibre";
 import { AngleMeasureMaplibre, ANGLE_LAYER_IDS } from "@/components/map/modules/angle-measure-maplibre";
 import { PolygonDrawMaplibre, POLY_DRAW_LAYER_IDS, POLY_ZONES_LAYER_IDS } from "@/components/map/modules/polygon-draw-maplibre";
-import { LaserMaplibre, LASER_CENTER, LASER_LAYER_IDS } from "@/components/map/modules/laser-maplibre";
-import { TdoaMaplibre, TDOA_CENTER, TDOA_LAYER_IDS } from "@/components/map/modules/tdoa-maplibre";
+import { LaserMaplibre, LASER_CENTER, LASER_LAYER_IDS, type LaserDevice } from "@/components/map/modules/laser-maplibre";
+import { TdoaMaplibre, TDOA_CENTER, TDOA_LAYER_IDS, type TdoaDevice } from "@/components/map/modules/tdoa-maplibre";
 import {
   TracksMaplibre,
   TRACK_TRAIL,
@@ -122,6 +128,7 @@ const ASSET_POINT_PICK_LAYERS = [
   OPTO_ASSET_ICON_LAYER,
   AIRPORT_ICON_LAYER,
   DRONES_STATIC_SYMBOL_LAYER,
+  DRONES_SYMBOL_LAYER,
   LASER_CENTER,
   TDOA_CENTER,
 ];
@@ -159,6 +166,7 @@ const LAYER_MAPPING: Record<string, string[]> = {
   [LYR_TDOA]: [...TDOA_LAYER_IDS],
   [LYR_RADAR_COVERAGE]: [...RADAR_COVERAGE_LAYER_IDS, RADAR_ASSET_ICON_LAYER],
   [LYR_OPTO_FOV]: [...FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER],
+  [LYR_TOWER]: [...TOWER_LAYER_IDS],
   [LYR_MEASURE]: [...MEASURE_TOOL_LAYER_IDS],
   [LYR_ZONES]: [...POLY_ZONES_LAYER_IDS],
 };
@@ -223,10 +231,26 @@ function applyLayerPanelVisibilityFromStore(
  * 将 store 中的 `AssetData`（合并后的静态配置 + WS 等）转成地图专题层使用的 `Asset`。
  * - 字段映射：`range_km`→`range`、`fov_angle`→`fovAngle`；`heading` 原样供光电 FOV 扇形朝向。
  * - `properties` 布尔：雷达 `showRings`；非雷达的 `center_icon_visible` / `center_name_visible` / `fov_sector_visible`→`centerIconVisible` / `nameLabelVisible` / `showFov`。
- * - 供 `RadarCoverageModule`、`OptoelectronicFovModule.setFromAssets`、`AirportStaticMaplibre.setFromAssets`、`DronesMaplibre.setStaticDroneSitesFromAssets` 等；激光/TDOA 专题设备由 `laserDevicesFromSectorBundle` 等单独生成，不经过本函数。
+ *
+ * 地图资产渲染有两条路线（各自独立 GeoJSON source + layers，独立显隐控制）：
+ *
+ * 路线 A — 资产路线（本函数 + 各 module.setFromAssets）：
+ *   asset-store → adaptAssets → Asset[] → 分发给各专题模块
+ *   ├─ 雷达    → RadarCoverageModule  画同心圆环、距离标注、角度标注
+ *   ├─ 光电/塔 → OptoelectronicFovModule 画 FOV 扇区、中心图标、名称标签
+ *   ├─ 机场    → AirportStaticMaplibre  画机场图标 + 名称标签
+ *   └─ 无人机  → DronesMaplibre.setStaticDroneSitesFromAssets  画静态机位点图标
+ *   激光/TDOA 不走本路线，由 laserDevicesFromSectorBundle / tdoaDevicesFromSectorBundle 单独生成
+ *
+ * 路线 B — 遥测路线（各 module 直接读 store）：
+ *   drone-store → DronesMaplibre.setDrones  画实时无人机位置、航向、历史轨迹、航线、FOV
+ *   dock-store → dock_status 更新机场坐标/属性（通过 asset-store mergeAssetFields）
+ *   track-store → TracksMaplibre  画航迹点、航迹线、锁定圈
  */
 function adaptAssets(assets: AssetData[]): Asset[] {
-  return assets.map((a) => {
+  return assets
+    .filter((a) => shouldDisplayAssetId(a.asset_type, a.id, a.name))
+    .map((a) => {
     const p = a.properties as Record<string, unknown> | null | undefined;
     const isRadar = String(a.asset_type ?? "").toLowerCase() === "radar";
     let showRings: boolean | undefined;
@@ -239,13 +263,26 @@ function adaptAssets(assets: AssetData[]): Asset[] {
     let nameLabelVisible: boolean | undefined;
     if (!isRadar && p?.center_name_visible === false) nameLabelVisible = false;
     const showFov = p?.fov_sector_visible === false ? false : undefined;
-    const friendlyMapColor = friendlyColorFromAssetProperties(p ?? null);
+    if (!a.asset_type) console.warn("[Map2D] asset_type 为空:", a.id, a);
+    const t = normalizeAssetType(a.asset_type);
+    const disp = dispositionFromAssetData(a);
+    let friendlyMapColor: string | undefined;
+    if (disp === "friendly") {
+      friendlyMapColor =
+        assetFriendlyColorFromProperties(p ?? null) ??
+        getAssetFriendlyColorForAssetType(t) ??
+        FORCE_COLORS.friendly;
+    }
+    // 机场和无人机的 name 在入资产时已解析好，直接用；光电/电侦走 id 提取数字
+    let displayName = a.name;
+    if (t === "camera") displayName = formatCameraTowerMapLabel(a.id);
+    else if (t === "tower") displayName = formatTowerMapLabel(a.id);
     return {
       id: a.id,
-      name: a.name,
-      type: normalizeAssetType(a.asset_type),
+      name: displayName,
+      type: t,
       status: a.status as Asset["status"],
-      disposition: dispositionFromAssetData(a),
+      disposition: disp,
       lat: a.lat,
       lng: a.lng,
       range: a.range_km ?? undefined,
@@ -261,12 +298,72 @@ function adaptAssets(assets: AssetData[]): Asset[] {
   });
 }
 
-/** 专题层要素 → 资产 id（FOV/相机等多边形用 `id`；雷达覆盖用 `radarId`） */
+/**
+ * Asset（asset-store 动态实体）→ LaserDevice（激光专题层 upsert）。
+ *
+ * - WS 动态实体不含激光扫描/脉动参数，使用默认 scan（enabled:false）；
+ *   若该 id 已被静态 bundle upsert 过，则 scan/脉动参数保持不变（upsert 覆盖）。
+ * - range/heading/fovAngle 等从 Asset 对应字段直接映射。
+ */
+function adaptAssetToLaserDevice(a: Asset): LaserDevice {
+  return {
+    id: a.id,
+    lng: a.lng,
+    lat: a.lat,
+    /* Asset.range 单位 km；LaserDevice.rangeKm 也是 km，直接传递 */
+    rangeKm: a.range ?? 12,
+    headingDeg: a.heading ?? 0,
+    openingDeg: a.fovAngle ?? 90,
+    virtual: a.isVirtual,
+    disposition: a.disposition,
+    friendlyMapColor: (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
+    centerNameVisible: a.nameLabelVisible,
+    /* 激光中心图标由 LaserMaplibre 专题层独立管理，不受资产层 center_icon_visible 影响。
+     * 资产数据中 center_icon_visible: false 是为了不让资产符号层画激光图标，
+     * 但激光专题层应该始终有中心图标（由 bundle 配置控制）。设为 undefined，
+     * LaserMaplibre.flush() 中 centerIconVisible !== false → true，保留专题层图标。 */
+    centerIconVisible: undefined,
+    name: a.name,
+    /* 动态 WS 实体不含扫描参数，默认关闭扫描动画；保留已有设备的扫描参数由 upsert 处理 */
+    scan: { enabled: false, cycleMs: 4000, tickMs: 90, bandCount: 9, bandWidthMeters: 1 },
+  };
+}
+
+/**
+ * Asset（asset-store 动态实体）→ TdoaDevice（TDOA 专题层 upsert）。
+ *
+ * 与激光同理，动态实体不含 TDOA 扫描参数，使用默认 scan（enabled:false）。
+ */
+function adaptAssetToTdoaDevice(a: Asset): TdoaDevice {
+  return {
+    id: a.id,
+    lng: a.lng,
+    lat: a.lat,
+    rangeKm: a.range ?? 12,
+    headingDeg: a.heading ?? 0,
+    openingDeg: a.fovAngle ?? 90,
+    virtual: a.isVirtual,
+    disposition: a.disposition,
+    friendlyMapColor: (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
+    centerNameVisible: a.nameLabelVisible,
+    /* TDOA 中心图标由 TdoaMaplibre 专题层独立管理，同激光 */
+    centerIconVisible: undefined,
+    name: a.name,
+    scan: { enabled: false, cycleMs: 2000, tickMs: 100, bandCount: 9, bandWidthMeters: 2 },
+  };
+}
+
+/**
+ * 专题层要素 → 资产 id
+ * - FOV/相机等多边形用 `id`；雷达覆盖用 `radarId`
+ * - 无人机/机场 GeoJSON 用 `sn`（deviceSn/dockSn），与 asset-store key 一致
+ */
 function assetIdFromPickFeature(f: maplibregl.MapGeoJSONFeature): string | undefined {
   const p = f.properties as Record<string, unknown> | null | undefined;
   if (!p) return undefined;
   if (typeof p.id === "string" && p.id.length) return p.id;
   if (typeof p.radarId === "string" && p.radarId.length) return p.radarId;
+  if (typeof p.sn === "string" && p.sn.length) return p.sn;
   return undefined;
 }
 
@@ -295,6 +392,7 @@ export function Map2D() {
   const areaIdsRef = useRef<string[]>([]);
   const radarCovRef = useRef<RadarCoverageModule | null>(null);
   const optoFovRef = useRef<OptoelectronicFovModule | null>(null);
+  const towerModRef = useRef<TowerMaplibre | null>(null);
   const airportStaticRef = useRef<AirportStaticMaplibre | null>(null);
   const tracksRef = useRef<TracksMaplibre | null>(null);
   /** 同帧内多次 `setTracks` 合并为一次 `requestAnimationFrame`，减轻 WS 突发压力 */
@@ -430,29 +528,10 @@ export function Map2D() {
           (async () => {
             if (!map.hasImage(LOCK_ON_IMAGE_ID)) map.addImage(LOCK_ON_IMAGE_ID, await loadSvgImage(buildLockOnDataUrl(), 128), { pixelRatio: 2 });
           })(),
-          /* 五类站址图标全组合（`getAssetSymbolId` → `asset-{type}-…`）。激光/TDOA 也含在内，与下行扇区中心并存：后者用 `nexus-*-ctr-*`，id 不同，不会重复 `addImage` */
+          /* 五类站址图标全组合（`getAssetSymbolId` → `asset-{type}-…`），激光/TDOA 中心图标也走同一条路径 */
           ...getAllAssetSymbolKeysForPrereg(appCfg.configAssetBase).map(async ({ id, type, status, virtual, disposition, friendlyFill }) => {
             if (!map.hasImage(id)) {
               const src = await buildAssetSymbolDataUrl(type, status, virtual, disposition, assetIconAccent, friendlyFill);
-              map.addImage(id, await loadSvgImage(src, 56), { pixelRatio: 2 });
-            }
-          }),
-          /*
-           * 激光/TDOA 扇区专题层（`LaserMaplibre` / `TdoaMaplibre`）的中心点图层固定引用 `nexus-*-ctr-*`（见 `LASER_CENTER_ICON_IMAGE_EXPR` 等），按敌我三色即可；
-           * 与上行 `asset-laser-*` / `asset-tdoa-*` 不同：站址符号含在线态/虚拟等全组合，且配置里常隐藏资产层中心点而只由专题层画中心。
-           * 光电 FOV 不走这一套：相机图标用 `getAssetSymbolId` → `asset-camera-*`（`opto-asset-icon` 的 `symbolId`），画的是「相机类资产」而非 `nexus-*-ctr-*`。
-           */
-          ...getAllSectorCenterSymbolKeys().map(async ({ id, kind, disposition }) => {
-            if (!map.hasImage(id)) {
-              const fr = await fetchPublicMapAssetFragment(kind);
-              const friendlyOv =
-                disposition === "friendly"
-                  ? kind === "laser"
-                    ? laserLabelStyleFromBundle(appCfg.laserWeapons).textColor
-                    : tdoaLabelStyleFromBundle(appCfg.tdoa).textColor
-                  : undefined;
-              const color = sectorCenterGlyphColor(disposition, assetIconAccent, friendlyOv);
-              const src = buildFramedPublicGlyphSvgDataUrl(fr.viewBox, fr.body, color, false, 8, kind);
               map.addImage(id, await loadSvgImage(src, 56), { pixelRatio: 2 });
             }
           }),
@@ -487,13 +566,21 @@ export function Map2D() {
         radarCov.setFromAssets(_assets, mergedAssetData);
         radarCovRef.current = radarCov;
 
-        /* 光电 FOV 与相机/塔台中心图标；`applyCamerasBundle` 用 `appCfg.cameras` 配 FOV 边线/标签样式 */
+        /* 光电 FOV 与相机中心图标；仅处理 camera，不含 tower（电侦） */
         const optoFov = new OptoelectronicFovModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
         optoFov.install();
         optoFov.setAssetDispositionAccent(assetIconAccent);
         optoFov.applyCamerasBundle(appCfg.cameras);
         optoFov.setFromAssets(_assets);
         optoFovRef.current = optoFov;
+
+        /* 电侦（tower）：独立渲染模块，不与光电共用任何图层 */
+        const towerMod = new TowerMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        towerMod.install();
+        towerMod.setAssetDispositionAccent(assetIconAccent);
+        towerMod.applyFovStyleFromBundle(appCfg.tower);
+        towerMod.setFromAssets(_assets);
+        towerModRef.current = towerMod;
 
         const airportStatic = new AirportStaticMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
         airportStatic.install();
@@ -531,6 +618,7 @@ export function Map2D() {
         laser.setSectorBorder(laserSectorBorderFromBundle(appCfg.laserWeapons));
         laser.setLabelStyle(laserLabelStyleFromBundle(appCfg.laserWeapons));
         laser.setLayerVisibility(sectorBundleToLaserLayerVis(appCfg.laserWeapons));
+        { const ld = resolveLaserDefaults(appCfg.laserWeapons); laser.setDefaults(ld.sectorFillDefaultColor, ld.sectorFillDefaultOpacity); }
         for (const d of laserDevicesFromSectorBundle(appCfg.laserWeapons)) {
           laser.upsert(d);
         }
@@ -541,10 +629,31 @@ export function Map2D() {
         tdoa.setSectorBorder(tdoaSectorBorderFromBundle(appCfg.tdoa));
         tdoa.setLabelStyle(tdoaLabelStyleFromBundle(appCfg.tdoa));
         tdoa.setLayerVisibility(sectorBundleToTdoaLayerVis(appCfg.tdoa));
+        { const td = resolveTdoaDefaults(appCfg.tdoa); tdoa.setDefaults(td.sectorFillDefaultColor, td.sectorFillDefaultOpacity); }
         for (const d of tdoaDevicesFromSectorBundle(appCfg.tdoa)) {
           tdoa.upsert(d);
         }
         measureToolRefs.current = { dist, angle, poly, laser, tdoa };
+
+        /* 从 factory.iconSize 配置覆盖所有资产中心图标的 zoom→size 插值 */
+        if (appCfg.iconSizeStops) {
+          const iconSizeExpr = buildIconSizeExpr(appCfg.iconSizeStops);
+          const allIconLayers = [
+            RADAR_ASSET_ICON_LAYER,
+            OPTO_ASSET_ICON_LAYER,
+            TOWER_ICON_LAYER,
+            AIRPORT_ICON_LAYER,
+            DRONES_STATIC_SYMBOL_LAYER,
+            DRONES_SYMBOL_LAYER,
+            LASER_CENTER,
+            TDOA_CENTER,
+          ];
+          for (const lid of allIconLayers) {
+            if (map.getLayer(lid)) {
+              map.setLayoutProperty(lid, "icon-size", iconSizeExpr);
+            }
+          }
+        }
 
         /* 测量面板与工具栏：切换测距 / 测角 / 多边形时互斥激活 */
         const measureHandlers: Map2DMeasureHandlers = {
@@ -662,6 +771,8 @@ export function Map2D() {
       airportStaticRef.current = null;
       optoFovRef.current?.dispose();
       optoFovRef.current = null;
+      towerModRef.current?.dispose();
+      towerModRef.current = null;
       dronesRef.current?.dispose();
       dronesRef.current = null;
       tracksRef.current?.dispose();
@@ -861,13 +972,25 @@ export function Map2D() {
   useEffect(() => {
     const flush = () => {
       tracksFlushRafRef.current = null;
-      if (!mapRef.current?.isStyleLoaded()) return;
-      tracksRef.current?.setTracks(tracksPendingRef.current);
+      if (!tracksRef.current) return;
+      tracksRef.current.setTracks(tracksPendingRef.current);
     };
     const unsub = useTrackStore.subscribe((s) => {
       tracksPendingRef.current = s.tracks;
       if (tracksFlushRafRef.current != null) return;
       tracksFlushRafRef.current = requestAnimationFrame(flush);
+      // 标牌跟随选中航迹位置更新
+      const cur = placardRef.current;
+      if (cur?.kind === "track") {
+        const t = s.tracks.find((tr) => tr.id === cur.id);
+        if (t && (t.lng !== cur.lng || t.lat !== cur.lat)) {
+          const map = mapRef.current;
+          if (map) {
+            const p = map.project({ lng: t.lng, lat: t.lat });
+            setPlacard({ kind: "track", id: cur.id, lng: t.lng, lat: t.lat, x: p.x, y: p.y });
+          }
+        }
+      }
     });
     return () => {
       unsub();
@@ -887,10 +1010,21 @@ export function Map2D() {
       const m = mapRef.current;
       if (!m?.isStyleLoaded()) return;
       const adapted = adaptAssets(s.assets);
+      /* 雷达/光电/电侦/机场/无人机：由各专题模块 setFromAssets 驱动 */
       radarCovRef.current?.setFromAssets(adapted, s.assets);
       optoFovRef.current?.setFromAssets(adapted);
+      towerModRef.current?.setFromAssets(adapted);
       airportStaticRef.current?.setFromAssets(adapted);
       dronesRef.current?.setStaticDroneSitesFromAssets(adapted, assetDispositionAccentRef.current);
+
+      /* 激光/TDOA：从 asset-store 动态实体 upsert 进专题模块（静态 bundle 设备已在初始化时 upsert） */
+      const tools = measureToolRefs.current;
+      if (tools) {
+        for (const a of adapted) {
+          if (a.type === "laser") tools.laser.upsert(adaptAssetToLaserDevice(a));
+          else if (a.type === "tdoa") tools.tdoa.upsert(adaptAssetToTdoaDevice(a));
+        }
+      }
     });
     return () => { unsubZ(); unsubA(); };
   }, []);

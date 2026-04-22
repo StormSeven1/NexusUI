@@ -18,7 +18,13 @@
  */
 
 import type { AssetData } from "@/stores/asset-store";
-import { normalizeAssetType, parseMapAssetTypeStrict, type Track } from "@/lib/map-entity-model";
+import {
+  normalizeAssetType,
+  parseMapAssetTypeStrict,
+  PUBLIC_MAP_ASSET_TYPES,
+  type PublicMapAssetType,
+  type Track,
+} from "@/lib/map-entity-model";
 import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
@@ -45,45 +51,251 @@ function finiteNumberOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** WS 实体 ontology / 业务类型 → `normalizeAssetType` 输入串 */
+/**
+ * 【核心：实体类型识别】从 WS 实体行中提取 `specificType`，映射为前端资产类型字符串。
+ *
+ * ── 字段提取优先级 ──
+ * 后端 entity_status 推来的每条实体行 `r` 中，类型标识字段有以下几种可能：
+ *   1. r.specificType           —— 顶层字段（最常见，如 "Radar-Surveillance"、"CAMERA"）
+ *   2. r.ontology.specificType  —— 嵌套在 ontology 对象内
+ *   3. r.ontologySpecificType   —— 扁平化的本体类型字段
+ *   4. r.specific_type          —— 下划线风格（部分后端版本）
+ *
+ * 本函数按以上优先级提取 `specificType`，转大写后匹配已知类型前缀/值。
+ *
+ * ── 类型映射规则（与后端 ontology 对齐）──
+ *   - "Radar-*"    （前缀匹配，如 "Radar-Surveillance"、"Radar-Tracking"）→ "radar"
+ *   - "RADAR" / "雷达" / 含 "RADAR" / 含 "雷达"              → "radar"
+ *   - navigationParameters.with_radar=1 / radarParameters 存在 → "radar"（隐式雷达，如无人船）
+ *   - "CAMERA" / "OPTOELECTRONIC" / "OPTICAL" / "光电"       → "camera"
+ *   - "TOWER" / "ESM" / "电侦" / "电子侦察" / "RECON" / "EW" → "tower"
+ *   - "DOCK" / "AIRPORT" / "GATEWAY"                         → "airport"
+ *   - "DRONE" / "UAV"                                         → "drone"
+ *   - "LASER" / "激光" / "激光武器"                           → "laser"
+ *   - "TDOA"                                                   → "tdoa"
+ *   - "SURVEILLANCE_AREA" / "RESTRICTED_AREA" / "AREA" / "AREA_TYPE_*" / "SURVEILLANCE" / "FIXED_WING" / "FRAME"
+ *     → "unknown"（非地图资产类型，跳过不入库，不报错）
+ *   - 其余回退：尝试 r.asset_type / r.type，仍无法识别 → "unknown"
+ */
 function wsEntityTypeRaw(r: Record<string, unknown>): string {
-  const st = String(r.specificType ?? r.ontologySpecificType ?? "").trim();
+  /* ── 第1步：提取 specificType（按优先级尝试多个可能的字段位置）── */
+  const ontology = asRecord(r.ontology);
+  const rawSpecificType =
+    r.specificType ??                          // 顶层 camelCase
+    r.specific_type ??                         // 顶层 snake_case
+    ontology?.specificType ??                   // 嵌套 ontology.specificType
+    ontology?.specific_type ??                  // 嵌套 ontology.specific_type
+    r.ontologySpecificType ??                   // 扁平化本体类型
+    "";                                         // 兜底空串
+  const st = String(rawSpecificType).trim();
   const stu = st.toUpperCase();
+
+  const eid = String(r.entityId ?? r.entity_id ?? "?");
+  const hasRadarParams = r.radarParameters != null || r.max_range_m != null || r.range_km != null;
+
+  /* ── 第2步：根据 specificType 大写值匹配前端资产类型 ── */
+
+  // 机场 / 网关
   if (stu === "DOCK" || stu === "AIRPORT" || stu === "GATEWAY") return "airport";
+  // 无人机
   if (stu === "DRONE" || stu === "UAV") return "drone";
-  return String(r.asset_type ?? r.type ?? r.specificType ?? "tower");
+  // 雷达：specificType 以 "Radar-" 开头（如 "Radar-Surveillance"、"Radar-Tracking"）或精确等于 "RADAR"
+  if (stu === "RADAR" || stu === "雷达" || stu.startsWith("RADAR-") || stu.includes("RADAR") || stu.includes("雷达")) return "radar";
+  // 相机（光电）：specificType 精确等于 "CAMERA"（注意：不含 TOWER，电侦是独立类型）
+  if (
+    stu === "CAMERA" || stu === "OPTOELECTRONIC" || stu === "OPTICAL" ||
+    stu === "光电" || stu === "摄像头"
+  ) return "camera";
+  // 电侦（电子侦察）：与光电（camera）为不同类型，图标使用 电侦.svg
+  if (
+    stu === "TOWER" || stu === "电侦" || stu === "电子侦察" || stu === "ESM" ||
+    stu === "RECON" || stu === "EW"
+  ) return "tower";
+  // 激光武器
+  if (stu === "LASER" || stu === "激光" || stu === "激光武器") return "laser";
+  // TDOA
+  if (stu === "TDOA") return "tdoa";
+  // 无人船/平台携带雷达：navigationParameters.with_radar=1 或 radarParameters 存在
+  const navParams = asRecord(r.navigationParameters);
+  if (navParams?.with_radar === 1 || navParams?.with_radar === true || hasRadarParams) {
+    return "radar";
+  }
+  // 区域/监视区等非地图资产类型，直接跳过不报错
+  if (
+    stu === "SURVEILLANCE_AREA" || stu === "RESTRICTED_AREA" || stu === "AREA" ||
+    stu.startsWith("AREA_TYPE_") || stu.startsWith("SURVEILLANCE") || stu === "FIXED_WING" ||
+    stu === "FRAME"
+  ) {
+    return "unknown";
+  }
+
+  /* ── 第3步：specificType 无法识别 —— 尝试 asset_type / type 字段 fallback ── */
+  const fallbackType = String(r.asset_type ?? r.type ?? "").toLowerCase().trim();
+  if (fallbackType && (PUBLIC_MAP_ASSET_TYPES as readonly string[]).includes(fallbackType)) {
+    return fallbackType;
+  }
+  console.error(
+    `[wsEntityTypeRaw] ✘ 无法识别实体类型: specificType="${st}", asset_type="${r.asset_type ?? ""}", type="${r.type ?? ""}", entityId=${eid}`
+  );
+  return "unknown";
 }
 
-/** WebSocket 等动态载荷中的实体行 → `AssetData`（与配置无关） */
+/**
+ * 【WS 实体 → AssetData 转换】
+ *
+ * 将 WebSocket 推来的单条实体行（来自 entity_status 消息的 data 数组）解析为前端 AssetData。
+ *
+ * ── 解析流程 ──
+ * 1. 提取实体 ID（r.id / r.entityId / r.drone_sn / r.asset_id / r.dock_sn）
+ * 2. 提取坐标（顶层 lat/lng → 嵌套 location.position → 无坐标则丢弃）
+ * 3. 提取名称（r.name / r.entityName / aliases.name）
+ * 4. 提取朝向与视场角（heading / bearing / fov_angle）
+ * 5. 雷达专用参数（radarParameters.range：海里→公里转换，写入 properties.max_range_m）
+ * 6. 提取敌我属性（disposition / milView.disposition）
+ * 7. 提取健康状态（health.healthStatus → online/offline/degraded）
+ * 8. 【关键】通过 `wsEntityTypeRaw(r)` 识别资产类型（基于 specificType 字段）
+ * 9. 组装 AssetData 写入 asset-store
+ *
+ * @param r - WebSocket 实体行原始对象（已 JSON.parse）
+ * @returns AssetData 或 null（无 ID 或无坐标时返回 null）
+ */
 export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
-  const id = String(r.id ?? r.entityId ?? r.drone_sn ?? r.asset_id ?? r.dock_sn ?? "");
-  if (!id) return null;
-  const lat = Number(r.lat ?? r.latitude);
-  const lng = Number(r.lng ?? r.longitude);
+  /* ── 1. 提取实体 ID ── */
+  /* 【重要】所有资产统一使用 entityId 字段作为唯一 key；
+   * entityId 是后端为每个实体分配的唯一标识符，贯穿 WS 消息、航迹关联、资产渲染全流程。
+   * 如果 WS 实体行没有 entityId，这条数据无法入库，直接报错丢弃。 */
+  const id = String(r.entityId ?? r.entity_id ?? "").trim();
+  if (!id) {
+    console.error("[mapOneEntityRow] ✘ 实体缺少 entityId，丢弃:", JSON.stringify(r).slice(0, 300));
+    return null;
+  }
+
+  /* ── 2. 提取 WGS84 坐标 ── */
+  /* 优先级：顶层 r.lat/r.latitude → 嵌套 r.location.position.latitudeDegrees */
+  let lat = Number(r.lat ?? r.latitude);
+  let lng = Number(r.lng ?? r.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    const location = asRecord(r.location);
+    const position = asRecord(location?.position);
+    if (position) {
+      const plat = Number(position.latitudeDegrees ?? position.latitude ?? position.lat);
+      const plng = Number(position.longitudeDegrees ?? position.longitude ?? position.lng ?? position.lon);
+      if (Number.isFinite(plat)) lat = plat;
+      if (Number.isFinite(plng)) lng = plng;
+    }
+  }
+  /* 无坐标的实体无法在地图上渲染，直接丢弃 */
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
   const now = isoNow();
-  /* 光电扇区朝向：与 `cameras.devices[].bearing` 一致，WS 常发 `bearing` 而非 `heading` */
+
+  /* ── 3. 提取名称 ── */
+  /* 优先级：r.name → r.entityName → aliases.name → 回退为 ID */
+  const aliases = asRecord(r.aliases);
+  const name = String(r.name ?? r.entityName ?? aliases?.name ?? id);
+
+  /* ── 4. 提取朝向（度）与视场角（度）── */
+  /* 朝向：heading / bearing / azimuth（光电 WS 常发 bearing 而非 heading） */
   const headingDeg = finiteNumberOrNull(r.heading ?? r.bearing ?? r.azimuth);
+  /* 视场角：fov_angle / fovAngle / openingDeg / angle */
   const fovDeg = finiteNumberOrNull(r.fov_angle ?? r.fovAngle ?? r.openingDeg ?? r.angle);
-  return {
+
+  /* ── 5. 雷达专用参数提取 ── */
+  /* 后端 radarParameters.range 单位为海里，需转换为公里写入 range_km；
+   * 同时将 max_range_m（米）、ring_interval_m、ring_count 写入 properties，
+   * 供 radar-range-rings-maplibre.ts 渲染雷达距离环使用 */
+  const radarParams = asRecord(r.radarParameters);
+  let rangeKm = r.range_km != null ? Number(r.range_km) : r.range != null ? Number(r.range) : null;
+  const radarExtraProps: Record<string, unknown> = {};
+  if (radarParams && rangeKm == null) {
+    const radarRange = Number(radarParams.range);
+    if (Number.isFinite(radarRange) && radarRange > 0) {
+      const rangeMeters = radarRange * 1852;                    // 海里 → 米
+      radarExtraProps.max_range_m = rangeMeters;
+      /* ring_interval_m / ring_count 不在此设置，由 app-config.json radar.defaultInterval / defaultMaxRange 控制 */
+      radarExtraProps.showRings = true;
+      radarExtraProps.radar_model = radarParams.radar_model;
+      radarExtraProps.radar_type = radarParams.radar_type;
+      radarExtraProps.radar_transmit = radarParams.transmit;
+      rangeKm = rangeMeters / 1000;                             // 米 → 公里
+    }
+  }
+  /* navigationParameters.maxRangeNm（无人船等携带雷达的平台） */
+  if (rangeKm == null) {
+    const navP = asRecord(r.navigationParameters);
+    if (navP) {
+      const maxRangeNm = Number(navP.maxRangeNm);
+      if (Number.isFinite(maxRangeNm) && maxRangeNm > 0) {
+        const rangeMeters = maxRangeNm * 1852;                  // 海里 → 米
+        radarExtraProps.max_range_m = rangeMeters;
+        /* ring_interval_m / ring_count 不在此设置，由 app-config.json radar.defaultInterval / defaultMaxRange 控制 */
+        radarExtraProps.showRings = true;
+        rangeKm = rangeMeters / 1000;
+      }
+    }
+  }
+
+  /* ── 6. 提取敌我属性（disposition）── */
+  /* 优先级：顶层 r.disposition → milView.disposition → forceDisposition → properties.disposition */
+  const milView = asRecord(r.milView);
+  const disposition = parseForceDisposition(
+    r.disposition ??
+      milView?.disposition ??
+      (r as Record<string, unknown>).forceDisposition ??
+      (r.properties && typeof r.properties === "object"
+        ? (r.properties as Record<string, unknown>).disposition
+        : undefined),
+    "friendly",
+  );
+
+  /* ── 7. 提取健康/在线状态 ── */
+  /* health.healthStatus → online / offline / degraded；
+   * isLive / online.isOnline 为 0 时强制 offline */
+  const health = asRecord(r.health);
+  const healthStatus = String(health?.healthStatus ?? r.status ?? "online");
+  const status: string = (() => {
+    const hs = healthStatus.toUpperCase();
+    if (hs.includes("OFFLINE") || hs.includes("FAIL")) return "offline";
+    if (hs.includes("DEGRADED")) return "degraded";
+    return "online";
+  })();
+
+  const isLive = r.isLive;
+  const online = asRecord(r.online);
+  const effectiveStatus =
+    (isLive === 0 || online?.isOnline === 0) ? "offline" : status;
+
+  /* ── 8. 【关键】识别资产类型 ── */
+  /* 调用 wsEntityTypeRaw()，基于 specificType 字段识别：
+   *   - specificType 以 "Radar-" 开头 → "radar"（如 "Radar-Surveillance"）
+   *   - specificType == "CAMERA"      → "camera"
+   *   - 其他类型见 wsEntityTypeRaw 注释
+   * 再经 normalizeAssetType() 确保落入 PUBLIC_MAP_ASSET_TYPES 集合 */
+  const rawType = wsEntityTypeRaw(r);
+  if (rawType === "unknown") {
+    return null;
+  }
+  const assetType = normalizeAssetType(rawType);
+  /* 雷达为全向扫描，fov_angle 强制 360° */
+  const effectiveFovDeg = assetType === "radar" ? 360 : fovDeg;
+
+  /* ── 9. 组装 AssetData ── */
+  const result: AssetData = {
     id,
-    name: String(r.name ?? r.entityName ?? id),
-    asset_type: normalizeAssetType(wsEntityTypeRaw(r)),
-    status: String(r.status ?? "online"),
-    disposition: parseForceDisposition(
-      r.disposition ??
-        (r as Record<string, unknown>).forceDisposition ??
-        (r.properties && typeof r.properties === "object"
-          ? (r.properties as Record<string, unknown>).disposition
-          : undefined),
-      "friendly",
-    ),
+    name,
+    asset_type: assetType,
+    status: effectiveStatus,
+    disposition,
     lat,
     lng,
-    range_km: r.range_km != null ? Number(r.range_km) : r.range != null ? Number(r.range) : null,
+    range_km: rangeKm,
     heading: headingDeg,
-    fov_angle: fovDeg,
-    properties: (r.properties as Record<string, unknown> | null) ?? { ...r },
+    fov_angle: effectiveFovDeg,
+    properties: {
+      ...((r.properties as Record<string, unknown> | null) ?? { ...r }),
+      ...radarParams,
+      ...radarExtraProps,
+    },
     mission_status: String(r.mission_status ?? "monitoring"),
     assigned_target_id: r.assigned_target_id != null ? String(r.assigned_target_id) : null,
     target_lat: r.target_lat != null ? Number(r.target_lat) : null,
@@ -91,8 +303,23 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
     created_at: String(r.created_at ?? now),
     updated_at: now,
   };
+
+  return result;
 }
 
+/**
+ * 【批量解析】将 WS 推来的实体数组统一转换为 AssetData[]。
+ *
+ * 遍历 payload 数组中的每条实体，调用 mapOneEntityRow 逐一解析：
+ *   - 根据 specificType 识别类型（"Radar-XXX" → 雷达，"CAMERA" → 相机，...）
+ *   - 提取坐标、名称、朝向、敌我属性等
+ *   - 无 ID 或无坐标的行被丢弃
+ *
+ * 调用链：entity_status → mapEntitiesPayload → mapOneEntityRow → wsEntityTypeRaw
+ *
+ * @param payload - WS 消息中的 data 数组（entity_status 的 msg.data）
+ * @returns 有效实体的 AssetData 数组
+ */
 export function mapEntitiesPayload(payload: unknown): AssetData[] {
   if (!Array.isArray(payload)) return [];
   const out: AssetData[] = [];
@@ -225,6 +452,26 @@ export type AppConfigSectorBundle = {
   /** 激光脉冲：间歇阶段默认 ms（V2 = 3000） */
   laserPulseOffMs?: number;
   devices?: AppConfigSectorDevice[];
+
+  /* ── FOV 扇区颜色（光电/电侦/机场/无人机/激光/TDOA 通用） ── */
+  /** 扇区填充色（如 "rgba(147,51,234,0.10)" 或 "#9333ea"） */
+  sectorFill?: string;
+  /** 扇区填充透明度（如 0.10）；与 sectorFill 配合，当 sectorFill 为 hex 色时必须单独设此值 */
+  sectorFillOpacity?: number;
+  /** 扇区线色（如 "#9333ea"） */
+  sectorLine?: string;
+  /** 扇区线宽 */
+  sectorLineWidth?: number;
+  /** 扇区线透明度 */
+  sectorLineOpacity?: number;
+  /** 扇区虚兵虚线样式 */
+  sectorLineDashVirtual?: number[];
+  /** 扇区实兵虚线样式 */
+  sectorLineDashReal?: number[];
+
+  /* ── 激光 / TDOA：专题层扇区填充默认值（设备未写 color/opacity 时使用） ── */
+  sectorFillDefaultColor?: string;
+  sectorFillDefaultOpacity?: number;
 };
 
 /* =============================================================================
@@ -232,7 +479,7 @@ export type AppConfigSectorBundle = {
  *
  * | 配置键 | 读取方 |
  * |--------|--------|
- * | `trackRendering` | `track-ws-normalize`（空中航向角）；`useUnifiedWsFeed`（超时轮询、`mergeTrackWsPayloadWithHistory`）；`tracks-maplibre`（`maxViewportPoints` 顶点预算内才画历史折线） |
+ * | `trackRendering` | `track-ws-normalize`（空中航向角）；`useUnifiedWsFeed`（超时轮询）；`track-store.setTracks`（按 `maxHistoryPointsPerTrack` 裁剪 `historyTrail`）；`tracks-maplibre`（超 `maxViewportPoints` 则整批不画历史折线，仅画当前点符号） |
  * | `drones`（内嵌渲染键） | `parseDroneMapRenderingConfig` → `drone-store`、`drones-maplibre`；兼容旧根键 `droneMapRendering` |
  * | `airports`（根级 Dock 显隐） | `useUnifiedWsFeed` Dock 分支 → `getAirportMapDefaults()`；兼容旧 `airportMap` / `airport` |
  *
@@ -308,10 +555,16 @@ export type AppConfigTrackRendering = {
     air: AppConfigTrackTypeStyle;
     underwater: AppConfigTrackTypeStyle;
   };
-  /** 仅 `showTrackId`、`maxViewportPoints` 被读取；其余旧 JSON 字段若存在会被忽略 */
+  /**
+   * `showTrackId`、`maxViewportPoints`、`maxHistoryPointsPerTrack` 被读取；
+   * `maxViewportPoints`：全图航迹折线顶点总预算；`maxHistoryPointsPerTrack`：单条航迹在 store 内保留的历史点数上限（与总预算独立）。
+   */
   trackDisplay: {
     showTrackId: boolean;
+    /** 当前帧所有航迹折线顶点估算之和的上限（仅影响是否绘制折线，不裁剪 store） */
     maxViewportPoints: number;
+    /** 每条航迹 `historyTrail` 在 track-store 内最多保留的点数（与 `maxViewportPoints` 无关） */
+    maxHistoryPointsPerTrack: number;
   };
   trackTimeout: {
     enabled: boolean;
@@ -338,9 +591,14 @@ export type AppConfigDroneMapRendering = {
   showHistoryTrail: boolean;
   showPlannedRoute: boolean;
   showSnLabel: boolean;
-  routeLineColor: string;
-  routeLineWidth: number;
-  routeLineOpacity: number;
+  /** 任务航线（航路点连线，`kind: route`） */
+  plannedRouteLineColor: string;
+  plannedRouteLineWidth: number;
+  plannedRouteLineOpacity: number;
+  /** 历史飞迹（`kind: trail`）；与任务航线独立配置 */
+  historyTrailLineColor: string;
+  historyTrailLineWidth: number;
+  historyTrailLineOpacity: number;
   fovFillColor: string;
   fovFillOpacity: number;
   fovLineColor: string;
@@ -350,8 +608,8 @@ export type AppConfigDroneMapRendering = {
 
 const DEFAULT_TYPE_STYLE: AppConfigTrackTypeStyle = {
   idColor: "#FFFFFF",
-  pointSize: 2,
-  idSize: 8,
+  pointSize: 5,
+  idSize: 11,
 };
 
 export const DEFAULT_TRACK_RENDERING: AppConfigTrackRendering = {
@@ -359,14 +617,15 @@ export const DEFAULT_TRACK_RENDERING: AppConfigTrackRendering = {
     sea: { ...DEFAULT_TYPE_STYLE },
     air: {
       idColor: "#FFFF00",
-      pointSize: 2,
-      idSize: 8,
+      pointSize: 5,
+      idSize: 11,
     },
     underwater: { ...DEFAULT_TYPE_STYLE },
   },
   trackDisplay: {
     showTrackId: true,
     maxViewportPoints: 2000,
+    maxHistoryPointsPerTrack: 400,
   },
   trackTimeout: {
     enabled: true,
@@ -389,9 +648,12 @@ export const DEFAULT_DRONE_MAP_RENDERING: AppConfigDroneMapRendering = {
   showHistoryTrail: true,
   showPlannedRoute: true,
   showSnLabel: true,
-  routeLineColor: "#38bdf8",
-  routeLineWidth: 2,
-  routeLineOpacity: 0.75,
+  plannedRouteLineColor: "#38bdf8",
+  plannedRouteLineWidth: 2,
+  plannedRouteLineOpacity: 0.75,
+  historyTrailLineColor: "#94a3b8",
+  historyTrailLineWidth: 1.5,
+  historyTrailLineOpacity: 0.64,
   fovFillColor: "#38bdf8",
   fovFillOpacity: 0.12,
   fovLineColor: "#7dd3fc",
@@ -443,6 +705,7 @@ export function parseTrackRenderingConfig(root: Record<string, unknown>): AppCon
     trackDisplay: {
       showTrackId: bool(td?.showTrackId, base.trackDisplay.showTrackId),
       maxViewportPoints: num(td?.maxViewportPoints, base.trackDisplay.maxViewportPoints),
+      maxHistoryPointsPerTrack: num(td?.maxHistoryPointsPerTrack, base.trackDisplay.maxHistoryPointsPerTrack),
     },
     trackTimeout: {
       enabled: bool(tt?.enabled, base.trackTimeout.enabled),
@@ -501,6 +764,32 @@ export function parseDroneMapRenderingConfig(root: Record<string, unknown>): App
     return { ...base, ...(mapFriendlyColor ? { mapFriendlyColor } : {}) };
   }
 
+  const legacyRouteColor =
+    typeof dm?.routeLineColor === "string" && dm.routeLineColor.trim() ? dm.routeLineColor.trim() : null;
+  const legacyRouteWidth = finiteNumberOrNull(dm?.routeLineWidth);
+  const legacyRouteOpacity = finiteNumberOrNull(dm?.routeLineOpacity);
+
+  const plannedRouteLineColor = str(dm?.plannedRouteLineColor, legacyRouteColor ?? base.plannedRouteLineColor);
+  const plannedRouteLineWidth = num(dm?.plannedRouteLineWidth, legacyRouteWidth ?? base.plannedRouteLineWidth);
+  const plannedRouteLineOpacity = num(dm?.plannedRouteLineOpacity, legacyRouteOpacity ?? base.plannedRouteLineOpacity);
+
+  const historyTrailLineColor = str(
+    dm?.historyTrailLineColor,
+    legacyRouteColor ?? base.historyTrailLineColor,
+  );
+  const historyTrailLineWidth =
+    dm?.historyTrailLineWidth != null && finiteNumberOrNull(dm.historyTrailLineWidth) != null
+      ? num(dm.historyTrailLineWidth, base.historyTrailLineWidth)
+      : legacyRouteWidth != null
+        ? Math.max(1, plannedRouteLineWidth - 0.5)
+        : base.historyTrailLineWidth;
+  const historyTrailLineOpacity =
+    dm?.historyTrailLineOpacity != null && finiteNumberOrNull(dm.historyTrailLineOpacity) != null
+      ? num(dm.historyTrailLineOpacity, base.historyTrailLineOpacity)
+      : legacyRouteOpacity != null
+        ? Math.min(1, plannedRouteLineOpacity * 0.85)
+        : base.historyTrailLineOpacity;
+
   return {
     maxFovRange: maxFov,
     horizontalFov: hFov,
@@ -512,9 +801,12 @@ export function parseDroneMapRenderingConfig(root: Record<string, unknown>): App
     showHistoryTrail: bool(dm?.showHistoryTrail, base.showHistoryTrail),
     showPlannedRoute: bool(dm?.showPlannedRoute, base.showPlannedRoute),
     showSnLabel: bool(dm?.showSnLabel, base.showSnLabel),
-    routeLineColor: str(dm?.routeLineColor, base.routeLineColor),
-    routeLineWidth: num(dm?.routeLineWidth, base.routeLineWidth),
-    routeLineOpacity: num(dm?.routeLineOpacity, base.routeLineOpacity),
+    plannedRouteLineColor,
+    plannedRouteLineWidth,
+    plannedRouteLineOpacity,
+    historyTrailLineColor,
+    historyTrailLineWidth,
+    historyTrailLineOpacity,
     fovFillColor: str(dm?.fovFillColor, base.fovFillColor),
     fovFillOpacity: num(dm?.fovFillOpacity, base.fovFillOpacity),
     fovLineColor: str(dm?.fovLineColor, base.fovLineColor),
@@ -525,6 +817,8 @@ export function parseDroneMapRenderingConfig(root: Record<string, unknown>): App
 /** `loadResolvedAppConfig` 写入的 `trackRendering` / `drones` 内嵌渲染块解析结果（静态配置，非航迹 store） */
 let resolvedTrackRenderingConfig: AppConfigTrackRendering = { ...DEFAULT_TRACK_RENDERING };
 let resolvedDroneMapRenderingConfig: AppConfigDroneMapRendering = { ...DEFAULT_DRONE_MAP_RENDERING };
+/** radar 根级默认配置（WS 实体兜底用） */
+let resolvedRadarDefaults: Record<string, unknown> = {};
 
 function applyResolvedRenderingConfigs(track: AppConfigTrackRendering, drone: AppConfigDroneMapRendering) {
   resolvedTrackRenderingConfig = track;
@@ -537,6 +831,130 @@ export function getTrackRenderingConfig(): AppConfigTrackRendering {
 
 export function getDroneMapRenderingConfig(): AppConfigDroneMapRendering {
   return resolvedDroneMapRenderingConfig;
+}
+
+/**
+ * 从 JSON 根提取 radar 默认配置，存入模块级变量。
+ *
+ * 作用：WS 推来的雷达实体（不在 config devices 中）进入 asset-store 后，
+ * `buildRadarCoverageGeoJSON` 在渲染距离环时从 properties 取不到 max_range_m 等字段，
+ * 此时调用 `getRadarConfigDefaults()` 获取根级默认值作为兜底。
+ *
+ * 默认配置字段均以 `default` 前缀命名（如 defaultMaxRange、defaultInterval），
+ * 在 app-config.json 的 `radar` 根级定义。
+ */
+function applyRadarDefaults(root: Record<string, unknown>) {
+  const radar = asRecord(root.radar);
+  if (!radar) return;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(radar)) {
+    if (key === "devices" || key === "visibility") continue;
+    out[key] = radar[key];
+  }
+  resolvedRadarDefaults = out;
+}
+
+/** 返回 radar 根级默认配置（供 WS 雷达实体兜底用） */
+export function getRadarConfigDefaults(): Record<string, unknown> {
+  return resolvedRadarDefaults;
+}
+
+// ── 新增配置类型与 getter ──
+
+export interface AppConfigWebSocket {
+  url: string;
+  reconnectInterval: number;
+  heartbeatInterval: number;
+  maxReconnectAttempts: number;
+  initialReconnectMs: number;
+  maxReconnectMs: number;
+}
+
+export interface AppConfigCoordinateTransform {
+  enabled: boolean;
+}
+
+export interface AppConfigHttp {
+  backendUrl: string;
+  imagePollIntervalMs: number;
+  imageFetchTimeoutMs: number;
+}
+
+export interface AppConfigTrackIdMode {
+  distinguishSeaAir: boolean;
+}
+
+const DEFAULT_WS: AppConfigWebSocket = {
+  url: "ws://localhost:8001/ws",
+  reconnectInterval: 3000,
+  heartbeatInterval: 25000,
+  maxReconnectAttempts: 12,
+  initialReconnectMs: 2000,
+  maxReconnectMs: 30000,
+};
+
+const DEFAULT_COORD_TRANSFORM: AppConfigCoordinateTransform = { enabled: true };
+
+const DEFAULT_HTTP: AppConfigHttp = {
+  backendUrl: "http://localhost:8001",
+  imagePollIntervalMs: 3000,
+  imageFetchTimeoutMs: 1000,
+};
+
+const DEFAULT_TRACK_ID_MODE: AppConfigTrackIdMode = { distinguishSeaAir: false };
+
+let resolvedWebSocketConfig: AppConfigWebSocket = { ...DEFAULT_WS };
+let resolvedCoordinateTransformConfig: AppConfigCoordinateTransform = { ...DEFAULT_COORD_TRANSFORM };
+let resolvedHttpConfig: AppConfigHttp = { ...DEFAULT_HTTP };
+let resolvedTrackIdModeConfig: AppConfigTrackIdMode = { ...DEFAULT_TRACK_ID_MODE };
+
+function applyResolvedNewConfigs(root: Record<string, unknown>) {
+  const ws = asRecord(root.websocket);
+  if (ws) {
+    resolvedWebSocketConfig = {
+      url: str(ws.url, DEFAULT_WS.url),
+      reconnectInterval: num(ws.reconnectInterval, DEFAULT_WS.reconnectInterval),
+      heartbeatInterval: num(ws.heartbeatInterval, DEFAULT_WS.heartbeatInterval),
+      maxReconnectAttempts: num(ws.maxReconnectAttempts, DEFAULT_WS.maxReconnectAttempts),
+      initialReconnectMs: num(ws.initialReconnectMs, DEFAULT_WS.initialReconnectMs),
+      maxReconnectMs: num(ws.maxReconnectMs, DEFAULT_WS.maxReconnectMs),
+    };
+  }
+
+  const ct = asRecord(root.coordinateTransform);
+  if (ct) {
+    resolvedCoordinateTransformConfig = { enabled: bool(ct.enabled, DEFAULT_COORD_TRANSFORM.enabled) };
+  }
+
+  const http = asRecord(root.http);
+  if (http) {
+    resolvedHttpConfig = {
+      backendUrl: str(http.backendUrl, DEFAULT_HTTP.backendUrl),
+      imagePollIntervalMs: num(http.imagePollIntervalMs, DEFAULT_HTTP.imagePollIntervalMs),
+      imageFetchTimeoutMs: num(http.imageFetchTimeoutMs, DEFAULT_HTTP.imageFetchTimeoutMs),
+    };
+  }
+
+  const tm = asRecord(root.trackIdMode);
+  if (tm) {
+    resolvedTrackIdModeConfig = { distinguishSeaAir: bool(tm.distinguishSeaAir, DEFAULT_TRACK_ID_MODE.distinguishSeaAir) };
+  }
+}
+
+export function getWebSocketConfig(): AppConfigWebSocket {
+  return resolvedWebSocketConfig;
+}
+
+export function getCoordinateTransformConfig(): AppConfigCoordinateTransform {
+  return resolvedCoordinateTransformConfig;
+}
+
+export function getHttpConfig(): AppConfigHttp {
+  return resolvedHttpConfig;
+}
+
+export function getTrackIdModeConfig(): AppConfigTrackIdMode {
+  return resolvedTrackIdModeConfig;
 }
 
 /**
@@ -561,6 +979,8 @@ export type ResolvedAppConfig = {
   configAssetBase: AssetData[];
   /** 根键 `cameras`：扇区边线、填充/边线显隐等（与 `configAssetBase` 里光电行配套） */
   cameras: AppConfigSectorBundle | null;
+  /** 根键 `tower`：电侦独立配置，扇区颜色/显隐/标签等与光电完全分离 */
+  tower: AppConfigSectorBundle | null;
   /** 根键 `airports`：与 cameras 同形子集 + Dock 默认显隐；静态 `devices` 并入 `configAssetBase` */
   airports: AppConfigSectorBundle | null;
   laserWeapons: AppConfigSectorBundle | null;
@@ -571,6 +991,8 @@ export type ResolvedAppConfig = {
   assetDispositionIconAccent: AssetDispositionIconAccent;
   /** 根键 `trackRendering`（或 V2 根级 `trackTypeStyles` / `trackDisplay` / `trackTimeout`）：见文件头表格 */
   trackRendering: AppConfigTrackRendering;
+  /** 根键 `factory.iconSize`：zoom→size 的 [[zoom, size], ...] 数组，用于资产中心图标 */
+  iconSizeStops: [number, number][] | null;
 };
 
 function mergeProperties(
@@ -588,6 +1010,64 @@ function parseAssetDispositionIconAccent(root: Record<string, unknown>): AssetDi
     hostileIcon: typeof ai?.hostile === "string" ? ai.hostile : undefined,
     neutralIcon: typeof ai?.neutral === "string" ? ai.neutral : undefined,
   };
+}
+
+/** 我方各资产类型默认着色（非敌/中时优先于主题默认红）；来自各根键 `assetFriendlyColor`，见 `applyFriendlyColorsFromAssetSections` */
+let resolvedAssetFriendlyColorsByAssetType: Partial<Record<PublicMapAssetType, string>> = {};
+
+function applyFriendlyColorsFromAssetSections(root: Record<string, unknown>) {
+  resolvedAssetFriendlyColorsByAssetType = {};
+  const setColor = (k: PublicMapAssetType, v: unknown) => {
+    if (typeof v === "string" && v.trim()) resolvedAssetFriendlyColorsByAssetType[k] = v.trim();
+  };
+
+  const radar = asRecord(root.radar);
+  if (radar) setColor("radar", radar.assetFriendlyColor);
+
+  const cameras = asRecord(root.cameras);
+  if (cameras) {
+    setColor("camera", cameras.assetFriendlyColor);
+  }
+
+  const tower = asRecord(root.tower);
+  if (tower) {
+    setColor("tower", tower.assetFriendlyColor);
+  }
+
+  const laserWeapons = asRecord(root.laserWeapons);
+  if (laserWeapons) setColor("laser", laserWeapons.assetFriendlyColor);
+
+  const tdoa = asRecord(root.tdoa);
+  if (tdoa) setColor("tdoa", tdoa.assetFriendlyColor);
+
+  const airports = asRecord(root.airports);
+  if (airports) setColor("airport", airports.assetFriendlyColor);
+
+  const drones = asRecord(root.drones);
+  if (drones) setColor("drone", drones.assetFriendlyColor);
+}
+
+/** 我方资产图标/标注：读各根键根级 `assetFriendlyColor`；未配置则 undefined（由上层回退到主题 `FORCE_COLORS.friendly`） */
+export function getAssetFriendlyColorForAssetType(t: PublicMapAssetType): string | undefined {
+  const c = resolvedAssetFriendlyColorsByAssetType[t];
+  return typeof c === "string" && c.trim() ? c.trim() : undefined;
+}
+
+export { shouldDisplayAssetId, shouldDisplayZone } from "./map-display-filters";
+
+/** 从 deviceId/asset id 中提取数字用于「相机001」等展示 */
+function digitsFromAssetId(id: string): string {
+  const m = String(id).match(/\d+/g);
+  return m ? m.join("") : String(id);
+}
+
+export function formatCameraTowerMapLabel(id: string): string {
+  return `相机${digitsFromAssetId(id)}`;
+}
+
+/** 电侦资产地图标签：从 id 提取数字，格式化为"电侦XXX" */
+export function formatTowerMapLabel(id: string): string {
+  return `电侦${digitsFromAssetId(id)}`;
 }
 
 /**
@@ -691,12 +1171,44 @@ function parseSectorBundle(raw: unknown): AppConfigSectorBundle | null {
     devices: Array.isArray(o.devices) ? (o.devices as AppConfigSectorDevice[]) : undefined,
     laserPulseOnMs: Number.isFinite(Number(o.laserPulseOnMs)) ? Number(o.laserPulseOnMs) : undefined,
     laserPulseOffMs: Number.isFinite(Number(o.laserPulseOffMs)) ? Number(o.laserPulseOffMs) : undefined,
+    /* 光电 FOV 扇区颜色 */
+    sectorFill: typeof o.sectorFill === "string" ? o.sectorFill : undefined,
+    sectorFillOpacity: Number.isFinite(Number(o.sectorFillOpacity)) ? Number(o.sectorFillOpacity) : undefined,
+    sectorLine: typeof o.sectorLine === "string" ? o.sectorLine : undefined,
+    sectorLineWidth: Number.isFinite(Number(o.sectorLineWidth)) ? Number(o.sectorLineWidth) : undefined,
+    sectorLineOpacity: Number.isFinite(Number(o.sectorLineOpacity)) ? Number(o.sectorLineOpacity) : undefined,
+    sectorLineDashVirtual: Array.isArray(o.sectorLineDashVirtual) ? (o.sectorLineDashVirtual as number[]) : undefined,
+    sectorLineDashReal: Array.isArray(o.sectorLineDashReal) ? (o.sectorLineDashReal as number[]) : undefined,
+    /* 电侦 FOV 扇区颜色 */
+    sectorFillDefaultColor: typeof o.sectorFillDefaultColor === "string" ? o.sectorFillDefaultColor : undefined,
+    sectorFillDefaultOpacity: Number.isFinite(Number(o.sectorFillDefaultOpacity))
+      ? Number(o.sectorFillDefaultOpacity)
+      : undefined,
   };
+}
+
+/** 解析 `factory.iconSize`：[[zoom, size], ...] 数组 → `[number, number][] | null` */
+function parseIconSizeStops(root: Record<string, unknown>): [number, number][] | null {
+  const factory = asRecord(root.factory);
+  if (!factory) return null;
+  const raw = factory.iconSize;
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+  const stops: [number, number][] = [];
+  for (const item of raw) {
+    if (!Array.isArray(item) || item.length < 2) continue;
+    const z = Number(item[0]);
+    const s = Number(item[1]);
+    if (Number.isFinite(z) && Number.isFinite(s) && s > 0) {
+      stops.push([z, s]);
+    }
+  }
+  return stops.length >= 2 ? stops : null;
 }
 
 function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   const root = asRecord(json) ?? {};
   const camerasBundle = parseSectorBundle(root.cameras);
+  const towerBundle = parseSectorBundle(root.tower);
   const airportsBundle = parseSectorBundle(root.airports);
   const laserWeapons = parseSectorBundle(root.laserWeapons);
   const tdoaBundle = parseSectorBundle(root.tdoa);
@@ -719,16 +1231,22 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   const trackRendering = parseTrackRenderingConfig(root);
   const droneMapRendering = parseDroneMapRenderingConfig(root);
   applyResolvedRenderingConfigs(trackRendering, droneMapRendering);
+  applyResolvedNewConfigs(root);
+  applyFriendlyColorsFromAssetSections(root);
+  // 提取 radar 根级默认配置（WS 雷达实体兜底用）
+  applyRadarDefaults(root);
 
   return {
     configAssetBase,
     cameras: camerasBundle,
+    tower: towerBundle,
     airports: airportsBundle,
     laserWeapons,
     tdoa: tdoaBundle,
     drones: dronesBundle,
     assetDispositionIconAccent: parseAssetDispositionIconAccent(root),
     trackRendering,
+    iconSizeStops: parseIconSizeStops(root),
   };
 }
 
@@ -834,6 +1352,50 @@ export function sectorBundleToTdoaLayerVis(b: AppConfigSectorBundle | null): Par
   };
 }
 
+/* ── FOV 扇区样式解析（光电 / 电侦 / 激光 / TDOA）── */
+
+/** 光电 FOV 扇区样式：从 cameras bundle 读取填充色/线色/线宽/透明度 */
+export function resolveOptoFovStyle(b: AppConfigSectorBundle | null) {
+  return {
+    fillColor: b?.sectorFill ?? "rgba(147,51,234,0.10)",
+    fillOpacity: b?.sectorFillOpacity ?? 0.10,
+    lineColor: b?.sectorLine ?? "#9333ea",
+    lineWidth: b?.sectorLineWidth ?? 1.2,
+    lineOpacity: b?.sectorLineOpacity ?? 0.4,
+    lineDashVirtual: b?.sectorLineDashVirtual ?? [6, 4],
+    lineDashReal: b?.sectorLineDashReal ?? [3, 3],
+  };
+}
+
+/** 电侦 FOV 扇区样式：从独立的 tower bundle 读取 */
+export function resolveTowerFovStyle(b: AppConfigSectorBundle | null) {
+  return {
+    fillColor: b?.sectorFill ?? "rgba(52,211,153,0.10)",
+    fillOpacity: b?.sectorFillOpacity ?? 0.10,
+    lineColor: b?.sectorLine ?? "#34d399",
+    lineWidth: b?.sectorLineWidth ?? 1.2,
+    lineOpacity: b?.sectorLineOpacity ?? 0.4,
+    lineDashVirtual: b?.sectorLineDashVirtual ?? [6, 4],
+    lineDashReal: b?.sectorLineDashReal ?? [3, 3],
+  };
+}
+
+/** 激光专题层：扇区填充默认色与透明度（设备未指定 color/opacity 时） */
+export function resolveLaserDefaults(b: AppConfigSectorBundle | null) {
+  return {
+    sectorFillDefaultColor: b?.sectorFillDefaultColor ?? "#fb7185",
+    sectorFillDefaultOpacity: b?.sectorFillDefaultOpacity ?? 0.35,
+  };
+}
+
+/** TDOA 专题层：扇区填充默认色与透明度 */
+export function resolveTdoaDefaults(b: AppConfigSectorBundle | null) {
+  return {
+    sectorFillDefaultColor: b?.sectorFillDefaultColor ?? "#fb923c",
+    sectorFillDefaultOpacity: b?.sectorFillDefaultOpacity ?? 0.30,
+  };
+}
+
 function sectorDeviceToSectorGeometry(
   d: AppConfigSectorDevice,
   defaultRangeM: number,
@@ -862,6 +1424,7 @@ function sectorDeviceToSectorGeometry(
     fillOpacity: typeof d.opacity === "number" ? d.opacity : undefined,
     virtual: !!d.virtualTroop,
     disposition: parseForceDisposition(d.disposition, "friendly"),
+    friendlyMapColor: sectorBundleFriendlyTint(bundle),
     centerNameVisible: mergeRootAndDeviceVisible(bundle?.visibility?.centerNameVisible, d.centerNameVisible),
     centerIconVisible: mergeRootAndDeviceVisible(bundle?.visibility?.centerIconVisible, d.centerIconVisible),
   };
@@ -1095,12 +1658,14 @@ export async function loadResolvedAppConfig(customUrl?: string): Promise<Resolve
   const empty: ResolvedAppConfig = {
     configAssetBase: [],
     cameras: null,
+    tower: null,
     airports: null,
     laserWeapons: null,
     tdoa: null,
     drones: null,
     assetDispositionIconAccent: {},
     trackRendering: { ...DEFAULT_TRACK_RENDERING },
+    iconSizeStops: null,
   };
   if (typeof window === "undefined") return empty;
   const url = configUrl(customUrl);

@@ -1,7 +1,46 @@
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  雷达覆盖范围渲染模块 —— 距离环 + 扇区填充 + 十字线 + 名称标签
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * ── 雷达渲染全链路 ──
+ *
+ *   1. 接收: WS entity_status → msg.entities[] → mapEntitiesPayload() → mapOneEntityRow()
+ *      ├─ specificType 含 "Radar"/"RADAR"/"雷达" → asset_type="radar"
+ *      ├─ navigationParameters.with_radar=1 → asset_type="radar"（隐式雷达，如无人船）
+ *      ├─ radarParameters.range（海里）→ properties.max_range_m（米）、range_km（公里）
+ *      └─ navigationParameters.maxRangeNm（海里）→ 同上（无人船携带雷达时）
+ *
+ *   2. 入资产: applyAssetListFromWs() → mergeDynamicAndStaticAssets() → asset-store.setAssets()
+ *      ├─ WS 实体与 app-config.json radar.devices 静态配置按 id 合并
+ *      └─ 同 id 实体：WS 值覆盖静态值，heading/fov_angle/range_km 仅在有限时覆盖
+ *
+ *   3. 渲染: asset-store 变化 → Map2D useEffect → RadarCoverageModule.setFromAssets()
+ *      ├─ setFromAssets() → 过滤 asset_type="radar" 的行
+ *      ├─ buildRadarCoverageGeoJSON() → 生成 GeoJSON FeatureCollection
+ *      │   ├─ 距离环 (kind="ring-line"): ringLineColor, ringLineWidth, ringLineOpacity
+ *      │   ├─ 环间填充 (kind="ring-band"): fillColor (带 alpha)
+ *      │   ├─ 距离标签 (kind="dist-label"): "3km" / "3000m"
+ *      │   ├─ 角度标签 (kind="angle-label"): "0°" / "30°" / ...
+ *      │   ├─ 十字线 (kind="crosshair"): 南北 + 东西
+ *      │   └─ 中心名称 (kind="radar-name"): 雷达名称标签
+ *      ├─ 颜色决策:
+ *      │   ├─ 环线色: p.ring_color → defaults.assetFriendlyColor(friendly) / defaults.ringLineFallbackColor → "#FF0000"
+ *      │   ├─ 名称色: assetMapLabelTextColor() → defaults.assetFriendlyColor(friendly) / FORCE_COLORS
+ *      │   └─ 填充色: p.ring_fill_color → ringColor, 透明度由 defaultRingFillOpacity 控制
+ *      ├─ 范围决策: p.max_range_m → defaults.defaultMaxRange (12000m)
+ *      ├─ 间隔决策: p.ring_interval_m → defaults.defaultInterval (3000m)
+ *      └─ 默认值来源: getRadarConfigDefaults() → app-config.json radar 根级配置
+ *          （assetFriendlyColor, defaultMaxRange, defaultInterval, ringLineFallbackColor, ringLineDefaultOpacity 等）
+ *
+ *   4. 更新: entity_status 周期推送 → 整体替换 asset-store → 重新渲染
+ *
+ *   5. 超时: 无独立超时机制，依赖 WS 周期推送
+ */
 import type maplibregl from "maplibre-gl";
 import type { AssetData } from "@/stores/asset-store";
 import { parseMapAssetTypeStrict } from "@/lib/map-entity-model";
-import { parseForceDisposition } from "@/lib/theme-colors";
+import { FORCE_COLORS, parseForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent, AssetStatus } from "@/lib/map-icons";
 import {
@@ -12,6 +51,7 @@ import {
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
 } from "@/lib/map-icons";
 import type { Asset } from "@/lib/map-entity-model";
+import { getRadarConfigDefaults } from "@/lib/map-app-config";
 
 /**
  * 雷达距离环覆盖：构建 GeoJSON，行为对齐 V2 `RangeRingManager` 与 `map-app-config`。
@@ -317,8 +357,11 @@ export function mapRadarPayload(payload: unknown, globals?: RadarVisibilityGloba
   const out: AssetData[] = [];
   for (const item of rows) {
     if (!item || typeof item !== "object") continue;
-    const a = mapRadarRowToAssetData(item as Record<string, unknown>, globals);
-    if (a) out.push(a);
+    try {
+      const a = mapRadarRowToAssetData(item as Record<string, unknown>, globals);
+      if (a) out.push(a);
+    } catch (e) {
+    }
   }
   return out;
 }
@@ -343,44 +386,72 @@ function annulusPolygonKm(
   return { type: "Polygon", coordinates: [outer, inner] };
 }
 
+/**
+ * 读取 radar 根级默认配置（WS 实体无 per-device 配置时兜底）。
+ *
+ * 配置来源：app-config.json 的 `radar` 根级以 `default` 前缀的字段，如：
+ *   defaultMaxRange, defaultInterval, ringLineFallbackColor, ringLineDefaultOpacity 等。
+ *
+ * 兜底场景：WS entity_status 推来一个雷达实体，但它的 id 不在 config devices 中，
+ * 此时 mapOneEntityRow 创建的 AssetData 没有 properties.max_range_m 等字段，
+ * buildRadarCoverageGeoJSON 从 getRadarConfigDefaults() 取默认值渲染距离环。
+ */
+function getRadarDefaults(): Record<string, unknown> {
+  const cfg = getRadarConfigDefaults();
+  if (cfg && typeof cfg === "object") return cfg as Record<string, unknown>;
+  return {};
+}
+
 /** 由 `AssetData` 雷达行生成覆盖 GeoJSON；`showRings === false` 时跳过 */
 export function buildRadarCoverageGeoJSON(
   rows: AssetData[],
   accent?: AssetDispositionIconAccent | null,
 ): GeoJSON.FeatureCollection {
+  const defaults = getRadarDefaults();
   const features: GeoJSON.Feature[] = [];
+  const radarRows = rows.filter((r) => String(r.asset_type ?? "").toLowerCase() === "radar");
   for (const row of rows) {
     if (String(row.asset_type ?? "").toLowerCase() !== "radar") continue;
     const p = (row.properties ?? {}) as Record<string, unknown>;
-    if (p.showRings === false) continue;
-    const maxRangeM = Number(p.max_range_m);
-    const intervalM = Number(p.ring_interval_m);
-    if (!Number.isFinite(maxRangeM) || maxRangeM <= 0 || !Number.isFinite(intervalM) || intervalM <= 0) continue;
+    if (p.showRings === false) {
+      continue;
+    }
+    // WS 实体无 max_range_m 时，用配置根级默认值
+    const maxRangeM = Number(p.max_range_m ?? defaults.defaultMaxRange);
+    const intervalM = Number(p.ring_interval_m ?? defaults.defaultInterval);
+    if (!Number.isFinite(maxRangeM) || maxRangeM <= 0 || !Number.isFinite(intervalM) || intervalM <= 0) {
+      continue;
+    }
 
     const ringCount = Number.isFinite(Number(p.ring_count)) && Number(p.ring_count) > 0 ? Math.floor(Number(p.ring_count)) : Math.ceil(maxRangeM / intervalM);
     const actualMaxM = ringCount * intervalM;
 
     const lng = row.lng;
     const lat = row.lat;
-    const ringColor = String(p.ring_color ?? "#FF0000");
-    const lineW = Number(p.ring_line_width) > 0 ? Number(p.ring_line_width) : 2;
-    const lineOp = Number.isFinite(Number(p.ring_line_opacity)) ? Math.min(1, Math.max(0, Number(p.ring_line_opacity))) : 0.85;
-    const fillOp = Number.isFinite(Number(p.ring_fill_opacity)) ? Math.min(1, Math.max(0, Number(p.ring_fill_opacity))) : 0;
+    const disp = parseForceDisposition(row.disposition, "friendly");
+    const rowStatus = rowAssetStatus(String(row.status ?? "online"));
+    /* 友方用 assetFriendlyColor，缺省用 ringLineFallbackColor；敌方/中立强制用 FORCE_COLORS */
+    const baseRingColor = disp === "hostile" ? FORCE_COLORS.hostile
+      : disp === "neutral" ? FORCE_COLORS.neutral
+      : typeof defaults.assetFriendlyColor === "string" ? String(defaults.assetFriendlyColor)
+      : String(defaults.ringLineFallbackColor ?? "#FF0000");
+    const ringColor = String(p.ring_color ?? baseRingColor);
+    const lineW = Number(p.ring_line_width ?? defaults.defaultRingLineWidth) > 0 ? Number(p.ring_line_width ?? defaults.defaultRingLineWidth) : 2;
+    const lineOp = Number.isFinite(Number(p.ring_line_opacity ?? defaults.ringLineDefaultOpacity)) ? Math.min(1, Math.max(0, Number(p.ring_line_opacity ?? defaults.ringLineDefaultOpacity))) : 0.85;
+    const fillOp = Number.isFinite(Number(p.ring_fill_opacity ?? defaults.defaultRingFillOpacity)) ? Math.min(1, Math.max(0, Number(p.ring_fill_opacity ?? defaults.defaultRingFillOpacity))) : 0;
     const fillColorBase = String(p.ring_fill_color ?? ringColor);
     const fillRgba = cssColorToRgba(fillColorBase, fillOp) ?? fillColorBase;
     const distVis = p.distance_labels_visible !== false;
     const angVis = p.angle_labels_visible !== false;
     const crossVis = p.crosshair_visible !== false;
     const nameVis = p.center_name_visible !== false;
-    const disp = parseForceDisposition(row.disposition, "friendly");
-    const rowStatus = rowAssetStatus(String(row.status ?? "online"));
 
-    const dl = asRecord(p.distance_label_block) ?? {};
-    const al = asRecord(p.angle_label_block) ?? {};
+    const dl = asRecord(p.distance_label_block) ?? asRecord(defaults.distanceLabel) ?? {};
+    const al = asRecord(p.angle_label_block) ?? asRecord(defaults.angleLabel) ?? {};
     const distColorRaw = p.distance_label_color;
     const distColor =
       distColorRaw === null || distColorRaw === undefined
-        ? String(p.ring_color ?? "#FF0000")
+        ? ringColor
         : String(distColorRaw);
     const angColorRaw = p.angle_label_color;
     const angColor =
@@ -432,6 +503,7 @@ export function buildRadarCoverageGeoJSON(
             fontColor: distColor,
             haloColor: String(dl.haloColor ?? "#000000"),
             haloWidth: Number.isFinite(Number(dl.haloWidth)) ? Number(dl.haloWidth) : 1.5,
+            textFont: Array.isArray(dl.textFont) && dl.textFont.length ? dl.textFont.map(String) : ["Open Sans Regular"],
             textOffsetX: Array.isArray(dl.textOffset) ? Number(dl.textOffset[0]) : 0,
             textOffsetY: Array.isArray(dl.textOffset) ? Number(dl.textOffset[1]) : -0.2,
           },
@@ -485,6 +557,7 @@ export function buildRadarCoverageGeoJSON(
             fontColor: angColor,
             haloColor: String(al.haloColor ?? "#000000"),
             haloWidth: Number.isFinite(Number(al.haloWidth)) ? Number(al.haloWidth) : 1,
+            textFont: Array.isArray(al.textFont) && al.textFont.length ? al.textFont.map(String) : ["Open Sans Regular"],
           },
           geometry: { type: "Point", coordinates: pt },
         });
@@ -492,9 +565,11 @@ export function buildRadarCoverageGeoJSON(
     }
 
     if (nameVis) {
-      const lb = asRecord(p.label_block) ?? {};
-      const friendlyOv =
-        disp === "friendly" && typeof lb.fontColor === "string" && lb.fontColor.trim() ? lb.fontColor.trim() : undefined;
+      const lb = asRecord(p.label_block) ?? asRecord(defaults.label) ?? {};
+      const lbFontColor = typeof lb.fontColor === "string" && lb.fontColor.trim() ? lb.fontColor.trim() : undefined;
+      const friendlyOv = disp === "friendly"
+        ? (lbFontColor ?? (typeof defaults.assetFriendlyColor === "string" ? String(defaults.assetFriendlyColor) : undefined))
+        : lbFontColor;
       const fontColor = assetMapLabelTextColor(disp, rowStatus, accent ?? null, friendlyOv);
       features.push({
         type: "Feature",
@@ -506,6 +581,7 @@ export function buildRadarCoverageGeoJSON(
           fontColor,
           haloColor: String(lb.haloColor ?? "#000000"),
           haloWidth: Number.isFinite(Number(lb.haloWidth)) ? Number(lb.haloWidth) : 2,
+          textFont: Array.isArray(lb.textFont) && lb.textFont.length ? lb.textFont.map(String) : ["Open Sans Regular"],
           textOffsetX: Array.isArray(lb.textOffset) ? Number(lb.textOffset[0]) : 0,
           textOffsetY: Array.isArray(lb.textOffset) ? Number(lb.textOffset[1]) : 0.4,
         },
@@ -526,29 +602,33 @@ export function pickRadarTypographyFromRows(rows: AssetData[]): {
   const fb = (r: AssetData): Record<string, unknown> => ((r.properties ?? {}) as Record<string, unknown>) ?? {};
   const first = rows.find((r) => String(r.asset_type ?? "").toLowerCase() === "radar");
   const p = first ? fb(first) : {};
-  const center = parseTextBlock(p.label_block, {
-    fontSize: 13,
-    fontColor: "#FFFFFF",
-    haloColor: "#000000",
-    haloWidth: 2,
-    textOffset: [0, 0.4],
-    textFont: ["Open Sans Semibold", "Arial Unicode MS Bold"],
+  const dfl = getRadarDefaults();
+  const cfgLabel = asRecord(dfl.label);
+  const cfgDist = asRecord(dfl.distanceLabel);
+  const cfgAngle = asRecord(dfl.angleLabel);
+  const center = parseTextBlock(p.label_block ?? cfgLabel, {
+    fontSize: 10,
+    fontColor: "#6ee7b7",
+    haloColor: "#09090b",
+    haloWidth: 1.5,
+    textOffset: [0, 1.8],
+    textFont: ["Open Sans Regular"],
   });
-  const distance = parseTextBlock(p.distance_label_block, {
+  const distance = parseTextBlock(p.distance_label_block ?? cfgDist, {
     fontSize: 12,
     fontColor: "#FFFFFF",
     haloColor: "#000000",
     haloWidth: 1.5,
     textOffset: [0, -0.2],
-    textFont: ["Open Sans Semibold", "Arial Unicode MS Bold"],
+    textFont: ["Open Sans Regular"],
   });
-  const angle = parseTextBlock(p.angle_label_block, {
+  const angle = parseTextBlock(p.angle_label_block ?? cfgAngle, {
     fontSize: 11,
     fontColor: "#FFFF00",
     haloColor: "#000000",
     haloWidth: 1,
     textOffset: [0, 0],
-    textFont: ["Open Sans Semibold", "Arial Unicode MS Bold"],
+    textFont: ["Open Sans Regular"],
   });
   return { center, distance, angle };
 }
@@ -668,7 +748,7 @@ export class RadarCoverageModule {
           filter: ["==", ["get", "kind"], "dist-label"],
           layout: {
             "text-field": ["get", "labelText"],
-            "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+            "text-font": ["Open Sans Regular"],
             "text-size": ["get", "fontSize"],
             "text-anchor": "bottom",
             "text-offset": [0, -0.2],
@@ -693,7 +773,7 @@ export class RadarCoverageModule {
           filter: ["==", ["get", "kind"], "angle-label"],
           layout: {
             "text-field": ["get", "labelText"],
-            "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+            "text-font": ["Open Sans Regular"],
             "text-size": ["get", "fontSize"],
             "text-anchor": "center",
             "text-allow-overlap": true,
@@ -717,7 +797,7 @@ export class RadarCoverageModule {
           filter: ["==", ["get", "kind"], "radar-name"],
           layout: {
             "text-field": ["get", "labelText"],
-            "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+            "text-font": ["Open Sans Regular"],
             "text-size": ["get", "fontSize"],
             "text-anchor": "top",
             "text-offset": [0, 0.4],

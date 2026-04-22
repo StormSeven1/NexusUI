@@ -4,6 +4,8 @@ const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8001";
 
 const nextConfig: NextConfig = {
   turbopack: {},
+  /** 局域网 IP 访问 dev（HMR / webpack-hmr）时需放行，否则跨域被拦 */
+  allowedDevOrigins: ["192.168.18.141"],
   async rewrites() {
     return [
       {

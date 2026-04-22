@@ -1,3 +1,34 @@
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  光电 FOV 渲染模块 —— FOV 扇区 + 名称标签 + 中心图标
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * ── 光电/电侦渲染全链路 ──
+ *
+ *   1. 接收:
+ *      ├─ 光电: WS entity_status → specificType="CAMERA"/"OPTOELECTRONIC"/"OPTICAL"/"光电" → asset_type="camera"
+ *      │        或 camera/optoelectronic 独立消息 → 仅更新朝向/视场角/坐标
+ *      └─ 电侦: WS entity_status → specificType="TOWER"/"ESM"/"电侦" → asset_type="tower"
+ *
+ *   2. 入资产:
+ *      ├─ 静态: cameras.devices[] → mapCamerasDevicesPayload() → configAssetBase
+ *      ├─ 动态: applyAssetListFromWs() → mergeDynamicAndStaticAssets() → asset-store
+ *      └─ camera 独立消息 → 直接 patch asset-store 中已有光电的 heading/fov_angle/range_km
+ *
+ *   3. 渲染: asset-store → OptoelectronicFovModule.setFromAssets()
+ *      ├─ buildFovGeoJSON() → 生成 FOV 扇区多边形 (geomKind="fov")
+ *      │   ├─ 仅 camera 类型画 FOV 扇区；tower 由 tower-maplibre.ts 独立渲染
+ *      │   ├─ 名称标签 (geomKind="lbl"): 有 name 且 nameLabelVisible≠false 就画，不依赖 range
+ *      │   └─ 中心图标 (geomKind="ico"): 敌我配色 SVG 图标
+ *      └─ 颜色: friendly → friendlyMapColor / label.textColor; hostile → FORCE_COLORS.hostile
+ *
+ *   4. 更新:
+ *      ├─ entity_status 周期推送 → 整体替换 asset-store → 重新渲染
+ *      └─ camera 消息 → parseCameraBearingDeg/parseCameraHorizontalFovDeg/parseCameraRangeKm
+ *          与静态 cameras.devices 同 id 合并默认 bearing/angle/range
+ *
+ *   5. 超时: 无独立超时机制
+ */
 import type maplibregl from "maplibre-gl";
 import { parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
 import type { AssetData } from "@/stores/asset-store";
@@ -13,10 +44,13 @@ import {
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
 } from "@/lib/map-icons";
 import type { AppConfigSectorBundle } from "@/lib/map-app-config";
-import { laserLabelStyleFromBundle, laserSectorBorderFromBundle, sectorBundleAnyMergedVisible } from "@/lib/map-app-config";
+import { laserLabelStyleFromBundle, laserSectorBorderFromBundle, resolveOptoFovStyle, sectorBundleAnyMergedVisible } from "@/lib/map-app-config";
 
 /**
- * 光电 FOV：GeoJSON 构建、`FOV_*` 常量、`OptoelectronicFovModule`，以及本文件内的 **`cameras.devices[]` → `AssetData`**（供 `map-app-config` 合并资产底数）。
+ * 光电（camera）FOV：GeoJSON 构建、`FOV_*` 常量、`OptoelectronicFovModule`。
+ *
+ * 【注意】本模块仅处理 camera（光电），不含 tower（电侦）。
+ * 电侦的渲染完全独立，见 `tower-maplibre.ts`。
  * **`airports`** 解析与地图图层见 **`airport-maplibre.ts`**；**无人机**见 **`drones-maplibre.ts`**。
  */
 
@@ -126,7 +160,7 @@ export const FOV_FILL = "fov-fill";
 export const FOV_LINE = "fov-line";
 export const FOV_LABEL = "fov-label";
 
-/** camera / tower 中心图标（机场见 `airport-maplibre.ts`） */
+/** 光电(camera) 中心图标（电侦见 `tower-maplibre.ts`，机场见 `airport-maplibre.ts`） */
 export const OPTO_ASSET_ICON_SOURCE = "opto-asset-icon-src";
 export const OPTO_ASSET_ICON_LAYER = "opto-asset-icon";
 
@@ -138,19 +172,16 @@ function assetStatusFromLabel(s: string | undefined): AssetStatus {
   return "online";
 }
 
-/** 构建 FOV 多边形 + 名称点：geomKind 为 poly | lbl；名称字色与中心图标一致，走 `assetMapLabelTextColor`（含 `factory.assetIcons`） */
+/** 构建 FOV 多边形 + 名称点：仅处理 camera（光电），不含 tower（电侦） */
 export function buildFovGeoJSON(assetList: Asset[], accent?: AssetDispositionIconAccent | null) {
+  /* 仅光电(camera)画 FOV 扇区；电侦(tower)由 tower-maplibre 独立渲染 */
   const polyFeatures = assetList
     .filter(
       (a) =>
+        a.type === "camera" &&
         a.showFov !== false &&
         a.range &&
-        a.range > 0 &&
-        a.type !== "radar" &&
-        a.type !== "laser" &&
-        a.type !== "tdoa" &&
-        a.type !== "airport" &&
-        a.type !== "drone",
+        a.range > 0,
     )
     .map((a) => {
       const isSector = a.fovAngle !== undefined && a.fovAngle < 360 && a.heading !== undefined;
@@ -173,12 +204,8 @@ export function buildFovGeoJSON(assetList: Asset[], accent?: AssetDispositionIco
 
   const labelFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
   for (const a of assetList) {
-    if (a.type === "radar" || a.type === "laser" || a.type === "tdoa" || a.type === "drone" || a.type === "airport")
-      continue;
-    const isCameraLike = a.type === "camera" || a.type === "tower";
-    if (isCameraLike) {
-      if (a.showFov === false || !a.range || a.range <= 0) continue;
-    }
+    /* 仅光电(camera)画 FOV 名称标签；电侦(tower)由 tower-maplibre 独立渲染 */
+    if (a.type !== "camera") continue;
     const showName = a.nameLabelVisible !== false && String(a.name ?? "").trim() !== "";
     if (!showName) continue;
     const disp = a.disposition ?? "friendly";
@@ -204,14 +231,14 @@ export function buildFovGeoJSON(assetList: Asset[], accent?: AssetDispositionIco
   };
 }
 
-/** camera / tower 中心点（**不含** `airport` / `drone`；机场见 `airport-maplibre`，无人机站点见 `drones-maplibre`） */
+/** 光电(camera) 中心图标（电侦/tower 已移至 `tower-maplibre.ts`，不再在此处理） */
 export function buildOptoAssetIconGeoJSON(assetList: Asset[]): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
     features: assetList
       .filter(
         (a) =>
-          (a.type === "camera" || a.type === "tower") &&
+          a.type === "camera" &&
           a.centerIconVisible !== false,
       )
       .map((a) => ({
@@ -233,22 +260,17 @@ export function buildOptoAssetIconGeoJSON(assetList: Asset[]): GeoJSON.FeatureCo
   };
 }
 
+/** 光电 FOV 扇区线色（仅 camera 类型会走此分支）；初始值会被 `applyFovStyleFromBundle` 从配置覆盖 */
+let _fovLineColor = "#9333ea";
+let _fovLineDashVirtual: number[] = [6, 4];
+let _fovLineDashReal: number[] = [3, 3];
+
 const FOV_LINE_COLOR_BY_ASSET: maplibregl.ExpressionSpecification = [
   "match",
   ["get", "assetType"],
   "camera",
   "#9333ea",
-  "tower",
-  "#34d399",
-  "airport",
-  "#94a3b8",
-  "drone",
-  "#38bdf8",
-  "laser",
-  "#f97316",
-  "tdoa",
-  "#06b6d4",
-  "#34d399",
+  "#9333ea",
 ];
 
 const FOV_LINE_DASH_BY_VIRTUAL: maplibregl.ExpressionSpecification = [
@@ -262,12 +284,15 @@ export type OptoelectronicFovVisibility = {
   fovFillVisible: boolean;
   fovLineVisible: boolean;
   fovLabelVisible: boolean;
+  /** 光电/塔台中心图标（`opto-asset-icon`）；须与名称标签分开，勿复用 `fovLabelVisible` */
+  fovIconVisible: boolean;
 };
 
 const fovVisDefault: OptoelectronicFovVisibility = {
   fovFillVisible: true,
   fovLineVisible: true,
   fovLabelVisible: true,
+  fovIconVisible: true,
 };
 
 /**
@@ -300,23 +325,9 @@ export class OptoelectronicFovModule {
           source: FOV_SOURCE,
           filter: ["==", ["get", "geomKind"], "poly"],
           paint: {
-            "fill-color": [
-              "match",
-              ["get", "assetType"],
-              "camera",
-              "rgba(147,51,234,0.10)",
-              "tower",
-              "rgba(52,211,153,0.06)",
-              "airport",
-              "rgba(148,163,184,0.08)",
-              "drone",
-              "rgba(56,189,248,0.10)",
-              "laser",
-              "rgba(249,115,22,0.10)",
-              "tdoa",
-              "rgba(6,182,212,0.10)",
-              "rgba(52,211,153,0.06)",
-            ],
+            /* 光电 FOV 填充色（仅 camera） */
+            "fill-color": "rgba(147,51,234,0.10)",
+            "fill-opacity": 0.10,
           },
         },
         b,
@@ -330,23 +341,8 @@ export class OptoelectronicFovModule {
           source: FOV_SOURCE,
           filter: ["==", ["get", "geomKind"], "poly"],
           paint: {
-            "line-color": [
-              "match",
-              ["get", "assetType"],
-              "camera",
-              "#9333ea",
-              "tower",
-              "#34d399",
-              "airport",
-              "#94a3b8",
-              "drone",
-              "#38bdf8",
-              "laser",
-              "#f97316",
-              "tdoa",
-              "#06b6d4",
-              "#34d399",
-            ],
+            /* 光电 FOV 线色（仅 camera） */
+            "line-color": "#9333ea",
             "line-width": 1.2,
             "line-dasharray": [
               "case",
@@ -416,7 +412,41 @@ export class OptoelectronicFovModule {
     }
 
     this.applyFovLabelStyleFromBundle(null);
+    this.applyFovStyleFromBundle(null);
     this.applyCoverageLayerVisibility();
+  }
+
+  /**
+   * 从 cameras bundle 读取光电 FOV 扇区颜色（fill / line / dash）并应用到 MapLibre 图层。
+   * bundle 为 null 时使用代码内默认值（与历史行为一致）。
+   */
+  applyFovStyleFromBundle(bundle: AppConfigSectorBundle | null) {
+    const m = this.map;
+    const style = resolveOptoFovStyle(bundle);
+
+    /* 更新模块级变量，供 applyCamerasBundle 里 border.emit=false 分支使用 */
+    _fovLineColor = style.lineColor;
+    _fovLineDashVirtual = style.lineDashVirtual;
+    _fovLineDashReal = style.lineDashReal;
+
+    /* 应用填充色 + 透明度 */
+    if (m.getLayer(FOV_FILL)) {
+      m.setPaintProperty(FOV_FILL, "fill-color", style.fillColor);
+      m.setPaintProperty(FOV_FILL, "fill-opacity", style.fillOpacity);
+    }
+
+    /* 应用线色 / 线宽 / 透明度 / 虚线 */
+    if (m.getLayer(FOV_LINE)) {
+      m.setPaintProperty(FOV_LINE, "line-color", style.lineColor);
+      m.setPaintProperty(FOV_LINE, "line-width", style.lineWidth);
+      m.setPaintProperty(FOV_LINE, "line-opacity", style.lineOpacity);
+      m.setPaintProperty(FOV_LINE, "line-dasharray", [
+        "case",
+        ["==", ["get", "isVirtual"], 1],
+        ["literal", style.lineDashVirtual],
+        ["literal", style.lineDashReal],
+      ] as maplibregl.ExpressionSpecification);
+    }
   }
 
   setCoverageLayerVisibility(partial: Partial<OptoelectronicFovVisibility>) {
@@ -470,10 +500,12 @@ export class OptoelectronicFovModule {
     const border = laserSectorBorderFromBundle(bundle);
     const vis = bundle?.visibility;
     this.applyFovLabelStyleFromBundle(bundle);
+    this.applyFovStyleFromBundle(bundle);
     this.setCoverageLayerVisibility({
       fovFillVisible: vis?.sectorFillVisible !== false,
       fovLineVisible: border.emit,
       fovLabelVisible: sectorBundleAnyMergedVisible(bundle, "centerNameVisible"),
+      fovIconVisible: sectorBundleAnyMergedVisible(bundle, "centerIconVisible"),
     });
     if (!m.getLayer(FOV_LINE)) return;
     const rm = m as maplibregl.Map & { removePaintProperty?: (id: string, prop: string) => void };
@@ -482,7 +514,7 @@ export class OptoelectronicFovModule {
       m.setPaintProperty(
         FOV_LINE,
         "line-color",
-        border.lineColorFixed ? border.lineColorFixed : FOV_LINE_COLOR_BY_ASSET,
+        border.lineColorFixed ? border.lineColorFixed : _fovLineColor,
       );
       if (border.lineDash.length >= 2) {
         m.setPaintProperty(FOV_LINE, "line-dasharray", [border.lineDash[0]!, border.lineDash[1]!]);
@@ -490,9 +522,15 @@ export class OptoelectronicFovModule {
         rm.removePaintProperty?.(FOV_LINE, "line-dasharray");
       }
     } else {
-      m.setPaintProperty(FOV_LINE, "line-width", 1.2);
-      m.setPaintProperty(FOV_LINE, "line-color", FOV_LINE_COLOR_BY_ASSET);
-      m.setPaintProperty(FOV_LINE, "line-dasharray", FOV_LINE_DASH_BY_VIRTUAL);
+      const style = resolveOptoFovStyle(bundle);
+      m.setPaintProperty(FOV_LINE, "line-width", style.lineWidth);
+      m.setPaintProperty(FOV_LINE, "line-color", _fovLineColor);
+      m.setPaintProperty(FOV_LINE, "line-dasharray", [
+        "case",
+        ["==", ["get", "isVirtual"], 1],
+        ["literal", _fovLineDashVirtual],
+        ["literal", _fovLineDashReal],
+      ] as maplibregl.ExpressionSpecification);
     }
   }
 
@@ -505,7 +543,7 @@ export class OptoelectronicFovModule {
     setVis(FOV_FILL, this.coverageVis.fovFillVisible);
     setVis(FOV_LINE, this.coverageVis.fovLineVisible);
     setVis(FOV_LABEL, this.coverageVis.fovLabelVisible);
-    setVis(OPTO_ASSET_ICON_LAYER, this.coverageVis.fovLabelVisible);
+    setVis(OPTO_ASSET_ICON_LAYER, this.coverageVis.fovIconVisible);
   }
 
   setFromAssets(assets: Asset[]) {

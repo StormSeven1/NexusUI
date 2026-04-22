@@ -207,7 +207,7 @@ export const useAppStore = create<AppState>((set) => ({
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
   setTopTab: (tab) => set({ topTab: tab }),
   setMapViewMode: (mode) => set({ mapViewMode: mode }),
-  selectTrack: (id) => set({ selectedTrackId: id }),
+  selectTrack: (id) => set({ selectedTrackId: id, highlightedTrackIds: id ? [id] : [] }),
   selectAsset: (id) => set({ selectedAssetId: id }),
   setZoomLevel: (level) => set({ zoomLevel: level }),
   setMapCenter: (center) => set({ mapCenter: center }),

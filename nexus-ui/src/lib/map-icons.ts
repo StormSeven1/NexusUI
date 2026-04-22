@@ -3,6 +3,22 @@ import { FORCE_COLORS, type ForceDisposition } from "./theme-colors.ts";
 import type { Track, PublicMapAssetType, AssetStatus } from "./map-entity-model.ts";
 import { PUBLIC_MAP_ASSET_TYPES } from "./map-entity-model.ts";
 
+/** 资产中心图标默认 zoom→size 插值 stops */
+const DEFAULT_ICON_SIZE_STOPS: [number, number][] = [
+  [5, 0.62],
+  [10, 0.88],
+  [15, 1.12],
+];
+
+/**
+ * 将 zoom→size 数组转为 MapLibre interpolate 表达式。
+ * @param stops - [[zoom, size], ...]，至少 2 组
+ */
+export function buildIconSizeExpr(stops: [number, number][] | undefined): ExpressionSpecification {
+  const s = (stops && stops.length >= 2) ? stops : DEFAULT_ICON_SIZE_STOPS;
+  return ["interpolate", ["linear"], ["zoom"], ...s.flat()] as unknown as ExpressionSpecification;
+}
+
 /** 雷达 / 光电 / 激光 / TDOA / 无人机与机场等**资产中心图标**共用的 `layout.icon-size`（避免同类标不同大） */
 export const MAPLIBRE_ASSET_CENTER_ICON_SIZE: ExpressionSpecification = [
   "interpolate",
@@ -29,7 +45,7 @@ export type AssetDispositionIconAccent = {
 /** 写入 `AssetData.properties`，供地图友方图标/名称取色（由各 bundle 的 `label.fontColor` 等解析） */
 export const MAP_FRIENDLY_COLOR_PROP = "map_friendly_color";
 
-export function friendlyColorFromAssetProperties(props: Record<string, unknown> | null | undefined): string | undefined {
+export function assetFriendlyColorFromProperties(props: Record<string, unknown> | null | undefined): string | undefined {
   const v = props?.[MAP_FRIENDLY_COLOR_PROP];
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
@@ -112,10 +128,10 @@ export function buildMarkerSymbolSvg(
 ): string {
   const color = resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
   const icon = TRACK_SVG_ICONS[type];
-  const frame =
+  const virtualFrame =
     virtual
       ? `<rect x="1" y="1" width="62" height="62" rx="10" fill="none" stroke="${color}" stroke-width="1.8" stroke-dasharray="5 4" opacity="0.92"/>`
-      : `<rect x="1" y="1" width="62" height="62" rx="10" fill="none" stroke="${color}" stroke-width="1.6" opacity="0.55"/>`;
+      : "";
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">`,
@@ -124,7 +140,7 @@ export function buildMarkerSymbolSvg(
     `<feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#000" flood-opacity="0.85"/>`,
     `</filter>`,
     `</defs>`,
-    frame,
+    virtualFrame,
     `<svg x="4" y="6" width="56" height="54" viewBox="${icon.viewBox}" filter="url(#sh)">`,
     `<path d="${icon.pathD}" fill="${color}"/>`,
     `</svg>`,
@@ -582,7 +598,7 @@ function uniqueFriendlyTintsFromConfigAssets(assets: readonly { properties?: unk
   s.add("");
   for (const a of assets) {
     const p = a.properties as Record<string, unknown> | null | undefined;
-    const c = friendlyColorFromAssetProperties(p ?? null);
+    const c = assetFriendlyColorFromProperties(p ?? null);
     if (c) s.add(c);
   }
   return [...s];
@@ -644,7 +660,7 @@ export function getAllAssetSymbolKeysForPrereg(configAssetBase: readonly { prope
 export const TRACK_SELECT_RING_ID = "track-select-ring";
 
 /**
- * 生成目标选中高亮环 SVG：蓝色静态瞄准环，取代原来的大透明圆圈。
+ * 生成目标选中高亮环 SVG：蓝色静态瞄准环。
  *
  * 设计：外层低透明度晕圈 + 内层主环 + 4 个刻度线，风格参考瞄准镜。
  */

@@ -1,7 +1,5 @@
 /**
- * 将后端 / V2（AlertWindow、MCP `map_command` alert）多种字段形态规范为 `AlertData`。
- * 对齐 V2 `components/AlertWindow/index.vue` 的 `addAlert` 与 `useDataWebSocket` 注释中的
- * `{ alert_type, title, message, location }`。
+ * 将后端 / V2（AlertWindow、MCP `map_command` alert、V2 `Alarm`）多种字段形态规范为 `AlertData`。
  */
 
 import type { AlertData } from "@/stores/alert-store";
@@ -17,10 +15,15 @@ function newAlertId(): string {
   return `al_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** V2 `alert_type` / 通用 `severity` → store 用的三档 */
+/** V2 `alert_type` / 通用 `severity` / V2 `alarmLevel`（数字 0-4）→ store 用的三档 */
 export function wsAlertTypeToSeverity(
-  raw: string | undefined | null,
+  raw: string | number | undefined | null,
 ): "critical" | "warning" | "info" {
+  if (typeof raw === "number") {
+    if (raw >= 3) return "critical";
+    if (raw >= 1) return "warning";
+    return "info";
+  }
   const t = String(raw ?? "info").trim().toLowerCase();
   if (t === "critical") return "critical";
   if (t === "error" || t === "severe" || t === "fatal") return "warning";
@@ -36,6 +39,8 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
   const title = typeof o.title === "string" ? o.title.trim() : "";
   const body =
     (typeof o.message === "string" && o.message) ||
+    (typeof o.alarmContent === "string" && o.alarmContent) ||
+    (typeof o.alarmMessage === "string" && o.alarmMessage) ||
     (typeof o.content === "string" && o.content) ||
     (typeof o.body === "string" && o.body) ||
     (typeof o.text === "string" && o.text) ||
@@ -49,11 +54,13 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     (typeof o.alert_type === "string" && o.alert_type) ||
     (typeof o.alertType === "string" && o.alertType) ||
     (typeof o.level === "string" && o.level) ||
+    (typeof o.alarmLevel === "number" ? o.alarmLevel : undefined) ||
+    (typeof o.alarmLevel === "string" ? o.alarmLevel : undefined) ||
     "info";
 
   const severity = wsAlertTypeToSeverity(alertTypeRaw);
 
-  const idRaw = o.id ?? o.alert_id ?? o.alertId;
+  const idRaw = o.id ?? o.alarmId ?? o.alert_id ?? o.alertId ?? o.eventId;
   const id =
     typeof idRaw === "string" && idRaw.trim()
       ? idRaw.trim()
@@ -61,7 +68,7 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
         ? String(idRaw)
         : newAlertId();
 
-  const tsRaw = o.timestamp ?? o.time ?? o.created_at ?? o.createdAt;
+  const tsRaw = o.timestamp ?? o.updateTime ?? o.time ?? o.created_at ?? o.createdAt;
   const timestamp =
     typeof tsRaw === "string" && tsRaw.trim()
       ? tsRaw.trim()
@@ -69,7 +76,7 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
         ? new Date(tsRaw).toISOString()
         : isoNow();
 
-  const trackRaw = o.trackId ?? o.track_id ?? o.tid ?? o.track;
+  const trackRaw = o.trackId ?? o.track_id ?? o.tid ?? o.track ?? o.trackID;
   const trackId =
     typeof trackRaw === "string" && trackRaw.trim()
       ? trackRaw.trim()
@@ -79,6 +86,20 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
 
   let lat: number | undefined;
   let lng: number | undefined;
+
+  // V2 嵌套 position: { longitude, latitude }
+  const pos = o.position;
+  if (pos && typeof pos === "object" && !Array.isArray(pos)) {
+    const P = pos as Record<string, unknown>;
+    const pLa = P.latitude ?? P.lat;
+    const pLn = P.longitude ?? P.lng ?? P.lon;
+    if (pLa != null && pLn != null) {
+      lat = Number(pLa);
+      lng = Number(pLn);
+    }
+  }
+
+  // 通用 location
   const loc = o.location;
   if (Array.isArray(loc) && loc.length >= 2) {
     lng = Number(loc[0]);
@@ -98,18 +119,61 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
   }
 
   const type =
-    typeof o.type === "string" && o.type !== "map_command" && o.type !== "alert_batch"
+    typeof o.type === "string" && o.type !== "map_command" && o.type !== "alert_batch" && o.type !== "Alarm"
       ? o.type
       : undefined;
+
+  const alarmLevelRaw = o.alarmLevel ?? o.level ?? o.alarm_level;
+  const alarmLevel =
+    typeof alarmLevelRaw === "number" && Number.isFinite(alarmLevelRaw)
+      ? alarmLevelRaw
+      : typeof alarmLevelRaw === "string" && alarmLevelRaw.trim()
+        ? Number(alarmLevelRaw)
+        : undefined;
+
+  const source =
+    typeof o.source === "string"
+      ? o.source
+      : typeof o.dataSource === "string"
+        ? o.dataSource
+        : typeof o.sensor === "string"
+          ? o.sensor
+          : undefined;
+
+  const areaName =
+    typeof o.areaName === "string"
+      ? o.areaName
+      : typeof o.zoneName === "string"
+        ? o.zoneName
+        : undefined;
+
+  const uniqueIDRaw = o.uniqueID ?? o.uniqueId ?? o.showID;
+  const uniqueID =
+    typeof uniqueIDRaw === "string" && uniqueIDRaw.trim() ? uniqueIDRaw.trim() : undefined;
+
+  const detail =
+    typeof o.detail === "string"
+      ? o.detail
+      : typeof o.description === "string"
+        ? o.description
+        : typeof o.extra === "string"
+          ? o.extra
+          : undefined;
 
   const out: AlertData = {
     id,
     severity,
     message,
     timestamp,
+    ...(title ? { title } : {}),
     ...(trackId ? { trackId } : {}),
     ...(lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : {}),
     ...(type ? { type } : {}),
+    ...(alarmLevel != null && Number.isFinite(alarmLevel) ? { alarmLevel } : {}),
+    ...(source ? { source } : {}),
+    ...(areaName ? { areaName } : {}),
+    ...(uniqueID ? { uniqueID } : {}),
+    ...(detail ? { detail } : {}),
   };
   return out;
 }

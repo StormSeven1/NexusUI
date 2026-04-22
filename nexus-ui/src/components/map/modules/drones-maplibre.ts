@@ -1,3 +1,32 @@
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  无人机/机场渲染模块 —— 无人机图标 + 航线 + 机场图标 + 名称标签
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * ── 无人机渲染全链路 ──
+ *
+ *   1. 接收:
+ *      ├─ entity_status → msg.relationships.airports[].drones[] → drone-store
+ *      ├─ drone_status → 更新 drone-store.drones（遥测坐标/航向）
+ *      └─ high_freq → 更新 drone-store.drones（高频坐标，100ms 级）
+ *
+ *   2. 解析:
+ *      ├─ applyEntityStatusMessage() → 解析 relationships → entityIdToDeviceSn 映射
+ *      ├─ setDroneStatus() → resolveDroneSn() 将 entityId 映射到 deviceSn
+ *      └─ drone_flight_path → extractWaypoints() 提取航路点
+ *
+ *   3. 入资产:
+ *      ├─ syncDroneAndAirportAssetsFromRelationships() → asset-store upsert
+ *      └─ drone_status / high_freq → mergeCoords() 合并坐标 → asset-store 更新
+ *
+ *   4. 渲染: asset-store → DronesMaplibre.setFromAssets()
+ *      ├─ buildDroneGeoJSON() → 生成无人机图标 + 名称 + 航线 GeoJSON
+ *      ├─ 无人机图标: 敌我配色 SVG，有 pose 时才渲染
+ *      ├─ 航线: extractWaypoints() → waypointsLineString → LineString
+ *      └─ 机场: AirportMaplibre.setFromAssets() → 机场图标 + 名称标签
+ *
+ *   5. 超时: 无独立超时机制，依赖 drone-store 的 entityReady 状态
+ */
 import type maplibregl from "maplibre-gl";
 import { parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
 import type { AssetData } from "@/stores/asset-store";
@@ -7,6 +36,7 @@ import type { AssetDispositionIconAccent, AssetStatus } from "@/lib/map-icons";
 import {
   assetMapLabelTextColor,
   buildAssetSymbolDataUrl,
+  geoCircleCoords,
   geoSectorCoords,
   getAssetSymbolId,
   MAP_FRIENDLY_COLOR_PROP,
@@ -111,6 +141,9 @@ export const DRONES_TRAIL_DASH = "nexus-drones-trail-dash";
 export const DRONES_FOV_LAYER = "nexus-drones-fov";
 export const DRONES_SYMBOL_LAYER = "nexus-drones-symbol";
 export const DRONES_LABEL_LAYER = "nexus-drones-label";
+export const DRONES_ROUTE_END_SOURCE = "nexus-drones-route-end-src";
+export const DRONES_ROUTE_END_INNER = "nexus-drones-route-end-inner";
+export const DRONES_ROUTE_END_OUTER = "nexus-drones-route-end-outer";
 /** 配置 / 资产 store 中的静态 `asset_type: drone` 站址（图标 + 名称），与实时机队 `DRONES_SOURCE` 分离 */
 export const DRONES_STATIC_SOURCE = "nexus-drones-static-sites";
 export const DRONES_STATIC_SYMBOL_LAYER = "nexus-drones-static-symbol";
@@ -151,15 +184,29 @@ function assetStatusFromLabel(s: string | undefined): AssetStatus {
   return "online";
 }
 
-/** 静态无人机站点：中心图标 + 名称（数据源与 `nexus-drones-src` 实时机队分离） */
+/**
+ * 静态无人机站点：中心图标 + 名称（数据源与 `nexus-drones-src` 实时机队分离）。
+ *
+ * 静态站址来源：app-config.json 的 `drones.devices` + entity_status 通过
+ * syncDroneAndAirportAssetsFromRelationships upsert 进 asset-store 的无人机。
+ *
+ * 避免重复图标：
+ *   同一架无人机可能同时出现在 asset-store（静态站址图标）和 drone-store（实时位置图标）。
+ *   对齐 V2 的做法（V2 中机场和无人机图标由 DroneRenderer 统一管理，不存在此问题），
+ *   此处在构建静态 GeoJSON 时跳过已有实时遥测数据的无人机，让实时层独占渲染。
+ */
 export function buildStaticDroneSitesGeoJSON(
   assetList: Asset[],
   accent: AssetDispositionIconAccent | null,
 ): GeoJSON.FeatureCollection {
+  const liveDrones = useDroneStore.getState().drones;
   const features: GeoJSON.Feature[] = [];
   for (const a of assetList) {
     if (a.type !== "drone") continue;
     if (a.centerIconVisible === false) continue;
+    // 有实时遥测数据的无人机由实时层渲染，跳过静态图标
+    const live = liveDrones[a.id];
+    if (live && live.lat != null && live.lng != null) continue;
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [a.lng, a.lat] },
@@ -180,6 +227,9 @@ export function buildStaticDroneSitesGeoJSON(
   for (const a of assetList) {
     if (a.type !== "drone") continue;
     if (a.nameLabelVisible === false || !String(a.name ?? "").trim()) continue;
+    // 有实时遥测数据的无人机由实时层渲染标签，跳过静态标签
+    const liveLbl = liveDrones[a.id];
+    if (liveLbl && liveLbl.lat != null && liveLbl.lng != null) continue;
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
     const friendlyOv = disp === "friendly" ? a.friendlyMapColor : undefined;
@@ -236,7 +286,6 @@ function latestPayloadForFov(tele: DroneTelemetry): Record<string, unknown> | nu
     return tele.highFreq;
   }
   if (tele.status) return tele.status;
-  if (tele.legacy) return tele.legacy;
   return null;
 }
 
@@ -270,19 +319,84 @@ function fovFeatureForDrone(tele: DroneTelemetry): GeoJSON.Feature<GeoJSON.Polyg
   };
 }
 
+/**
+ * 从任务数据中提取航点数组（对齐 V2 DroneRenderer.renderFlightPaths）。
+ *
+ * V2 中 DroneFlightPath 消息 → DroneRenderer.updateDroneTask(message.data)：
+ *   message.data = { entityId, waypoints: [{ longitude, latitude, height, index }, ...], executionState, ... }
+ *   waypoints 直接在载荷顶层，每个航点含 longitude / latitude。
+ *
+ * 本函数兼容多种可能的后端载荷格式：
+ *   - task.waypoints（V2 标准格式）
+ *   - task.points / task.flightPoints / task.route / task.flight_path
+ *   - task.data.waypoints / task.payload.waypoints / task.flightPlan.waypoints（嵌套格式）
+ */
+function extractWaypoints(task: Record<string, unknown>): unknown[] | null {
+  const tryArr = (v: unknown): unknown[] | null =>
+    Array.isArray(v) && v.length >= 2 ? v : null;
+
+  /* 直接字段：V2 标准格式 taskData.waypoints */
+  const direct =
+    tryArr(task.waypoints) ??
+    tryArr(task.points) ??
+    tryArr(task.flightPoints) ??
+    tryArr(task.route) ??
+    tryArr(task.flight_path) ??
+    null;
+  if (direct) return direct;
+
+  /* 嵌套格式：某些后端可能把航点包在 data / payload / flightPlan 里 */
+  for (const key of ["data", "payload", "flightPlan"]) {
+    const inner = task[key];
+    if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+      const o = inner as Record<string, unknown>;
+      const found =
+        tryArr(o.waypoints) ??
+        tryArr(o.points) ??
+        tryArr(o.flightPoints) ??
+        tryArr(o.route) ??
+        null;
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * 将任务航点转为 GeoJSON LineString（对齐 V2 DroneRenderer.renderFlightPaths）。
+ *
+ * V2 渲染逻辑（DroneRenderer.js:2121-2204）：
+ *   1. 遍历 droneData，取 drone.task.waypoints
+ *   2. 每个 waypoint 渲染为 circle 航点（含 index, altitude 属性）
+ *   3. 相邻航点之间渲染虚线 LineString 航线段
+ *   4. 航点坐标：wp.longitude, wp.latitude（经 transformCoordinate 转换）
+ *   5. 航线颜色按目标类型区分：对海白色、对空黄色
+ *
+ * V3 简化：不画航点圆点，仅画航线折线（实兵实线、虚兵虚线，由 DRONES_ROUTE_SOLID / DASH 分图层）。
+ * 坐标字段兼容：longitude/lng/lon + latitude/lat，以及嵌套 position.location 等。
+ */
 function waypointsLineString(
   task: Record<string, unknown> | null,
   virtualTroop: boolean,
 ): GeoJSON.Feature<GeoJSON.LineString> | null {
   if (!task) return null;
-  const wps = task.waypoints;
-  if (!Array.isArray(wps) || wps.length < 2) return null;
+  const wps = extractWaypoints(task);
+  if (!wps) return null;
   const coords: Array<[number, number]> = [];
   for (const wp of wps) {
     if (!wp || typeof wp !== "object") continue;
     const o = wp as Record<string, unknown>;
-    const lng = Number(o.longitude ?? o.lng ?? o.lon);
-    const lat = Number(o.latitude ?? o.lat);
+    /* 坐标字段：与 V2 wp.longitude / wp.latitude 一致，同时兼容嵌套格式 */
+    const pos = o.position ?? o.location ?? o.coordinate ?? o.coord;
+    let lng: number, lat: number;
+    if (pos && typeof pos === "object" && !Array.isArray(pos)) {
+      const p = pos as Record<string, unknown>;
+      lng = Number(p.longitude ?? p.lng ?? p.lon);
+      lat = Number(p.latitude ?? p.lat);
+    } else {
+      lng = Number(o.longitude ?? o.lng ?? o.lon);
+      lat = Number(o.latitude ?? o.lat);
+    }
     if (Number.isFinite(lng) && Number.isFinite(lat)) coords.push([lng, lat]);
   }
   if (coords.length < 2) return null;
@@ -313,7 +427,6 @@ export function mergedDronePose(t: DroneTelemetry): {
   const now = Date.now();
   const hf = t.highFreq;
   const st = t.status;
-  const leg = t.legacy;
 
   const hfFresh = t.highFreqReceivedAt != null && now - t.highFreqReceivedAt < cfg.highFreqPositionMaxAgeMs;
   if (hf && hfFresh) {
@@ -330,13 +443,6 @@ export function mergedDronePose(t: DroneTelemetry): {
       return { ...p, headingDeg: h ?? t.headingDeg ?? 0 };
     }
   }
-  if (leg) {
-    const p = readLatLng(leg);
-    if (p) {
-      const h = readHeading(leg);
-      return { ...p, headingDeg: h ?? t.headingDeg ?? 0 };
-    }
-  }
   if (t.lat != null && t.lng != null) {
     return { lat: t.lat, lng: t.lng, headingDeg: t.headingDeg ?? 0 };
   }
@@ -346,9 +452,12 @@ export function mergedDronePose(t: DroneTelemetry): {
 function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.FeatureCollection {
   const cfg = getDroneMapRenderingConfig();
   const features: GeoJSON.Feature[] = [];
-  for (const [, tele] of Object.entries(drones)) {
+  const droneCount = Object.keys(drones).length;
+  let renderedCount = 0;
+  for (const [sn, tele] of Object.entries(drones)) {
     const pose = mergedDronePose(tele);
     if (!pose) continue;
+    renderedCount++;
 
     if (cfg.showPlannedRoute) {
       const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
@@ -371,12 +480,20 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
       geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
     });
     if (cfg.showSnLabel) {
+      const dn = tele.displayName || tele.sn;
       features.push({
         type: "Feature",
-        properties: { kind: "label", sn: tele.sn },
+        properties: {
+          kind: "label",
+          sn: tele.sn,
+          displayName: dn,
+        },
         geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
       });
     }
+  }
+  if (droneCount > 0) {
+    // drone rendering summary
   }
   return { type: "FeatureCollection", features };
 }
@@ -389,6 +506,7 @@ export class DronesMaplibre {
   private beforeId?: string;
   private unsub: (() => void) | null = null;
   private timeoutTimer: ReturnType<typeof setInterval> | null = null;
+  private pulseAnimId: number | null = null;
 
   constructor(map: maplibregl.Map, options?: { insertBeforeLayerId?: string }) {
     this.map = map;
@@ -485,9 +603,9 @@ export class DronesMaplibre {
     };
 
     const routePaintBase = {
-      "line-color": cfg0.routeLineColor,
-      "line-width": cfg0.routeLineWidth,
-      "line-opacity": cfg0.routeLineOpacity,
+      "line-color": cfg0.plannedRouteLineColor,
+      "line-width": cfg0.plannedRouteLineWidth,
+      "line-opacity": cfg0.plannedRouteLineOpacity,
     };
     addLine(DRONES_ROUTE_SOLID, ["all", ["==", ["get", "kind"], "route"], ["!=", ["get", "virt"], 1]], routePaintBase);
     addLine(DRONES_ROUTE_DASH, ["all", ["==", ["get", "kind"], "route"], ["==", ["get", "virt"], 1]], {
@@ -495,9 +613,9 @@ export class DronesMaplibre {
       "line-dasharray": [5, 4],
     });
     const trailPaintBase = {
-      "line-color": cfg0.routeLineColor,
-      "line-width": Math.max(1, cfg0.routeLineWidth - 0.5),
-      "line-opacity": Math.min(1, cfg0.routeLineOpacity * 0.85),
+      "line-color": cfg0.historyTrailLineColor,
+      "line-width": cfg0.historyTrailLineWidth,
+      "line-opacity": cfg0.historyTrailLineOpacity,
     };
     addLine(DRONES_TRAIL_SOLID, ["all", ["==", ["get", "kind"], "trail"], ["!=", ["get", "virt"], 1]], trailPaintBase);
     addLine(DRONES_TRAIL_DASH, ["all", ["==", ["get", "kind"], "trail"], ["==", ["get", "virt"], 1]], {
@@ -547,6 +665,40 @@ export class DronesMaplibre {
         b,
       );
     }
+    if (!m.getSource(DRONES_ROUTE_END_SOURCE)) {
+      m.addSource(DRONES_ROUTE_END_SOURCE, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    }
+    if (!m.getLayer(DRONES_ROUTE_END_INNER)) {
+      m.addLayer(
+        {
+          id: DRONES_ROUTE_END_INNER,
+          type: "fill",
+          source: DRONES_ROUTE_END_SOURCE,
+          filter: ["==", ["get", "ringType"], "inner"],
+          paint: {
+            "fill-color": ["coalesce", ["get", "ringColor"], "#fffacd"],
+            "fill-opacity": ["coalesce", ["get", "fillOpacity"], 0.2],
+          },
+        },
+        b,
+      );
+    }
+    if (!m.getLayer(DRONES_ROUTE_END_OUTER)) {
+      m.addLayer(
+        {
+          id: DRONES_ROUTE_END_OUTER,
+          type: "fill",
+          source: DRONES_ROUTE_END_SOURCE,
+          filter: ["==", ["get", "ringType"], "outer"],
+          paint: {
+            "fill-color": ["coalesce", ["get", "ringColor"], "#fffacd"],
+            "fill-opacity": ["coalesce", ["get", "fillOpacity"], 0.12],
+          },
+        },
+        b,
+      );
+    }
+    this.startPulseAnimation();
     if (!m.getLayer(DRONES_LABEL_LAYER)) {
       m.addLayer(
         {
@@ -555,7 +707,7 @@ export class DronesMaplibre {
           source: DRONES_SOURCE,
           filter: ["==", ["get", "kind"], "label"],
           layout: {
-            "text-field": ["get", "sn"],
+            "text-field": ["coalesce", ["get", "displayName"], ["get", "sn"]],
             "text-font": ["Open Sans Regular"],
             "text-size": 10,
             "text-offset": [0, 2.1],
@@ -618,6 +770,54 @@ export class DronesMaplibre {
     }
   }
 
+  private startPulseAnimation() {
+    if (this.pulseAnimId != null) cancelAnimationFrame(this.pulseAnimId);
+    const m = this.map;
+    const pulsePeriodMs = 2000;
+    const animate = () => {
+      const src = m.getSource(DRONES_ROUTE_END_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (!src) { this.pulseAnimId = requestAnimationFrame(animate); return; }
+      const t = (Date.now() % pulsePeriodMs) / pulsePeriodMs;
+      const pulseScale = 0.85 + 0.3 * t;
+      const baseRadiusM = 50;
+      const innerRadius = Math.max(20, baseRadiusM * 0.55);
+      const outerRadius = Math.max(innerRadius + 10, baseRadiusM * pulseScale);
+      const drones = useDroneStore.getState().drones;
+      const cfg = getDroneMapRenderingConfig();
+      const features: GeoJSON.Feature[] = [];
+      for (const sn of Object.keys(drones)) {
+        const tele = drones[sn];
+        if (!tele?.flightPath) continue;
+        const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
+        if (!route) continue;
+        const lastCoord = route.geometry.coordinates[route.geometry.coordinates.length - 1];
+        if (!lastCoord) continue;
+        const [lng, lat] = lastCoord as [number, number];
+        const ringColor = "#fffacd";
+        features.push({
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [geoCircleCoords(lng, lat, innerRadius / 1000)] },
+          properties: { ringType: "inner", ringColor, fillOpacity: 0.2, sn },
+        });
+        features.push({
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [geoCircleCoords(lng, lat, outerRadius / 1000)] },
+          properties: { ringType: "outer", ringColor, fillOpacity: 0.12 + 0.1 * (1 - t), sn },
+        });
+      }
+      src.setData({ type: "FeatureCollection", features });
+      if (!cfg.showPlannedRoute) {
+        if (m.getLayer(DRONES_ROUTE_END_INNER)) m.setLayoutProperty(DRONES_ROUTE_END_INNER, "visibility", "none");
+        if (m.getLayer(DRONES_ROUTE_END_OUTER)) m.setLayoutProperty(DRONES_ROUTE_END_OUTER, "visibility", "none");
+      } else {
+        if (m.getLayer(DRONES_ROUTE_END_INNER)) m.setLayoutProperty(DRONES_ROUTE_END_INNER, "visibility", "visible");
+        if (m.getLayer(DRONES_ROUTE_END_OUTER)) m.setLayoutProperty(DRONES_ROUTE_END_OUTER, "visibility", "visible");
+      }
+      this.pulseAnimId = requestAnimationFrame(animate);
+    };
+    this.pulseAnimId = requestAnimationFrame(animate);
+  }
+
   private startTimeoutPrune() {
     if (this.timeoutTimer) clearInterval(this.timeoutTimer);
     const tickMs = Math.max(500, getDroneMapRenderingConfig().timeoutCheckIntervalMs);
@@ -641,16 +841,16 @@ export class DronesMaplibre {
     const cfg = getDroneMapRenderingConfig();
     for (const lid of [DRONES_ROUTE_SOLID, DRONES_ROUTE_DASH]) {
       if (m.getLayer(lid)) {
-        m.setPaintProperty(lid, "line-color", cfg.routeLineColor);
-        m.setPaintProperty(lid, "line-width", cfg.routeLineWidth);
-        m.setPaintProperty(lid, "line-opacity", cfg.routeLineOpacity);
+        m.setPaintProperty(lid, "line-color", cfg.plannedRouteLineColor);
+        m.setPaintProperty(lid, "line-width", cfg.plannedRouteLineWidth);
+        m.setPaintProperty(lid, "line-opacity", cfg.plannedRouteLineOpacity);
       }
     }
     for (const lid of [DRONES_TRAIL_SOLID, DRONES_TRAIL_DASH]) {
       if (m.getLayer(lid)) {
-        m.setPaintProperty(lid, "line-color", cfg.routeLineColor);
-        m.setPaintProperty(lid, "line-width", Math.max(1, cfg.routeLineWidth - 0.5));
-        m.setPaintProperty(lid, "line-opacity", Math.min(1, cfg.routeLineOpacity * 0.85));
+        m.setPaintProperty(lid, "line-color", cfg.historyTrailLineColor);
+        m.setPaintProperty(lid, "line-width", cfg.historyTrailLineWidth);
+        m.setPaintProperty(lid, "line-opacity", cfg.historyTrailLineOpacity);
       }
     }
     if (m.getLayer(DRONES_FOV_LAYER)) {
@@ -684,12 +884,18 @@ export class DronesMaplibre {
       clearInterval(this.timeoutTimer);
       this.timeoutTimer = null;
     }
+    if (this.pulseAnimId != null) {
+      cancelAnimationFrame(this.pulseAnimId);
+      this.pulseAnimId = null;
+    }
     this.unsub?.();
     this.unsub = null;
     const m = this.map;
     for (const id of [
       DRONES_LABEL_LAYER,
       DRONES_SYMBOL_LAYER,
+      DRONES_ROUTE_END_OUTER,
+      DRONES_ROUTE_END_INNER,
       DRONES_FOV_LAYER,
       DRONES_TRAIL_DASH,
       DRONES_TRAIL_SOLID,
@@ -701,6 +907,7 @@ export class DronesMaplibre {
       if (m.getLayer(id)) m.removeLayer(id);
     }
     if (m.getSource(DRONES_SOURCE)) m.removeSource(DRONES_SOURCE);
+    if (m.getSource(DRONES_ROUTE_END_SOURCE)) m.removeSource(DRONES_ROUTE_END_SOURCE);
     if (m.getSource(DRONES_STATIC_SOURCE)) m.removeSource(DRONES_STATIC_SOURCE);
     if (m.hasImage(DRONE_MAP_IMAGE_REAL)) m.removeImage(DRONE_MAP_IMAGE_REAL);
     if (m.hasImage(DRONE_MAP_IMAGE_VIRT)) m.removeImage(DRONE_MAP_IMAGE_VIRT);

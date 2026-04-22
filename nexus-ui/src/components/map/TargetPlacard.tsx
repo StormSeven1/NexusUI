@@ -1,13 +1,13 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, friendlyColorFromAssetProperties } from "@/lib/map-icons";
+import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, assetFriendlyColorFromProperties } from "@/lib/map-icons";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
-import { dispositionFromAssetData, getTrackRenderingConfig } from "@/lib/map-app-config";
+import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
 import { useAlertStore } from "@/stores/alert-store";
 import { useAssetStore } from "@/stores/asset-store";
-import { useTrackStore } from "@/stores/track-store";
+import { useTrackStore, isTrackMatchedByAlarm } from "@/stores/track-store";
 import { useEffect, useMemo, useState } from "react";
 
 export type PlacardKind = "track" | "asset";
@@ -24,13 +24,6 @@ function formatLatLng(lat: number | null | undefined, lng: number | null | undef
   const ns = lat >= 0 ? "N" : "S";
   const ew = lng >= 0 ? "E" : "W";
   return `${Math.abs(lat).toFixed(4)}°${ns}, ${Math.abs(lng).toFixed(4)}°${ew}`;
-}
-
-function kvEntries(obj: Record<string, unknown> | null | undefined) {
-  if (!obj) return [];
-  return Object.entries(obj)
-    .filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .slice(0, 40);
 }
 
 function DispositionBadge({ d }: { d: ForceDisposition }) {
@@ -72,19 +65,37 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
 
 export function TargetPlacard(props: TargetPlacardProps) {
   const { kind, id, onClose, className } = props;
-  const [showAllProps, setShowAllProps] = useState(false);
 
+  const allAssets = useAssetStore((s) => s.assets);
   const track = useTrackStore((s) => s.tracks.find((t) => t.id === id)) as Track | undefined;
 
-  const asset = useAssetStore((s) => s.assets.find((a) => a.id === id));
+  const asset = allAssets.find((a) => a.id === id);
+  // console.log("[TargetPlacard] id=", id, "kind=", kind, "asset=", asset ? { id: asset.id, asset_type: asset.asset_type, name: asset.name } : null, "allAssetIds=", allAssets.map(a => `${a.id}(${a.asset_type})`));
   const alerts = useAlertStore((s) => s.alerts);
 
+  /** 构建告警 trackId 集合，复用 isTrackMatchedByAlarm 逻辑匹配 */
   const relatedAlerts = useMemo(() => {
-    if (kind !== "track") return [];
-    return alerts.filter((a) => a.trackId === id).slice(0, 5);
-  }, [alerts, id, kind]);
+    if (kind !== "track" || !track) return [];
+    const alarmTrackIds = new Set<string>();
+    for (const a of alerts) {
+      if (a.trackId) alarmTrackIds.add(a.trackId);
+    }
+    return alerts
+      .filter((a) => a.trackId && isTrackMatchedByAlarm(track, new Set([a.trackId])))
+      .slice(0, 5);
+  }, [alerts, track, kind]);
 
-  const title = kind === "track" ? (track?.name ?? id) : (asset?.name ?? id);
+  /** 机场/无人机的 name 在入资产时已解析好，直接用 */
+  const mapDisplayName = useMemo(() => {
+    if (kind === "track") return track?.name ?? id;
+    if (!asset) return id;
+    const t = normalizeAssetType(asset.asset_type);
+    if (t === "camera") return formatCameraTowerMapLabel(asset.id);
+    if (t === "tower") return formatTowerMapLabel(asset.id);
+    return asset.name;
+  }, [kind, track, asset, id]);
+
+  const title = mapDisplayName;
   const subtitle = kind === "track" ? "航迹" : "资产";
 
   const trackSymbolUrl = useMemo(() => {
@@ -98,40 +109,40 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const [assetIconLoaded, setAssetIconLoaded] = useState<{ id: string; url: string } | null>(null);
 
   useEffect(() => {
-    if (kind !== "asset" || !asset) return;
+    if (kind !== "asset") return;
+    if (!asset) return;
     let cancelled = false;
     const aid = asset.id;
+    const t = normalizeAssetType(asset.asset_type);
+    const assetFriendlyTint =
+      assetFriendlyColorFromProperties(asset.properties as Record<string, unknown> | null) ??
+      getAssetFriendlyColorForAssetType(t) ??
+      FORCE_COLORS.friendly;
     void buildAssetSymbolDataUrl(
-      normalizeAssetType(asset.asset_type),
+      t,
       asset.status as AssetStatus,
       isVirtualFromProperties(asset.properties),
       dispositionFromAssetData(asset),
       undefined,
-      friendlyColorFromAssetProperties(asset.properties as Record<string, unknown> | null),
+      assetFriendlyTint,
     ).then((url) => {
       if (!cancelled) setAssetIconLoaded({ id: aid, url });
     });
     return () => {
       cancelled = true;
     };
-  }, [kind, asset]);
+  }, [kind, asset, id]);
 
   const symbolUrl =
     kind === "track"
       ? trackSymbolUrl
-      : kind === "asset" && asset && assetIconLoaded?.id === asset.id
+      : kind === "asset" && assetIconLoaded?.id === (asset?.id ?? id)
         ? assetIconLoaded.url
         : null;
 
   const headerColor = kind === "track"
     ? (track ? (FORCE_COLORS[track.disposition] ?? "#a1a1aa") : "#a1a1aa")
-    : "#6ee7b7";
-
-  const propEntries = useMemo(() => {
-    if (kind !== "asset") return [];
-    const entries = kvEntries(asset?.properties ?? null);
-    return showAllProps ? entries : entries.slice(0, 12);
-  }, [asset?.properties, kind, showAllProps]);
+    : (assetFriendlyColorFromProperties(asset?.properties as Record<string, unknown> | null) ?? (asset?.asset_type ? getAssetFriendlyColorForAssetType(normalizeAssetType(asset.asset_type)) : null) ?? FORCE_COLORS.friendly);
 
   return (
     <div
@@ -201,24 +212,66 @@ export function TargetPlacard(props: TargetPlacardProps) {
           </div>
 
           <SectionTitle>关联告警</SectionTitle>
-          <div className="mt-1 space-y-1">
+          <div className="mt-1 space-y-1.5">
             {relatedAlerts.length ? (
-              relatedAlerts.map((a) => (
-                <div
-                  key={a.id}
-                  className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-[10px] font-semibold text-nexus-text-secondary">
-                      {a.severity.toUpperCase()}
+              relatedAlerts.map((a) => {
+                const sevColor =
+                  a.severity === "critical"
+                    ? "text-red-400"
+                    : a.severity === "warning"
+                      ? "text-amber-400"
+                      : "text-zinc-400";
+                const sevLabel =
+                  a.severity === "critical"
+                    ? "严重"
+                    : a.severity === "warning"
+                      ? "警告"
+                      : "信息";
+                const sevBorder =
+                  a.severity === "critical"
+                    ? "border-l-2 border-l-red-500/60"
+                    : a.severity === "warning"
+                      ? "border-l-2 border-l-amber-500/60"
+                      : "border-l-2 border-l-zinc-500/40";
+                return (
+                  <div
+                    key={a.id}
+                    className={cn("rounded-lg border border-white/10 bg-white/5 px-2.5 py-2", sevBorder)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("text-[10px] font-bold", sevColor)}>{sevLabel}</span>
+                        {a.alarmType && (
+                          <span className="rounded bg-white/5 px-1 text-[9px] text-nexus-text-muted">
+                            {a.alarmType === "threat" ? "威胁" : "告警"}
+                          </span>
+                        )}
+                        {a.alarmLevel != null && (
+                          <span className="text-[10px] text-nexus-text-muted">Lv.{a.alarmLevel}</span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-nexus-text-muted">{a.timestamp}</div>
                     </div>
-                    <div className="text-[10px] text-nexus-text-muted">{a.timestamp}</div>
+                    {a.title && (
+                      <div className="mt-1 text-[11px] font-medium text-nexus-text-primary">{a.title}</div>
+                    )}
+                    <div className={cn("text-[11px] text-nexus-text-primary", a.title ? "mt-0.5" : "mt-1")}>
+                      {a.message}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-nexus-text-muted">
+                      {a.source && <span>来源：{a.source}</span>}
+                      {a.areaName && <span>区域：{a.areaName}</span>}
+                      {a.lat != null && a.lng != null && Number.isFinite(a.lat) && Number.isFinite(a.lng) && (
+                        <span>坐标：{a.lng.toFixed(4)}, {a.lat.toFixed(4)}</span>
+                      )}
+                      {a.type && <span>类型：{a.type}</span>}
+                    </div>
+                    {a.detail && (
+                      <div className="mt-1 text-[10px] leading-relaxed text-nexus-text-muted">{a.detail}</div>
+                    )}
                   </div>
-                  <div className="mt-0.5 text-[11px] text-nexus-text-primary">
-                    {a.message}
-                  </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="text-[11px] text-nexus-text-muted">暂无关联告警</div>
             )}
@@ -233,44 +286,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
             <Row k="坐标" v={formatLatLng(asset?.lat, asset?.lng)} />
             <Row k="射程" v={asset?.range_km ? `${asset.range_km} km` : "-"} />
             <Row k="任务状态" v={asset?.mission_status ?? "-"} />
-            <Row k="分配目标" v={asset?.assigned_target_id ?? "-"} />
-            <Row k="目标坐标" v={formatLatLng(asset?.target_lat, asset?.target_lng)} />
             <Row k="更新时间" v={asset?.updated_at ?? "-"} />
-          </div>
-
-          <SectionTitle>扩展属性</SectionTitle>
-          <div className="mt-1">
-            {propEntries.length ? (
-              <>
-                <div className="space-y-1.5">
-                  {propEntries.map(([k, v]) => (
-                    <Row
-                      key={k}
-                      k={k}
-                      v={
-                        typeof v === "string" || typeof v === "number" || typeof v === "boolean"
-                          ? String(v)
-                          : (
-                            <span className="block truncate text-nexus-text-secondary" title={JSON.stringify(v)}>
-                              {JSON.stringify(v)}
-                            </span>
-                          )
-                      }
-                    />
-                  ))}
-                </div>
-                {kvEntries(asset?.properties ?? null).length > 12 && (
-                  <button
-                    onClick={() => setShowAllProps((s) => !s)}
-                    className="mt-2 w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[11px] font-semibold text-nexus-text-secondary hover:bg-white/10"
-                  >
-                    {showAllProps ? "收起" : "展开全部"}
-                  </button>
-                )}
-              </>
-            ) : (
-              <div className="text-[11px] text-nexus-text-muted">暂无扩展属性</div>
-            )}
           </div>
         </>
       )}

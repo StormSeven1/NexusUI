@@ -41,15 +41,20 @@ export function trackMapVertexEstimate(tracks: ReadonlyArray<Track>): number {
   return tracks.reduce((n, t) => n + 1 + (t.historyTrail?.length ?? 0), 0);
 }
 
-/** 在预算内则画 `historyTrail` 折线；超预算则**只跳过折线**，仍画当前点（store 里 `historyTrail` 原样保留）。 */
+/**
+ * 未超 `maxViewportPoints` 预算 → 画每条航迹的 `historyTrail` 折线。
+ * 超预算 → **整批不画折线**（不渲染历史轨迹）；每条航迹**只画当前位置**一个 Point（符号/标牌），**不**单独画历史采样点（本模块也无历史点 Point 要素）。store 里 `historyTrail` 原样保留。
+ */
 export function trackMapDrawHistoryTrails(tracks: ReadonlyArray<Track>): boolean {
   const max = getTrackRenderingConfig().trackDisplay.maxViewportPoints;
-  if (!Number.isFinite(max) || max < 1) return true;
+  if (!Number.isFinite(max)) return true;
+  /** ≤0：显式关闭历史折线（仅保留当前点符号）；无效数字则不作顶点限制 */
+  if (max <= 0) return false;
   return trackMapVertexEstimate(tracks) <= max;
 }
 
 /**
- * `Track[]` → GeoJSON：**Point** 始终输出；**LineString** 仅在 `trackMapDrawHistoryTrails(trackList)` 为真且存在 `historyTrail` 时输出。
+ * `Track[]` → GeoJSON：**Point**（当前位置）始终输出；**LineString** 仅在 `trackMapDrawHistoryTrails(trackList)` 为真且存在 `historyTrail` 时输出。
  */
 export function buildTrackGeoJSON(
   trackList: Track[],
@@ -86,18 +91,26 @@ export function buildTrackGeoJSON(
 
     const ts = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
     const v = t.isVirtual === true;
-    const iconScale = Math.max(0.45, Math.min(1.35, ts.pointSize / 5));
+    const iconScale = Math.max(0.55, Math.min(1.5, ts.pointSize / 3.5));
     const friendlyFill = t.disposition === "friendly" ? ts.idColor : undefined;
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [t.lng, t.lat] as [number, number] },
       properties: {
         id: t.id,
+        showID: t.showID,
+        uniqueID: t.uniqueID,
+        trackId: t.trackId ?? null,
+        isAirTrack: t.isAirTrack ?? false,
+        targetType: t.targetType ?? null,
         name: t.name,
+        /** 地图标牌：固定显示 `showID`，避免业务 `name`/label 如「对空融合航迹」覆盖 */
+        mapLabelText: t.showID,
         type: t.type,
         disposition: t.disposition,
         speed: t.speed,
         heading: t.heading,
+        course: t.course ?? null,
         altitude: t.altitude ?? null,
         color: resolveTrackMarkerFill(t.disposition, accent ?? null, friendlyFill),
         symbolId: getMarkerSymbolId(t.type, t.disposition, v, friendlyFill),
@@ -145,11 +158,17 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
     h ^= tl;
     h = Math.imul(h, 16777619) >>> 0;
     if (tl > 0) {
-      const p = t.historyTrail![tl - 1];
-      h ^= ((p[0] * 1e6) | 0) >>> 0;
-      h = Math.imul(h, 16777619) >>> 0;
-      h ^= ((p[1] * 1e6) | 0) >>> 0;
-      h = Math.imul(h, 16777619) >>> 0;
+      const tr = t.historyTrail!;
+      const mixPt = (p: [number, number]) => {
+        h ^= ((p[0] * 1e6) | 0) >>> 0;
+        h = Math.imul(h, 16777619) >>> 0;
+        h ^= ((p[1] * 1e6) | 0) >>> 0;
+        h = Math.imul(h, 16777619) >>> 0;
+      };
+      /* 首 / 中 / 末采样，避免仅中间形变时指纹与上一帧相同导致错误跳过 setData */
+      mixPt(tr[0]);
+      if (tl > 2) mixPt(tr[tl >> 1]);
+      if (tl > 1) mixPt(tr[tl - 1]);
     }
     const typ = t.type === "air" ? 1 : t.type === "sea" ? 2 : 3;
     h ^= typ;
@@ -175,9 +194,12 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
 export class TracksMaplibre {
   private map: maplibregl.Map;
   private dispositionAccent: AssetDispositionIconAccent | null = null;
-  /** 敌我图标等变化时递增，强制下一帧重建 GeoJSON */
+  /**
+   * 与航迹几何无关的渲染参数每变一次 +1（如 `factory.assetIcons` 驱动的 `setTrackDispositionAccent`），
+   * 使 `setTracks` 的缓存键失效，避免沿用上一帧 GeoJSON。
+   */
   private trackRenderRevision = 0;
-  /** 与 `setData` 内容对应的键；相同则跳过 `buildTrackGeoJSON` + `setData` */
+  /** 上一帧写入 source 的签名；与当前帧一致则跳过 `buildTrackGeoJSON` + `setData`（减轻 MapLibre 压力） */
   private lastSetDataKey = "";
 
   constructor(map: maplibregl.Map) {
@@ -243,7 +265,7 @@ export class TracksMaplibre {
         filter: filterPointsOnly(["in", "id", ""]),
         layout: {
           "icon-image": LOCK_ON_IMAGE_ID,
-          "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.4, 10, 0.65, 15, 0.95],
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.5, 10, 0.72, 15, 1.05],
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
           "icon-rotation-alignment": "viewport",
@@ -304,12 +326,14 @@ export class TracksMaplibre {
         source: TRACK_SOURCE,
         filter: filterPointsOnly(null),
         layout: {
-          "text-field": ["get", "name"],
+          "text-field": ["coalesce", ["get", "mapLabelText"], ["get", "name"], ""],
           "text-font": ["Open Sans Regular"],
           "text-size": 10,
           "text-offset": [0, 2.2],
           "text-anchor": "top",
           "text-max-width": 10,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
         },
         paint: {
           "text-color": "#a1a1aa",
@@ -323,10 +347,12 @@ export class TracksMaplibre {
   setTracks(tracks: Track[]) {
     const src = this.map.getSource(TRACK_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
-    const maxVp = getTrackRenderingConfig().trackDisplay.maxViewportPoints;
+    const trd = getTrackRenderingConfig().trackDisplay;
+    const maxVp = trd.maxViewportPoints;
+    const maxHist = trd.maxHistoryPointsPerTrack;
     const drawTrails = trackMapDrawHistoryTrails(tracks) ? 1 : 0;
     const fp = fnv1aTrackDataFingerprint(tracks);
-    const key = `${this.trackRenderRevision}:${maxVp}:${drawTrails}:${tracks.length}:${fp}`;
+    const key = `${this.trackRenderRevision}:${maxVp}:${maxHist}:${drawTrails}:${tracks.length}:${fp}`;
     if (key === this.lastSetDataKey) return;
     this.lastSetDataKey = key;
     src.setData(buildTrackGeoJSON(tracks, this.dispositionAccent) as GeoJSON.FeatureCollection);
@@ -345,7 +371,7 @@ export class TracksMaplibre {
     this.map.setFilter(
       LOCK_ON,
       filterPointsOnly(
-        selectedId ? (["==", ["get", "id"], selectedId] as FilterSpecification) : ["in", "id", ""],
+        selectedId ? (["==", "id", selectedId] as FilterSpecification) : ["in", "id", ""],
       ),
     );
   }

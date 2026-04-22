@@ -1,8 +1,135 @@
 "use client";
 
 /**
- * WebSocket：建连、解析、按 `type` 写入各 store（思路对齐 V2 App.vue）。
- * 静态配置（app-config.json 的 radar、cameras.devices）经 fetchConfigAssetBase 与 WS 合并，见 map-app-config。
+ * ══════════════════════════════════════════════════════════════════════
+ *  WebSocket 统一接入 —— 建连、解析、按 type 写入各 store
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * 本模块是前端所有实时数据的唯一入口，负责：
+ *   1. 建立 WebSocket 连接（地址、心跳间隔等从 app-config.json 的 websocket 节读取）
+ *   2. 接收消息 → JSON.parse → 按 msg.type 分发
+ *   3. 解析后的数据写入对应的 Zustand store（track-store / alert-store / asset-store / drone-store / zone-store）
+ *
+ * ── 各资产类型全链路数据流 ──
+ *
+ * 【雷达 radar】
+ *   接收: entity_status → msg.entities[]（优先）或 msg.data[]
+ *   解析: mapEntitiesPayload() → mapOneEntityRow() → wsEntityTypeRaw()
+ *         specificType 以 "Radar-" 开头 / 包含 "RADAR" / "雷达" → asset_type="radar"
+ *         或 navigationParameters.with_radar=1 / radarParameters 存在 → asset_type="radar"
+ *         radarParameters.range（海里）→ properties.max_range_m（米）、range_km（公里）
+ *         navigationParameters.maxRangeNm（海里）→ 同上（无人船携带雷达时）
+ *   入资产: applyAssetListFromWs() → mergeDynamicAndStaticAssets() → asset-store.setAssets()
+ *   更新: entity_status 周期推送，整体替换 asset-store（同 id 后写覆盖）
+ *   渲染: asset-store 变化 → Map2D useEffect → RadarCoverageModule.setFromAssets()
+ *         → buildRadarCoverageGeoJSON() 生成距离环/填充/十字线/名称 GeoJSON
+ *         → 颜色: friendly 用 defaults.assetFriendlyColor（app-config.json radar.assetFriendlyColor）
+ *         → 范围: properties.max_range_m → defaults.defaultMaxRange（12000m）
+ *         → 间隔: properties.ring_interval_m → defaults.defaultInterval（3000m）
+ *   超时: 无独立超时机制，依赖 WS 周期推送；若 WS 断连则资产保持最后状态
+ *
+ * 【光电 camera】
+ *   接收: entity_status → 同上路径解析 → asset_type="camera"
+ *         或 camera/optoelectronic 独立消息 → 仅更新朝向/视场角/坐标
+ *   解析: specificType="CAMERA"/"OPTOELECTRONIC"/"OPTICAL"/"光电" → asset_type="camera"
+ *   入资产: 同雷达路径（entity_status）或 camera 消息直接 patch asset-store
+ *   更新: camera 消息 → parseCameraBearingDeg/parseCameraHorizontalFovDeg/parseCameraRangeKm
+ *         与静态 cameras.devices 同 id 合并默认 bearing/angle/range
+ *   渲染: asset-store → OptoelectronicFovModule.setFromAssets()
+ *         → buildFovGeoJSON() 生成 FOV 扇区多边形 + 名称标签 + 中心图标
+ *         → tower 类型由 tower-maplibre.ts 独立渲染
+ *   超时: 无独立超时机制
+ *
+ * 【电侦 tower】
+ *   接收: entity_status → 同上路径 → specificType="TOWER"/"ESM"/"电侦" → asset_type="tower"
+ *   解析: 同 mapOneEntityRow 通用流程
+ *   入资产: 同雷达路径
+ *   渲染: asset-store → TowerMaplibre（独立模块，不归入光电 FOV）
+ *         → 绘制电侦图标 + 名称标签
+ *   超时: 无独立超时机制
+ *
+ * 【无人机 drone】
+ *   接收: entity_status → msg.relationships.airports[].drones[] → drone-store
+ *         drone_status → 更新 drone-store.drones（遥测坐标/航向）
+ *         high_freq → 更新 drone-store.drones（高频坐标，100ms 级）
+ *   解析: applyEntityStatusMessage() 解析 relationships → entityIdToDeviceSn 映射
+ *         setDroneStatus() → resolveDroneSn() 将 entityId 映射到 deviceSn
+ *   入资产: syncDroneAndAirportAssetsFromRelationships() → asset-store upsert
+ *   更新: drone_status / high_freq 消息 → mergeCoords() 合并坐标 → asset-store 更新
+ *   渲染: asset-store → DronesMaplibre.setFromAssets()
+ *         → buildDroneGeoJSON() 绘制无人机图标 + 名称 + 航线
+ *         → extractWaypoints() 从 drone_flight_path 提取航路点
+ *   超时: 无独立超时机制，依赖 drone-store 的 entityReady 状态
+ *
+ * 【机场 airport】
+ *   接收: entity_status → msg.relationships.airports[] → drone-store.docks
+ *         dock_status → 更新 drone-store.docks（机场遥测）
+ *   解析: applyEntityStatusMessage() 解析 relationships
+ *         dock.displayName 从下属无人机名称提取编号
+ *   入资产: syncDroneAndAirportAssetsFromRelationships() → asset-store upsert
+ *   更新: dock_status 消息 → 更新 docks 遥测 → asset-store 更新
+ *   渲染: asset-store → AirportMaplibre.setFromAssets()
+ *         → 绘制机场图标 + 名称标签
+ *   超时: 无独立超时机制
+ *
+ * 【激光 laser】
+ *   接收: entity_status → 同上路径 → specificType="LASER"/"激光" → asset_type="laser"
+ *   解析: mapOneEntityRow() 通用流程；静态配置由 laserWeapons bundle 提供
+ *         bundle 包含 scan 参数（tickMs/bandCount/bandWidthMeters）和脉冲参数
+ *   入资产: 静态 → laserBundleToStaticAssets() → configAssetBase
+ *         动态 → 同雷达路径 → asset-store
+ *         专题层 → adaptAssetToLaserDevice() → LaserMaplibre.upsert()
+ *   更新: entity_status 周期推送 → adaptAssetToLaserDevice() 转换 → LaserMaplibre.upsert()
+ *         WS 实体不含 scan/pulse 参数，upsert 时保留静态 bundle 的参数
+ *   渲染: LaserMaplibre.flush() → 绘制扇区填充 + 扫描亮带 + 边线 + 中心图标 + 名称
+ *         脉冲: laserPulseActive=true 时，ensureLaserPulse() 用 setTimeout 循环
+ *               亮相（pulseOnMs，默认10s）→ 暗相（pulseOffMs，默认3s）→ 重复
+ *               暗相期扇区填充不画，扫描亮带不画
+ *         扫描: scan.enabled=true 时，syncScanTimer() 用 setInterval 按 tickMs 刷新
+ *   超时: 无独立超时机制
+ *
+ * 【TDOA】
+ *   接收: entity_status → 同上路径 → specificType="TDOA" → asset_type="tdoa"
+ *   解析: 同激光；静态配置由 tdoa bundle 提供
+ *   入资产: 静态 → tdoaBundleToStaticAssets() → configAssetBase
+ *         动态 → 同雷达路径 → asset-store
+ *         专题层 → adaptAssetToTdoaDevice() → TdoaMaplibre.upsert()
+ *   更新: 同激光，WS 实体不含 scan 参数，upsert 时保留静态 bundle 的参数
+ *   渲染: TdoaMaplibre.flush() → 绘制扇区 + 扫描亮带 + 中心图标 + 名称
+ *         扫描: 同激光，scan.enabled 时 setInterval 刷新
+ *   超时: 无独立超时机制
+ *
+ * ── entity_status 消息处理流程（共3步）──
+ *
+ *   后端 WS 推送 type="entity_status" 消息
+ *     │
+ *     ├─ msg.relationships.airports[] ─→ 第1步: applyEntityStatusMessage()
+ *     │   解析机场-无人机归属关系 → drone-store
+ *     │   (dock.displayName / drone.displayName / entityIdToDeviceSn 映射)
+ *     │
+ *     ├─ msg.entities[]（优先）或 msg.data[] ─→ 第2步: mapEntitiesPayload() → mapOneEntityRow() → wsEntityTypeRaw()
+ *     │   │
+ *     │   │  每条实体通过 specificType 字段识别资产类型：
+ *     │   │    ● "Radar-XXX" / "RADAR" / "雷达"  → asset_type = "radar"
+ *     │   │    ● navigationParameters.with_radar=1          → asset_type = "radar"（隐式雷达）
+ *     │   │    ● "CAMERA" / "OPTOELECTRONIC"      → asset_type = "camera"
+ *     │   │    ● "TOWER" / "ESM"                  → asset_type = "tower"
+ *     │   │    ● "LASER" / "TDOA" / "DOCK" / "DRONE" → 对应类型
+ *     │   │    ● "SURVEILLANCE_AREA" / "FRAME" 等 → "unknown"，跳过不入库
+ *     │   │
+ *     │   ├─ 提取坐标: 顶层 lat/lng → location.position → 无坐标则丢弃
+ *     │   ├─ 提取名称: name / entityName / aliases.name
+ *     │   ├─ 雷达参数: radarParameters.range (海里→公里) → properties.max_range_m
+ *     │   ├─ 无人船雷达: navigationParameters.maxRangeNm (海里→公里) → properties.max_range_m
+ *     │   ├─ 敌我属性: disposition / milView.disposition
+ *     │   └─ 健康状态: health.healthStatus → online/offline/degraded
+ *     │
+ *     │   → applyAssetListFromWs(): 与 app-config.json 静态配置合并
+ *     │   → asset-store.setAssets(): 写入 asset-store
+ *     │
+ *     └─ 第3步: syncDroneAndAirportAssetsFromRelationships()
+ *         从 drone-store.relationships 把机场/无人机 upsert 进 asset-store
+ *         (名称从第1步解析的 displayName 取，坐标从 relationships 取)
  */
 
 import { useEffect } from "react";
@@ -15,54 +142,68 @@ import type { ZoneData } from "@/stores/zone-store";
 import { useZoneStore } from "@/stores/zone-store";
 import { useDroneStore } from "@/stores/drone-store";
 import {
-  mapOneEntityRow,
   mapEntitiesPayload,
   fetchConfigAssetBase,
   mergeDynamicAndStaticAssets,
-} from "@/lib/map-app-config";
-import { mergeTrackWsPayloadWithHistory, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
-import { normalizeWsAlertItem, normalizeWsAlertList } from "@/lib/ws-alert-normalize";
-import {
-  filterTracksByTimeout,
-  getAirportMapDefaults,
   getTrackRenderingConfig,
+  getWebSocketConfig,
+  getHttpConfig,
+  shouldDisplayAssetId,
+  shouldDisplayZone,
 } from "@/lib/map-app-config";
-
-type WsShard = "tracks" | "alerts" | "assets";
+import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
+import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
+import { normalizeAssetType, type Track } from "@/lib/map-entity-model";
+import { parseForceDisposition } from "@/lib/theme-colors";
 
 /** 与 WS 全量资产列表合并：先静态后动态，同 id 以 WS 为准 */
 let configAssetBaseCache: AssetData[] = [];
 let lastWsAssetList: AssetData[] = [];
 
+function filterAssetsForDisplay(assets: AssetData[]): AssetData[] {
+  return assets.filter((a) => shouldDisplayAssetId(a.asset_type, a.id, a.name));
+}
+
 async function reloadAppConfigAssetBase() {
   configAssetBaseCache = await fetchConfigAssetBase();
-  useAssetStore.getState().setAssets(mergeDynamicAndStaticAssets(configAssetBaseCache, lastWsAssetList));
+  useAssetStore.getState().setAssets(
+    filterAssetsForDisplay(mergeDynamicAndStaticAssets(configAssetBaseCache, lastWsAssetList)),
+  );
 }
 
+/**
+ * 【第2步核心】把 WS 推来的资产列表（雷达、光电等）与本地静态配置合并，整体替换 asset-store。
+ *
+ * ── 合并策略 ──
+ * 1. 以 configAssetBaseCache（app-config.json 静态解析结果）为底
+ * 2. WS 列表按 id 覆盖/追加到静态底数（同 id 以 WS 动态值为准）
+ * 3. heading / fov_angle / range_km：WS 值为 null 时保留静态值（避免覆盖丢失）
+ * 4. 过滤掉显隐黑名单中的资产（shouldDisplayAssetId）
+ *
+ * @param list - mapEntitiesPayload 解析后的 AssetData 数组（已通过 specificType 识别类型）
+ */
 function applyAssetListFromWs(list: AssetData[]) {
-  lastWsAssetList = list;
-  useAssetStore.getState().setAssets(mergeDynamicAndStaticAssets(configAssetBaseCache, list));
+  /* 无人机由 syncDroneAndAirportAssetsFromRelationships 统一管理（用 deviceSn 做 key），
+   * 此处过滤掉 WS 实体列表中的无人机（用 entityId 做 key），防止同一无人机出现两条记录 */
+  const nonDroneList = list.filter((a) => a.asset_type !== "drone");
+  lastWsAssetList = nonDroneList;
+  const merged = mergeDynamicAndStaticAssets(configAssetBaseCache, nonDroneList);
+  const filtered = filterAssetsForDisplay(merged);
+  useAssetStore.getState().setAssets(filtered);
 }
-
-const INITIAL_RECONNECT_MS = 2_000;
-const MAX_RECONNECT_MS = 30_000;
-const HEARTBEAT_MS = 25_000;
 
 const ws = {
   running: false,
-  sockets: {} as Partial<Record<WsShard, WebSocket | null>>,
-  reconnectTimers: {} as Partial<Record<WsShard, ReturnType<typeof setTimeout>>>,
-  reconnectAttempt: { tracks: 0, alerts: 0, assets: 0 } as Record<WsShard, number>,
-  heartbeatTimers: {} as Partial<Record<WsShard, ReturnType<typeof setInterval>>>,
-  channelsAllReadyNotified: false,
-  /** 无新 WS 航迹包时仍按 `lastUpdate` 定时剔除超时目标 */
+  socket: null as WebSocket | null,
+  reconnectTimer: null as ReturnType<typeof setTimeout> | null,
+  reconnectAttempt: 0,
+  heartbeatTimer: null as ReturnType<typeof setInterval> | null,
+  readyNotified: false,
   trackPruneTimer: null as ReturnType<typeof setInterval> | null,
+  alarmCleanupTimer: null as ReturnType<typeof setInterval> | null,
+  alertRevisionUnsub: null as (() => void) | null,
+  imagePollTimer: null as ReturnType<typeof setInterval> | null,
 };
-
-function wsUrl(path: "/ws/tracks" | "/ws/alerts" | "/ws/assets"): string {
-  if (typeof window === "undefined") return "";
-  return `ws://${window.location.hostname}:8001/api${path}`;
-}
 
 function notify(title: string, body: string | undefined, variant: "info" | "success" | "error") {
   if (variant === "error") toast.error(title, { description: body });
@@ -70,32 +211,99 @@ function notify(title: string, body: string | undefined, variant: "info" | "succ
   else toast.info(title, { description: body });
 }
 
-function shardLabel(ch: WsShard): string {
-  if (ch === "tracks") return "航迹";
-  if (ch === "alerts") return "告警";
-  return "资产";
+function clearReconnectTimer() {
+  if (ws.reconnectTimer) clearTimeout(ws.reconnectTimer);
+  ws.reconnectTimer = null;
 }
 
-function clearReconnectTimer(ch: WsShard) {
-  const t = ws.reconnectTimers[ch];
-  if (t) clearTimeout(t);
-  ws.reconnectTimers[ch] = undefined;
+function clearHeartbeat() {
+  if (ws.heartbeatTimer) clearInterval(ws.heartbeatTimer);
+  ws.heartbeatTimer = null;
 }
 
-function clearHeartbeat(ch: WsShard) {
-  const t = ws.heartbeatTimers[ch];
-  if (t) clearInterval(t);
-  ws.heartbeatTimers[ch] = undefined;
-}
-
-function backoffMs(ch: WsShard): number {
-  const n = ws.reconnectAttempt[ch];
-  return Math.min(MAX_RECONNECT_MS, INITIAL_RECONNECT_MS * Math.pow(2, Math.min(n, 4)));
+function backoffMs(): number {
+  const cfg = getWebSocketConfig();
+  return Math.min(cfg.maxReconnectMs, cfg.initialReconnectMs * Math.pow(2, Math.min(ws.reconnectAttempt, 4)));
 }
 
 function isoNow() {
   return new Date().toISOString();
 }
+
+/** 光电 WS 载荷中解析 WGS84；支持 `position` 嵌套或顶层 lat/lng */
+function extractCameraLatLng(d: Record<string, unknown>): { lat: number; lng: number } | null {
+  const pos = d.position;
+  if (pos && typeof pos === "object") {
+    const p = pos as Record<string, unknown>;
+    const lat = Number(p.latitude ?? p.lat);
+    const lng = Number(p.longitude ?? p.lng ?? p.lon);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  const lat = Number(d.latitude ?? d.lat);
+  const lng = Number(d.longitude ?? d.lng ?? d.lon);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  return null;
+}
+
+/**
+ * 与 V2 `App.vue` 一致：`cameras.devices` 里同 `deviceId` 的静态项作默认 bearing / 开角 / 射程。
+ * `configAssetBaseCache` 在 `reloadAppConfigAssetBase` 后可用。
+ */
+function cameraStaticDefaultsForId(entityId: string): { headingDeg: number; fovDeg: number; rangeKm: number } {
+  const row = configAssetBaseCache.find((a) => a.id === entityId);
+  const h = row?.heading != null ? Number(row.heading) : NaN;
+  const fov = row?.fov_angle != null ? Number(row.fov_angle) : NaN;
+  const rk = row?.range_km != null ? Number(row.range_km) : NaN;
+  return {
+    headingDeg: Number.isFinite(h) ? h : 0,
+    fovDeg: Number.isFinite(fov) && fov > 0 ? fov : 60,
+    rangeKm: Number.isFinite(rk) && rk > 0 ? rk : 15,
+  };
+}
+
+/** 水平朝向（度）：`originPtz.pan` → `ptz.pan` → `pan` / `bearing` / `heading`，与 V2 一致 */
+function parseCameraBearingDeg(d: Record<string, unknown>, defaultDeg: number): number {
+  const originPtz = d.originPtz as Record<string, unknown> | undefined;
+  const ptz = d.ptz as Record<string, unknown> | undefined;
+  const v = originPtz?.pan ?? ptz?.pan ?? d.pan ?? d.bearing ?? d.heading ?? defaultDeg;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : defaultDeg;
+}
+
+/** 水平视场开角（度）：`fov.horizontal` → `fov.hs` → `horizontalFov` …，与 V2 一致 */
+function parseCameraHorizontalFovDeg(d: Record<string, unknown>, defaultDeg: number): number {
+  const fov = d.fov as Record<string, unknown> | undefined;
+  const v =
+    fov?.horizontal ??
+    fov?.hs ??
+    d.horizontalFov ??
+    d.fov_angle ??
+    d.fovAngle ??
+    d.openingDeg ??
+    d.angle ??
+    defaultDeg;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : defaultDeg;
+}
+
+/** 射程→`AssetData.range_km`（千米）；`range` / `maxRange` 多为米，与 V2 `defaultRange` 对齐 */
+function parseCameraRangeKm(d: Record<string, unknown>, defaultKm: number): number {
+  if (d.range_km != null) {
+    const n = Number(d.range_km);
+    if (Number.isFinite(n) && n > 0) return n > 500 ? n / 1000 : n;
+  }
+  if (d.range != null) {
+    const n = Number(d.range);
+    if (Number.isFinite(n) && n > 0) return n > 500 ? n / 1000 : n;
+  }
+  if (d.maxRange != null) {
+    const n = Number(d.maxRange);
+    if (Number.isFinite(n) && n > 0) return n > 500 ? n / 1000 : n;
+  }
+  return defaultKm;
+}
+
+// ── Zone 解析 ──
 
 function inferZoneType(name: string): "no-fly" | "warning" | "exercise" {
   const n = name || "";
@@ -119,7 +327,6 @@ function toLngLatPair(v: unknown): [number, number] | null {
   return null;
 }
 
-/** 规范化多边形环 [lng,lat][]，供 MapLibre Polygon */
 function normalizePolygonRing(raw: unknown): Array<[number, number]> | null {
   if (!Array.isArray(raw) || raw.length < 3) return null;
   const ring: Array<[number, number]> = [];
@@ -134,7 +341,6 @@ function normalizePolygonRing(raw: unknown): Array<[number, number]> | null {
   return ring;
 }
 
-/** 圆心 + 半径（米）→ 多边形近似环 */
 function circleToRingMeters(cx: number, cy: number, radiusM: number, segments = 36): Array<[number, number]> {
   const R = Math.max(1, radiusM);
   const mPerDegLat = 111_320;
@@ -150,12 +356,6 @@ function circleToRingMeters(cx: number, cy: number, radiusM: number, segments = 
   return ring;
 }
 
-/**
- * Vue/V2 风格单条区域 → `ZoneData`。
- * - **颜色**：报文里的 `strokeColor` → `color`（边线/标签），`fillColor` → `fill_color`；缺省则描边 `#3b82f6`，填充回落为与描边同色。
- *   `fillOpacity`（数字）→ `fill_opacity`（写入 store；2D `POLY_ZONES_FILL` 是否使用该字段见 `buildZonesFeatureCollection` 注释）。
- * - **类型**：`zone_type` 由名称 `inferZoneType` 推断（禁飞/警告/演训），供无显式颜色时在 `ZONE_COLORS` 里取默认填充与线色。
- */
 function vueZoneItemToZoneData(z: Record<string, unknown>): ZoneData | null {
   const id = String(z.id ?? z.areaId ?? "");
   if (!id) return null;
@@ -179,29 +379,21 @@ function vueZoneItemToZoneData(z: Record<string, unknown>): ZoneData | null {
   const zt = inferZoneType(name);
   const line = (z.strokeColor as string) ?? "#3b82f6";
   const fill = (z.fillColor as string) ?? line;
+  const rawFo = z.fillOpacity ?? z.fill_opacity;
+  let fill_opacity = 0.25;
+  if (typeof rawFo === "number" && Number.isFinite(rawFo)) fill_opacity = Math.min(1, Math.max(0, rawFo));
+  else if (rawFo != null && String(rawFo).trim() !== "") {
+    const n = Number(rawFo);
+    if (Number.isFinite(n)) fill_opacity = Math.min(1, Math.max(0, n));
+  }
+   fill_opacity = 0.1;
   return {
-    id,
-    name,
-    zone_type: zt,
-    source: "websocket",
-    coordinates,
-    color: line,
-    fill_color: fill,
-    fill_opacity: typeof z.fillOpacity === "number" ? z.fillOpacity : 0.25,
-    properties: {
-      geometryType,
-      areaType: z.areaType,
-      isActive: z.isActive,
-    },
-    created_at: now,
-    updated_at: now,
+    id, name, zone_type: zt, source: "websocket", coordinates,
+    color: line, fill_color: fill,
+    fill_opacity,
+    properties: { geometryType, areaType: z.areaType, isActive: z.isActive },
+    created_at: now, updated_at: now,
   };
-}
-
-/** 与 V2 App.vue Zones 分支一致：名称含「拒止拦截区」「警告驱离区」等 */
-function zoneNameMatchesV2Filter(name: string): boolean {
-  const n = name || "";
-  return n.includes("拒止拦截区") || n.includes("警告驱离区");
 }
 
 function mapZonesPayload(payload: unknown): ZoneData[] {
@@ -209,32 +401,27 @@ function mapZonesPayload(payload: unknown): ZoneData[] {
   const out: ZoneData[] = [];
   for (const item of payload) {
     if (!item || typeof item !== "object") continue;
-    const rec = item as Record<string, unknown>;
-    const zd = vueZoneItemToZoneData(rec);
+    const zd = vueZoneItemToZoneData(item as Record<string, unknown>);
     if (zd) out.push(zd);
   }
   return out;
 }
 
+// ── 资产事件 ──
+
 function applyAssetWsEvent(ev: Record<string, unknown>) {
-  const t = ev.type as string;
-  if (t === "asset_arrived") {
-    const id = String(ev.assetId ?? "");
-    if (!id) return;
-    const lat = Number(ev.lat);
-    const lng = Number(ev.lng);
-    const patch: Partial<AssetData> = { mission_status: "monitoring" };
-    if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      patch.lat = lat;
-      patch.lng = lng;
-    }
-    /* 光电扇区：与 `mapOneEntityRow` 一致，支持 `bearing` / `fovAngle` 等别名 */
-    const hRaw = ev.heading ?? ev.bearing ?? ev.azimuth;
-    if (hRaw != null && Number.isFinite(Number(hRaw))) patch.heading = Number(hRaw);
-    const fovRaw = ev.fov_angle ?? ev.fovAngle ?? ev.openingDeg;
-    if (fovRaw != null && Number.isFinite(Number(fovRaw))) patch.fov_angle = Number(fovRaw);
-    useAssetStore.getState().mergeAssetFields(id, patch);
-  }
+  if (ev.type !== "asset_arrived") return;
+  const id = String(ev.assetId ?? "");
+  if (!id) return;
+  const lat = Number(ev.lat);
+  const lng = Number(ev.lng);
+  const patch: Partial<AssetData> = { mission_status: "monitoring" };
+  if (Number.isFinite(lat) && Number.isFinite(lng)) { patch.lat = lat; patch.lng = lng; }
+  const hRaw = ev.heading ?? ev.bearing ?? ev.azimuth;
+  if (hRaw != null && Number.isFinite(Number(hRaw))) patch.heading = Number(hRaw);
+  const fovRaw = ev.fov_angle ?? ev.fovAngle ?? ev.openingDeg;
+  if (fovRaw != null && Number.isFinite(Number(fovRaw))) patch.fov_angle = Number(fovRaw);
+  useAssetStore.getState().mergeAssetFields(id, patch);
 }
 
 function payloadArray(msg: Record<string, unknown>): unknown[] | null {
@@ -245,36 +432,228 @@ function payloadArray(msg: Record<string, unknown>): unknown[] | null {
   return null;
 }
 
-function dispatchWsMessage(shard: WsShard, raw: string) {
+/**
+ * 【entity_status 第3步】遍历 drone-store.relationships，将机场和无人机 upsert 进 asset-store。
+ *
+ * 【关键】资产 key 统一用 entityId（与雷达/光电/电侦等一致）。
+ * drone-store 内部仍以 deviceSn/dockSn 做遥测缓存索引，
+ * 但写入 asset-store 时必须用 relationships 中的 entityId 作为资产 ID。
+ * 没有 entityId 的机场/无人机，报错丢弃。
+ *
+ * 数据来源：drone-store.relationships 由第1步 applyEntityStatusMessage() 解析得到。
+ */
+function syncDroneAndAirportAssetsFromRelationships() {
+  const ds = useDroneStore.getState();
+  const as = useAssetStore.getState();
+  const now = isoNow();
+
+  for (const ap of ds.relationships?.airports ?? []) {
+    if (!ap.dockSn) continue;
+
+    // ── 机场：用 dockSn 作为资产 key（机场没有 entityId）──
+    const airportId = ap.dockSn;
+    if (shouldDisplayAssetId("airport", airportId)) {
+      const airportName = ds.docks[ap.dockSn]?.displayName ?? "机场";
+      const airportRow = as.assets.find((a) => a.id === airportId);
+      if (!airportRow) {
+        const lat = ap.latitude ?? null;
+        const lng = ap.longitude ?? null;
+        if (lat == null || lng == null) continue;
+        as.upsertAsset({
+          id: airportId,
+          name: airportName,
+          asset_type: "airport",
+          status: "online",
+          disposition: "friendly",
+          lat,
+          lng,
+          range_km: null,
+          heading: null,
+          fov_angle: null,
+          properties: { virtual_troop: ap.virtualTroop, dock_sn: ap.dockSn },
+          mission_status: "monitoring",
+          assigned_target_id: null,
+          target_lat: null,
+          target_lng: null,
+          created_at: now,
+          updated_at: now,
+        });
+      } else {
+        as.mergeAssetFields(airportId, { name: airportName });
+      }
+    }
+
+    // ── 无人机：用 deviceSn 作为资产 key（与机场用 dockSn 一致，与地图点击返回的 sn 一致）──
+    for (const dr of ap.drones) {
+      if (!dr.deviceSn) continue;
+      const droneAssetId = dr.deviceSn;
+      if (!shouldDisplayAssetId("drone", droneAssetId, dr.name)) continue;
+      const droneName = dr.name || dr.deviceSn;
+      const droneRow = as.assets.find((a) => a.id === droneAssetId);
+      if (!droneRow) {
+        const lat = dr.latitude ?? null;
+        const lng = dr.longitude ?? null;
+        if (lat == null || lng == null) continue;
+        as.upsertAsset({
+          id: droneAssetId,
+          name: droneName,
+          asset_type: "drone",
+          status: "online",
+          disposition: "friendly",
+          lat,
+          lng,
+          range_km: null,
+          heading: null,
+          fov_angle: null,
+          properties: { virtual_troop: dr.virtualTroop, dock_sn: ap.dockSn, device_sn: dr.deviceSn, entity_id: dr.entityId ?? "" },
+          mission_status: "monitoring",
+          assigned_target_id: null,
+          target_lat: null,
+          target_lng: null,
+          created_at: now,
+          updated_at: now,
+        });
+      } else {
+        const prev =
+          droneRow.properties && typeof droneRow.properties === "object"
+            ? ({ ...(droneRow.properties as Record<string, unknown>) } as Record<string, unknown>)
+            : {};
+        prev.dock_sn = ap.dockSn;
+        prev.device_sn = dr.deviceSn;
+        if (dr.entityId) prev.entity_id = dr.entityId;
+        as.mergeAssetFields(droneAssetId, { name: droneName, properties: prev });
+      }
+    }
+  }
+}
+
+// ── 告警 taskStatus 判断 ──
+
+function isVerifySuccessAlarmRaw(raw: Record<string, unknown>): boolean {
+  const status = raw.taskStatus ?? raw.task_status;
+  if (status == null) return false;
+  if (typeof status === "string") {
+    const n = status.trim().toUpperCase();
+    return n === "VERIFY_SUCCESS" || n.endsWith("::VERIFY_SUCCESS");
+  }
+  return Number(status) === 3;
+}
+
+/** 统一的 alarm 处理：判断 alarm vs threat 后写入 store */
+function handleAlarmItem(raw: Record<string, unknown>) {
+  const normalized = normalizeWsAlertItem(raw);
+  if (!normalized) return;
+  const alertStore = useAlertStore.getState();
+  if (isVerifySuccessAlarmRaw(raw)) alertStore.upsertAlarm(normalized);
+  else alertStore.upsertThreat(normalized);
+}
+
+/**
+ * 【消息分发】WebSocket 收到消息后的统一入口。
+ *
+ * 解析 JSON 后按 msg.type 分发到对应处理逻辑：
+ *
+ * ┌─ type ─────────────┬─ 处理说明 ────────────────────────────────────────────────────────┐
+ * │ trackbatch / track │ 航迹数据 → normalizeIncomingTrack → track-store.setTracks       │
+ * │ alarm / alert      │ 告警数据 → normalizeWsAlertItem → alert-store.upsertAlarm/Threat │
+ * │ zones              │ 区域数据 → normalizePolygonRing → zone-store.setZones            │
+ * │ entity_status      │ 【核心】实体状态（雷达/相机/无人机/机场），见下方详细流程           │
+ * │ camera / optoelec  │ 光电实时数据（PTZ朝向/视场角/坐标）→ 更新 asset-store 已有光电    │
+ * │ dock_status        │ 机场状态 → 更新 drone-store.docks + asset-store 已有机场         │
+ * │ drone_status       │ 无人机遥测 → 更新 drone-store.drones（仅更新不新增）             │
+ * │ high_freq          │ 无人机高频坐标 → 更新 drone-store.drones                         │
+ * │ drone_flight_path  │ 无人机航线 → 更新 drone-store.drones                             │
+ * │ heartbeat          │ 心跳 → 回复 pong                                                 │
+ * └────────────────────┴──────────────────────────────────────────────────────────────────┘
+ *
+ * entity_status 完整流程（雷达/相机/机场/无人机）：
+ *   接收 WS 消息 → JSON.parse → 按 type 路由到 entity_status 分支
+ *   → 第1步：解析 relationships（机场/无人机）→ drone-store
+ *   → 第2步：解析 data 数组（雷达/相机等）→ mapEntitiesPayload → mapOneEntityRow → wsEntityTypeRaw
+ *            （specificType "Radar-XXX" → radar, "CAMERA" → camera）
+ *            → applyAssetListFromWs → 与静态配置合并 → asset-store.setAssets
+ *   → 第3步：同步 airport/drone 到 asset-store
+ */
+function dispatchWsMessage(raw: string) {
   try {
-    const data = JSON.parse(raw) as Record<string, unknown>;
-    const type = data.type as string | undefined;
+    const msg = JSON.parse(raw) as Record<string, unknown>;
+    const type = (msg.type as string | undefined)?.toLowerCase();
     if (!type) return;
 
     switch (type) {
+      // ── 航迹 ──
+      case "trackbatch": {
+        // V2 trackBatch: data = [{ type: "Track", data: {...} }]
+        const arr = msg.data;
+        if (Array.isArray(arr)) {
+          const tracks = arr
+            .map((item) => {
+              if (!item || typeof item !== "object") return null;
+              const envelope = item as Record<string, unknown>;
+              const inner = envelope.data ?? envelope;
+              return normalizeIncomingTrack(inner);
+            })
+            .filter(Boolean);
+          if (tracks.length) {
+            useTrackStore.getState().setTracks(tracks as Track[]);
+          }
+        }
+        if (msg.timestamp) useTrackStore.getState().setLastUpdate(String(msg.timestamp));
+        break;
+      }
+      case "track": {
+        // V2 单条 Track
+        const t = normalizeIncomingTrack(msg.data ?? msg);
+        if (t) {
+          useTrackStore.getState().setTracks([t]);
+        }
+        if (msg.timestamp) useTrackStore.getState().setLastUpdate(String(msg.timestamp));
+        break;
+      }
       case "track_update":
       case "track_snapshot": {
-        const tracks = data.tracks as unknown[] | undefined;
+        const tracks = msg.tracks as unknown[] | undefined;
         if (Array.isArray(tracks)) {
-          const prev = useTrackStore.getState().tracks;
           const normalized = normalizeIncomingTrackList(tracks);
-          useTrackStore.getState().setTracks(mergeTrackWsPayloadWithHistory(prev, normalized));
-          const ts = data.timestamp as string | undefined;
-          if (ts) useTrackStore.getState().setLastUpdate(ts);
+          useTrackStore.getState().setTracks(normalized);
+          if (msg.timestamp) useTrackStore.getState().setLastUpdate(String(msg.timestamp));
+        }
+        break;
+      }
+
+      // ── 告警 ──
+      case "alarm": {
+        // V2 Alarm: data = { alarms: [...] } 或 data 直接是单条
+        const d = msg.data as Record<string, unknown> | undefined;
+        if (d) {
+          if (Array.isArray(d.alarms)) {
+            for (const a of d.alarms) {
+              if (a && typeof a === "object") handleAlarmItem(a as Record<string, unknown>);
+            }
+          } else {
+            handleAlarmItem(d);
+          }
         }
         break;
       }
       case "alert_batch": {
-        const list = data.alerts as unknown[] | undefined;
-        if (Array.isArray(list) && list.length) {
-          const normalized = normalizeWsAlertList(list);
-          if (normalized.length) useAlertStore.getState().addAlerts(normalized);
+        const list = msg.alerts as unknown[] | undefined;
+        if (Array.isArray(list)) {
+          for (const r of list) {
+            if (r && typeof r === "object") handleAlarmItem(r as Record<string, unknown>);
+          }
         }
         break;
       }
-      /* V2：`map_command` → MCP `alert`，payload 在 `data.data`（与 `MCPMapController.handleMapCommand` 一致） */
+      case "alert": {
+        const inner = (msg.data ?? msg) as Record<string, unknown>;
+        handleAlarmItem(inner);
+        break;
+      }
+
+      // ── map_command ──
       case "map_command": {
-        const wrap = data.data;
+        const wrap = msg.data;
         if (!wrap || typeof wrap !== "object") break;
         const w = wrap as Record<string, unknown>;
         if (w.command !== "alert") break;
@@ -284,121 +663,259 @@ function dispatchWsMessage(shard: WsShard, raw: string) {
             ? (inner as Record<string, unknown>)
             : w;
         const one = normalizeWsAlertItem(payload);
-        if (one) useAlertStore.getState().addAlerts([one]);
+        if (one) useAlertStore.getState().upsertAlarm(one);
         break;
       }
-      case "alert":
-      case "Alert": {
-        const inner = (data.data ?? data) as Record<string, unknown>;
-        const one = normalizeWsAlertItem(inner);
-        if (one) useAlertStore.getState().addAlerts([one]);
-        break;
-      }
-      /* 区域：对齐 V2 App.vue 的 Zones 推送 */
-      case "Zones":
+
+      // ── 区域 ──
       case "zones": {
-        const arr = payloadArray(data);
+        const arr = payloadArray(msg);
         if (arr?.length) {
-          useZoneStore.getState().setZones(mapZonesPayload(arr));
+          const zones = mapZonesPayload(arr).filter((z) => shouldDisplayZone(z));
+          useZoneStore.getState().setZones(zones);
         }
         break;
       }
-      /* 资产：全量或批量 */
-      case "Assets":
+
+      // ── 资产 ──
       case "assets":
-      case "AssetBatch":
-      case "assetBatch": {
-        const arr = payloadArray(data);
-        if (Array.isArray(arr)) {
-          applyAssetListFromWs(mapEntitiesPayload(arr));
-        }
+      case "assetbatch": {
+        const arr = payloadArray(msg);
+        if (Array.isArray(arr)) applyAssetListFromWs(mapEntitiesPayload(arr));
         break;
       }
+      /**
+       * ══════════════════════════════════════════════════════════════════
+       *  entity_status —— 实体状态消息（雷达、相机、无人机、机场等的统一入口）
+       * ══════════════════════════════════════════════════════════════════
+       *
+       * 后端通过 type="entity_status" 推送所有实体信息，包含：
+       *   - msg.entities[]      : 实体数组（优先，雷达、相机、激光、TDOA 等资产）
+       *   - msg.data[]          : 实体数组（兼容旧格式）
+       *   - msg.relationships   : 机场与无人机的归属关系
+       *
+       * ── 处理流程（共3步）──
+       *
+       * 【第1步】applyEntityStatusMessage(msg) —— 解析机场/无人机关系
+       *   解析 msg.relationships.airports[]：
+       *   ├─ 每个 airport → 创建 drone-store.docks[dockSn]（机场遥测记录）
+       *   │   dock.displayName = "机场-1、2"（从下属无人机名称提取编号）
+       *   ├─ 每个 airport.drones[] → 创建 drone-store.drones[deviceSn]（无人机遥测记录）
+       *   │   drone.displayName = "无人机1"（直接取 relationships 里的 name）
+       *   └─ 构建 droneToAirport / airportToDrones / entityIdToDeviceSn 映射表
+       *
+       * 【第2步】解析 msg.entities（优先）或 msg.data 数组中的资产 → 写入 asset-store
+       *   调用 mapEntitiesPayload(rawEntities) 逐条解析：
+       *   ├─ 每条实体通过 specificType 字段识别类型：
+       *   │   ● specificType 以 "Radar-" 开头 / 包含 "RADAR" → asset_type = "radar"
+       *   │   ● navigationParameters.with_radar=1 / radarParameters 存在 → asset_type = "radar"（隐式雷达）
+       *   │   ● specificType 等于 "CAMERA" → asset_type = "camera"
+       *   │   ● 其他类型（激光、TDOA 等）见 wsEntityTypeRaw 注释
+       *   │   ● "SURVEILLANCE_AREA" / "FRAME" 等 → "unknown"，跳过不入库
+       *   ├─ 提取坐标（顶层 lat/lng 或 location.position 嵌套）
+       *   ├─ 雷达额外提取 radarParameters.range（海里→公里）或 navigationParameters.maxRangeNm
+       *   └─ 调用 applyAssetListFromWs() 与静态配置合并，整体写入 asset-store
+       *
+       * 【第3步】syncDroneAndAirportAssetsFromRelationships() —— 同步机场/无人机到 asset-store
+       *   遍历 relationships，将第1步解析好的机场和无人机 upsert 到 asset-store：
+       *   ├─ 机场：name = docks[dockSn].displayName, 坐标 = ap.latitude/ap.longitude
+       *   ├─ 无人机：name = dr.name, 坐标 = dr.latitude/dr.longitude
+       *   └─ 无坐标则跳过，不兜底
+       *
+       * ── 后续 WS 消息只更新不新增 ──
+       *   dock_status       → 更新 drone-store.docks + asset-store 已有机场
+       *   drone_status      → 更新 drone-store.drones（遥测坐标/航向）
+       *   high_freq         → 更新 drone-store.drones（高频坐标）
+       *   drone_flight_path → 更新 drone-store.drones（航线）
+       *   camera / optoelectronic → 更新 asset-store 已有光电（朝向/视场角/坐标）
+       */
       case "entity_status": {
-        const d = data.data;
-        if (Array.isArray(d)) {
-          applyAssetListFromWs(mapEntitiesPayload(d));
-        } else if (d && typeof d === "object" && !Array.isArray(d)) {
-          applyAssetListFromWs(mapEntitiesPayload(Object.values(d as Record<string, unknown>)));
+        /* ── 第1步：解析 relationships，提取机场/无人机关系到 drone-store ── */
+        useDroneStore.getState().applyEntityStatusMessage(msg);
+
+        /* ── 第2步：解析实体（雷达、相机等），写入 asset-store ── */
+        /* entity_status 消息格式：实体在 msg.entities（优先）或 msg.data */
+        const rawEntities: unknown[] | null =
+          Array.isArray(msg.entities) ? msg.entities :
+          Array.isArray(msg.data) ? msg.data :
+          null;
+        if (rawEntities) {
+          const parsed = mapEntitiesPayload(rawEntities);
+          applyAssetListFromWs(parsed);
+        } else if (msg.data && typeof msg.data === "object" && !Array.isArray(msg.data)) {
+          /* data 是对象：尝试 data.entities 子数组，否则取 data 所有值作为实体数组 */
+          const bag = msg.data as Record<string, unknown>;
+          const entities = bag.entities;
+          if (Array.isArray(entities)) {
+            const parsed = mapEntitiesPayload(entities);
+            applyAssetListFromWs(parsed);
+          } else {
+            const vals = Object.values(bag);
+            const parsed = mapEntitiesPayload(vals);
+            applyAssetListFromWs(parsed);
+          }
+        } else {
+          console.warn(`[entity_status] 无实体数据`);
+        }
+
+        /* ── 第3步：将第1步解析的机场/无人机 upsert 进 asset-store ── */
+        syncDroneAndAirportAssetsFromRelationships();
+        break;
+      }
+
+      // ── 光电 ──
+      case "camera":
+      case "optoelectronic": {
+        // V2 `App.vue`：PTZ.pan=水平角、fov.horizontal=开角；与静态 cameras.devices 同 id 合并默认 bearing/angle/range
+        const d = msg.data as Record<string, unknown> | undefined;
+        if (d) {
+          if (d.online === false) break;
+          const entityId = String(
+            d.entityId ?? d["cameraId"] ?? d["deviceId"] ?? d.id ?? "",
+          );
+          if (entityId) {
+            const atType = normalizeAssetType(String(d.asset_type ?? d.type ?? "camera"));
+            if (!shouldDisplayAssetId(atType, entityId)) break;
+            const def = cameraStaticDefaultsForId(entityId);
+            const bearing = parseCameraBearingDeg(d, def.headingDeg);
+            const fovDeg = parseCameraHorizontalFovDeg(d, def.fovDeg);
+            const rangeKm = parseCameraRangeKm(d, def.rangeKm);
+
+            const patch: Partial<AssetData> = {
+              mission_status: "monitoring",
+              heading: bearing,
+              fov_angle: fovDeg,
+              range_km: rangeKm,
+            };
+            const ll = extractCameraLatLng(d);
+            if (ll) {
+              patch.lat = ll.lat;
+              patch.lng = ll.lng;
+            }
+
+            const assets = useAssetStore.getState().assets;
+            const exists = assets.some((a) => a.id === entityId);
+            if (exists) {
+              useAssetStore.getState().mergeAssetFields(entityId, patch);
+            } else {
+              const now = isoNow();
+              const status = d.online === false ? "offline" : "online";
+              const baseProps: Record<string, unknown> = {
+                config_kind: "camera",
+                ...(typeof d.properties === "object" && d.properties ? (d.properties as Record<string, unknown>) : {}),
+              };
+              if (d.taskType != null) baseProps.taskType = d.taskType;
+              if (d.executionState != null) baseProps.executionState = d.executionState;
+              if (d.online !== undefined) baseProps.online = d.online;
+              if (ll) {
+                useAssetStore.getState().upsertAsset({
+                  id: entityId,
+                  name: String(d.name ?? d.entityName ?? entityId),
+                  asset_type: atType,
+                  status,
+                  disposition: parseForceDisposition(d.disposition, "friendly"),
+                  lat: ll.lat,
+                  lng: ll.lng,
+                  range_km: rangeKm,
+                  heading: bearing,
+                  fov_angle: fovDeg,
+                  properties: baseProps,
+                  mission_status: "monitoring",
+                  assigned_target_id: null,
+                  target_lat: null,
+                  target_lng: null,
+                  created_at: now,
+                  updated_at: now,
+                });
+              } else {
+                useAssetStore.getState().upsertAsset({
+                  id: entityId,
+                  name: String(d.name ?? d.entityName ?? entityId),
+                  asset_type: atType,
+                  status,
+                  disposition: parseForceDisposition(d.disposition, "friendly"),
+                  lat: 0,
+                  lng: 0,
+                  range_km: rangeKm,
+                  heading: bearing,
+                  fov_angle: fovDeg,
+                  properties: {
+                    ...baseProps,
+                    center_icon_visible: false,
+                    fov_sector_visible: false,
+                    ws_camera_pending_position: true,
+                  },
+                  mission_status: "monitoring",
+                  assigned_target_id: null,
+                  target_lat: null,
+                  target_lng: null,
+                  created_at: now,
+                  updated_at: now,
+                });
+              }
+            }
+          }
         }
         break;
       }
-      case "DockStatus":
-      case "dockStatus":
+
+      // ── 机场 / 无人机 ──
+      case "dockstatus":
       case "dock_status": {
-        const d = data.data as Record<string, unknown> | undefined;
+        const d = msg.data as Record<string, unknown> | undefined;
         if (!d || d.latitude == null || d.longitude == null) break;
+        const dockSn = String(d.dock_sn ?? d.sn ?? "").trim();
+        if (!dockSn) break;
         useDroneStore.getState().setDockStatus(d);
-        const dockSn = String(d.dock_sn ?? d.sn ?? "dock");
-        const id = `airport_${dockSn}`;
-        const now = isoNow();
-        const ap = getAirportMapDefaults();
-        const vt =
-          d.virtual_troop === true ||
-          d.virtualTroop === true ||
-          d.is_virtual === true ||
-          d.is_virtual === 1;
-        useAssetStore.getState().upsertAsset({
-          id,
-          name: `机场 ${dockSn}`,
-          asset_type: "airport",
-          status: "online",
+        /* dock_status 只更新已有机场资产，不新增。
+         * 机场用 dockSn 做 key（机场没有 entityId） */
+        const existingAsset = useAssetStore.getState().assets.find((x) => x.id === dockSn);
+        if (!existingAsset) break;
+        const airportName = useDroneStore.getState().docks[dockSn]?.displayName ?? "机场";
+        const prevProps =
+          existingAsset.properties && typeof existingAsset.properties === "object"
+            ? ({ ...(existingAsset.properties as Record<string, unknown>) } as Record<string, unknown>)
+            : {};
+        useAssetStore.getState().mergeAssetFields(dockSn, {
           lat: Number(d.latitude),
           lng: Number(d.longitude),
-          range_km: null,
-          heading: null,
-          fov_angle: null,
+          name: airportName,
           properties: {
+            ...prevProps,
             dock: d,
-            center_icon_visible: ap.centerIconVisible,
-            center_name_visible: ap.centerNameVisible,
-            virtual_troop: vt,
-            is_virtual: vt,
+            map_label: airportName,
+            virtual_troop: existingAsset.properties?.virtual_troop ?? false,
           },
-          mission_status: "monitoring",
-          assigned_target_id: null,
-          target_lat: null,
-          target_lng: null,
-          created_at: now,
-          updated_at: now,
         });
         break;
       }
-      case "DroneStatus":
-      case "droneStatus":
+      case "dronestatus":
       case "drone_status": {
-        const d = data.data as Record<string, unknown> | undefined;
-        if (!d) break;
-        useDroneStore.getState().setDroneStatus(d);
+        const d = msg.data as Record<string, unknown> | undefined;
+        if (d) useDroneStore.getState().setDroneStatus(d);
         break;
       }
-      case "DroneFlightPath":
-      case "droneFlightPath":
+      case "droneflightpath":
       case "drone_flight_path": {
-        const d = data.data as Record<string, unknown> | undefined;
+        const d = msg.data as Record<string, unknown> | undefined;
         if (d && typeof d === "object") useDroneStore.getState().setDroneFlightPath(d);
         break;
       }
-      case "HighFreq":
-      case "highFreq":
+      case "highfreq":
       case "high_freq": {
-        const d = data.data as Record<string, unknown> | undefined;
+        const d = msg.data as Record<string, unknown> | undefined;
         if (d && typeof d === "object") useDroneStore.getState().setHighFreq(d);
         break;
       }
-      case "Drone":
-      case "drone":
-      case "DroneData": {
-        const d = data.data as Record<string, unknown> | undefined;
-        if (d && typeof d === "object") useDroneStore.getState().setLegacyDrone(d);
-        break;
-      }
-      case "ClearDrones":
-      case "clearDrones":
+      case "cleardrones":
+      case "cleartracks":
         useDroneStore.getState().clearDrones();
+        if (type === "cleartracks") useTrackStore.getState().clearAllTracks();
         break;
+
+      // ── 资产事件 ──
       case "asset_events": {
-        const events = data.events as unknown[] | undefined;
+        const events = msg.events as unknown[] | undefined;
         if (Array.isArray(events)) {
           for (const ev of events) {
             if (ev && typeof ev === "object") applyAssetWsEvent(ev as Record<string, unknown>);
@@ -406,19 +923,21 @@ function dispatchWsMessage(shard: WsShard, raw: string) {
         }
         break;
       }
+
+      // ── 心跳 ──
       case "heartbeat": {
-        const sock = ws.sockets[shard];
+        const sock = ws.socket;
         if (sock?.readyState === WebSocket.OPEN) {
-          sock.send(
-            JSON.stringify({
-              type: "pong",
-              created_at: new Date().toISOString(),
-              data: { message: "pong" },
-            })
-          );
+          sock.send(JSON.stringify({ type: "pong", created_at: new Date().toISOString(), data: { message: "pong" } }));
         }
         break;
       }
+
+      // ── 忽略 ──
+      case "pong":
+      case "speedcamera":
+        break;
+
       default:
         break;
     }
@@ -427,132 +946,193 @@ function dispatchWsMessage(shard: WsShard, raw: string) {
   }
 }
 
-function startHeartbeat(ch: WsShard, socket: WebSocket) {
-  clearHeartbeat(ch);
-  ws.heartbeatTimers[ch] = setInterval(() => {
-    if (socket.readyState !== WebSocket.OPEN) return;
+// ── 连接管理 ──
+
+function startHeartbeat() {
+  clearHeartbeat();
+  const interval = getWebSocketConfig().heartbeatInterval;
+  ws.heartbeatTimer = setInterval(() => {
+    if (!ws.socket || ws.socket.readyState !== WebSocket.OPEN) return;
     try {
-      socket.send(JSON.stringify({ type: "ping", channel: ch, t: Date.now() }));
-    } catch {
-      /* ignore */
-    }
-  }, HEARTBEAT_MS);
+      ws.socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
+    } catch { /* ignore */ }
+  }, interval);
 }
 
-function maybeNotifyAllReady() {
-  const ok =
-    ws.sockets.tracks?.readyState === WebSocket.OPEN &&
-    ws.sockets.alerts?.readyState === WebSocket.OPEN &&
-    ws.sockets.assets?.readyState === WebSocket.OPEN;
-  if (ok && !ws.channelsAllReadyNotified) {
-    ws.channelsAllReadyNotified = true;
-    notify("WebSocket 已就绪", "航迹 / 告警 / 资产 通道已连接", "success");
-  }
-}
-
-function scheduleReconnect(ch: WsShard, reason: string) {
+function scheduleReconnect() {
   if (!ws.running) return;
-  clearReconnectTimer(ch);
-  const delay = backoffMs(ch);
-  ws.reconnectTimers[ch] = setTimeout(() => {
-    ws.reconnectTimers[ch] = undefined;
+  clearReconnectTimer();
+  const delay = backoffMs();
+  ws.reconnectTimer = setTimeout(() => {
+    ws.reconnectTimer = null;
     if (!ws.running) return;
-    notify(`${shardLabel(ch)} 重连中`, reason, "info");
-    openWsChannel(ch);
+    notify("WebSocket 重连中", "连接已断开", "info");
+    openConnection();
   }, delay);
 }
 
-function openWsChannel(ch: WsShard) {
+function openConnection() {
   if (!ws.running) return;
-  const path =
-    ch === "tracks" ? "/ws/tracks" : ch === "alerts" ? "/ws/alerts" : "/ws/assets";
-  const url = wsUrl(path);
+  const url = getWebSocketConfig().url;
   if (!url) return;
 
-  const prev = ws.sockets[ch];
-  if (prev && (prev.readyState === WebSocket.OPEN || prev.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
+  if (ws.socket && (ws.socket.readyState === WebSocket.OPEN || ws.socket.readyState === WebSocket.CONNECTING)) return;
 
   const socket = new WebSocket(url);
-  ws.sockets[ch] = socket;
+  ws.socket = socket;
 
   socket.onopen = () => {
-    ws.reconnectAttempt[ch] = 0;
-    if (ch === "tracks") useTrackStore.getState().setConnected(true);
-    startHeartbeat(ch, socket);
-    maybeNotifyAllReady();
+    ws.reconnectAttempt = 0;
+    useTrackStore.getState().setConnected(true);
+    startHeartbeat();
+    if (!ws.readyNotified) {
+      ws.readyNotified = true;
+      notify("WebSocket 已就绪", url, "success");
+    }
   };
 
   socket.onmessage = (ev) => {
-    dispatchWsMessage(ch, ev.data as string);
+    dispatchWsMessage(ev.data as string);
   };
 
   socket.onerror = () => {
-    notify(`${shardLabel(ch)} 连接异常`, "请确认后端 8001 端口 WebSocket 服务可用", "error");
-    try {
-      socket.close();
-    } catch {
-      /* noop */
-    }
+    notify("WebSocket 连接异常", "请确认后端 WebSocket 服务可用", "error");
+    try { socket.close(); } catch { /* noop */ }
   };
 
   socket.onclose = () => {
-    clearHeartbeat(ch);
-    if (ch === "tracks") useTrackStore.getState().setConnected(false);
-    ws.sockets[ch] = null;
+    clearHeartbeat();
+    useTrackStore.getState().setConnected(false);
+    ws.socket = null;
     if (!ws.running) return;
-    ws.reconnectAttempt[ch] += 1;
-    if (ws.reconnectAttempt[ch] > 12) {
-      notify(`${shardLabel(ch)} 重连失败`, "已停止自动重连", "error");
+    ws.reconnectAttempt += 1;
+    const maxAttempts = getWebSocketConfig().maxReconnectAttempts;
+    if (ws.reconnectAttempt > maxAttempts) {
+      notify("WebSocket 重连失败", "已停止自动重连", "error");
       return;
     }
-    scheduleReconnect(ch, "连接已断开");
+    scheduleReconnect();
   };
 }
 
-/** 航迹超时**仅**在此定时扫 `track-store`；WS 入站不做 `filterTracksByTimeout`。 */
+// ── 定时器 ──
+
 function startTrackStalePrune() {
   if (ws.trackPruneTimer) clearInterval(ws.trackPruneTimer);
   const tick = () => Math.max(500, getTrackRenderingConfig().trackTimeout.checkIntervalMs);
   ws.trackPruneTimer = setInterval(() => {
-    const cfg = getTrackRenderingConfig();
-    if (!cfg.trackTimeout.enabled) return;
-    const cur = useTrackStore.getState().tracks;
-    const next = filterTracksByTimeout(cur);
-    if (next.length !== cur.length) useTrackStore.getState().setTracks(next);
+    useTrackStore.getState().pruneStaleTracks();
   }, tick());
 }
+
+function startAlarmCleanup() {
+  if (ws.alarmCleanupTimer) clearInterval(ws.alarmCleanupTimer);
+  ws.alarmCleanupTimer = setInterval(() => {
+    const before = useAlertStore.getState().alerts.length;
+    useAlertStore.getState().removeStaleAlarms();
+    const after = useAlertStore.getState().alerts.length;
+    if (before !== after) {
+      useTrackStore.getState().syncWithAlarms(useAlertStore.getState().alarmTrackIds);
+    }
+  }, 5_000);
+}
+
+function stopAlarmCleanup() {
+  if (ws.alarmCleanupTimer) { clearInterval(ws.alarmCleanupTimer); ws.alarmCleanupTimer = null; }
+}
+
+function startAlertRevisionSync() {
+  if (ws.alertRevisionUnsub) return;
+  let lastRev = useAlertStore.getState().alarmTrackRevision;
+  ws.alertRevisionUnsub = useAlertStore.subscribe((state) => {
+    if (state.alarmTrackRevision !== lastRev) {
+      lastRev = state.alarmTrackRevision;
+      useTrackStore.getState().syncWithAlarms(state.alarmTrackIds);
+    }
+  });
+}
+
+function stopAlertRevisionSync() {
+  if (ws.alertRevisionUnsub) { ws.alertRevisionUnsub(); ws.alertRevisionUnsub = null; }
+}
+
+// ── 查证图片轮询 ──
+
+function startImagePolling() {
+  if (ws.imagePollTimer) clearInterval(ws.imagePollTimer);
+  const httpCfg = getHttpConfig();
+  const { getRenderCache } = require("@/stores/track-store") as { getRenderCache: () => Map<string, import("@/lib/map-entity-model").Track> };
+  const { updateTrackImage } = useTrackStore.getState();
+
+  ws.imagePollTimer = setInterval(async () => {
+    const cache = getRenderCache();
+    for (const [showID, track] of cache) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), httpCfg.imageFetchTimeoutMs);
+        const res = await fetch(`${httpCfg.backendUrl}/api/image/${encodeURIComponent(showID)}`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!res.ok) continue;
+        const json = await res.json() as Record<string, unknown>;
+        const result = json.result as Record<string, unknown> | undefined;
+        const raw = result?.data as Record<string, unknown> | undefined;
+        const imageBase64 = raw?.imageBase64 as string | undefined;
+        if (!imageBase64) continue;
+        const imageUrl = imageBase64.startsWith("data:")
+          ? imageBase64
+          : `data:image/jpeg;base64,${imageBase64}`;
+        updateTrackImage(showID, imageUrl);
+      } catch {
+        // timeout / network error → next cycle will retry
+      }
+    }
+  }, httpCfg.imagePollIntervalMs);
+}
+
+function stopImagePolling() {
+  if (ws.imagePollTimer) { clearInterval(ws.imagePollTimer); ws.imagePollTimer = null; }
+}
+
+// ── 启停 ──
 
 function startUnifiedWs() {
   if (ws.running) return;
   ws.running = true;
-  ws.channelsAllReadyNotified = false;
-  notify("正在连接 WebSocket", "航迹 / 告警 / 资产", "info");
-  (["tracks", "alerts", "assets"] as const).forEach((ch) => openWsChannel(ch));
+  ws.readyNotified = false;
+  notify("正在连接 WebSocket", "", "info");
+  openConnection();
   startTrackStalePrune();
+  startAlarmCleanup();
+  startAlertRevisionSync();
+  startImagePolling();
 }
 
 function stopUnifiedWs() {
   ws.running = false;
-  if (ws.trackPruneTimer) {
-    clearInterval(ws.trackPruneTimer);
-    ws.trackPruneTimer = null;
-  }
-  (["tracks", "alerts", "assets"] as const).forEach((ch) => {
-    clearReconnectTimer(ch);
-    clearHeartbeat(ch);
-    const sock = ws.sockets[ch];
-    if (sock && sock.readyState === WebSocket.OPEN) sock.close(1000, "client shutdown");
-    ws.sockets[ch] = null;
-  });
+  if (ws.trackPruneTimer) { clearInterval(ws.trackPruneTimer); ws.trackPruneTimer = null; }
+  stopAlarmCleanup();
+  stopAlertRevisionSync();
+  stopImagePolling();
+  clearReconnectTimer();
+  clearHeartbeat();
+  if (ws.socket && ws.socket.readyState === WebSocket.OPEN) ws.socket.close(1000, "client shutdown");
+  ws.socket = null;
   useTrackStore.getState().setConnected(false);
 }
 
 export function useUnifiedWsFeed() {
   useEffect(() => {
-    void reloadAppConfigAssetBase();
-    startUnifiedWs();
-    return () => stopUnifiedWs();
+    let cancelled = false;
+    void (async () => {
+      // 必须先拉取 app-config.json 并 applyResolvedNewConfigs，否则 WS 仍用默认 ws://localhost:8001，
+      // 从局域网 IP 打开页面时会连到本机 localhost 而非配置里的后端地址。
+      await reloadAppConfigAssetBase();
+      if (cancelled) return;
+      startUnifiedWs();
+    })();
+    return () => {
+      cancelled = true;
+      stopUnifiedWs();
+    };
   }, []);
 }

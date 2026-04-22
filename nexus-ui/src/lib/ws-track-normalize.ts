@@ -1,36 +1,46 @@
 /**
- * WebSocket 航迹载荷 → 与 `Track` / 地图渲染一致的字段（对空对海、敌我默认敌方、空中航向 +45°）。
+ * WebSocket 航迹载荷 → 与 `Track` / 地图渲染一致的字段。
+ *
+ * 核心字段：
+ * - `showID` = `uniqueID`（缓存主键，整个工程统一用此做 key）
+ * - `uniqueID` — 后端唯一标识（报文 uniqueID / uniqueId）
+ * - `trackId` — 业务 trackId（告警匹配用）
+ * - `isAirTrack` — 对空 / 对海
+ * - `targetType` — 目标类型
  */
 
 import { isVirtualFromProperties, type Track } from "@/lib/map-entity-model";
 import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
+import { transformCoordinate } from "@/lib/coordinate-transform";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
-function truthyAirSea(v: unknown): boolean {
+/**
+ * 后端 `isAirTrack` / `is_air_track`：true→对空(air)，false→对海(sea)；缺省再信 `type`。
+ */
+function readIsAirTrack(rec: Record<string, unknown>): boolean | undefined {
+  const v = rec.isAirTrack ?? rec.is_air_track;
   if (v === true || v === 1) return true;
+  if (v === false || v === 0) return false;
   if (typeof v === "string") {
     const s = v.trim().toLowerCase();
-    return s === "1" || s === "true" || s === "yes";
+    if (s === "1" || s === "true" || s === "yes") return true;
+    if (s === "0" || s === "false" || s === "no") return false;
   }
-  return false;
+  return undefined;
 }
 
-/** 对空→air，对海→sea；兼容已有 type 与英文域 */
+/** 对空→air，对海→sea；优先后端 `isAirTrack`，否则 `type`，默认 sea */
 export function inferTrackSurfaceKind(rec: Record<string, unknown>): Track["type"] {
+  const air = readIsAirTrack(rec);
+  if (air === true) return "air";
+  if (air === false) return "sea";
+
   const t = rec.type;
   if (t === "air" || t === "sea" || t === "underwater") return t;
-
-  if (truthyAirSea(rec.对空) || truthyAirSea(rec["对空目标"])) return "air";
-  if (truthyAirSea(rec.对海) || truthyAirSea(rec["对海目标"])) return "sea";
-
-  const domain = String(rec.target_domain ?? rec.track_domain ?? rec.domain ?? rec.surfaceKind ?? "").toLowerCase();
-  if (domain.includes("air") || domain === "a" || domain === "空中") return "air";
-  if (domain.includes("sea") || domain.includes("surface") || domain === "s" || domain.includes("水面")) return "sea";
-  if (domain.includes("sub") || domain.includes("under") || domain.includes("水下")) return "underwater";
 
   if (typeof t === "string") {
     const u = t.toLowerCase();
@@ -43,7 +53,7 @@ export function inferTrackSurfaceKind(rec: Record<string, unknown>): Track["type
 export function trackIconHeadingDeg(kind: Track["type"], courseDeg: number): number {
   const c = Number.isFinite(courseDeg) ? courseDeg : 0;
   if (kind === "air") return c + getTrackRenderingConfig().airIconHeadingOffsetDeg;
-  return c;
+  return 0;
 }
 
 function readCourseDeg(rec: Record<string, unknown>, kind: Track["type"]): number {
@@ -69,16 +79,32 @@ function readDisposition(rec: Record<string, unknown>): ForceDisposition {
 }
 
 /**
+ * 解析航迹的 uniqueID：必须来自报文 uniqueID / uniqueId，禁止前端拼接。
+ * 对齐 V2 `resolveTrackUniqueID`。
+ */
+function resolveUniqueID(rec: Record<string, unknown>): string {
+  const u = rec.uniqueID ?? rec.uniqueId ?? rec.unique_id;
+  if (u != null && String(u).trim() !== "") return String(u).trim();
+  return "";
+}
+
+/**
  * 将单条 WS 航迹（含不完整字段）规范为 `Track`。
  */
 export function normalizeIncomingTrack(raw: unknown): Track | null {
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as Record<string, unknown>;
-  const id = String(rec.id ?? "");
-  if (!id) return null;
-  const lat = Number(rec.lat ?? rec.latitude);
-  const lng = Number(rec.lng ?? rec.longitude);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const uniqueID = resolveUniqueID(rec);
+  const fallbackId = String(rec.id ?? "");
+  const showID = uniqueID || fallbackId;
+  if (!showID) return null;
+
+  const rawLat = Number(rec.lat ?? rec.latitude);
+  const rawLng = Number(rec.lng ?? rec.longitude);
+  if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng)) return null;
+
+  const [lng, lat] = transformCoordinate(rawLng, rawLat);
 
   const kind = inferTrackSurfaceKind(rec);
   const course = readCourseDeg(rec, kind);
@@ -99,9 +125,29 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     rawUav === 1 ||
     (typeof rawUav === "string" && /^(1|true|yes|uav)$/i.test(rawUav.trim()));
 
+  const isAirTrack = kind === "air";
+
+  const trackId = rec.trackId ?? rec.track_id ?? rec.tracnID;
+  const trackIdStr = trackId != null && String(trackId).trim() !== "" ? String(trackId).trim() : undefined;
+
+  const targetType = rec.target_type ?? rec.targetType ?? rec.name ?? rec.label;
+  const targetTypeStr = targetType != null ? String(targetType) : undefined;
+
+  const azimuthRaw = rec.azimuth ?? rec.azimuth_deg;
+  const azimuth = azimuthRaw != null && Number.isFinite(Number(azimuthRaw)) ? Number(azimuthRaw) : undefined;
+
+  const distanceRaw = rec.range ?? rec.distance;
+  const distance = distanceRaw != null && Number.isFinite(Number(distanceRaw)) ? Number(distanceRaw) : undefined;
+
+  const dataSourceId = rec.dataSourceId ?? rec.data_source_id;
+  const dataSourceIdStr = dataSourceId != null ? String(dataSourceId) : undefined;
+
   return {
-    id,
-    name: String(rec.name ?? rec.label ?? id),
+    id: showID,
+    showID,
+    uniqueID,
+    ...(trackIdStr ? { trackId: trackIdStr } : {}),
+    name: String(rec.name ?? rec.label ?? showID),
     type: kind,
     disposition,
     lat,
@@ -112,6 +158,12 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     sensor: String(rec.sensor ?? rec.source ?? ""),
     lastUpdate: String(rec.lastUpdate ?? rec.last_update ?? rec.updated_at ?? new Date().toISOString()),
     starred: Boolean(rec.starred),
+    ...(isAirTrack ? { isAirTrack: true } : {}),
+    ...(targetTypeStr ? { targetType: targetTypeStr } : {}),
+    ...(Number.isFinite(course) ? { course } : {}),
+    ...(azimuth != null ? { azimuth } : {}),
+    ...(distance != null ? { distance } : {}),
+    ...(dataSourceIdStr ? { dataSourceId: dataSourceIdStr } : {}),
     ...(isVirtual ? { isVirtual: true } : {}),
     ...(isUav ? { isUav: true } : {}),
   };
@@ -127,33 +179,10 @@ export function normalizeIncomingTrackList(list: unknown): Track[] {
   return out;
 }
 
-/** 与 `trackDisplay.maxViewportPoints` 联动：单条航迹在 store 内最多保留的历史点数 */
+/** 与 `trackRendering.trackDisplay.maxHistoryPointsPerTrack` 对齐：单条航迹在 store 内最多保留的历史点数 */
 export function maxStoredTrailPointsPerTrack(): number {
-  const max = getTrackRenderingConfig().trackDisplay.maxViewportPoints;
-  if (!Number.isFinite(max) || max < 8) return 2;
-  return Math.max(2, Math.min(400, Math.floor(max / 3)));
+  const max = getTrackRenderingConfig().trackDisplay.maxHistoryPointsPerTrack;
+  if (!Number.isFinite(max) || max < 2) return 2;
+  return Math.max(2, Math.min(4000, Math.floor(max)));
 }
 
-/**
- * 全量 WS 航迹列表与上一帧合并（结果仍是一次 `setTracks` 写入 Zustand，**无**独立「WS 缓存表」）：
- * - `incoming`：本帧 WS 解析后的目标列表（当前 `lat/lng` 等）。
- * - 对每条 `id`，若 `prev` 里同 id 存在且本帧相对上一帧**坐标变化**，把**上一帧坐标** `[lng,lat]` 追加进该条的 `historyTrail`（不含本帧当前点）。
- * - 单条 `historyTrail` 长度上限见 `maxStoredTrailPointsPerTrack`（与配置 `maxViewportPoints` 联动，限制的是**存多少**，不是地图删不删）。
- */
-export function mergeTrackWsPayloadWithHistory(prev: Track[], incoming: Track[]): Track[] {
-  const cap = maxStoredTrailPointsPerTrack();
-  const prevMap = new Map(prev.map((t) => [t.id, t]));
-  return incoming.map((t) => {
-    const old = prevMap.get(t.id);
-    if (!old) return { ...t };
-
-    let historyTrail = old.historyTrail ? [...old.historyTrail] : [];
-    const moved = old.lat !== t.lat || old.lng !== t.lng;
-    if (moved) {
-      historyTrail = [...historyTrail, [old.lng, old.lat] as [number, number]];
-      if (historyTrail.length > cap) historyTrail = historyTrail.slice(-cap);
-    }
-
-    return historyTrail.length ? { ...t, historyTrail } : { ...t };
-  });
-}

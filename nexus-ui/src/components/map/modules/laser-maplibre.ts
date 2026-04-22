@@ -1,12 +1,53 @@
+/**
+ * ══════════════════════════════════════════════════════════════════════
+ *  激光武器渲染模块 —— 扇区 + 扫描亮带 + 脉冲动画 + 中心图标 + 名称
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * ── 激光渲染全链路 ──
+ *
+ *   1. 接收: WS entity_status → msg.entities[] → mapEntitiesPayload() → mapOneEntityRow()
+ *      ├─ specificType="LASER"/"激光"/"激光武器" → asset_type="laser"
+ *      └─ 静态配置: app-config.json laserWeapons.devices[] → laserBundleToStaticAssets()
+ *
+ *   2. 入资产:
+ *      ├─ 静态: laserBundleToStaticAssets() → configAssetBase（含 scan/pulse 参数）
+ *      ├─ 动态: applyAssetListFromWs() → mergeDynamicAndStaticAssets() → asset-store
+ *      └─ 专题层: adaptAssetToLaserDevice() → LaserMaplibre.upsert()
+ *          WS 动态实体不含 scan/pulse 参数，upsert 时保留静态 bundle 的参数
+ *
+ *   3. 渲染: LaserMaplibre.flush() → 遍历 devices 生成 GeoJSON
+ *      ├─ 扇区填充 (t="sec"): 基础扇区多边形，脉冲暗相时不画
+ *      ├─ 扫描亮带 (t="scan"): geoSectorRingCoords 环形，按 tickMs 动画移动
+ *      ├─ 扇区边线 (t="ln"): 扇区外轮廓线
+ *      ├─ 中心图标 (t="ctr"): 激光 SVG 图标，敌我配色
+ *      └─ 名称标签 (t="lbl"): 雷达/激光名称
+ *
+ *   4. 脉冲动画: laserPulseActive=true 时
+ *      ├─ ensureLaserPulse() → setTimeout 循环切换 pulseVisibleById
+ *      ├─ 亮相 (pulseOnMs，默认 10000ms): 扇区填充 + 扫描亮带均可见
+ *      ├─ 暗相 (pulseOffMs，默认 3000ms): 扇区填充不画，扫描亮带不画
+ *      └─ WS 更新时保留静态 bundle 的 laserPulseActive/pulseOnMs/pulseOffMs
+ *
+ *   5. 扫描动画: scan.enabled=true 时
+ *      ├─ syncScanTimer() → setInterval(tickMs) 定时调用 flush()
+ *      ├─ flush() 中按 Date.now() % scan.cycleMs 计算扫描进度
+ *      └─ 生成 bandCount 个环形亮带，从内向外移动
+ *
+ *   6. 更新: entity_status 周期推送 → adaptAssetToLaserDevice() → upsert()
+ *      ├─ upsert 保留静态 scan 参数（新设备 scan.enabled=false 但旧设备有 scan 时）
+ *      └─ upsert 保留静态脉冲参数（新设备 laserPulseActive≠true 但旧设备=true 时）
+ *
+ *   7. 超时: 无独立超时机制
+ */
 import type maplibregl from "maplibre-gl";
-import type { ForceDisposition } from "@/lib/theme-colors";
+import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import {
   assetMapLabelTextColor,
   geoSectorCoords,
   geoSectorRingCoords,
+  getAssetSymbolId,
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
-  sectorCenterMapImageId,
 } from "@/lib/map-icons";
 
 const P = "nexus-laser";
@@ -15,29 +56,6 @@ const P = "nexus-laser";
 const DEFAULT_LASER_PULSE_ON_MS = 10_000;
 /** V2：默认 scan 扇区暗相间隔（ms） */
 const DEFAULT_LASER_PULSE_OFF_MS = 3000;
-
-export function laserCenterMapImageId(disposition: ForceDisposition): string {
-  return sectorCenterMapImageId("laser", disposition);
-}
-
-/** center symbol icon-image: select framed bitmap by GeoJSON disp (consistent with asset layer frame) */
-export const LASER_CENTER_ICON_IMAGE_EXPR: [
-  "match",
-  ["get", string],
-  string,
-  string,
-  string,
-  string,
-  string,
-] = [
-  "match",
-  ["get", "disp"],
-  "hostile",
-  laserCenterMapImageId("hostile"),
-  "neutral",
-  laserCenterMapImageId("neutral"),
-  laserCenterMapImageId("friendly"),
-];
 
 export const LASER_SOURCE = `${P}-src`;
 export const LASER_FILL = `${P}-fill`;
@@ -94,6 +112,8 @@ export type LaserDevice = {
   virtual?: boolean;
   /** 敌我属性，对应 `laserWeapons.devices[].disposition` */
   disposition?: ForceDisposition;
+  /** 友方图标/标签着色（来自 bundle label.fontColor 或 Asset.friendlyMapColor） */
+  friendlyMapColor?: string;
   /** 中心名称 symbol；默认随 `centerNameVisible` 为 true */
   centerNameVisible?: boolean;
   /** 中心图标 symbol；默认随 `centerIconVisible` 与配置一致 */
@@ -132,6 +152,8 @@ export class LaserMaplibre {
   private devices = new Map<string, LaserDevice>();
   private layerVis: LaserMaplibreLayerVisibility = { ...laserLayerVisDefault };
   private _assetIconAccent: AssetDispositionIconAccent | null = null;
+  private _sectorFillDefaultColor = "#fb7185";
+  private _sectorFillDefaultOpacity = 0.35;
   private scanTimer: ReturnType<typeof setInterval> | null = null;
   /** 脉动时各设备 scan 几何是否处于「亮相」帧 */
   private pulseVisibleById = new Map<string, boolean>();
@@ -171,6 +193,13 @@ export class LaserMaplibre {
   /** 敌我标签强调色，与资产层 `factory.assetIcons` 一致 */
   setAssetDispositionAccent(accent: AssetDispositionIconAccent | null) {
     this._assetIconAccent = accent;
+    this.flush();
+  }
+
+  /** 根配置 `sectorFillDefaultColor` / `sectorFillDefaultOpacity`：设备未指定 color/opacity 时用于扇区填充 */
+  setDefaults(color: string, opacity: number) {
+    this._sectorFillDefaultColor = color;
+    this._sectorFillDefaultOpacity = opacity;
     this.flush();
   }
 
@@ -267,7 +296,7 @@ export class LaserMaplibre {
           source: LASER_SOURCE,
           filter: ["==", ["get", "t"], "ctr"],
           layout: {
-            "icon-image": LASER_CENTER_ICON_IMAGE_EXPR,
+            "icon-image": ["get", "symbolId"],
             "icon-size": MAPLIBRE_ASSET_CENTER_ICON_SIZE,
             "icon-allow-overlap": true,
             "icon-ignore-placement": true,
@@ -349,11 +378,30 @@ export class LaserMaplibre {
     const wasPulse = prev?.laserPulseActive === true;
     const nowPulse = d.laserPulseActive === true;
 
+    /* 如果新设备的 scan.enabled 为 false 但旧设备有 scan（来自静态 bundle），保留旧设备的 scan 参数，
+     * 避免动态 WS 实体覆盖静态 bundle 的扫描配置 */
+    if (prev && d.scan.enabled === false && prev.scan.enabled) {
+      d = { ...d, scan: { ...prev.scan } };
+    }
+    /* 同理保留静态 bundle 的脉冲参数（laserPulseActive / pulseOnMs / pulseOffMs），
+     * WS 动态实体不含这些字段，不保留则脉冲动画会被停掉 */
+    if (prev && d.laserPulseActive !== true && prev.laserPulseActive === true) {
+      d = { ...d, laserPulseActive: true, pulseOnMs: d.pulseOnMs ?? prev.pulseOnMs, pulseOffMs: d.pulseOffMs ?? prev.pulseOffMs };
+    }
+    /* 同理保留静态 bundle 的 color / fillOpacity，
+     * WS 动态实体不含这些字段，不保留则扇区颜色回退到 `_sectorFillDefaultColor` */
+    if (prev) {
+      if (d.color == null && prev.color != null) d = { ...d, color: prev.color };
+      if (d.fillOpacity == null && prev.fillOpacity != null) d = { ...d, fillOpacity: prev.fillOpacity };
+    }
+
     this.devices.set(d.id, { ...d });
 
-    if (!nowPulse) {
+    /* 保留参数后重新计算 nowPulse */
+    const effectiveNowPulse = d.laserPulseActive === true;
+    if (!effectiveNowPulse) {
       this.stopLaserPulse(d.id);
-    } else if (nowPulse && !wasPulse) {
+    } else if (effectiveNowPulse && !wasPulse) {
       this.stopLaserPulse(d.id);
       this.pulseVisibleById.set(d.id, true);
       this.ensureLaserPulse(d.id);
@@ -454,9 +502,17 @@ export class LaserMaplibre {
   private flush() {
     const feats: GeoJSON.Feature[] = [];
     for (const d of this.devices.values()) {
-      const c = d.color ?? "#fb7185";
-      const baseOp = d.fillOpacity ?? 0.35;
+      const disp = d.disposition ?? "friendly";
+      /* 友方用配置色（d.color / 根级 sectorFillDefault*），敌方/中立强制 FORCE_COLORS */
+      const c = disp === "hostile" ? FORCE_COLORS.hostile
+        : disp === "neutral" ? FORCE_COLORS.neutral
+        : (d.color ?? this._sectorFillDefaultColor);
+      const baseOp = d.fillOpacity ?? this._sectorFillDefaultOpacity;
+      const pulseOn = d.laserPulseActive !== true || this.pulseVisibleById.get(d.id) !== false;
       const ring = geoSectorCoords(d.lng, d.lat, d.rangeKm, d.headingDeg, d.openingDeg);
+
+      /* ── 扇区填充：脉冲暗相时仍渲染背景（降低透明度），仅扫描亮带消失 ── */
+      const secOpacity = pulseOn ? Math.max(0.08, baseOp * 0.65) : Math.max(0.04, baseOp * 0.3);
       feats.push({
         type: "Feature",
         geometry: { type: "Polygon", coordinates: [ring] },
@@ -464,11 +520,12 @@ export class LaserMaplibre {
           t: "sec",
           id: d.id,
           c,
-          o: Math.max(0.08, baseOp * 0.65),
+          o: secOpacity,
         },
       });
 
-      if (this.sectorScanGeometryVisible(d)) {
+      /* 扫描亮带：仅脉冲亮相时渲染 */
+      if (pulseOn && this.sectorScanGeometryVisible(d)) {
         const maxRangeM = d.rangeKm * 1000;
         const progress = (Date.now() % d.scan.cycleMs) / d.scan.cycleMs;
         const n = Math.max(1, Math.floor(d.scan.bandCount));
@@ -500,7 +557,7 @@ export class LaserMaplibre {
         }
       }
 
-      if (this._border.emit && this.layerVis.lineVisible) {
+      if (pulseOn && this._border.emit && this.layerVis.lineVisible) {
         const lineRing = ring[0] === ring[ring.length - 1] ? ring.slice(0, -1) : ring;
         const lc = this._border.lineColorFixed ?? c;
         feats.push({
@@ -510,18 +567,25 @@ export class LaserMaplibre {
         });
       }
       if (d.centerIconVisible !== false) {
+        const fmc = disp === "friendly" ? d.friendlyMapColor : undefined;
         feats.push({
           type: "Feature",
           geometry: { type: "Point", coordinates: [d.lng, d.lat] },
-          properties: { t: "ctr", id: d.id, c, disp: d.disposition ?? "friendly" },
+          properties: {
+            t: "ctr",
+            id: d.id,
+            c,
+            disp,
+            symbolId: getAssetSymbolId("laser", "online", !!d.virtual, disp, fmc),
+          },
         });
       }
       if (d.name && d.centerNameVisible !== false) {
-        const disp = d.disposition ?? "friendly";
+        const fmc = disp === "friendly" ? d.friendlyMapColor : undefined;
         const tc =
           disp === "hostile" || disp === "neutral"
             ? assetMapLabelTextColor(disp, "online", this._assetIconAccent)
-            : this._label.textColor;
+            : assetMapLabelTextColor(disp, "online", this._assetIconAccent, fmc ?? this._label.textColor);
         feats.push({
           type: "Feature",
           geometry: { type: "Point", coordinates: [d.lng, d.lat] },

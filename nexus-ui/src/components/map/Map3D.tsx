@@ -6,16 +6,22 @@ import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { useTrackStore } from "@/stores/track-store";
 import { isVirtualFromProperties, normalizeAssetType } from "@/lib/map-entity-model";
 import type { Asset, RestrictedZone, Track } from "@/lib/map-entity-model";
+import { mergeZoneFillColor } from "@/components/map/modules/polygon-draw-maplibre";
 import { useZoneStore } from "@/stores/zone-store";
 import { useAssetStore } from "@/stores/asset-store";
 import type { ZoneData } from "@/stores/zone-store";
 import type { AssetData } from "@/stores/asset-store";
 import {
   dispositionFromAssetData,
+  formatCameraTowerMapLabel,
+  formatTowerMapLabel,
+  getAssetFriendlyColorForAssetType,
   getTrackRenderingConfig,
   laserLabelStyleFromBundle,
   loadResolvedAppConfig,
+  shouldDisplayAssetId,
 } from "@/lib/map-app-config";
+import { FORCE_COLORS } from "@/lib/theme-colors";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import { trackMapDrawHistoryTrails } from "@/components/map/modules/tracks-maplibre";
 import {
@@ -27,7 +33,7 @@ import {
   geoSectorCoords,
   geoRadarSweepCoords,
   resolveTrackMarkerFill,
-  friendlyColorFromAssetProperties,
+  assetFriendlyColorFromProperties,
 } from "@/lib/map-icons";
 import { AlertTriangle } from "lucide-react";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
@@ -97,11 +103,66 @@ function adaptZones(zones: ZoneData[]): RestrictedZone[] {
     name: z.name,
     type: z.zone_type as RestrictedZone["type"],
     coordinates: z.coordinates,
+    fillColor: z.fill_color,
+    lineColor: z.color,
+    fillOpacity: z.fill_opacity,
   }));
 }
 
+/** 批量创建/刷新 3D 区域实体（先清旧再建新） */
+function syncCesiumZones(
+  viewer: CesiumViewer,
+  C: CesiumModule,
+  groups: { zones: CesiumEntity[] },
+  zones: RestrictedZone[],
+) {
+  for (const e of groups.zones) viewer.entities.remove(e);
+  groups.zones.length = 0;
+
+  const rgba = (c: RGBA) => new C.Color(c[0], c[1], c[2], c[3]);
+  for (const zone of zones) {
+    const style = ZONE_STYLES[zone.type] ?? ZONE_STYLES["warning"];
+    const coords = zone.coordinates.slice(0, -1);
+    const positions = coords.map(([lng, lat]) => C.Cartesian3.fromDegrees(lng, lat));
+    const centerLng = coords.reduce((s, c) => s + c[0], 0) / coords.length;
+    const centerLat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+
+    const hasWsFill = zone.fillColor != null && String(zone.fillColor).trim() !== "";
+    const fillMat = hasWsFill
+      ? C.Color.fromCssColorString(mergeZoneFillColor(zone.fillColor, zone.fillOpacity ?? 0.25))
+      : rgba(style.fill);
+    const lineCss = zone.lineColor?.trim();
+    const labelFill = lineCss ? C.Color.fromCssColorString(lineCss) : rgba(style.line);
+
+    const ent = viewer.entities.add({
+      polygon: {
+        hierarchy: new C.PolygonHierarchy(positions),
+        material: fillMat,
+        outline: false,
+        heightReference: C.HeightReference.CLAMP_TO_GROUND,
+      },
+      label: {
+        text: zone.name,
+        font: '12px Roboto, "Noto Sans SC", sans-serif',
+        fillColor: labelFill,
+        outlineColor: C.Color.fromCssColorString("#09090b"),
+        outlineWidth: 2,
+        style: C.LabelStyle.FILL_AND_OUTLINE,
+        verticalOrigin: C.VerticalOrigin.CENTER,
+        scaleByDistance: new C.NearFarScalar(1e4, 1, 5e5, 0.4),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      position: C.Cartesian3.fromDegrees(centerLng, centerLat, 100),
+      properties: { zoneId: zone.id },
+    });
+    groups.zones.push(ent);
+  }
+}
+
 function adaptAssets(assets: AssetData[]): Asset[] {
-  return assets.map((a) => {
+  return assets
+    .filter((a) => shouldDisplayAssetId(a.asset_type, a.id, a.name))
+    .map((a) => {
     const p = a.properties as Record<string, unknown> | null | undefined;
     const isRadar = String(a.asset_type ?? "").toLowerCase() === "radar";
     let showRings: boolean | undefined;
@@ -113,13 +174,25 @@ function adaptAssets(assets: AssetData[]): Asset[] {
     let nameLabelVisible: boolean | undefined;
     if (!isRadar && p?.center_name_visible === false) nameLabelVisible = false;
     const showFov = p?.fov_sector_visible === false ? false : undefined;
-    const friendlyMapColor = friendlyColorFromAssetProperties(p ?? null);
+    const t = normalizeAssetType(a.asset_type);
+    const disp = dispositionFromAssetData(a);
+    let friendlyMapColor: string | undefined;
+    if (disp === "friendly") {
+      friendlyMapColor =
+        assetFriendlyColorFromProperties(p ?? null) ??
+        getAssetFriendlyColorForAssetType(t) ??
+        FORCE_COLORS.friendly;
+    }
+    // 机场和无人机的 name 在入资产时已解析好，直接用；光电/电侦走 id 提取数字
+    let displayName = a.name;
+    if (t === "camera") displayName = formatCameraTowerMapLabel(a.id);
+    else if (t === "tower") displayName = formatTowerMapLabel(a.id);
     return {
       id: a.id,
-      name: a.name,
-      type: normalizeAssetType(a.asset_type),
+      name: displayName,
+      type: t,
       status: a.status as Asset["status"],
-      disposition: dispositionFromAssetData(a),
+      disposition: disp,
       lat: a.lat,
       lng: a.lng,
       range: a.range_km ?? undefined,
@@ -135,7 +208,7 @@ function adaptAssets(assets: AssetData[]): Asset[] {
   });
 }
 
-/** 与 Map2D 一致：store 全量画 billboard；折线仅在 `trackMapDrawHistoryTrails` 为真时画（超预算只跳过折线，不删 store） */
+/** 与 Map2D 一致：store 全量画航迹 billboard（最新位置）；折线仅在 `trackMapDrawHistoryTrails` 为真时画；超预算整批不画尾迹线，仅保留最新点实体（不删 store） */
 async function syncCesiumTrackBillboards(
   viewer: CesiumViewer,
   Cesium: CesiumModule,
@@ -332,39 +405,7 @@ export function Map3D() {
 
         /* 1) 限制区 */
         const rgba = (c: RGBA) => new Cesium.Color(c[0], c[1], c[2], c[3]);
-
-        for (const zone of adaptZones(useZoneStore.getState().zones)) {
-          const style = ZONE_STYLES[zone.type] ?? ZONE_STYLES["warning"];
-          // 闭合多边形：去掉重复闭合点
-          const coords = zone.coordinates.slice(0, -1);
-          const positions = coords.map(([lng, lat]) => Cesium.Cartesian3.fromDegrees(lng, lat));
-          const centerLng = coords.reduce((s, c) => s + c[0], 0) / coords.length;
-          const centerLat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
-
-          const ent = v.entities.add({
-            polygon: {
-              hierarchy: new Cesium.PolygonHierarchy(positions),
-              material: rgba(style.fill),
-              /* 贴地多边形 + outline 在 Cesium 地形上不支持描边，会触发 oneTimeWarning 且无轮廓 */
-              outline: false,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            },
-            label: {
-              text: zone.name,
-              font: '12px Roboto, "Noto Sans SC", sans-serif',
-              fillColor: rgba(style.line),
-              outlineColor: Cesium.Color.fromCssColorString("#09090b"),
-              outlineWidth: 2,
-              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-              verticalOrigin: Cesium.VerticalOrigin.CENTER,
-              scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.4),
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-            },
-            position: Cesium.Cartesian3.fromDegrees(centerLng, centerLat, 100),
-            properties: { zoneId: zone.id },
-          });
-          groups.zones.push(ent);
-        }
+        syncCesiumZones(v, Cesium, groups, adaptZones(useZoneStore.getState().zones));
 
         /* 2) 雷达覆盖（圆/扫描）与光电 FOV（扇形/圆）分开展示，与 2D 图层面板两项一致 */
         const _assets = adaptAssets(useAssetStore.getState().assets);
@@ -427,7 +468,7 @@ export function Map3D() {
           }
         }
 
-        /* 3) 航迹：store 全量；折线受 `maxViewportPoints` 顶点预算（与 Map2D `buildTrackGeoJSON` 一致） */
+        /* 3) 航迹：store 全量；`historyTrail` 条数由 `maxHistoryPointsPerTrack` 裁剪；折线是否绘制受 `maxViewportPoints` 预算（与 Map2D 一致） */
         cesiumTrackAccentRef.current = assetIconAccent;
         await syncCesiumTrackBillboards(v, Cesium, groups, useTrackStore.getState().tracks, assetIconAccent);
 
@@ -782,6 +823,17 @@ export function Map3D() {
           ent.billboard.scale = new (cesiumRef.current!.ConstantProperty)(tid === id ? 1.12 : 0.90);
         }
       }
+    });
+    return unsub;
+  }, []);
+
+  /* 区域：响应式同步（WS 推送新区域时自动刷新） */
+  useEffect(() => {
+    const unsub = useZoneStore.subscribe((s) => {
+      const v = viewerRef.current;
+      const C = cesiumRef.current;
+      if (!v || !C || v.isDestroyed()) return;
+      syncCesiumZones(v, C, entityGroupsRef.current, adaptZones(s.zones));
     });
     return unsub;
   }, []);

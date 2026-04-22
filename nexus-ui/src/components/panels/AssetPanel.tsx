@@ -7,6 +7,7 @@ import { Search, Crosshair } from "lucide-react";
 import { useState } from "react";
 import { PUBLIC_MAP_SVG_FILES, publicIconFileUrl } from "@/lib/map-icons";
 import { normalizeAssetType } from "@/lib/map-entity-model";
+import { formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
 
 const STATUS_STYLES = {
   online: { dot: "bg-emerald-400", text: "text-emerald-400", label: "在线" },
@@ -22,6 +23,15 @@ const MISSION_STYLES: Record<string, { label: string; color: string }> = {
   returning: { label: "返航", color: "text-zinc-400" },
 };
 
+/** 机场/无人机的 name 在入资产时已解析好，直接用；光电/电侦走 id 提取数字 */
+function mapAssetDisplayName(a: AssetData): string {
+  if (!a.asset_type) console.warn("[AssetPanel] asset_type 为空:", a.id, a);
+  const t = normalizeAssetType(a.asset_type);
+  if (t === "camera") return formatCameraTowerMapLabel(a.id);
+  if (t === "tower") return formatTowerMapLabel(a.id);
+  return a.name;
+}
+
 export function AssetPanel() {
   const [search, setSearch] = useState("");
   const selectedAssetId = useAppStore((s) => s.selectedAssetId);
@@ -36,7 +46,7 @@ export function AssetPanel() {
   );
 
   const online = filtered.filter((a) => a.status === "online").length;
-  const degraded = filtered.filter((a) => a.status === "degraded").length;
+  const offline = filtered.length - online;
 
   return (
     <div className="flex h-full flex-col">
@@ -46,7 +56,7 @@ export function AssetPanel() {
             资产列表
           </span>
           <span className="text-[10px] text-nexus-text-muted">
-            {online} 在线 · {degraded} 降级
+            {online} 在线 · {offline} 离线
           </span>
         </div>
         <div className="relative">
@@ -65,6 +75,7 @@ export function AssetPanel() {
 
       <div className="flex-1 overflow-y-auto">
         {filtered.map((asset) => {
+          if (!asset.asset_type) console.warn("[AssetPanel/render] asset_type 为空:", asset.id, asset);
           const iconSrc = publicIconFileUrl(PUBLIC_MAP_SVG_FILES[normalizeAssetType(asset.asset_type)]);
           const status = STATUS_STYLES[asset.status as keyof typeof STATUS_STYLES];
           const isSelected = selectedAssetId === asset.id;
@@ -97,7 +108,7 @@ export function AssetPanel() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between">
                   <span className="truncate text-xs font-medium text-nexus-text-primary">
-                    {asset.name}
+                    {mapAssetDisplayName(asset)}
                   </span>
                   <div className="flex items-center gap-1.5">
                     <span className={cn("h-1.5 w-1.5 rounded-full", status.dot)} />
