@@ -1,0 +1,206 @@
+
+module casia {
+module device {
+module status {
+module dronetask{
+
+
+/**
+ * 执行状态枚举
+ */
+enum ExecutionState {
+    EXECUTING,           // 执行中
+    COMPLETED,          // 已完成
+    ALREADY_CLEARED,    // 已取消
+    SAVED,              // 暂存中
+    FAILED              // 已失败
+};
+
+
+/**
+ * 地理位置结构
+ */
+struct GeoPosition {
+    double longitude;        // 经度
+    double latitude;         // 纬度
+    double altitude;         // 高度（米）
+};
+
+/**
+ * 基础设备状态
+ */
+struct BaseDeviceStatus {
+    string entityId;    // 设备唯一标识符
+    string taskType;         // 当前执行的任务类型
+    ExecutionState executionState;    // 执行状态
+    unsigned long executionTimeMs;    // 执行时间（毫秒）
+    boolean online;                   // 在线状态
+    GeoPosition position;             // 地理位置
+    double elec;                      // 电量百分比
+    string timestamp;                 // 数据采集时间戳
+};
+    enum TemplateType {
+        WAYPOINT,      // 航点飞行
+        MAPPING_2D,    // 建图航拍
+        MAPPING_3D,    // 倾斜摄影
+        MAPPING_STRIP  // 航带飞行
+    };
+
+    enum DroneType {
+        M3D_M3TD
+    };
+
+
+    enum PayloadPosition {
+        POSITION_0
+    };
+
+
+    enum FinishAction {
+        GO_HOME,             // 返航
+        NO_ACTION,           // 无动作
+        AUTO_LAND,           // 原地降落
+        GOTO_FIRST_WAYPOINT  // 飞向起始点
+    };
+    
+
+    enum RCLostAction {
+        GO_BACK, // 返航
+        LANDING, // 降落
+        HOVER    // 悬停
+    };
+    
+
+    enum WaypointHeadingMode {
+        FOLLOW_WAYLINE,     // 沿航线方向
+        MANUALLY,           // 手动控制
+        FIXED_YAW,              // 锁定当前偏航角
+        SMOOTH_TRANSITION,  // 自定义平滑过渡
+        TOWARD_POI          // 朝向兴趣点
+    };
+
+
+    enum WaypointTurnMode {
+        COORDINATE_TURN,                              // 协调转弯，不过点
+        TO_POINT_AND_STOP_WITH_DISCONTINUITY_CURVATURE, // 直线到点停
+        TO_POINT_AND_STOP_WITH_CONTINUITY_CURVATURE,    // 曲线到点停
+        TO_POINT_AND_PASS_WITH_CONTINUITY_CURVATURE     // 曲线过点不停
+    };
+
+
+    enum GimbalPitchMode {
+        MANUAL,
+        USE_POINT_SETTING
+    };
+
+
+    enum ActionTriggerType {
+        REACH_POINT,              // 到达航点时
+        BETWEEN_ADJACENT_POINTS,  // 航段触发
+        MULTIPLE_TIMING,          // 等时触发
+        MULTIPLE_DISTANCE         // 等距触发
+    };
+
+
+    struct WaypointHeadingParam {
+        WaypointHeadingMode waypoint_heading_mode;
+   
+        double waypoint_heading_angle;
+   
+        string waypoint_poi_point;
+    };
+
+ 
+    struct WaypointTurnParam {
+        WaypointTurnMode waypoint_turn_mode;
+        double waypoint_turn_damping_dist;
+
+        long use_straight_line;
+    };
+
+ 
+    struct Action {
+        long action_index;
+        long hover_time; 
+        double aircraft_heading;
+      
+        long use_global_image_format;
+  
+        string image_format;
+        double gimbal_yaw_rotate_angle;
+        double gimbal_pitch_rotate_angle;
+        double zoom;
+    };
+
+  
+    struct ActionTriggerParam {
+        ActionTriggerType action_trigger_type;
+        double action_trigger_param; 
+    };
+
+  
+    struct Waypoint {
+        long index;
+        double latitude;  
+        double longitude; 
+        double height;   
+     
+        double speed;
+        WaypointHeadingParam heading_param;
+        WaypointTurnParam turn_param;
+        double gimbal_pitch_angle;
+        
+        sequence<Action> actions;
+        ActionTriggerParam action_trigger_param;
+    };
+    struct SearchArea
+    {
+	    string area_name;
+		sequence<Waypoint>	area_points;	
+    };  
+    struct GenerateArea
+	{
+		string area_name;
+		sequence<Waypoint>	area_points;
+	};
+    struct Wayline {
+     
+        string wayline_id;
+        
+  
+        string wayline_name;
+        TemplateType template_type;
+        DroneType drone_type;
+        long sub_drone_type;
+        string payload_type; 
+        PayloadPosition payload_position;
+        string image_format; 
+        FinishAction finish_action;
+        RCLostAction execute_rc_lost_action;
+        double global_height;
+        double auto_flight_speed;
+        GimbalPitchMode gimbal_pitch_mode;
+        string take_off_ref_point; 
+
+      
+        WaypointHeadingParam global_waypoint_heading_param;
+        WaypointTurnParam global_waypoint_turn_param;
+
+     
+        sequence<Waypoint> way_point_list;
+    };
+
+	struct DroneTaskRealTimeStatus : BaseDeviceStatus {
+	    Wayline current_wayline; 
+		SearchArea current_SearchArea;
+		GenerateArea current_GenerateArea;
+        string drone_state;
+        string rev1;
+        string rev2;
+        string rev3;
+	};
+
+}; 
+};
+}; 
+};

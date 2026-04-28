@@ -1,0 +1,454 @@
+
+module casia {
+module device {
+module status {
+module dock2Status{
+	enum HomePositionValidity {
+		INVALID,
+		VALID
+	};
+
+	enum RTCMDeviceType {
+		DOCK
+	};
+
+	enum CalibrationType {
+		NOT_CALIBRATED,
+		SELF_CONVERGENCE,
+		MANUAL_CALIBRATION,
+		NETWORK_RTK_CALIBRATION
+	};
+
+	enum AirConditionerState {
+		IDLE_MODE,
+		COOLING_MODE,
+		HEATING_MODE,
+		DEHUMIDIFICATION_MODE,
+		COOLING_EXIT_MODE,
+		HEATING_EXIT_MODE,
+		DEHUMIDIFICATION_EXIT_MODE,
+		COOLING_READY_MODE,
+		HEATING_READY_MODE,
+		DEHUMIDIFICATION_READY_MODE
+	};
+
+	enum SilentMode {
+		NOT_SILENT,
+		SILENT
+	};
+
+	enum UserExperienceImprovement {
+		INITIAL_STATE,
+		REFUSE,
+		AGREE
+	};
+
+	enum DongleType {
+		OLD_DONGLE,
+		NEW_DONGLE_WITH_ESIM
+	};
+
+	enum ESIMActivationState {
+		NOT_ACTIVATED,
+		ACTIVATED
+	};
+
+	enum SIMCardState {
+		NOT_INSERTED,
+		INSERTED
+	};
+
+	enum SIMSlot {
+		UNKNOWN_SIM,
+		PHYSICAL_SIM,
+		ESIM
+	};
+
+	enum TelecomOperator {
+		UNKNOWN_OPERATOR,
+		MOBILE,
+		CHINA_UNICOM,
+		TELECOMMUNICATIONS
+	};
+
+	enum SIMType {
+		UNKNOWN_TYPE,
+		REGULAR_SIM,
+		TRI_NETWORK_SIM
+	};
+
+	enum MaintenanceState {
+		NO_MAINTENANCE,
+		WAITING_FOR_MAINTENANCE,
+		IN_MAINTENANCE
+	};
+
+	enum HeatState {
+		NOT_HEATING,
+		HEATING,
+		HEAT_PRESERVATION
+	};
+
+	enum SatelliteQuality {
+		GEAR_1,
+		GEAR_2,
+		GEAR_3,
+		GEAR_4,
+		GEAR_5,
+		RTK_FIXED
+	};
+
+	enum EmergencyStopState {
+		DISABLE_STOP,
+		ENABLE_STOP
+	};
+
+	enum ChargingState {
+		IDLE_CHARGING,
+		CHARGING
+	};
+
+	enum BatteryStoreMode {
+		SCHEDULE_MODE,
+		STANDBY_MODE
+	};
+
+	enum FirmwareConsistency {
+		NO_UPGRADE_REQUIRED,
+		CONSISTENCY_UPGRADE_REQUIRED
+	};
+
+	enum Rainfall {
+		NO_RAIN,
+		LIGHT_RAIN,
+		MODERATE_RAIN,
+		HEAVY_RAIN
+	};
+
+	enum VideoQuality {
+		ADAPTIVE,
+		SMOOTH,
+		STANDARD_DEFINITION,
+		HIGH_DEFINITION,
+		ULTRA_HIGH_DEFINITION
+	};
+
+	enum LiveStreamingState {
+		NOT_LIVE_STREAMING,
+		IN_LIVE_STREAMING
+	};
+
+	enum LinkState {
+		DISCONNECTED,
+		CONNECTED
+	};
+
+	enum LinkWorkMode {
+		SDR_MODE,
+		FOUR_G_FUSION_MODE
+	};
+
+	enum NetworkType {
+		FOUR_G,
+		ETHERNET
+	};
+
+	enum NetworkQuality {
+		NO_SIGNAL,
+		POOR,
+		MODERATE,
+		BETTER,
+		GOOD
+	};
+
+	enum SupplementaryLightState {
+		DISABLE_LIGHT,
+		ON_LIGHT
+	};
+
+	enum CoverState {
+		DISABLE_COVER,
+		ON_COVER,
+		HALF_OPEN,
+		ABNORMAL
+	};
+
+	enum DeviceOnlineStatus {
+		POWER_OFF,
+		POWER_ON
+	};
+
+	enum DevicePairedStatus {
+		NOT_PAIRED,
+		PAIRED
+	};
+
+	enum FlightTaskStepCode {
+		OPERATION_PREPARATION,
+		IN_FLIGHT_OPERATION,
+		POST_OPERATION_RECOVERY,
+		CUSTOM_FLIGHT_AREA_UPDATING,
+		TERRAIN_OBSTACLE_UPDATING,
+		MISSION_IDLE,
+		AIRCRAFT_EXCEPTION,
+		UNKNOWN_STATE
+	};
+
+	enum DockModeCode {
+		IDLE_DOCK,
+		ON_SITE_DEBUGGING,
+		REMOTE_DEBUGGING,
+		FIRMWARE_UPGRADE_IN_PROGRESS,
+		IN_OPERATION
+	};
+
+	enum FirmwareUpgradeStatus {
+		NOT_UPGRADED,
+		UPGRADING
+	};
+
+	// 结构体定义
+	struct RTCMInfo {
+		string mount_point;
+		string port;
+		string host;
+		RTCMDeviceType rtcm_device_type;
+		CalibrationType source_type;
+	};
+
+	struct CenterNode {
+		unsigned long sdr_id;
+		string sn;
+	};
+
+	struct LeafNode {
+		unsigned long sdr_id;
+		string sn;
+		unsigned long control_source_index;
+	};
+
+	struct WirelessLinkTopo {
+		sequence<unsigned long, 28> secret_code;
+		CenterNode center_node;
+		sequence<LeafNode> leaf_nodes;
+	};
+
+	struct AirConditioner {
+		AirConditionerState air_conditioner_state;
+		unsigned long switch_time;
+	};
+
+	struct ESIMInfo {
+		TelecomOperator telecom_operator;
+		boolean enabled;
+		string iccid;
+	};
+
+	struct SIMInfo {
+		TelecomOperator telecom_operator;
+		SIMType sim_type;
+		string iccid;
+	};
+
+	struct DongleInfo {
+		string imei;
+		DongleType dongle_type;
+		string eid;
+		ESIMActivationState esim_activate_state;
+		SIMCardState sim_card_state;
+		SIMSlot sim_slot;
+		sequence<ESIMInfo> esim_infos;
+		SIMInfo sim_info;
+	};
+
+	struct Battery {
+		unsigned long capacity_percent;
+		unsigned long index;
+		unsigned long voltage;
+		double temperature;
+	};
+
+	struct DroneBatteryMaintenanceInfo {
+		MaintenanceState maintenance_state;
+		unsigned long maintenance_time_left;
+		HeatState heat_state;
+		sequence<Battery> batteries;
+	};
+
+	enum IsWithMaintenance {
+		WITHOUT_MAINTENANCE,
+		WITH_MAINTENANCE
+	};
+
+	enum AircraftMaintenanceLevel {
+		NONE_MAINTENANCE,
+		REGULAR_MAINTENANCE,
+		DEEP_MAINTENANCE
+	};
+
+	struct MaintainStatusItem {
+		IsWithMaintenance state;
+		AircraftMaintenanceLevel last_maintain_type;
+		int64 last_maintain_time;
+		unsigned long last_maintain_work_sorties;
+	};
+
+	struct MaintainStatus {
+		sequence<MaintainStatusItem> maintain_status_array;
+	};
+
+	struct PositionState {
+		unsigned long is_calibration;
+		unsigned long is_fixed;
+		SatelliteQuality quality;
+		unsigned long gps_number;
+		unsigned long rtk_number;
+	};
+
+	struct DroneChargeState {
+		unsigned long capacity_percent;
+		ChargingState state;
+	};
+
+	struct BackupBattery {
+		unsigned long switch_state;
+		unsigned long voltage;
+		double temperature;
+	};
+
+	struct AlternateLandPoint {
+		double longitude;
+		double latitude;
+		double safe_land_height;
+		unsigned long is_configured;
+		double height;
+	};
+
+	struct StorageCapacity {
+		unsigned long total;
+		unsigned long used;
+	};
+	
+	struct VideoList {
+		string video_index;
+		string video_type;
+		sequence<string> switchable_video_types;
+	};
+
+	struct CameraList {
+		string camera_index;
+		unsigned long available_video_number;
+		unsigned long coexist_video_number_max;
+		sequence<VideoList> video_list;
+	};
+
+	struct DeviceList {
+		string sn;
+		unsigned long available_video_number;
+		unsigned long coexist_video_number_max;
+		sequence<CameraList> camera_list;
+	};
+
+	struct LiveCapacity {
+		unsigned long available_video_number;
+		unsigned long coexist_video_number_max;
+		sequence<DeviceList> device_list;
+	};
+
+	struct LiveStatusItem {
+		string video_id;
+		string video_type;
+		VideoQuality video_quality;
+		LiveStreamingState status;
+		unsigned long error_status;
+	};
+
+	struct LiveStatus {
+		sequence<LiveStatusItem> live_status;
+	};
+
+	struct WirelessLink {
+		unsigned long dongle_number;
+		LinkState four_g_link_state;
+		LinkState sdr_link_state;
+		LinkWorkMode link_workmode;
+		unsigned long sdr_quality;
+		unsigned long four_g_quality;
+		unsigned long four_g_uav_quality;
+		unsigned long four_g_gnd_quality;
+		double sdr_freq_band;
+		double four_g_freq_band;
+	};
+
+	struct MediaFileDetail {
+		unsigned long remain_upload;
+	};
+
+	struct NetworkState {
+		NetworkType type;
+		NetworkQuality quality;
+		double rate;
+	};
+
+	struct SubDevice {
+		string device_sn;
+		string device_model_key;
+		DeviceOnlineStatus device_online_status;
+		DevicePairedStatus device_paired;
+	};
+
+	// 主结构体
+	struct dock2RealTimeStatus {
+		HomePositionValidity home_position_is_valid;
+		double heading;
+		RTCMInfo rtcm_info;
+		WirelessLinkTopo wireless_link_topo;
+		AirConditioner air_conditioner;
+		boolean air_transfer_enable;
+		SilentMode silent_mode;
+		UserExperienceImprovement user_experience_improvement;
+		sequence<DongleInfo> dongle_infos;
+		DroneBatteryMaintenanceInfo drone_battery_maintenance_info;
+		MaintainStatus maintain_status;
+		PositionState position_state;
+		EmergencyStopState emergency_stop_state;
+		DroneChargeState drone_charge_state;
+		BackupBattery backup_battery;
+		unsigned long alarm_state;
+		BatteryStoreMode battery_store_mode;
+		int64 activation_time;
+		double height;
+		AlternateLandPoint alternate_land_point;
+		FirmwareConsistency compatible_status;
+		int64 acc_time;
+		int64 first_power_on;
+		StorageCapacity storage;
+		double working_current;
+		unsigned long working_voltage;
+		double humidity;
+		double temperature;
+		double environment_temperature;
+		double wind_speed;
+		Rainfall rainfall;
+		LiveCapacity live_capacity;
+		LiveStatus live_status;
+		WirelessLink wireless_link;
+		MediaFileDetail media_file_detail;
+		unsigned long job_number;
+		boolean drone_in_dock;
+		NetworkState network_state;
+		SupplementaryLightState supplement_light_state;
+		CoverState cover_state;
+		SubDevice sub_device;
+		FlightTaskStepCode flighttask_step_code;
+		DockModeCode mode_code;
+		FirmwareUpgradeStatus firmware_upgrade_status;
+		string firmware_version;
+		double latitude;
+		double longitude;
+		string dock_sn;
+	};
+}; // module dock2Status
+}; // module status
+}; // module device
+}; // module casia

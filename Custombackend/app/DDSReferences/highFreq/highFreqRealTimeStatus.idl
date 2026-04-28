@@ -1,0 +1,24 @@
+
+
+module casia {
+module device {
+module status {
+module drcstatus{
+struct highFreqRealTimeStatus {
+	double attitude_head;
+	double latitude;
+	double longitude;
+	double height;
+	double speed_x;
+	double speed_y;
+	double speed_z;
+	double gimbal_pitch;
+	double gimbal_roll;
+	double gimbal_yaw;
+	string drone_sn;
+	string dock_sn;
+};
+}; // module drcstatus
+}; // module status
+}; // module device
+}; // module casia

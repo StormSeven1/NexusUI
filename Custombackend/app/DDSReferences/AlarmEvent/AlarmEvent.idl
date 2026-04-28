@@ -1,0 +1,111 @@
+#include "./BaseEvent.idl"
+module casia {
+module event {
+module alarm {
+
+/**
+ * 告警类型枚举
+ */
+enum AlarmType {
+    TRACK_AREA,      // 航迹区域告警
+    TARGET_BEHAVIOR, // 目标行为告警
+    TARGET_ATTR,     // 目标属性告警
+    DEVICE,          // 设备告警
+    CUSTOM_TYPE          // 自定义告警
+    };
+
+/**
+ * 告警航迹类型枚举
+ */
+enum TrackType {
+    FUSE,                 // 融合航迹
+    BIRD                  // 鸟航迹
+};
+
+/**
+ * 告警状态枚举
+ */
+enum AlarmStatus {
+    ACTIVE,                 // 活跃
+    CANCELED,               // 已取消
+    DELETED,                // 已删除
+    FOCUS,                  // 重点关注
+    AUTO_RESOLVED           // 自动取消
+};
+
+/**
+ * 告警任务状态枚举
+ */
+enum AlarmTaskStatus {
+    UNASSIGNED,     // 未分配资源
+    ASSIGNED,       // 已分配资源查证中
+    VERIFY_FAILED,  // 查证失败
+    VERIFY_SUCCESS  // 查证成功
+};
+
+
+
+/**
+* 目标检测框结构
+*/
+struct BoundingBox {
+    string cameraId;                // 相关相机ID（如果有）
+	string syncHeader;     // 同步头（64字符）
+	short x;              // 检测框左上角x坐标
+	short y;              // 检测框左上角y坐标
+	short width;          // 检测框宽度
+	short height;         // 检测框高度
+	long boxId;           // 检测框ID
+	long trackId;         // 关联航迹Id 如果有
+	long classId;          // 目标类型ID
+	long behaviorId;         //目标行为ID
+};
+
+struct TrackData{
+    unsigned long trackId;
+    unsigned long mmsi;
+    double longitude;
+    double latitude;
+    double course;
+    double speed;
+    double height;
+    unsigned long timeStamp;
+    TrackType trackType;
+};
+
+struct GeoPosition {
+    double longitude;        // 经度
+    double latitude;         // 纬度
+    double altitude;         // 高度（米）
+};
+
+/**
+ * 告警事件结构
+ */
+struct AlarmInfo {
+    string alarmId;   //告警ID
+    sequence<AlarmType> alarmType;            // 告警类型 可以多种
+    AlarmStatus status;             // 告警状态
+    AlarmTaskStatus taskStatus;      //告警任务状态
+    string alarmContent;             //告警内容
+    long alarmLevel;                //告警级别 1-低 2-中 3-高
+    string areaId;                    //相关区域Id
+	string areaName;                //相关区域名称
+    string trackId;                 // 相关航迹ID（如果有）
+    long classId;              // 目标类型ID（如果有）
+    long behaviorId;         //行为ID 
+    GeoPosition position;           // 告警发生位置(经纬高)
+    string updateTime;        // 告警更新时间
+    string resolvedTime;            // 解决时间（如果已解决）
+    string resolvedBy;              // 解决用户ID（如果已解决）
+    string resolutionDetails;       // 解决详情（如果已解决）
+    sequence<string> alarmRuleId;             //相关告警规则id
+    BoundingBox targetBox;          // 目标检测框（如果有）
+    TrackData track;   //航迹属性
+};
+struct AlarmEvent : BaseEvent {
+	sequence<AlarmInfo> alarm; //告警信息列表
+};
+}; // module alarm
+}; // module event
+};

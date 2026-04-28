@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "map-location": {
+      "command": "python",
+      "args": ["D:/JavaProjects/12zhi/backend/mcp_server.py"],
+      "env": {}
+    }
+  }
+}

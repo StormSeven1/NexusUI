@@ -1,0 +1,40 @@
+module casia {
+module event {
+
+/**
+ * 事件严重程度枚举
+ */
+enum EventSeverity {
+    INFO,               // 信息
+    WARNING,            // 警告
+    ERROR_,              // 错误
+    CRITICAL            // 严重
+};
+
+/**
+ * 事件来源类型枚举
+ */
+enum EventSourceType {
+    SYSTEM,             // 系统
+    DEVICE,             // 设备
+    USER,               // 用户
+    TASK,               // 任务
+    TRACK               // 航迹
+};
+
+/**
+ * 基础事件结构
+ */
+struct BaseEvent {
+    string eventId;           		// 事件唯一标识符
+    string sourceId;               // 事件源ID
+    EventSourceType sourceType;    // 事件源类型
+    EventSeverity severity;        // 事件严重程度
+    string message;                // 事件消息
+    string timestamp;              // 事件发生时间戳
+    string userId;                 // 关联用户ID（如果有）
+    sequence<string> deviceId;               // 关联设备ID（如果有）
+};
+
+}; // module event
+}; // module casia

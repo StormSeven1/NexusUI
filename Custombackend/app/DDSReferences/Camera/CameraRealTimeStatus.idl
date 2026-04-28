@@ -1,0 +1,46 @@
+
+#include "./BaseDeviceStatus.idl"
+
+module casia {
+module device {
+module status {
+
+/**
+ * 云台状态
+ */
+struct PTZStatus {
+    double pan;             // 水平角度
+    double tilt;            // 垂直角度
+    double zoom;            // 变焦倍数
+};
+
+/**
+ * 视场角状态
+ */
+struct FOVStatus {
+    double hs;              // 水平视场角
+    double vs;              // 垂直视场角
+};
+
+/**
+ * 相机实时状态
+ */
+struct CameraRealTimeStatus : BaseDeviceStatus {
+    PTZStatus ptz;          // 云台状态
+	PTZStatus originPtz;    //添加偏移值的ptz
+    double focus;           // 聚焦值
+    FOVStatus fov;          // 视场角状态
+    double panoOffset;      // 相机偏移角
+	long trackID;
+	double visibility;	 	//能见度
+	double reverse1; //相机权限位置
+	double reverse2;//相机速度补偿参数
+	double reverse3;
+	double reverse4;
+	double reverse5;
+	double reverse6;
+};
+
+}; // module status
+}; // module device
+}; // module casia

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <profiles>
+        <participant profile_name="track_publisher_forward_RadarTrack1">
+            <rtps>
+                <builtin>
+                    <discovery_config>
+                        <discoveryProtocol>CLIENT</discoveryProtocol>
+                        <discoveryServersList>
+                                    <locator>
+                                        <udpv4>
+                                            <!-- 发现服务器IP和端口 -->
+                                            <address>192.168.18.141</address>
+                                            <port>11611</port>
+                                        </udpv4>
+                                    </locator>
+                        </discoveryServersList>
+                    </discovery_config>
+                </builtin>
+                <defaultMulticastLocatorList>
+                    <locator>
+                        <udpv4>
+                            <!-- 组播的目标IP和端口 -->
+                            <address>239.255.0.1</address>
+                            <port>12355</port>
+                        </udpv4>
+                    </locator>
+                </defaultMulticastLocatorList>
+            </rtps>
+        </participant>
+    </profiles>
+</dds>

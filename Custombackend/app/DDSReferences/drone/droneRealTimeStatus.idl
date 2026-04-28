@@ -1,0 +1,470 @@
+module casia {
+	module device {
+		module status {
+			module dronestatus{
+
+        // 基本类型定义
+        typedef sequence<octet, 28> secret_code_type;
+        typedef sequence<string> string_array;
+        typedef sequence<int32> int_array;
+        typedef sequence<float> float_array;
+        typedef sequence<double> double_array;
+
+        // 枚举类型定义
+        enum CameraMode {
+            PHOTO_MODE,
+            VIDEO_MODE,
+            SMART_LOW_LIGHT_MODE,
+            PANORAMA_MODE
+        };
+
+        enum PhotoState {
+            PHOTO_IDLE,
+            PHOTO_IN_PROGRESS
+        };
+
+        enum RecordingState {
+            RECORDING_IDLE,
+            RECORDING_IN_PROGRESS
+        };
+
+        enum WideExposureMode {
+            AUTO_EXPOSURE,
+            SHUTTER_PRIORITY,
+            APERTURE_PRIORITY,
+            MANUAL_EXPOSURE
+        };
+
+        enum ZoomFocusMode {
+            MF_MODE,
+            AFS_MODE,
+            AFC_MODE
+        };
+
+        enum ZoomFocusState {
+            FOCUS_IDLE,
+            FOCUS_IN_PROGRESS,
+            FOCUS_SUCCESS,
+            FOCUS_FAILED
+        };
+
+        enum IrMeteringMode {
+            IR_OFF,
+            IR_POINT,
+            IR_AREA
+        };
+
+        enum DongleType {
+			DONGLE0,
+			DONGLE1,
+			DONGLE2,
+			DONGLE3,
+			DONGLE4,
+			DONGLE5,
+            OLD_DONGLE,
+			DONGLE7,
+			DONGLE8,
+			DONGLE9,
+            NEW_DONGLE_WITH_ESIM 
+        };
+
+        enum EsimActivateState {
+            ESIM_INACTIVE,
+            ESIM_ACTIVE
+        };
+
+        enum SimCardState {
+            SIM_NOT_INSERTED,
+            SIM_INSERTED
+        };
+
+        enum SimSlot {
+            SIM_SLOT_UNKNOWN,
+            SIM_SLOT_PHYSICAL,
+            SIM_SLOT_ESIM
+        };
+
+        enum TelecomOperator {
+            OPERATOR_UNKNOWN,
+            OPERATOR_CHINA_MOBILE,
+            OPERATOR_CHINA_UNICOM,
+            OPERATOR_CHINA_TELECOM
+        };
+
+        enum SimType {
+            SIM_TYPE_UNKNOWN,
+            SIM_TYPE_NORMAL,
+            SIM_TYPE_TRIPLE_NETWORK
+        };
+
+        enum RthMode {
+            SMART_HEIGHT_MODE,
+            SET_HEIGHT_MODE
+        };
+
+        enum ObstacleAvoidanceState {
+            AVOIDANCE_OFF,
+            AVOIDANCE_ON
+        };
+
+        enum PositionFixedStatus {
+            POSITION_NOT_STARTED,
+            POSITION_CONVERGING,
+            POSITION_SUCCESS,
+            POSITION_FAILED
+        };
+
+        enum PositionQuality {
+			QUALITY_0,
+            QUALITY_1,
+            QUALITY_2,
+            QUALITY_3,
+            QUALITY_4,
+            QUALITY_5,
+			QUALITY_6,
+            QUALITY_7,
+            QUALITY_8,
+            QUALITY_9,
+            QUALITY_RTK_FIXED 
+        };
+
+        enum GearMode {
+            GEAR_A,
+            GEAR_P,
+            GEAR_NAV,
+            GEAR_FPV,
+            GEAR_FARM,
+            GEAR_S,
+            GEAR_F,
+            GEAR_M,
+            GEAR_G,
+            GEAR_T
+        };
+
+        enum ModeCodeReason {
+            REASON_NONE,
+            REASON_LOW_BATTERY,
+            REASON_LOW_VOLTAGE,
+            REASON_CRITICAL_LOW_VOLTAGE,
+            REASON_REMOTE_CONTROL,
+            REASON_APP_REQUEST,
+            REASON_RC_LOST,
+            REASON_EXTERNAL_DEVICE,
+            REASON_AIRPORT_GEOZONE,
+            REASON_TOO_CLOSE_TO_HOME,
+            REASON_TOO_FAR_FROM_HOME,
+            REASON_WAYPOINT_MISSION,
+            REASON_OVER_HOME_POINT,
+            REASON_ALTITUDE_LIMIT,
+            REASON_FORCE_LANDING,
+            REASON_AIRCRAFT_AVOIDANCE,
+            REASON_ALTITUDE_CONTROL_FAILURE,
+            REASON_SMART_LOW_BATTERY,
+            REASON_AP_CONTROL,
+            REASON_HARDWARE_ERROR,
+            REASON_GROUND_PROTECTION,
+            REASON_RTH_CANCELED,
+            REASON_OBSTACLE_AVOIDANCE,
+            REASON_STRONG_WIND
+        };
+
+        enum ModeCode {
+            STANDBY,
+            TAKEOFF_PREPARING,
+            TAKEOFF_READY,
+            MANUAL_FLIGHT,
+            AUTO_TAKEOFF,
+            WAYPOINT_FLIGHT,
+            PANORAMA_PHOTO,
+            SMART_FOLLOW,
+            ADS_B_AVOIDANCE,
+            AUTO_RETURN,
+            AUTO_LANDING,
+            FORCE_LANDING,
+            THREE_BLADE_LANDING,
+            UPGRADING,
+            DISCONNECTED,
+            APAS,
+            VIRTUAL_JOYSTICK,
+            COMMAND_FLIGHT,
+            RTK_CONVERGENCE,
+            AIRPORT_SITE_SELECTION
+        };
+
+        enum WindDirection {
+            NORTH,
+            NORTHEAST,
+            EAST,
+            SOUTHEAST,
+            SOUTH,
+            SOUTHWEST,
+            WEST,
+            NORTHWEST
+        };
+
+        enum WatermarkLayout {
+            TOP_LEFT,
+            BOTTOM_LEFT,
+            TOP_RIGHT,
+            BOTTOM_RIGHT
+        };
+
+        // 子结构体定义
+        struct SdrNode {
+            int32 sdr_id;
+            string sn;
+        };
+
+        struct ControlSourceNode {
+            int32 sdr_id;
+            string sn;
+            int32 control_source_index;
+        };
+
+        struct WirelessLinkTopo {
+            secret_code_type secret_code;
+            SdrNode center_node;
+            sequence<ControlSourceNode> leaf_nodes;
+        };
+
+        struct LiveviewWorldRegion {
+            float left;
+            float top;
+            float right;
+            float bottom;
+        };
+
+        struct TemperaturePoint {
+            double x;
+            double y;
+            double temperature;
+        };
+
+        struct IrMeteringArea {
+            double x;
+            double y;
+            double width;
+            double height;
+            double aver_temperature;
+            TemperaturePoint min_temperature_point;
+            TemperaturePoint max_temperature_point;
+        };
+
+        struct EsimInfo {
+            TelecomOperator telecom_operator;
+            boolean enabled;
+            string iccid;
+        };
+
+        struct SimInfo {
+            TelecomOperator telecom_operator;
+            SimType sim_type;
+            string iccid;
+        };
+
+        struct DongleInfo {
+            string imei;
+            DongleType dongle_type;
+            string eid;
+            EsimActivateState esim_activate_state;
+            SimCardState sim_card_state;
+            SimSlot sim_slot;
+            sequence<EsimInfo> esim_infos;
+            SimInfo sim_info;
+        };
+
+        struct MaintainStatusItem {
+            int32 state;
+            int32 last_maintain_type;
+            int64 last_maintain_time;
+            int32 last_maintain_flight_time;
+            int32 last_maintain_flight_sorties;
+        };
+
+        struct MaintainStatus {
+            sequence<MaintainStatusItem> maintain_status_array;
+        };
+
+        struct TypeSubtypeGimbalIndex {
+            double gimbal_pitch;
+            double gimbal_roll;
+            double gimbal_yaw;
+            string payload_index;
+            double zoom_factor;
+        };
+
+        struct PositionState {
+            PositionFixedStatus is_fixed;
+            PositionQuality quality;
+            int32 gps_number;
+            int32 rtk_number;
+        };
+
+        struct StorageInfo {
+            int32 total;
+            int32 used;
+        };
+
+        struct BatteryInfo {
+            int32 capacity_percent;
+            int32 index;
+            string sn;
+            int32 type;
+            int32 sub_type;
+            string firmware_version;
+            int32 loop_times;
+            int32 voltage;
+            float temperature;
+            int32 high_voltage_storage_days;
+        };
+
+        struct BatteryStatus {
+            int32 capacity_percent;
+            int32 remain_flight_time;
+            int32 return_home_power;
+            int32 landing_power;
+            sequence<BatteryInfo> batteries;
+        };
+
+        struct ObstacleAvoidance {
+            ObstacleAvoidanceState horizon;
+            ObstacleAvoidanceState upside;
+            ObstacleAvoidanceState downside;
+        };
+
+        struct CameraWatermarkSettings {
+            int32 global_enable;
+            int32 drone_type_enable;
+            int32 drone_sn_enable;
+            int32 datetime_enable;
+            int32 gps_enable;
+            int32 user_custom_string_enable;
+            string user_custom_string;
+            int32 layout;
+        };
+
+        struct CameraStatus {
+            int32 remain_photo_num;
+            int32 remain_record_duration;
+            int32 record_time;
+            string payload_index;
+            CameraMode camera_mode;
+            PhotoState photo_state;
+            boolean screen_split_enable;
+            RecordingState recording_state;
+            float zoom_factor;
+            float ir_zoom_factor;
+            LiveviewWorldRegion liveview_world_region;
+            string_array photo_storage_settings;
+            string_array video_storage_settings;
+            WideExposureMode wide_exposure_mode;
+            int32 wide_iso;
+            int32 wide_shutter_speed;
+            int32 wide_exposure_value;
+            WideExposureMode zoom_exposure_mode;
+            int32 zoom_iso;
+            int32 zoom_shutter_speed;
+            int32 zoom_exposure_value;
+            ZoomFocusMode zoom_focus_mode;
+            int32 zoom_focus_value;
+            int32 zoom_max_focus_value;
+            int32 zoom_min_focus_value;
+            int32 zoom_calibrate_farthest_focus_value;
+            int32 zoom_calibrate_nearest_focus_value;
+            ZoomFocusState zoom_focus_state;
+            IrMeteringMode ir_metering_mode;
+            TemperaturePoint ir_metering_point;
+            IrMeteringArea ir_metering_area;
+        };
+
+        // 主结构体
+        struct droneRealTimeStatus {
+            // 图传连接信息
+            string best_link_gateway;
+            WirelessLinkTopo wireless_link_topo;
+            
+            // 相机信息
+            sequence<CameraStatus> cameras;
+            
+            // 飞行安全信息
+            string flysafe_database_version;
+            boolean offline_map_enable;
+            
+            // 4G Dongle信息
+            sequence<DongleInfo> dongle_infos;
+            
+            // 返航设置
+            RthMode current_rth_mode;
+            RthMode rth_mode;
+            
+            // 避障设置
+            ObstacleAvoidance obstacle_avoidance;
+            
+            // 飞行限制状态
+            int32 is_near_area_limit;
+            int32 is_near_height_limit;
+            int32 height_limit;
+            
+            // 设备状态
+            int32 night_lights_state;
+            int64 activation_time;
+            MaintainStatus maintain_status;
+            int32 total_flight_sorties;
+            TypeSubtypeGimbalIndex type_subtype_gimbalindex;
+            string track_id;
+            
+            // 定位信息
+            PositionState position_state;
+            StorageInfo storage;
+            
+            // 电池信息
+            BatteryStatus battery;
+            float total_flight_distance;
+            int32 total_flight_time;
+            int32 serious_low_battery_warning_threshold;
+            int32 low_battery_warning_threshold;
+            
+            // 控制源
+            string control_source;
+            
+            // 环境信息
+            WindDirection wind_direction;
+            float wind_speed;
+            float home_distance;
+            float home_latitude;
+            float home_longitude;
+            
+            // 姿态信息
+            int32 attitude_head;
+            float attitude_roll;
+            float attitude_pitch;
+            float elevation;
+            float height;
+            float latitude;
+            float longitude;
+            float vertical_speed;
+            float horizontal_speed;
+            
+            // 固件信息
+            int32 firmware_upgrade_status;
+            int32 compatible_status;
+            string firmware_version;
+            
+            // 飞行模式
+            GearMode gear;
+            ModeCodeReason mode_code_reason;
+            float commander_flight_height;
+            int32 commander_flight_mode;
+            int32 commander_mode_lost_action;
+            
+            // 水印设置
+            CameraWatermarkSettings camera_watermark_settings;
+            
+            // 飞行状态
+            ModeCode mode_code;
+			string drone_sn;
+        };
+			};	
+		};
+	};
+};

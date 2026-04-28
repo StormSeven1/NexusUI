@@ -1,0 +1,25 @@
+
+module casia {
+module device {
+module detection {
+
+struct BoundingBox {
+	short x;              // 检测框左上角x坐标
+	short y;              // 检测框左上角y坐标
+	short width;          // 检测框宽度
+	short height;         // 检测框高度
+	long boxId;           // 检测框ID
+	long classId;          // 目标类型ID
+};
+
+
+struct SingleTrackResult {
+	string cameraId;       // 相机ID
+	string syncHeader;     // 同步头（64字符）
+	long boxCount;         // 检测框个数（固定为1）
+	BoundingBox box;       // 检测框信息
+};
+
+}; // module detection 
+}; // module device
+}; // module casia
