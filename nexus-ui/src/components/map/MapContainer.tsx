@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useAppStore } from "@/stores/app-store";
 import { Map as MapIcon, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { WorkflowStatusOverlay } from "@/components/layout/WorkflowStatusOverlay";
 // import { MiniMap } from "./MiniMap"; // 小地图暂隐藏，恢复时取消注释
 
 const Map2D = dynamic(() => import("./Map2D").then((m) => m.Map2D), {
@@ -85,6 +86,9 @@ export function MapContainer() {
           <div className="absolute right-0 top-1/2 h-px w-2 -translate-y-1/2 bg-nexus-text-primary" />
         </div>
       </div> */}
+
+      {/* 工作流状态浮层（地图上方居中） */}
+      <WorkflowStatusOverlay />
 
       {/* 边缘暗角 */}
       <div className="pointer-events-none absolute inset-0 z-[4] shadow-[inset_0_0_100px_rgba(10,10,15,0.8)]" />

@@ -27,6 +27,8 @@ import { AlertTriangle, Shield, Target, Radar, X, Loader2, Play, ChevronLeft } f
 import { cn } from "@/lib/utils";
 import { getHttpChatConfig } from "@/lib/map-app-config";
 import { toast } from "sonner";
+import { useWorkflowStatusStore } from "@/stores/workflow-status-store";
+import { WorkflowStatusWsClient } from "@/lib/workflow/workflow-status-ws-client";
 
 /** 快捷工作流配置项 */
 export interface QuickWorkflowItem {
@@ -211,7 +213,16 @@ export function QuickWorkflowModal({ open, onClose }: Props) {
       const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
       clearTimeout(tid);
       if (!res.ok) { toast.error(`工作流「${wf.name}」启动失败: HTTP ${res.status}`); }
-      else { toast.success(`工作流「${wf.name}」已启动`); }
+      else {
+        toast.success(`工作流「${wf.name}」已启动`);
+        // 启动独立 WS 接收状态推送
+        const wsClient = new WorkflowStatusWsClient();
+        wsClient.start();
+        // 写入状态 store → Overlay 自动出现，wsClient 存入 store 供关闭时断开
+        useWorkflowStatusStore.getState().addWorkflow({
+          threadId, workflowId: wf.id, name: wf.name, startedAt: Date.now(),
+        }, wsClient);
+      }
     } catch (e) {
       toast.error(`工作流「${wf.name}」异常: ${e instanceof Error ? e.message : "网络错误"}`);
     } finally {

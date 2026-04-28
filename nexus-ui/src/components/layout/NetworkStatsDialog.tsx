@@ -67,10 +67,10 @@ export function NetworkStatsDialog({ open, onClose }: Props) {
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative z-10 w-[880px] max-h-[620px] overflow-hidden rounded-xl border border-white/[0.08] bg-[#1a1a2e]/95 shadow-2xl flex flex-col">
         {/* 标题栏 */}
-        <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-4">
+        <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-2.5">
           <div>
-            <h2 className="text-xl font-semibold text-nexus-text-primary">网络数据接收统计</h2>
-            <p className="mt-1 text-sm text-nexus-text-muted">实时监控各数据源接收间隔（超时阈值 8s）</p>
+            <h2 className="text-sm font-semibold text-nexus-text-primary">网络数据接收统计</h2>
+            <p className="text-[10px] text-nexus-text-muted">实时监控各数据源接收间隔（超时阈值 8s）</p>
           </div>
           <button onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-md text-nexus-text-muted hover:bg-white/10">
             <X size={20} />
@@ -78,36 +78,36 @@ export function NetworkStatsDialog({ open, onClose }: Props) {
         </div>
 
         {/* 卡片网格 */}
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="flex-1 overflow-y-auto p-3">
           {groups.length === 0 && (
             <div className="flex items-center justify-center h-40 text-sm text-nexus-text-muted">
               暂无数据，等待 WebSocket 连接...
             </div>
           )}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-5 gap-2">
             {groups.map(([category, items]) => (
               <div
                 key={category}
-                className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-4 py-3"
+                className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-2"
               >
                 {/* 卡片标题 */}
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-sm font-semibold text-nexus-text-primary">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-nexus-text-primary">
                     {CATEGORY_LABELS[category] ?? category}
                   </span>
                   <span className="text-[10px] text-nexus-text-muted">{items.length} 项</span>
                 </div>
                 {/* 卡片内容 */}
-                <div className="space-y-1">
+                <div className="space-y-0">
                   {items.map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-white/[0.04]">
-                      <span className="text-xs text-nexus-text-secondary flex-1 truncate" title={item.label}>
+                    <div key={idx} className="flex items-center gap-2 rounded px-1.5 py-0.5 hover:bg-white/[0.04]">
+                      <span className="text-[11px] text-nexus-text-secondary flex-1 truncate" title={item.label}>
                         {item.label}
                       </span>
-                      <span className="text-[10px] text-nexus-text-muted tabular-nums">
+                      <span className="text-[9px] text-nexus-text-muted tabular-nums">
                         {item.count}条
                       </span>
-                      <span className={`text-xs font-mono font-semibold tabular-nums ${
+                      <span className={`text-[11px] font-mono font-semibold tabular-nums ${
                         item.isTimeout ? "text-red-400" : "text-emerald-400"
                       }`}>
                         {item.displayText}
@@ -121,7 +121,7 @@ export function NetworkStatsDialog({ open, onClose }: Props) {
         </div>
 
         {/* 底部说明 */}
-        <div className="border-t border-white/[0.06] px-6 py-3 flex items-center gap-4 text-xs text-nexus-text-muted">
+        <div className="border-t border-white/[0.06] px-4 py-2 flex items-center gap-4 text-[10px] text-nexus-text-muted">
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400" />
             正常 (&le;8s)

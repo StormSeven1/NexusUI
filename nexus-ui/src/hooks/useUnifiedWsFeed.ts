@@ -873,6 +873,7 @@ function dispatchWsMessage(raw: string) {
         const dockSn = String(d.dock_sn ?? d.sn ?? "").trim();
         if (!dockSn) break;
         useDroneStore.getState().setDockStatus(d);
+        recordDockReceived();
         /* dock_status 只更新已有机场资产，不新增。
          * 机场用 dockSn 做 key（机场没有 entityId） */
         const existingAsset = useAssetStore.getState().assets.find((x) => x.id === dockSn);
@@ -898,19 +899,28 @@ function dispatchWsMessage(raw: string) {
       case "dronestatus":
       case "drone_status": {
         const d = msg.data as Record<string, unknown> | undefined;
-        if (d) useDroneStore.getState().setDroneStatus(d);
+        if (d) {
+          useDroneStore.getState().setDroneStatus(d);
+          recordDroneReceived();
+        }
         break;
       }
       case "droneflightpath":
       case "drone_flight_path": {
         const d = msg.data as Record<string, unknown> | undefined;
-        if (d && typeof d === "object") useDroneStore.getState().setDroneFlightPath(d);
+        if (d && typeof d === "object") {
+          useDroneStore.getState().setDroneFlightPath(d);
+          recordDroneFlightPathReceived();
+        }
         break;
       }
       case "highfreq":
       case "high_freq": {
         const d = msg.data as Record<string, unknown> | undefined;
-        if (d && typeof d === "object") useDroneStore.getState().setHighFreq(d);
+        if (d && typeof d === "object") {
+          useDroneStore.getState().setHighFreq(d);
+          recordDroneReceived();
+        }
         break;
       }
       case "cleardrones":

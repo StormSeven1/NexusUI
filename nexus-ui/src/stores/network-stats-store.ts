@@ -103,11 +103,10 @@ export function recordTrackReceived(isAirTrack: boolean) {
   bump(key);
 }
 
-/** 记录无人机数据（按 SN 区分） */
-export function recordDroneReceived(deviceSn: string) {
-  const key = `drone:${deviceSn}`;
-  ensureEntry(key, deviceSn, "无人机");
-  bump(key);
+/** 记录无人机数据（统一归入"无人机"分类，不按 SN 区分） */
+export function recordDroneReceived() {
+  ensureEntry("drone", "无人机", "无人机");
+  bump("drone");
 }
 
 /** 将 asset_type（由 wsEntityTypeRaw 解析）映射为可读大类名 */
@@ -153,20 +152,16 @@ export function recordCameraReceived(entityId?: string) {
   bump(key);
 }
 
-/** 记录机场数据 */
-export function recordDockReceived(dockSn?: string) {
-  const key = dockSn ? `dock:${dockSn}` : "dock";
-  const label = dockSn ? `机场 ${dockSn}` : "机场";
-  ensureEntry(key, label, "机场");
-  bump(key);
+/** 记录机场数据（统一归入"无人机"分类） */
+export function recordDockReceived() {
+  ensureEntry("dock", "机场", "无人机");
+  bump("dock");
 }
 
-/** 记录无人机航线数据 */
-export function recordDroneFlightPathReceived(deviceSn?: string) {
-  const key = deviceSn ? `flight_path:${deviceSn}` : "flight_path";
-  const label = deviceSn ? `航线 ${deviceSn}` : "航线";
-  ensureEntry(key, label, "航线");
-  bump(key);
+/** 记录无人机航线数据（统一归入"无人机"分类） */
+export function recordDroneFlightPathReceived() {
+  ensureEntry("flight_path", "航线", "无人机");
+  bump("flight_path");
 }
 
 // ── 读取方法 ──
@@ -200,7 +195,7 @@ export function getNetworkStatsSnapshot(): NetworkStatDisplay[] {
     result.push(computeDisplay(entry, now));
   }
   // 按分类排序
-  const categoryOrder = ["航迹", "无人机", "实体", "告警", "区域", "光电", "机场", "航线"];
+  const categoryOrder = ["航迹", "无人机", "实体", "告警", "区域", "光电"];
   result.sort((a, b) => {
     const ci = categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category);
     if (ci !== 0) return ci;

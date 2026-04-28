@@ -3,6 +3,7 @@
 import { useRef, useEffect } from "react";
 import { ChatMessage } from "./ChatMessage";
 import { DisposalPlanFeed } from "./DisposalPlanFeed";
+import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import type { UIMessage } from "ai";
 import { Bot, Sparkles } from "lucide-react";
 
@@ -27,6 +28,8 @@ export function ChatMessageList({
   onHintClick?: (text: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const disposalBlocks = useDisposalPlanStore((s) => s.blocks);
+  const hasContent = messages.length > 0 || disposalBlocks.length > 0;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -63,7 +66,7 @@ export function ChatMessageList({
     <div className="flex-1 overflow-y-auto">
       {/* 会话为空时原先整页只渲染欢迎区，未挂载 DisposalPlanFeed，导致一键处置/WS 方案写入 store 后仍看不到卡片 */}
       <DisposalPlanFeed />
-      {messages.length === 0
+      {!hasContent
         ? emptyState
         : messages.map((msg, i) => {
             const isLastAssistant = msg.role === "assistant" && i === messages.length - 1;

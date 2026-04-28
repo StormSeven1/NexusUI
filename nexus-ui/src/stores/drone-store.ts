@@ -447,7 +447,7 @@ function mergeCoords(prev: DroneTelemetry, d: Record<string, unknown>): DroneTel
  * 而 drone-store 按 deviceSn 索引，因此必须通过 entityIdToDeviceSn 映射表转换。
  * 映射表由 entity_status 的 relationships.airports[].drones[] 构建。
  */
-function resolveDroneSn(data: Record<string, unknown>): string | null {
+export function resolveDroneSn(data: Record<string, unknown>): string | null {
   /* 优先通过 entityId → deviceSn 映射表解析（drone_flight_path / high_freq 使用） */
   const eid = String(data.entityId ?? data.entity_id ?? "").trim();
   if (eid) {
@@ -563,7 +563,7 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
     set((s) => {
       const prev = s.drones[sn];
       if (!prev) return s;
-      let base = {
+      const base = {
         ...prev,
         status: discardStatus ? prev.status : { ...data },
         updatedAt: isoNow(),

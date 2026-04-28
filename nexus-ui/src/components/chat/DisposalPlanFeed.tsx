@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useEffect } from "react";
 import { NxCard, NxBadge } from "@/components/nexus";
 import { cn } from "@/lib/utils";
 import { useDisposalPlanStore, type DisposalPlanBlock, type DisposalPlanCardRow } from "@/stores/disposal-plan-store";
@@ -138,6 +139,12 @@ export function DisposalPlanFeed() {
   const blocks = useDisposalPlanStore((s) => s.blocks);
   const wsStatus = useDisposalPlanStore((s) => s.wsStatus);
   const executeScheme = useDisposalPlanStore((s) => s.executeScheme);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  // 新方案追加到底部时自动滚动
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [blocks.length]);
 
   if (blocks.length === 0) return null;
 
@@ -162,6 +169,7 @@ export function DisposalPlanFeed() {
             }}
           />
         ))}
+        <div ref={bottomRef} />
       </div>
     </div>
   );

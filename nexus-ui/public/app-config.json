@@ -700,7 +700,8 @@
       "disposalExecuteTimeoutMs": 8000,
       "autoDisposalWsConnectTimeoutMs": 10000,
       "quickWorkflowUrl": "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
-      "quickWorkflowTimeoutMs": 5000
+      "quickWorkflowTimeoutMs": 5000,
+      "quickWorkflowStatusWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream"
     }
   },
 

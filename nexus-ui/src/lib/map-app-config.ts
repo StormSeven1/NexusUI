@@ -884,6 +884,8 @@ export interface AppConfigHttpChat {
   quickWorkflowUrl: string;
   /** 快捷工作流 POST 超时（毫秒），默认 5000 */
   quickWorkflowTimeoutMs: number;
+  /** 快捷工作流状态 WebSocket URL（执行时连接，独立 WS） */
+  quickWorkflowStatusWsUrl: string;
 }
 
 export interface AppConfigTrackIdMode {
@@ -950,6 +952,7 @@ const DEFAULT_HTTP_CHAT: AppConfigHttpChat = {
   autoDisposalWsConnectTimeoutMs: 5000,
   quickWorkflowUrl: "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
   quickWorkflowTimeoutMs: 5000,
+  quickWorkflowStatusWsUrl: "ws://192.168.18.103:8000/api/v1/ws/workflow-status",
 };
 
 const DEFAULT_TRACK_ID_MODE: AppConfigTrackIdMode = { distinguishSeaAir: false };
@@ -1000,6 +1003,7 @@ function applyResolvedNewConfigs(root: Record<string, unknown>) {
         ),
         quickWorkflowUrl: str(ch.quickWorkflowUrl, DEFAULT_HTTP_CHAT.quickWorkflowUrl),
         quickWorkflowTimeoutMs: num(ch.quickWorkflowTimeoutMs, DEFAULT_HTTP_CHAT.quickWorkflowTimeoutMs),
+        quickWorkflowStatusWsUrl: str(ch.quickWorkflowStatusWsUrl, DEFAULT_HTTP_CHAT.quickWorkflowStatusWsUrl),
       };
     }
   }

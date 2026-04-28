@@ -23,6 +23,7 @@
  */
 
 import { useAssetStore } from "@/stores/asset-store";
+import { useDroneStore } from "@/stores/drone-store";
 import type {
   DisposalInputParams,
   MappedDisposalScheme,
@@ -121,14 +122,48 @@ function groupKeyForMappedScheme(mapped: MappedDisposalScheme, fallbackTargetId:
 
 /**
  * 通过设备 ID 查找资产 store 中的友好名称（如 "uav-011" → "无人机011"）。
+ * 查找路径：
+ *   1. asset-store.assets 按 id 精确匹配
+ *   2. asset-store.assets 按 properties.entity_id 匹配（处置方案常用 entityId 如 uav-101）
+ *   3. drone-store.entityIdToDeviceSn 映射 → 再按 deviceSn 查 asset-store
  * 找不到则回退到 fallbackName 或原始 ID。
  */
 function resolveDeviceNameById(deviceId: string, fallbackName: string): string {
   const sid = String(deviceId || "").trim();
   if (!sid) return fallbackName || "";
+  const low = sid.toLowerCase();
   const assets = useAssetStore.getState().assets;
-  const a = assets.find((x) => x.id === sid);
-  if (a?.name) return a.name;
+
+  // 1. 按 id 精确匹配（大小写不敏感）
+  const byId = assets.find((x) => x.id === sid || x.id.toLowerCase() === low);
+  if (byId?.name) return byId.name;
+
+  // 2. 按 properties.entity_id 匹配
+  for (const a of assets) {
+    const p = a.properties && typeof a.properties === "object" ? (a.properties as Record<string, unknown>) : null;
+    if (!p) continue;
+    const eid = p.entity_id ?? p.entityId;
+    if (typeof eid === "string" && (eid === sid || eid.toLowerCase() === low)) {
+      if (a.name) return a.name;
+    }
+  }
+
+  // 3. 通过 drone-store entityIdToDeviceSn 映射
+  const entityMap = useDroneStore.getState().entityIdToDeviceSn as Record<string, string>;
+  let sn: string | undefined = entityMap[sid];
+  if (!sn) {
+    for (const [eid, mappedSn] of Object.entries(entityMap)) {
+      if (eid.toLowerCase() === low) {
+        sn = mappedSn;
+        break;
+      }
+    }
+  }
+  if (sn) {
+    const bySn = assets.find((x) => x.id === sn);
+    if (bySn?.name) return bySn.name;
+  }
+
   return fallbackName || sid;
 }
 
@@ -211,9 +246,18 @@ function mapSchemeToCardScheme(
   /* 方案内所有 task 的最高 recommendationScore */
   const maxScore = mappedTasks.reduce((mx, t) => Math.max(mx, t.recommendationScore), 0);
 
+  /* schemeName 中可能包含 entityId（如 "方案3: uav-101 → 40504"），替换为友好名称 */
+  const rawSchemeName = String(scheme?.schemeName || `方案${index + 1}`);
+  const schemeName = mappedTasks.reduce((name, t) => {
+    if (t.deviceId && t.deviceName && t.deviceName !== t.deviceId) {
+      return name.replaceAll(t.deviceId, t.deviceName);
+    }
+    return name;
+  }, rawSchemeName);
+
   return {
     schemeId: String(scheme?.schemeId || scheme?.scheme_id || `scheme_${index + 1}`),
-    schemeName: String(scheme?.schemeName || `方案${index + 1}`),
+    schemeName,
     description: String(
       scheme?.description || `${(red as { unitType?: string })?.unitType || "unknown"} 处置 ${(blue as { id?: string })?.id || ""}`.trim(),
     ),
@@ -316,9 +360,6 @@ export function normalizeDisposalPayload(payload: Record<string, unknown>): Norm
     .map((s, i) => mapSchemeToCardScheme(s, i))
     .filter((x): x is MappedDisposalScheme => x != null);
 
-  /* 按 recommendationScore 降序排名，赋值 priority（P0/P1/P2…） */
-  rankSchemesByRecommendationScore(mappedSchemes);
-
   const fallbackTid = target?.targetId != null && String(target.targetId).trim() !== "" ? String(target.targetId).trim() : "";
 
   const groups = new Map<string, MappedDisposalScheme[]>();
@@ -326,6 +367,11 @@ export function normalizeDisposalPayload(payload: Record<string, unknown>): Norm
     const key = groupKeyForMappedScheme(mapped, fallbackTid);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(mapped);
+  }
+
+  /* 按目标分组排名：每组内按 recommendationScore 降序赋 P0/P1/P2… */
+  for (const list of groups.values()) {
+    rankSchemesByRecommendationScore(list);
   }
 
   const items: NormalizedDisposalItem[] = [];

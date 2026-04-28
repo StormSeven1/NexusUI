@@ -374,6 +374,12 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
     const { blocks } = get();
     const targetId = primaryTargetIdFromNormalized(n);
 
+    // 按 taskId 去重：同一任务不重复插入
+    if (n.taskId && blocks.some((b) => b.taskId === n.taskId)) {
+      console.log("[DisposalPlanStore] duplicate taskId skipped:", n.taskId);
+      return;
+    }
+
     reconcileDisposalMapEffectsForIncomingPayload(n);
 
     const items: DisposalPlanCardRow[] = (n.items || []).map((it, idx) => {
@@ -400,6 +406,7 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
     const summary = buildBlockSummary(source, n.taskId, items.length);
     set({
       blocks: [
+        ...blocks,
         {
           blockId: `blk_${randomId()}`,
           taskId: n.taskId,
@@ -408,7 +415,6 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
           summary,
           items,
         },
-        ...blocks,
       ],
     });
   },
