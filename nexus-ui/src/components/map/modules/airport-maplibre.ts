@@ -12,6 +12,7 @@ import {
   assetMapLabelTextColor,
   getAssetSymbolId,
   MAP_FRIENDLY_COLOR_PROP,
+  MAP_LABEL_FONT_COLOR_PROP,
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
 } from "@/lib/map-icons";
 import type { AppConfigSectorBundle } from "@/lib/map-app-config";
@@ -38,7 +39,8 @@ function mapAirportConfigDeviceRow(
   r: Record<string, unknown>,
   defaultRangeM: number,
   visibility: Record<string, unknown> | null | undefined,
-  rootFriendlyLabelColor?: string | null,
+  rootAssetFriendlyColor?: string | null,
+  rootLabelFontColor?: string | null,
 ): AssetData | null {
   const id = String(r.deviceId ?? "");
   const c = r.center;
@@ -66,12 +68,15 @@ function mapAirportConfigDeviceRow(
   const fovSectorVisible = r.showSector !== false;
 
   const rowLbl = asRecord(r.label);
-  const rowFc = typeof rowLbl?.fontColor === "string" && rowLbl.fontColor.trim() ? rowLbl.fontColor.trim() : "";
-  const rootFc =
-    typeof rootFriendlyLabelColor === "string" && rootFriendlyLabelColor.trim()
-      ? rootFriendlyLabelColor.trim()
-      : "";
-  const mapFriendly = rowFc || rootFc;
+  const rowLabelColor = typeof rowLbl?.fontColor === "string" && rowLbl.fontColor.trim() ? rowLbl.fontColor.trim() : "";
+  const rootLabelColor =
+    typeof rootLabelFontColor === "string" && rootLabelFontColor.trim() ? rootLabelFontColor.trim() : "";
+  const mapLabelColor = rowLabelColor || rootLabelColor;
+  const rowAssetColor =
+    typeof r.assetFriendlyColor === "string" && r.assetFriendlyColor.trim() ? r.assetFriendlyColor.trim() : "";
+  const rootAssetColor =
+    typeof rootAssetFriendlyColor === "string" && rootAssetFriendlyColor.trim() ? rootAssetFriendlyColor.trim() : "";
+  const mapFriendly = rowAssetColor || rootAssetColor;
 
   return {
     id,
@@ -93,6 +98,7 @@ function mapAirportConfigDeviceRow(
       center_icon_visible: centerIconVisible,
       fov_sector_visible: fovSectorVisible,
       ...(mapFriendly ? { [MAP_FRIENDLY_COLOR_PROP]: mapFriendly } : {}),
+      ...(mapLabelColor ? { [MAP_LABEL_FONT_COLOR_PROP]: mapLabelColor } : {}),
     },
     mission_status: "monitoring",
     assigned_target_id: null,
@@ -110,8 +116,10 @@ export function mapAirportsDevicesPayload(airportsRoot: unknown): AssetData[] {
   const defM = Number(root.defaultRange) || 15_000;
   const vis = asRecord(root.visibility);
   const rootLbl = asRecord(root.label);
-  const rootFriendly =
+  const rootLabelFontColor =
     typeof rootLbl?.fontColor === "string" && rootLbl.fontColor.trim() ? rootLbl.fontColor.trim() : undefined;
+  const rootAssetFriendlyColor =
+    typeof root.assetFriendlyColor === "string" && root.assetFriendlyColor.trim() ? root.assetFriendlyColor.trim() : undefined;
   const out: AssetData[] = [];
   for (const item of root.devices) {
     if (!item || typeof item !== "object") continue;
@@ -123,7 +131,7 @@ export function mapAirportsDevicesPayload(airportsRoot: unknown): AssetData[] {
       const id = String(r.deviceId ?? "?");
       throw new Error(`airports.devices[${id}].assetType 必须为 airport（当前为 ${t || "空"}）`);
     }
-    const a = mapAirportConfigDeviceRow(r, defM, vis, rootFriendly);
+    const a = mapAirportConfigDeviceRow(r, defM, vis, rootAssetFriendlyColor, rootLabelFontColor);
     if (a) out.push(a);
   }
   return out;
@@ -166,7 +174,7 @@ function buildAirportStaticGeoJSON(
     if (a.nameLabelVisible === false || !String(a.name ?? "").trim()) continue;
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
-    const friendlyOv = disp === "friendly" ? a.friendlyMapColor : undefined;
+    const friendlyOv = disp === "friendly" ? a.labelFontColor : undefined;
     const labelColor = assetMapLabelTextColor(disp, st, accent ?? null, friendlyOv);
     features.push({
       type: "Feature",

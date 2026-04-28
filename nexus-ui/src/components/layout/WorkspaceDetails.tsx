@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
@@ -25,6 +25,8 @@ import {
   DraftingCompass,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { QuickWorkflowModal } from "@/components/layout/QuickWorkflowModal";
+import { NetworkStatsDialog } from "@/components/layout/NetworkStatsDialog";
 
 type StatRow = { label: string; value: string; icon: LucideIcon; color: string };
 
@@ -193,6 +195,10 @@ export function WorkspaceDetails() {
   const basemapVectorVisibility = useAppStore((s) => s.basemapVectorVisibility);
   const drawnAreas = useAppStore((s) => s.drawnAreas);
   const routeLines = useAppStore((s) => s.routeLines);
+
+  /** 快捷工作流弹窗状态 */
+  const [quickWorkflowOpen, setQuickWorkflowOpen] = useState(false);
+  const [networkStatsOpen, setNetworkStatsOpen] = useState(false);
 
   const situationLiveStats = useMemo((): StatRow[] => {
     const layerN = countLayerPanelEnabled(
@@ -376,6 +382,16 @@ export function WorkspaceDetails() {
             key={tool.id}
             type="button"
             className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-nexus-text-secondary transition-colors hover:bg-nexus-bg-elevated hover:text-nexus-text-primary"
+            onClick={() => {
+              // 任务→规划：点击打开快捷工作流弹窗
+              if (topTab === "tasks" && tool.id === "plan") {
+                setQuickWorkflowOpen(true);
+              }
+              // 分析→查询：点击打开网络数据统计弹窗
+              if (topTab === "analytics" && tool.id === "query") {
+                setNetworkStatsOpen(true);
+              }
+            }}
           >
             <tool.icon size={14} />
             {tool.label}
@@ -386,6 +402,11 @@ export function WorkspaceDetails() {
           更多
         </button>
       </div>
+
+      {/* 快捷工作流弹窗：任务→规划 点击时弹出 */}
+      <QuickWorkflowModal open={quickWorkflowOpen} onClose={() => setQuickWorkflowOpen(false)} />
+      {/* 网络数据统计弹窗：分析→查询 点击时弹出 */}
+      <NetworkStatsDialog open={networkStatsOpen} onClose={() => setNetworkStatsOpen(false)} />
     </div>
   );
 }

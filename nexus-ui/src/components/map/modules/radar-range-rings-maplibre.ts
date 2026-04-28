@@ -48,6 +48,7 @@ import {
   geoCircleCoords,
   getAssetSymbolId,
   MAP_FRIENDLY_COLOR_PROP,
+  MAP_LABEL_FONT_COLOR_PROP,
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
 } from "@/lib/map-icons";
 import type { Asset } from "@/lib/map-entity-model";
@@ -202,7 +203,9 @@ function parseCrosshair(raw: unknown): Required<RadarCrosshairBlock> {
  * - **opacity** 映射为环线 `line-opacity`；**ringFillOpacity** / **ringFillColor** 与 **color** 共同决定填充
  * - **ringLineWidth** / **ringLineDash**：**virtualTroop** 等与 V2 虚线样式一致
  * - **distanceLabelsVisible** / **angleLabelsVisible** / **crosshairVisible** / **centerIconVisible** / **centerNameVisible**：
- *   经 **`radar.visibility`**、`radarVisibility`、`mergeRootAndDeviceVisible` 合并后写入 `properties`；
+ *   前三个：设备项显式 boolean 优先，否则用根级 **`defaultDistanceLabelsVisible` / `defaultAngleLabelsVisible` / `defaultCrosshairVisible`**
+ *  （由 `mapRadarPayload(..., buildRadarMapGlobalsFromRoot(root))` 注入）；**未**写各 `default*` 时距离/角标视为 false、十字线视为 true。
+ *   中心名/图标准 **`radar.visibility`**、`radarVisibility`、`mergeRootAndDeviceVisible` 合并后写入 `properties`；
  *   `RADAR_CENTER_NAME` 还受 **showRings** 与 **center_name_visible** 控制
  * - **distanceLabelColor** / **angleLabelColor** 为 **null** 时用 **color** / **angleLabel.fontColor**
  * - **label** / **distanceLabel** / **angleLabel** 中的 **textFont** 供 MapLibre 符号层使用
@@ -213,9 +216,30 @@ export type RadarVisibilityGlobal = {
   centerIconVisible?: boolean;
 };
 
+/** `radar.visibility` + 根级 `defaultDistanceLabelsVisible` / `defaultAngleLabelsVisible` / `defaultCrosshairVisible` */
+export type RadarMapGlobals = RadarVisibilityGlobal & {
+  /** 根级 `radar.defaultDistanceLabelsVisible`；`devices[]` 未写 `distanceLabelsVisible` 时采用 */
+  defaultDistanceLabelsVisible?: boolean;
+  defaultAngleLabelsVisible?: boolean;
+  defaultCrosshairVisible?: boolean;
+};
+
+/**
+ * 设备项显式 boolean 优先，否则用 `globals` 根级默认，再否则用 `fallback`（距离/角标默认关，十字线默认开）.
+ */
+function radarBoolFromConfig(
+  deviceVal: unknown,
+  rootVal: boolean | undefined,
+  fallback: boolean,
+): boolean {
+  if (typeof deviceVal === "boolean") return deviceVal;
+  if (typeof rootVal === "boolean") return rootVal;
+  return fallback;
+}
+
 export function mapRadarRowToAssetData(
   r: Record<string, unknown>,
-  globals?: RadarVisibilityGlobal | null,
+  globals?: RadarMapGlobals | null,
 ): AssetData | null {
   const id = String(r.id ?? "");
   const c = r.center;
@@ -302,9 +326,13 @@ export function mapRadarRowToAssetData(
     ring_fill_color: ringFillColor,
     virtual_troop: virtualTroop,
     is_virtual: virtualTroop,
-    distance_labels_visible: r.distanceLabelsVisible !== false,
-    angle_labels_visible: r.angleLabelsVisible !== false,
-    crosshair_visible: r.crosshairVisible !== false,
+    distance_labels_visible: radarBoolFromConfig(
+      r.distanceLabelsVisible,
+      globals?.defaultDistanceLabelsVisible,
+      false,
+    ),
+    angle_labels_visible: radarBoolFromConfig(r.angleLabelsVisible, globals?.defaultAngleLabelsVisible, false),
+    crosshair_visible: radarBoolFromConfig(r.crosshairVisible, globals?.defaultCrosshairVisible, true),
     center_icon_visible: mergeRootAndDeviceVisible(globals?.centerIconVisible, r.centerIconVisible),
     center_name_visible: mergeRootAndDeviceVisible(globals?.centerNameVisible, r.centerNameVisible),
     angle_label_interval_deg: Number.isFinite(Number(r.angleLabelInterval)) ? Number(r.angleLabelInterval) : 30,
@@ -316,8 +344,11 @@ export function mapRadarRowToAssetData(
     distance_label_block: distanceLabel,
     angle_label_block: angleLabel,
     crosshair_block: crosshair,
+    ...(typeof r.assetFriendlyColor === "string" && r.assetFriendlyColor.trim()
+      ? { [MAP_FRIENDLY_COLOR_PROP]: r.assetFriendlyColor.trim() }
+      : {}),
     ...(typeof label.fontColor === "string" && label.fontColor.trim()
-      ? { [MAP_FRIENDLY_COLOR_PROP]: label.fontColor.trim() }
+      ? { [MAP_LABEL_FONT_COLOR_PROP]: label.fontColor.trim() }
       : {}),
   };
 
@@ -342,7 +373,7 @@ export function mapRadarRowToAssetData(
   };
 }
 
-/** 兼容 `radar: [...]` 与 `radar: { visibility, devices }`；与 cameras 下 `stations` 写法类似 */
+/** 解析 `radar: [...]` 与 `radar: { visibility, devices }` 两种格式；与 cameras 下 `stations` 写法类似 */
 export function extractRadarStationRows(payload: unknown): unknown[] {
   if (Array.isArray(payload)) return payload;
   const o = asRecord(payload);
@@ -352,7 +383,7 @@ export function extractRadarStationRows(payload: unknown): unknown[] {
   return [];
 }
 
-export function mapRadarPayload(payload: unknown, globals?: RadarVisibilityGlobal | null): AssetData[] {
+export function mapRadarPayload(payload: unknown, globals?: RadarMapGlobals | null): AssetData[] {
   const rows = extractRadarStationRows(payload);
   const out: AssetData[] = [];
   for (const item of rows) {
@@ -441,9 +472,15 @@ export function buildRadarCoverageGeoJSON(
     const fillOp = Number.isFinite(Number(p.ring_fill_opacity ?? defaults.defaultRingFillOpacity)) ? Math.min(1, Math.max(0, Number(p.ring_fill_opacity ?? defaults.defaultRingFillOpacity))) : 0;
     const fillColorBase = String(p.ring_fill_color ?? ringColor);
     const fillRgba = cssColorToRgba(fillColorBase, fillOp) ?? fillColorBase;
-    const distVis = p.distance_labels_visible !== false;
-    const angVis = p.angle_labels_visible !== false;
-    const crossVis = p.crosshair_visible !== false;
+    const rootDist = defaults.defaultDistanceLabelsVisible;
+    const rootAng = defaults.defaultAngleLabelsVisible;
+    const rootCh = defaults.defaultCrosshairVisible;
+    const defDist = typeof rootDist === "boolean" ? rootDist : false;
+    const defAng = typeof rootAng === "boolean" ? rootAng : false;
+    const defCh = typeof rootCh === "boolean" ? rootCh : true;
+    const distVis = radarBoolFromConfig(p.distance_labels_visible, defDist, false);
+    const angVis = radarBoolFromConfig(p.angle_labels_visible, defAng, false);
+    const crossVis = radarBoolFromConfig(p.crosshair_visible, defCh, true);
     const nameVis = p.center_name_visible !== false;
 
     const dl = asRecord(p.distance_label_block) ?? asRecord(defaults.distanceLabel) ?? {};
@@ -567,9 +604,7 @@ export function buildRadarCoverageGeoJSON(
     if (nameVis) {
       const lb = asRecord(p.label_block) ?? asRecord(defaults.label) ?? {};
       const lbFontColor = typeof lb.fontColor === "string" && lb.fontColor.trim() ? lb.fontColor.trim() : undefined;
-      const friendlyOv = disp === "friendly"
-        ? (lbFontColor ?? (typeof defaults.assetFriendlyColor === "string" ? String(defaults.assetFriendlyColor) : undefined))
-        : lbFontColor;
+      const friendlyOv = disp === "friendly" ? lbFontColor : undefined;
       const fontColor = assetMapLabelTextColor(disp, rowStatus, accent ?? null, friendlyOv);
       features.push({
         type: "Feature",

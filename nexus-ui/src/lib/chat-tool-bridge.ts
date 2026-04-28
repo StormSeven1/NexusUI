@@ -264,9 +264,3 @@ export function applyToolSideEffect(action: string, output: ToolOutput) {
   const handler = sideEffects[action];
   if (handler) handler(output);
 }
-
-/**
- * 兼容旧命名：早期版本使用 executeClientTool
- * @deprecated 请使用 applyToolSideEffect
- */
-export const executeClientTool = applyToolSideEffect;

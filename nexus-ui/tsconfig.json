@@ -31,5 +31,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "src - 副本"]
+  "exclude": ["node_modules", "src - 副本", "src copy"]
 }

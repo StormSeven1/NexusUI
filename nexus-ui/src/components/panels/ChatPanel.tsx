@@ -12,7 +12,11 @@ import { ChatMessageList } from "@/components/chat/ChatMessageList";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ConversationList } from "@/components/chat/ConversationList";
 import { applyToolSideEffect } from "@/lib/chat-tool-bridge";
+import { useAppConfigStore } from "@/stores/app-config-store";
+import { DisposalPlanWsClient } from "@/lib/disposal/disposal-ws-client";
+import { toast } from "sonner";
 import { useAppStore } from "@/stores/app-store";
+import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import { Trash2, SquarePen, X } from "lucide-react";
 import type { FileUIPart, UIMessage } from "ai";
 import type { ConversationSummary } from "@/lib/chat-api";
@@ -47,6 +51,42 @@ export function ChatPanel() {
   const [refreshKey, setRefreshKey] = useState(0);
   const processedToolIds = useRef(new Set<string>());
   const { selectedAgentMessage, setSelectedAgentMessage } = useAppStore();
+  const appendDisposalFromWs = useDisposalPlanStore((s) => s.appendFromNormalized);
+  const setDisposalWsStatus = useDisposalPlanStore((s) => s.setWsStatus);
+  const disposalWsRef = useRef<DisposalPlanWsClient | null>(null);
+
+  /** 硬编码：右侧面板挂载即连接处置方案 WebSocket（与模式无关） */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await useAppConfigStore.getState().ensureLoaded();
+      if (cancelled) return;
+      setDisposalWsStatus("connecting");
+      const client = new DisposalPlanWsClient({
+        handlers: {
+          onConnect: () => setDisposalWsStatus("open"),
+          onDisconnect: (intentional) => {
+            if (!intentional) {
+              setDisposalWsStatus("error");
+              toast.error("处置方案连接断开", { description: "WebSocket 连接意外断开，将自动重连" });
+            }
+          },
+          onConnectTimeout: () => {
+            setDisposalWsStatus("error");
+            toast.error("处置方案连接超时", { description: "无法连接方案服务，请检查网络" });
+          },
+          onPlanReady: (n) => appendDisposalFromWs(n, "ws"),
+        },
+      });
+      client.start();
+      disposalWsRef.current = client;
+    })();
+    return () => {
+      cancelled = true;
+      disposalWsRef.current?.stop();
+      disposalWsRef.current = null;
+    };
+  }, [appendDisposalFromWs, setDisposalWsStatus]);
 
   const transport = useMemo(
     () =>

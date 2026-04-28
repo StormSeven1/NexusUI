@@ -116,7 +116,7 @@ function buildTowerIconGeoJSON(
     if (a.nameLabelVisible === false || !String(a.name ?? "").trim()) continue;
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
-    const friendlyOv = disp === "friendly" ? a.friendlyMapColor : undefined;
+    const friendlyOv = disp === "friendly" ? a.labelFontColor : undefined;
     const labelColor = assetMapLabelTextColor(disp, st, accent, friendlyOv);
     features.push({
       type: "Feature",

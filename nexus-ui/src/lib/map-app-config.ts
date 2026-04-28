@@ -11,10 +11,10 @@
  * - `Map2D` 专题层仍用 `laserDevicesFromSectorBundle` / `tdoaDevicesFromSectorBundle`（含 `scan` 动画参数）。
  * - **航迹 / 无人机渲染**：同文件下方 `parseTrackRenderingConfig` / `parseDroneMapRenderingConfig`、`getTrackRenderingConfig`、`filterTracksByTimeout`（**仅**定时剔除 store，**不参与**地图顶点预算）等（原独立 `app-config-rendering.ts` 已并入）。
  * - **`resolvedTrackRenderingConfig` / `resolvedDroneMapRenderingConfig` / `resolvedAirportMapConfig`**：
- *   根键 **`trackRendering`**、**`drones`（内嵌原 `droneMapRendering` 字段）**、**`airports`（根级 Dock 显隐 + 扇区块）** 解析后的对象，在 **`loadResolvedAppConfig()`** 写入本模块内存；**兼容**旧根键 **`droneMapRendering`**、**`airportMap` / `airport`**。
+ *   根键 **`trackRendering`**、**`drones`**、**`airports`** 解析后的对象，在 **`loadResolvedAppConfig()`** 写入本模块内存。
  *   **不是** WebSocket 航迹数据、**不是**磁盘缓存；`getTrackRenderingConfig()` 等读的是「当前已加载的 **`app-config.json` 配置**」。
  *   **动态航迹列表**在 **`useTrackStore`**。
- * - **机场 Dock 默认**：**`airports.centerIconVisible` / `airports.centerNameVisible`**（或旧 `airportMap`）→ `getAirportMapDefaults()`；**虚兵/实兵**仍只认 WS 报文。
+ * - **机场 Dock 默认**：**`airports.centerIconVisible` / `airports.centerNameVisible`** → `getAirportMapDefaults()`；**虚兵/实兵**仍只认 WS 报文。
  */
 
 import type { AssetData } from "@/stores/asset-store";
@@ -28,8 +28,12 @@ import {
 import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
-import { MAP_FRIENDLY_COLOR_PROP } from "@/lib/map-icons";
-import { mapRadarPayload, type RadarVisibilityGlobal } from "@/components/map/modules/radar-range-rings-maplibre";
+import { MAP_FRIENDLY_COLOR_PROP, MAP_LABEL_FONT_COLOR_PROP } from "@/lib/map-icons";
+import {
+  mapRadarPayload,
+  type RadarMapGlobals,
+  type RadarVisibilityGlobal,
+} from "@/components/map/modules/radar-range-rings-maplibre";
 import { mapAirportsDevicesPayload } from "@/components/map/modules/airport-maplibre";
 import { mapCamerasDevicesPayload } from "@/components/map/modules/optoelectronic-fov-maplibre";
 import { mapDronesDevicesPayload } from "@/components/map/modules/drones-maplibre";
@@ -195,9 +199,8 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
   const name = String(r.name ?? r.entityName ?? aliases?.name ?? id);
 
   /* ── 4. 提取朝向（度）与视场角（度）── */
-  /* 朝向：heading / bearing / azimuth（光电 WS 常发 bearing 而非 heading） */
+  /* entity_status 仅做通用实体字段解析；相机 PTZ 专用解析在 useUnifiedWsFeed 的 camera/optoelectronic 分支 */
   const headingDeg = finiteNumberOrNull(r.heading ?? r.bearing ?? r.azimuth);
-  /* 视场角：fov_angle / fovAngle / openingDeg / angle */
   const fovDeg = finiteNumberOrNull(r.fov_angle ?? r.fovAngle ?? r.openingDeg ?? r.angle);
 
   /* ── 5. 雷达专用参数提取 ── */
@@ -376,11 +379,10 @@ function mergeConfigAssetBase(
 
 /** 与 V2 `LaserManager`/`TdoaManager` 扫描参数对齐（径向亮带） */
 export type AppConfigSectorScan = {
+  /** 扫描开关（光电/机场/无人机用）；激光/TDOA 由 activationEnabled 控制 */
   enabled?: boolean;
-  /** 亮带沿半径走一圈的周期 ms（V2 默认 2000）；兼容旧字段 `periodMs` */
+  /** 亮带沿半径走一圈的周期 ms（V2 默认 2000） */
   cycleMs?: number;
-  periodMs?: number;
-  periodSec?: number;
   /** 刷新间隔 ms（激光 V2=90，TDOA V2=100） */
   tickMs?: number;
   /** 同心亮带条数（V2=9） */
@@ -391,7 +393,6 @@ export type AppConfigSectorScan = {
 
 export type AppConfigSectorDevice = {
   deviceId?: string;
-  id?: string;
   name?: string;
   center?: [number, number];
   bearing?: number;
@@ -399,6 +400,7 @@ export type AppConfigSectorDevice = {
   range?: number;
   color?: string;
   opacity?: number;
+  /** 为 false 时不绘制扇区（光电/机场/无人机用）；激光/TDOA 由 activationEnabled 控制 */
   showSector?: boolean;
   virtualTroop?: boolean;
   /** 敌我：friendly / hostile / neutral（及中文别名），默认友方 */
@@ -409,12 +411,9 @@ export type AppConfigSectorDevice = {
   centerIconVisible?: boolean;
   /** 必填：在 `laserWeapons` 内须为 `laser`，在 `tdoa` 内须为 `tdoa`（与 `PUBLIC_MAP_SVG_FILES` 键一致） */
   assetType?: string;
+  /** 设备级激活开关，覆盖根级 activationEnabled；不写则继承根级 */
+  activationEnabled?: boolean;
   scan?: AppConfigSectorScan;
-  /**
-   * 与 V2 `LaserSectorOverlayTool` 一致：true 时扫描为「激活 / 间歇」交替（默认 10s 有扫描、3s 仅底色），
-   * 间歇期不生成 scan 要素且可停表；非脉冲时仍由 `scan.enabled` 决定是否始终扫描。
-   */
-  laserPulseActive?: boolean;
   /** 覆盖根级默认；激活阶段时长 ms */
   pulseOnMs?: number;
   /** 覆盖根级默认；间歇阶段时长 ms */
@@ -432,6 +431,8 @@ export type AppConfigLabelBlock = {
 };
 
 export type AppConfigSectorBundle = {
+  /** 我方资产中心图标主色（所有资产图标统一读取此字段） */
+  assetFriendlyColor?: string;
   defaultRange?: number;
   defaultSectorRange?: number;
   scan?: AppConfigSectorScan;
@@ -442,7 +443,9 @@ export type AppConfigSectorBundle = {
     lineDash?: number[];
   };
   visibility?: {
+    /** 扇区填充可见（光电/机场/无人机用）；激光/TDOA 由 activationEnabled 控制 */
     sectorFillVisible?: boolean;
+    /** 扫描亮带可见（光电/机场/无人机用）；激光/TDOA 由 activationEnabled 控制 */
     sectorScanVisible?: boolean;
     centerIconVisible?: boolean;
     centerNameVisible?: boolean;
@@ -472,6 +475,9 @@ export type AppConfigSectorBundle = {
   /* ── 激光 / TDOA：专题层扇区填充默认值（设备未写 color/opacity 时使用） ── */
   sectorFillDefaultColor?: string;
   sectorFillDefaultOpacity?: number;
+
+  /** 激活开关：false 时扇区/扫描/脉冲均不显示，true 时按各子配置渲染 */
+  activationEnabled?: boolean;
 };
 
 /* =============================================================================
@@ -480,10 +486,8 @@ export type AppConfigSectorBundle = {
  * | 配置键 | 读取方 |
  * |--------|--------|
  * | `trackRendering` | `track-ws-normalize`（空中航向角）；`useUnifiedWsFeed`（超时轮询）；`track-store.setTracks`（按 `maxHistoryPointsPerTrack` 裁剪 `historyTrail`）；`tracks-maplibre`（超 `maxViewportPoints` 则整批不画历史折线，仅画当前点符号） |
- * | `drones`（内嵌渲染键） | `parseDroneMapRenderingConfig` → `drone-store`、`drones-maplibre`；兼容旧根键 `droneMapRendering` |
- * | `airports`（根级 Dock 显隐） | `useUnifiedWsFeed` Dock 分支 → `getAirportMapDefaults()`；兼容旧 `airportMap` / `airport` |
- *
- * 兼容：根级仍可出现 V2 的 `trackTypeStyles` / `trackDisplay` / `trackTimeout` 等，解析器会拾取**上表用到的子集**，其余键忽略不写回类型。
+ * | `drones`（内嵌渲染键） | `parseDroneMapRenderingConfig` → `drone-store`、`drones-maplibre` |
+ * | `airports`（根级 Dock 显隐） | `useUnifiedWsFeed` Dock 分支 → `getAirportMapDefaults()` |
  * ============================================================================= */
 /** 配置 JSON 对象（排除数组），供 `trackRendering` / `drones` 等块解析 */
 function asCfgObject(v: unknown): Record<string, unknown> | null {
@@ -509,7 +513,7 @@ function str(v: unknown, d: string): string {
   return typeof v === "string" && v.trim() ? v : d;
 }
 
-/** Dock / 机场：仅**中心图标 / 名称**两类默认显隐（根键 `airportMap`，兼容 `airport`）；虚兵由报文决定 */
+/** Dock / 机场：仅**中心图标 / 名称**两类默认显隐（根键 `airports`）；虚兵由报文决定 */
 export type AppConfigAirportMap = {
   centerIconVisible: boolean;
   centerNameVisible: boolean;
@@ -531,9 +535,7 @@ export function getAirportMapDefaults(): AppConfigAirportMap {
 }
 
 function parseAirportMapConfig(root: Record<string, unknown>): AppConfigAirportMap {
-  const ap = asCfgObject(root.airports);
-  const legacy = asCfgObject(root.airportMap) ?? asCfgObject(root.airport);
-  const o = ap ?? legacy;
+  const o = asCfgObject(root.airports);
   const b = DEFAULT_AIRPORT_MAP;
   if (!o) return { ...b };
   return {
@@ -579,7 +581,7 @@ export type AppConfigTrackRendering = {
   airDefaultCourseDeg: number;
 };
 
-/** `drones-maplibre` + `drone-store` 实际读取的子集（根键 **`drones`**，兼容旧 `droneMapRendering`；根级 `drone` 仅合并 `maxFovRange` / `horizontalFov`） */
+/** `drones-maplibre` + `drone-store` 实际读取的子集（根键 **`drones`**） */
 export type AppConfigDroneMapRendering = {
   maxFovRange: number;
   horizontalFov: number;
@@ -602,8 +604,10 @@ export type AppConfigDroneMapRendering = {
   fovFillColor: string;
   fovFillOpacity: number;
   fovLineColor: string;
-  /** 解析自 `drones.label.fontColor`：友方无人机资产符号预染 */
+  /** 仅来自根键 `drones.assetFriendlyColor`：与 `getAssetFriendlyColorForAssetType("drone")` 一致，供少数仍读该字段的路径；**三角/装图请用根键色而非本字段与 label 的合成** */
   mapFriendlyColor?: string;
+  /** 来自 `drones.label.fontColor`：仅用于无人机**名称**标签字色，不参与符号/三角填色 */
+  labelFontColor?: string;
 };
 
 const DEFAULT_TYPE_STYLE: AppConfigTrackTypeStyle = {
@@ -741,54 +745,36 @@ function droneRenderingPickFromDronesRoot(dronesRoot: Record<string, unknown>): 
   return Object.keys(out).length ? out : null;
 }
 
-/** 解析 `drones` 内嵌渲染块；兼容旧根键 `droneMapRendering`；`drone.*` 作补充 */
+/** 解析 `drones` 内嵌渲染块 */
 export function parseDroneMapRenderingConfig(root: Record<string, unknown>): AppConfigDroneMapRendering {
   const dBundle = asCfgObject(root.drones);
-  const dm =
-    (dBundle ? droneRenderingPickFromDronesRoot(dBundle) : null) ??
-    asCfgObject(root.droneMapRendering) ??
-    ({} as Record<string, unknown>);
-  const legacyDrone = asCfgObject(root.drone);
+  const dm = dBundle ? droneRenderingPickFromDronesRoot(dBundle) : null;
   const base = DEFAULT_DRONE_MAP_RENDERING;
 
-  const maxFov = num(dm?.maxFovRange ?? legacyDrone?.maxFovRange, base.maxFovRange);
-  const hFov = num(dm?.horizontalFov ?? legacyDrone?.horizontalFov, base.horizontalFov);
+  const maxFov = num(dm?.maxFovRange, base.maxFovRange);
+  const hFov = num(dm?.horizontalFov, base.horizontalFov);
 
   const lbl = dBundle?.label !== undefined && dBundle.label !== null && typeof dBundle.label === "object"
     ? (dBundle.label as AppConfigLabelBlock)
     : undefined;
-  const mapFriendlyColor =
-    typeof lbl?.fontColor === "string" && lbl.fontColor.trim() ? lbl.fontColor.trim() : undefined;
+  const labelFc = typeof lbl?.fontColor === "string" && lbl.fontColor.trim() ? lbl.fontColor.trim() : undefined;
+  const assetFc = typeof dBundle?.assetFriendlyColor === "string" && (dBundle?.assetFriendlyColor as string).trim() ? (dBundle?.assetFriendlyColor as string).trim() : undefined;
 
-  if (!dBundle && !asCfgObject(root.droneMapRendering) && !legacyDrone) {
-    return { ...base, ...(mapFriendlyColor ? { mapFriendlyColor } : {}) };
+  if (!dBundle) {
+    return {
+      ...base,
+      ...(assetFc ? { mapFriendlyColor: assetFc } : {}),
+      ...(labelFc ? { labelFontColor: labelFc } : {}),
+    };
   }
 
-  const legacyRouteColor =
-    typeof dm?.routeLineColor === "string" && dm.routeLineColor.trim() ? dm.routeLineColor.trim() : null;
-  const legacyRouteWidth = finiteNumberOrNull(dm?.routeLineWidth);
-  const legacyRouteOpacity = finiteNumberOrNull(dm?.routeLineOpacity);
+  const plannedRouteLineColor = str(dm?.plannedRouteLineColor, base.plannedRouteLineColor);
+  const plannedRouteLineWidth = num(dm?.plannedRouteLineWidth, base.plannedRouteLineWidth);
+  const plannedRouteLineOpacity = num(dm?.plannedRouteLineOpacity, base.plannedRouteLineOpacity);
 
-  const plannedRouteLineColor = str(dm?.plannedRouteLineColor, legacyRouteColor ?? base.plannedRouteLineColor);
-  const plannedRouteLineWidth = num(dm?.plannedRouteLineWidth, legacyRouteWidth ?? base.plannedRouteLineWidth);
-  const plannedRouteLineOpacity = num(dm?.plannedRouteLineOpacity, legacyRouteOpacity ?? base.plannedRouteLineOpacity);
-
-  const historyTrailLineColor = str(
-    dm?.historyTrailLineColor,
-    legacyRouteColor ?? base.historyTrailLineColor,
-  );
-  const historyTrailLineWidth =
-    dm?.historyTrailLineWidth != null && finiteNumberOrNull(dm.historyTrailLineWidth) != null
-      ? num(dm.historyTrailLineWidth, base.historyTrailLineWidth)
-      : legacyRouteWidth != null
-        ? Math.max(1, plannedRouteLineWidth - 0.5)
-        : base.historyTrailLineWidth;
-  const historyTrailLineOpacity =
-    dm?.historyTrailLineOpacity != null && finiteNumberOrNull(dm.historyTrailLineOpacity) != null
-      ? num(dm.historyTrailLineOpacity, base.historyTrailLineOpacity)
-      : legacyRouteOpacity != null
-        ? Math.min(1, plannedRouteLineOpacity * 0.85)
-        : base.historyTrailLineOpacity;
+  const historyTrailLineColor = str(dm?.historyTrailLineColor, base.historyTrailLineColor);
+  const historyTrailLineWidth = num(dm?.historyTrailLineWidth, base.historyTrailLineWidth);
+  const historyTrailLineOpacity = num(dm?.historyTrailLineOpacity, base.historyTrailLineOpacity);
 
   return {
     maxFovRange: maxFov,
@@ -810,7 +796,8 @@ export function parseDroneMapRenderingConfig(root: Record<string, unknown>): App
     fovFillColor: str(dm?.fovFillColor, base.fovFillColor),
     fovFillOpacity: num(dm?.fovFillOpacity, base.fovFillOpacity),
     fovLineColor: str(dm?.fovLineColor, base.fovLineColor),
-    ...(mapFriendlyColor ? { mapFriendlyColor } : {}),
+    ...(assetFc ? { mapFriendlyColor: assetFc } : {}),
+    ...(labelFc ? { labelFontColor: labelFc } : {}),
   };
 }
 
@@ -880,8 +867,60 @@ export interface AppConfigHttp {
   imageFetchTimeoutMs: number;
 }
 
+/** 指挥处置：`http.chat` 子块（V2 对齐），由 `getHttpChatConfig()` 读取 */
+export interface AppConfigHttpChat {
+  /** 自动推送处置方案 WebSocket */
+  disposalPlanWsUrl: string;
+  /** 手动产生处置方案完整 URL（合并原 disposalUrl + disposalPath） */
+  disposalManualGeneratePlanUrl: string;
+  /** grpc 执行唯一接口完整 URL */
+  disposalExecuteUrl: string;
+  /** 处置结束：后端告警过滤接口完整 URL（type=0对海/type=1对空，trackid 动态拼接为 query） */
+  disposalEndUrl: string;
+  disposalHttpTimeoutMs: number;
+  disposalExecuteTimeoutMs: number;
+  autoDisposalWsConnectTimeoutMs: number;
+  /** 快捷工作流 POST 完整 URL */
+  quickWorkflowUrl: string;
+  /** 快捷工作流 POST 超时（毫秒），默认 5000 */
+  quickWorkflowTimeoutMs: number;
+}
+
 export interface AppConfigTrackIdMode {
   distinguishSeaAir: boolean;
+}
+
+/** 根键 `assetTargetLine`：处置方案资产→目标连接线在地图上的样式与流动速度 */
+export type AppConfigAssetTargetLine = {
+  color: string;
+  lineWidth: number;
+  /** 虚线流动一整周的大致毫秒数（越大越慢） */
+  flowCycleMs: number;
+  /** 流动点半径（像素） */
+  flowPointRadius: number;
+};
+
+const DEFAULT_ASSET_TARGET_LINE: AppConfigAssetTargetLine = {
+  color: "#22d3ee",
+  lineWidth: 2.5,
+  flowCycleMs: 1200,
+  flowPointRadius: 3.6,
+};
+
+let resolvedAssetTargetLineConfig: AppConfigAssetTargetLine = { ...DEFAULT_ASSET_TARGET_LINE };
+
+function parseAssetTargetLineConfig(root: Record<string, unknown>): void {
+  const o = asRecord(root.assetTargetLine);
+  if (!o) {
+    resolvedAssetTargetLineConfig = { ...DEFAULT_ASSET_TARGET_LINE };
+    return;
+  }
+  resolvedAssetTargetLineConfig = {
+    color: str(o.color, DEFAULT_ASSET_TARGET_LINE.color),
+    lineWidth: num(o.lineWidth, DEFAULT_ASSET_TARGET_LINE.lineWidth),
+    flowCycleMs: Math.max(200, num(o.flowCycleMs, DEFAULT_ASSET_TARGET_LINE.flowCycleMs)),
+    flowPointRadius: Math.max(1, num(o.flowPointRadius, DEFAULT_ASSET_TARGET_LINE.flowPointRadius)),
+  };
 }
 
 const DEFAULT_WS: AppConfigWebSocket = {
@@ -901,11 +940,24 @@ const DEFAULT_HTTP: AppConfigHttp = {
   imageFetchTimeoutMs: 1000,
 };
 
+const DEFAULT_HTTP_CHAT: AppConfigHttpChat = {
+  disposalPlanWsUrl: "ws://192.168.18.103:9000/api/v1/ws/workflow-stream",
+  disposalManualGeneratePlanUrl: "http://192.168.18.103:9000/api/v1/tasks/target-engagement/manual-generate-plan",
+  disposalExecuteUrl: "http://192.168.18.103:9000/api/v1/tasks/grpc-disposal/execute",
+  disposalEndUrl: "http://192.168.18.110:8019/api/alarm_filter",
+  disposalHttpTimeoutMs: 5000,
+  disposalExecuteTimeoutMs: 5000,
+  autoDisposalWsConnectTimeoutMs: 5000,
+  quickWorkflowUrl: "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
+  quickWorkflowTimeoutMs: 5000,
+};
+
 const DEFAULT_TRACK_ID_MODE: AppConfigTrackIdMode = { distinguishSeaAir: false };
 
 let resolvedWebSocketConfig: AppConfigWebSocket = { ...DEFAULT_WS };
 let resolvedCoordinateTransformConfig: AppConfigCoordinateTransform = { ...DEFAULT_COORD_TRANSFORM };
 let resolvedHttpConfig: AppConfigHttp = { ...DEFAULT_HTTP };
+let resolvedHttpChatConfig: AppConfigHttpChat = { ...DEFAULT_HTTP_CHAT };
 let resolvedTrackIdModeConfig: AppConfigTrackIdMode = { ...DEFAULT_TRACK_ID_MODE };
 
 function applyResolvedNewConfigs(root: Record<string, unknown>) {
@@ -933,12 +985,31 @@ function applyResolvedNewConfigs(root: Record<string, unknown>) {
       imagePollIntervalMs: num(http.imagePollIntervalMs, DEFAULT_HTTP.imagePollIntervalMs),
       imageFetchTimeoutMs: num(http.imageFetchTimeoutMs, DEFAULT_HTTP.imageFetchTimeoutMs),
     };
+    const ch = asRecord(http.chat);
+    if (ch) {
+      resolvedHttpChatConfig = {
+        disposalPlanWsUrl: str(ch.disposalPlanWsUrl, DEFAULT_HTTP_CHAT.disposalPlanWsUrl),
+        disposalManualGeneratePlanUrl: str(ch.disposalManualGeneratePlanUrl, DEFAULT_HTTP_CHAT.disposalManualGeneratePlanUrl),
+        disposalExecuteUrl: str(ch.disposalExecuteUrl, DEFAULT_HTTP_CHAT.disposalExecuteUrl),
+        disposalEndUrl: str(ch.disposalEndUrl, DEFAULT_HTTP_CHAT.disposalEndUrl),
+        disposalHttpTimeoutMs: num(ch.disposalHttpTimeoutMs, DEFAULT_HTTP_CHAT.disposalHttpTimeoutMs),
+        disposalExecuteTimeoutMs: num(ch.disposalExecuteTimeoutMs, DEFAULT_HTTP_CHAT.disposalExecuteTimeoutMs),
+        autoDisposalWsConnectTimeoutMs: num(
+          ch.autoDisposalWsConnectTimeoutMs,
+          DEFAULT_HTTP_CHAT.autoDisposalWsConnectTimeoutMs,
+        ),
+        quickWorkflowUrl: str(ch.quickWorkflowUrl, DEFAULT_HTTP_CHAT.quickWorkflowUrl),
+        quickWorkflowTimeoutMs: num(ch.quickWorkflowTimeoutMs, DEFAULT_HTTP_CHAT.quickWorkflowTimeoutMs),
+      };
+    }
   }
 
   const tm = asRecord(root.trackIdMode);
   if (tm) {
     resolvedTrackIdModeConfig = { distinguishSeaAir: bool(tm.distinguishSeaAir, DEFAULT_TRACK_ID_MODE.distinguishSeaAir) };
   }
+
+  parseAssetTargetLineConfig(root);
 }
 
 export function getWebSocketConfig(): AppConfigWebSocket {
@@ -953,8 +1024,16 @@ export function getHttpConfig(): AppConfigHttp {
   return resolvedHttpConfig;
 }
 
+export function getHttpChatConfig(): AppConfigHttpChat {
+  return resolvedHttpChatConfig;
+}
+
 export function getTrackIdModeConfig(): AppConfigTrackIdMode {
   return resolvedTrackIdModeConfig;
+}
+
+export function getAssetTargetLineConfig(): AppConfigAssetTargetLine {
+  return resolvedAssetTargetLineConfig;
 }
 
 /**
@@ -993,6 +1072,10 @@ export type ResolvedAppConfig = {
   trackRendering: AppConfigTrackRendering;
   /** 根键 `factory.iconSize`：zoom→size 的 [[zoom, size], ...] 数组，用于资产中心图标 */
   iconSizeStops: [number, number][] | null;
+  /** 激光 bundle `activationEnabled`：false 时扇区/扫描/脉冲均不显示 */
+  laserActivationEnabled: boolean;
+  /** TDOA bundle `activationEnabled`：false 时扇区/扫描均不显示 */
+  tdoaActivationEnabled: boolean;
 };
 
 function mergeProperties(
@@ -1014,6 +1097,8 @@ function parseAssetDispositionIconAccent(root: Record<string, unknown>): AssetDi
 
 /** 我方各资产类型默认着色（非敌/中时优先于主题默认红）；来自各根键 `assetFriendlyColor`，见 `applyFriendlyColorsFromAssetSections` */
 let resolvedAssetFriendlyColorsByAssetType: Partial<Record<PublicMapAssetType, string>> = {};
+/** 各资产名称默认字色：来自根键 `*.label.fontColor` */
+let resolvedAssetLabelColorsByAssetType: Partial<Record<PublicMapAssetType, string>> = {};
 
 function applyFriendlyColorsFromAssetSections(root: Record<string, unknown>) {
   resolvedAssetFriendlyColorsByAssetType = {};
@@ -1047,9 +1132,41 @@ function applyFriendlyColorsFromAssetSections(root: Record<string, unknown>) {
   if (drones) setColor("drone", drones.assetFriendlyColor);
 }
 
+function applyLabelColorsFromAssetSections(root: Record<string, unknown>) {
+  resolvedAssetLabelColorsByAssetType = {};
+  const setColor = (k: PublicMapAssetType, v: unknown) => {
+    if (typeof v === "string" && v.trim()) resolvedAssetLabelColorsByAssetType[k] = v.trim();
+  };
+  const pickLabelColor = (section: Record<string, unknown> | null) => {
+    const lbl = asRecord(section?.label);
+    return lbl?.fontColor;
+  };
+
+  const radar = asRecord(root.radar);
+  if (radar) setColor("radar", pickLabelColor(radar));
+  const cameras = asRecord(root.cameras);
+  if (cameras) setColor("camera", pickLabelColor(cameras));
+  const tower = asRecord(root.tower);
+  if (tower) setColor("tower", pickLabelColor(tower));
+  const laserWeapons = asRecord(root.laserWeapons);
+  if (laserWeapons) setColor("laser", pickLabelColor(laserWeapons));
+  const tdoa = asRecord(root.tdoa);
+  if (tdoa) setColor("tdoa", pickLabelColor(tdoa));
+  const airports = asRecord(root.airports);
+  if (airports) setColor("airport", pickLabelColor(airports));
+  const drones = asRecord(root.drones);
+  if (drones) setColor("drone", pickLabelColor(drones));
+}
+
 /** 我方资产图标/标注：读各根键根级 `assetFriendlyColor`；未配置则 undefined（由上层回退到主题 `FORCE_COLORS.friendly`） */
 export function getAssetFriendlyColorForAssetType(t: PublicMapAssetType): string | undefined {
   const c = resolvedAssetFriendlyColorsByAssetType[t];
+  return typeof c === "string" && c.trim() ? c.trim() : undefined;
+}
+
+/** 我方资产名称字色：读各根键 `label.fontColor`；未配置则 undefined（上层回退） */
+export function getAssetLabelFontColorForAssetType(t: PublicMapAssetType): string | undefined {
+  const c = resolvedAssetLabelColorsByAssetType[t];
   return typeof c === "string" && c.trim() ? c.trim() : undefined;
 }
 
@@ -1136,15 +1253,32 @@ function visibilityRecordToRadarGlobals(vis: Record<string, unknown> | null | un
   return Object.keys(o).length ? o : undefined;
 }
 
-/** 优先读 `radar.visibility`（与 cameras 阵型一致）；否则兼容旧版根级 `radarVisibility` */
+/** 读取 `radar.visibility`（与 cameras 阵型一致） */
 function parseRadarVisibilityGlobal(root: Record<string, unknown>): RadarVisibilityGlobal | undefined {
   const radar = root.radar;
   const bundle = asRecord(radar);
   if (bundle && bundle.visibility != null && typeof bundle.visibility === "object") {
     return visibilityRecordToRadarGlobals(asRecord(bundle.visibility));
   }
-  const rv = asRecord(root.radarVisibility);
-  return visibilityRecordToRadarGlobals(rv);
+  return undefined;
+}
+
+/**
+ * 静态 `radar.devices` 解析时合并用：与 `getRadarConfigDefaults()` 中根级
+ * `defaultDistanceLabelsVisible` / `defaultAngleLabelsVisible` / `defaultCrosshairVisible` 语义一致。
+ */
+function buildRadarMapGlobalsFromRoot(root: Record<string, unknown>): RadarMapGlobals {
+  const vis = parseRadarVisibilityGlobal(root) ?? {};
+  const radar = asRecord(root.radar) ?? {};
+  return {
+    ...vis,
+    defaultDistanceLabelsVisible:
+      "defaultDistanceLabelsVisible" in radar ? (radar.defaultDistanceLabelsVisible as boolean) !== false : false,
+    defaultAngleLabelsVisible:
+      "defaultAngleLabelsVisible" in radar ? (radar.defaultAngleLabelsVisible as boolean) !== false : false,
+    defaultCrosshairVisible:
+      "defaultCrosshairVisible" in radar ? (radar.defaultCrosshairVisible as boolean) !== false : true,
+  };
 }
 
 function parseSectorBundle(raw: unknown): AppConfigSectorBundle | null {
@@ -1157,6 +1291,7 @@ function parseSectorBundle(raw: unknown): AppConfigSectorBundle | null {
         ? Number(o.defaultSectorRange)
         : undefined;
   return {
+    assetFriendlyColor: typeof o.assetFriendlyColor === "string" ? o.assetFriendlyColor : undefined,
     defaultRange: dr,
     scan:
       o.scan !== undefined && o.scan !== null && typeof o.scan === "object"
@@ -1214,7 +1349,7 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   const tdoaBundle = parseSectorBundle(root.tdoa);
   const dronesBundle = parseSectorBundle(root.drones);
   const fromCameras = mapCamerasDevicesPayload(root.cameras);
-  const fromRadar = mapRadarPayload(root.radar, parseRadarVisibilityGlobal(root));
+  const fromRadar = mapRadarPayload(root.radar, buildRadarMapGlobalsFromRoot(root));
   const fromAirports = mapAirportsDevicesPayload(root.airports);
   const fromDrones = mapDronesDevicesPayload(root.drones);
   const configAssetBase = mergeConfigAssetBase(
@@ -1233,9 +1368,14 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   applyResolvedRenderingConfigs(trackRendering, droneMapRendering);
   applyResolvedNewConfigs(root);
   applyFriendlyColorsFromAssetSections(root);
+  applyLabelColorsFromAssetSections(root);
   // 提取 radar 根级默认配置（WS 雷达实体兜底用）
   applyRadarDefaults(root);
 
+  const laserActivationEnabled = laserWeapons?.activationEnabled === true;
+  const tdoaActivationEnabled = tdoaBundle?.activationEnabled === true;
+  applyLaserActivation(laserActivationEnabled);
+  applyTdoaActivation(tdoaActivationEnabled);
   return {
     configAssetBase,
     cameras: camerasBundle,
@@ -1247,10 +1387,12 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
     assetDispositionIconAccent: parseAssetDispositionIconAccent(root),
     trackRendering,
     iconSizeStops: parseIconSizeStops(root),
+    laserActivationEnabled,
+    tdoaActivationEnabled,
   };
 }
 
-/** 扇区描边：`lineWidth` 经 `Number` 后 ≤0 或 NaN 视为关闭（兼容 JSON 里字符串 `"0"`） */
+/** 扇区描边：`lineWidth` 经 `Number` 后 ≤0 或 NaN 视为关闭 */
 export function resolveSectorBorderEmit(b: AppConfigSectorBundle | null): boolean {
   const w = Number(b?.sectorBorder?.lineWidth);
   return Number.isFinite(w) && w > 0;
@@ -1328,12 +1470,12 @@ export function sectorBundleAnyMergedVisible(
 
 export function sectorBundleToLaserLayerVis(b: AppConfigSectorBundle | null): Partial<LaserMaplibreLayerVisibility> {
   if (!b) return {};
-  const v = b.visibility ?? {};
+  const active = resolvedLaserActivation;
   const borderEmit = resolveSectorBorderEmit(b);
   return {
-    fillVisible: v.sectorFillVisible !== false,
-    scanFillVisible: v.sectorScanVisible !== false,
-    lineVisible: borderEmit && v.sectorFillVisible !== false,
+    fillVisible: active,
+    scanFillVisible: active,
+    lineVisible: active && borderEmit,
     centerVisible: sectorBundleAnyMergedVisible(b, "centerIconVisible"),
     labelVisible: sectorBundleAnyMergedVisible(b, "centerNameVisible"),
   };
@@ -1341,12 +1483,12 @@ export function sectorBundleToLaserLayerVis(b: AppConfigSectorBundle | null): Pa
 
 export function sectorBundleToTdoaLayerVis(b: AppConfigSectorBundle | null): Partial<TdoaMaplibreLayerVisibility> {
   if (!b) return {};
-  const v = b.visibility ?? {};
+  const active = resolvedTdoaActivation;
   const borderEmit = resolveSectorBorderEmit(b);
   return {
-    fillVisible: v.sectorFillVisible !== false,
-    scanFillVisible: v.sectorScanVisible !== false,
-    lineVisible: borderEmit && v.sectorFillVisible !== false,
+    fillVisible: active,
+    scanFillVisible: active,
+    lineVisible: active && borderEmit,
     centerVisible: sectorBundleAnyMergedVisible(b, "centerIconVisible"),
     labelVisible: sectorBundleAnyMergedVisible(b, "centerNameVisible"),
   };
@@ -1400,15 +1542,13 @@ function sectorDeviceToSectorGeometry(
   d: AppConfigSectorDevice,
   defaultRangeM: number,
   bundle: AppConfigSectorBundle | null,
-): Omit<LaserDevice, "scan"> | null {
-  const id = String(d.deviceId ?? d.id ?? "");
+): Omit<LaserDevice, "scan" | "activationEnabled"> | null {
+  const id = String(d.deviceId ?? "");
   const c = d.center;
   if (!id || !Array.isArray(c) || c.length < 2) return null;
   const lng = Number(c[0]);
   const lat = Number(c[1]);
   if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
-  const laserPulse = d.laserPulseActive === true;
-  if (d.showSector === false && !laserPulse) return null;
   const rangeM = Number.isFinite(Number(d.range)) ? Number(d.range) : defaultRangeM;
   const bearing = Number.isFinite(Number(d.bearing)) ? Number(d.bearing) : 0;
   const angle = Number.isFinite(Number(d.angle)) ? Number(d.angle) : 60;
@@ -1431,13 +1571,7 @@ function sectorDeviceToSectorGeometry(
 }
 
 function resolveCycleMs(bs: AppConfigSectorScan | undefined, ds: Record<string, unknown>): number {
-  const v =
-    ds.cycleMs ??
-    ds.periodMs ??
-    bs?.cycleMs ??
-    bs?.periodMs ??
-    (bs?.periodSec != null ? Number(bs.periodSec) * 1000 : undefined) ??
-    (ds.periodSec != null ? Number(ds.periodSec) * 1000 : undefined);
+  const v = ds.cycleMs ?? bs?.cycleMs;
   const n = Number(v);
   return Math.max(400, Number.isFinite(n) ? n : 2000);
 }
@@ -1452,25 +1586,6 @@ function buildLaserScanParams(
   const ds = asRecord(row.scan as unknown) ?? {};
   if (!sectorScanVisible) {
     return {
-      enabled: false,
-      cycleMs: 2000,
-      tickMs: defaults.tickMs,
-      bandCount: defaults.bandCount,
-      bandWidthMeters: defaults.bandWidthMeters,
-    };
-  }
-  if (bs?.enabled === false) {
-    return {
-      enabled: false,
-      cycleMs: 2000,
-      tickMs: defaults.tickMs,
-      bandCount: defaults.bandCount,
-      bandWidthMeters: defaults.bandWidthMeters,
-    };
-  }
-  if (ds.enabled === false) {
-    return {
-      enabled: false,
       cycleMs: 2000,
       tickMs: defaults.tickMs,
       bandCount: defaults.bandCount,
@@ -1492,24 +1607,51 @@ function buildLaserScanParams(
     Number(ds.bandWidthMeters ?? bs?.bandWidthMeters ?? defaults.bandWidthMeters) || defaults.bandWidthMeters,
   );
 
-  return { enabled: true, cycleMs, tickMs, bandCount, bandWidthMeters };
+  return { cycleMs, tickMs, bandCount, bandWidthMeters };
+}
+
+let resolvedLaserActivation = false;
+let resolvedTdoaActivation = false;
+function applyLaserActivation(v: boolean) {
+  resolvedLaserActivation = v;
+}
+function applyTdoaActivation(v: boolean) {
+  resolvedTdoaActivation = v;
+}
+/** 激光激活开关：`activationEnabled` 为 true 时才显示扇区+扫描+脉冲 */
+export function getLaserActivationEnabled(): boolean {
+  return resolvedLaserActivation;
+}
+/** 运行时设置激光激活开关（供 chat 方案激活调用） */
+export function setLaserActivationEnabled(v: boolean): void {
+  resolvedLaserActivation = v;
+}
+/** TDOA 激活开关：`activationEnabled` 为 true 时才显示扇区+扫描 */
+export function getTdoaActivationEnabled(): boolean {
+  return resolvedTdoaActivation;
+}
+/** 运行时设置 TDOA 激活开关（供 chat 方案激活调用） */
+export function setTdoaActivationEnabled(v: boolean): void {
+  resolvedTdoaActivation = v;
 }
 
 export function laserDevicesFromSectorBundle(bundle: AppConfigSectorBundle | null): LaserDevice[] {
   if (!bundle?.devices?.length) return [];
   const defM = Number.isFinite(Number(bundle.defaultRange)) ? Number(bundle.defaultRange) : 12_000;
-  const sectorScanVisible = bundle.visibility?.sectorScanVisible !== false;
+  const rootActive = resolvedLaserActivation;
   const out: LaserDevice[] = [];
   for (const raw of bundle.devices) {
-    const sid = String(raw.deviceId ?? raw.id ?? "");
+    const sid = String(raw.deviceId ?? "");
     if (!sid) continue;
     const laserAt = parseMapAssetTypeStrict(raw.assetType, `laserWeapons.devices[${sid}].assetType`);
     if (laserAt !== "laser") {
       throw new Error(`laserWeapons.devices[${sid}].assetType 必须为 laser`);
     }
+    /* 设备级 activationEnabled 覆盖根级；不写则继承根级 */
+    const devActive = raw.activationEnabled !== undefined ? raw.activationEnabled === true : rootActive;
     const base = sectorDeviceToSectorGeometry(raw, defM, bundle);
     if (!base) continue;
-    const scan = buildLaserScanParams(bundle, raw, sectorScanVisible, {
+    const scan = buildLaserScanParams(bundle, raw, devActive, {
       tickMs: 90,
       bandCount: 9,
       bandWidthMeters: 1,
@@ -1528,8 +1670,8 @@ export function laserDevicesFromSectorBundle(bundle: AppConfigSectorBundle | nul
         : undefined;
     out.push({
       ...base,
+      activationEnabled: devActive,
       scan,
-      laserPulseActive: raw.laserPulseActive === true,
       ...(pulseOnMs !== undefined ? { pulseOnMs } : {}),
       ...(pulseOffMs !== undefined ? { pulseOffMs } : {}),
     });
@@ -1556,25 +1698,32 @@ export function tdoaDevicesFromSectorBundle(bundle: AppConfigSectorBundle | null
     : Number.isFinite(Number(bundle.defaultSectorRange))
       ? Number(bundle.defaultSectorRange)
       : 12_000;
-  const sectorScanVisible = bundle.visibility?.sectorScanVisible !== false;
+  const rootActive = resolvedTdoaActivation;
   const out: TdoaDevice[] = [];
   for (const raw of bundle.devices) {
-    const sid = String(raw.deviceId ?? raw.id ?? "");
+    const sid = String(raw.deviceId ?? "");
     if (!sid) continue;
     const tat = parseMapAssetTypeStrict(raw.assetType, `tdoa.devices[${sid}].assetType`);
     if (tat !== "tdoa") {
       throw new Error(`tdoa.devices[${sid}].assetType 必须为 tdoa`);
     }
+    /* 设备级 activationEnabled 覆盖根级；不写则继承根级 */
+    const devActive = raw.activationEnabled !== undefined ? raw.activationEnabled === true : rootActive;
     const base = sectorDeviceToSectorGeometry(raw, defM, bundle);
     if (!base) continue;
-    const scan = buildTdoaScanParams(bundle, raw, sectorScanVisible);
-    out.push({ ...base, scan });
+    const scan = buildTdoaScanParams(bundle, raw, devActive);
+    out.push({ ...base, activationEnabled: devActive, scan });
   }
   return out;
 }
 
 /** `laserWeapons` → `asset-store` 静态行；中心点仅专题层绘制，仅用于列表/统一实体模型 */
 function sectorBundleFriendlyTint(bundle: AppConfigSectorBundle | null | undefined): string | undefined {
+  const c = bundle?.assetFriendlyColor;
+  return typeof c === "string" && c.trim() ? c.trim() : undefined;
+}
+
+function sectorBundleLabelFontColor(bundle: AppConfigSectorBundle | null | undefined): string | undefined {
   const c = bundle?.label?.fontColor;
   return typeof c === "string" && c.trim() ? c.trim() : undefined;
 }
@@ -1583,6 +1732,7 @@ function laserBundleToStaticAssets(bundle: AppConfigSectorBundle | null): AssetD
   const devices = laserDevicesFromSectorBundle(bundle);
   const now = isoNow();
   const mfc = sectorBundleFriendlyTint(bundle);
+  const lfc = sectorBundleLabelFontColor(bundle);
   return devices.map((d) => ({
     id: d.id,
     name: d.name ?? d.id,
@@ -1600,6 +1750,7 @@ function laserBundleToStaticAssets(bundle: AppConfigSectorBundle | null): AssetD
       center_name_visible: d.centerNameVisible !== false,
       virtual_troop: d.virtual === true,
       ...(mfc ? { [MAP_FRIENDLY_COLOR_PROP]: mfc } : {}),
+      ...(lfc ? { [MAP_LABEL_FONT_COLOR_PROP]: lfc } : {}),
     },
     mission_status: "monitoring",
     assigned_target_id: null,
@@ -1614,6 +1765,7 @@ function tdoaBundleToStaticAssets(bundle: AppConfigSectorBundle | null): AssetDa
   const devices = tdoaDevicesFromSectorBundle(bundle);
   const now = isoNow();
   const mfc = sectorBundleFriendlyTint(bundle);
+  const lfc = sectorBundleLabelFontColor(bundle);
   return devices.map((d) => ({
     id: d.id,
     name: d.name ?? d.id,
@@ -1631,6 +1783,7 @@ function tdoaBundleToStaticAssets(bundle: AppConfigSectorBundle | null): AssetDa
       center_name_visible: d.centerNameVisible !== false,
       virtual_troop: d.virtual === true,
       ...(mfc ? { [MAP_FRIENDLY_COLOR_PROP]: mfc } : {}),
+      ...(lfc ? { [MAP_LABEL_FONT_COLOR_PROP]: lfc } : {}),
     },
     mission_status: "monitoring",
     assigned_target_id: null,
@@ -1666,6 +1819,8 @@ export async function loadResolvedAppConfig(customUrl?: string): Promise<Resolve
     assetDispositionIconAccent: {},
     trackRendering: { ...DEFAULT_TRACK_RENDERING },
     iconSizeStops: null,
+    laserActivationEnabled: false,
+    tdoaActivationEnabled: false,
   };
   if (typeof window === "undefined") return empty;
   const url = configUrl(customUrl);

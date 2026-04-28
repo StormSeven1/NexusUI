@@ -119,7 +119,7 @@ export function TopNav() {
             <Map size={16} />
           </div>
           <span className="text-sm font-semibold tracking-wide nexus-text-gradient">
-            Nexus<span className="text-nexus-text-secondary">UI</span>
+            作战管理<span className="text-nexus-text-secondary">系统</span>
           </span>
         </div>
       </div>

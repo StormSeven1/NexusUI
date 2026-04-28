@@ -6,7 +6,8 @@ import { Toaster } from "sonner";
 export function SonnerToaster() {
   return (
     <Toaster
-      position="bottom-right"
+      className="nexus-sonner-list"
+      position="top-right"
       theme="dark"
       richColors
       closeButton

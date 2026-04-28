@@ -50,7 +50,7 @@ export const ZONE_ID_ALLOWLIST: readonly string[] = [];
  * 空数组表示**不按名称**过滤（仍可按 `ZONE_ID_ALLOWLIST` 过滤）。
  * 若需与 18.141 完全一致，保留默认两项；若需显示全部区域，改为 `[]`。
  */
-export const ZONE_NAME_SUBSTRING_ALLOWLIST: readonly string[] = ["拒止拦截区", "警告驱离区","港外航道监控区"];
+export const ZONE_NAME_SUBSTRING_ALLOWLIST: readonly string[] = ["港外航道监控区"];
 
 const zoneIdAllowSet =
   ZONE_ID_ALLOWLIST.length > 0 ? new Set(ZONE_ID_ALLOWLIST.map((s) => String(s).trim()).filter(Boolean)) : null;

@@ -13,7 +13,7 @@
  *      ├─ 静态: laserBundleToStaticAssets() → configAssetBase（含 scan/pulse 参数）
  *      ├─ 动态: applyAssetListFromWs() → mergeDynamicAndStaticAssets() → asset-store
  *      └─ 专题层: adaptAssetToLaserDevice() → LaserMaplibre.upsert()
- *          WS 动态实体不含 scan/pulse 参数，upsert 时保留静态 bundle 的参数
+ *          scan/脉冲是否开启由处置激活或配置写入；WS 只带站址时应在 Map2D 合并层写好再 upsert
  *
  *   3. 渲染: LaserMaplibre.flush() → 遍历 devices 生成 GeoJSON
  *      ├─ 扇区填充 (t="sec"): 基础扇区多边形，脉冲暗相时不画
@@ -22,20 +22,19 @@
  *      ├─ 中心图标 (t="ctr"): 激光 SVG 图标，敌我配色
  *      └─ 名称标签 (t="lbl"): 雷达/激光名称
  *
- *   4. 脉冲动画: laserPulseActive=true 时
+ *   4. 脉冲动画: activationEnabled=true 时
  *      ├─ ensureLaserPulse() → setTimeout 循环切换 pulseVisibleById
  *      ├─ 亮相 (pulseOnMs，默认 10000ms): 扇区填充 + 扫描亮带均可见
  *      ├─ 暗相 (pulseOffMs，默认 3000ms): 扇区填充不画，扫描亮带不画
- *      └─ WS 更新时保留静态 bundle 的 laserPulseActive/pulseOnMs/pulseOffMs
+ *      └─ WS 更新不改变激活态；脉动参数随处置/配置写入的 LaserDevice 为准
  *
- *   5. 扫描动画: scan.enabled=true 时
+ *   5. 扫描动画: activationEnabled=true 时
  *      ├─ syncScanTimer() → setInterval(tickMs) 定时调用 flush()
  *      ├─ flush() 中按 Date.now() % scan.cycleMs 计算扫描进度
  *      └─ 生成 bandCount 个环形亮带，从内向外移动
  *
  *   6. 更新: entity_status 周期推送 → adaptAssetToLaserDevice() → upsert()
- *      ├─ upsert 保留静态 scan 参数（新设备 scan.enabled=false 但旧设备有 scan 时）
- *      └─ upsert 保留静态脉冲参数（新设备 laserPulseActive≠true 但旧设备=true 时）
+ *      └─ upsert 仅合并 WS 未带的可选展示字段（如 color），不根据 prev 推断 scan/脉冲
  *
  *   7. 超时: 无独立超时机制
  */
@@ -89,11 +88,10 @@ const laserLayerVisDefault: LaserMaplibreLayerVisibility = {
 };
 
 /**
- * V2 LaserManager 扫描扇区参数：**bandCount** / **bandWidthMeters** / **cycleMs** 等；
- * **tickMs** 对齐 V2：最小 90ms、最大 2000ms、band 至少 9 条、带宽至少 1m。
+ * 扇区扫描亮带动画参数（**bandCount** / **bandWidthMeters** / **cycleMs** / **tickMs**）。
+ * 是否绘制扇区由设备上 **`activationEnabled`**（与 app-config 中 devices[].activationEnabled 同源语义）控制。
  */
 export type LaserScanParams = {
-  enabled: boolean;
   cycleMs: number;
   tickMs: number;
   bandCount: number;
@@ -107,22 +105,24 @@ export type LaserDevice = {
   rangeKm: number;
   headingDeg: number;
   openingDeg: number;
+  /** true：绘制扇区/亮带/边线/中心/标签；false：该设备专题要素不渲染 */
+  activationEnabled: boolean;
   color?: string;
   fillOpacity?: number;
   virtual?: boolean;
   /** 敌我属性，对应 `laserWeapons.devices[].disposition` */
   disposition?: ForceDisposition;
-  /** 友方图标/标签着色（来自 bundle label.fontColor 或 Asset.friendlyMapColor） */
+  /** 友方图标着色（来自 assetFriendlyColor） */
   friendlyMapColor?: string;
+  /** 友方名称字色（来自 label.fontColor） */
+  labelFontColor?: string;
   /** 中心名称 symbol；默认随 `centerNameVisible` 为 true */
   centerNameVisible?: boolean;
   /** 中心图标 symbol；默认随 `centerIconVisible` 与配置一致 */
   centerIconVisible?: boolean;
   name?: string;
   scan: LaserScanParams;
-  /** true 时扇区扫描做明暗脉动（对齐 V2 LaserSectorOverlayTool） */
-  laserPulseActive?: boolean;
-  /** 亮相时长（ms），默认 10000 */
+  /** 亮相时长（ms），默认 10000；activationEnabled=true 时按 pulseOnMs / pulseOffMs 做亮相/暗相循环 */
   pulseOnMs?: number;
   /** 暗相时长（ms），默认 3000 */
   pulseOffMs?: number;
@@ -373,23 +373,19 @@ export class LaserMaplibre {
     this.devices.clear();
   }
 
+  getDevice(id: string): LaserDevice | undefined {
+    return this.devices.get(id);
+  }
+
+  getDeviceIds(): string[] {
+    return [...this.devices.keys()];
+  }
+
   upsert(d: LaserDevice) {
     const prev = this.devices.get(d.id);
-    const wasPulse = prev?.laserPulseActive === true;
-    const nowPulse = d.laserPulseActive === true;
+    const wasPulse = prev?.activationEnabled === true;
 
-    /* 如果新设备的 scan.enabled 为 false 但旧设备有 scan（来自静态 bundle），保留旧设备的 scan 参数，
-     * 避免动态 WS 实体覆盖静态 bundle 的扫描配置 */
-    if (prev && d.scan.enabled === false && prev.scan.enabled) {
-      d = { ...d, scan: { ...prev.scan } };
-    }
-    /* 同理保留静态 bundle 的脉冲参数（laserPulseActive / pulseOnMs / pulseOffMs），
-     * WS 动态实体不含这些字段，不保留则脉冲动画会被停掉 */
-    if (prev && d.laserPulseActive !== true && prev.laserPulseActive === true) {
-      d = { ...d, laserPulseActive: true, pulseOnMs: d.pulseOnMs ?? prev.pulseOnMs, pulseOffMs: d.pulseOffMs ?? prev.pulseOffMs };
-    }
-    /* 同理保留静态 bundle 的 color / fillOpacity，
-     * WS 动态实体不含这些字段，不保留则扇区颜色回退到 `_sectorFillDefaultColor` */
+    /* WS 常不带 color/fillOpacity：仅补全可选展示字段，与扇区激活态无关 */
     if (prev) {
       if (d.color == null && prev.color != null) d = { ...d, color: prev.color };
       if (d.fillOpacity == null && prev.fillOpacity != null) d = { ...d, fillOpacity: prev.fillOpacity };
@@ -397,16 +393,40 @@ export class LaserMaplibre {
 
     this.devices.set(d.id, { ...d });
 
-    /* 保留参数后重新计算 nowPulse */
-    const effectiveNowPulse = d.laserPulseActive === true;
-    if (!effectiveNowPulse) {
+    if (!d.activationEnabled) {
       this.stopLaserPulse(d.id);
-    } else if (effectiveNowPulse && !wasPulse) {
+    } else if (d.activationEnabled && !wasPulse) {
       this.stopLaserPulse(d.id);
       this.pulseVisibleById.set(d.id, true);
       this.ensureLaserPulse(d.id);
     }
 
+    this.flush();
+  }
+
+  /**
+   * 批量更新设备：同一批次仅 flush 一次，减少高频 WS/跟随时的重复 setData。
+   */
+  upsertMany(devices: LaserDevice[]) {
+    if (!devices.length) return;
+    for (let i = 0; i < devices.length; i += 1) {
+      let d = devices[i]!;
+      const prev = this.devices.get(d.id);
+      const wasPulse = prev?.activationEnabled === true;
+      if (prev) {
+        if (d.color == null && prev.color != null) d = { ...d, color: prev.color };
+        if (d.fillOpacity == null && prev.fillOpacity != null) d = { ...d, fillOpacity: prev.fillOpacity };
+      }
+      this.devices.set(d.id, { ...d });
+
+      if (!d.activationEnabled) {
+        this.stopLaserPulse(d.id);
+      } else if (d.activationEnabled && !wasPulse) {
+        this.stopLaserPulse(d.id);
+        this.pulseVisibleById.set(d.id, true);
+        this.ensureLaserPulse(d.id);
+      }
+    }
     this.flush();
   }
 
@@ -431,15 +451,15 @@ export class LaserMaplibre {
   private minScanTickMs(): number {
     let t = 90;
     for (const d of this.devices.values()) {
-      if (d.scan.enabled && Number.isFinite(d.scan.tickMs)) t = Math.min(t, Math.max(16, d.scan.tickMs));
+      if (d.activationEnabled && Number.isFinite(d.scan.tickMs)) t = Math.min(t, Math.max(16, d.scan.tickMs));
     }
     return t;
   }
 
-  /** 是否绘制 scan 扇区填充：未启用/图层关/开口过小为 false；脉动开启时仅在亮相帧为 true */
+  /** 是否绘制 scan 亮带：未激活/图层关/开口过小为 false；脉动开启时仅在亮相帧为 true */
   private sectorScanGeometryVisible(d: LaserDevice): boolean {
-    if (!d.scan.enabled || !this.layerVis.scanFillVisible || d.openingDeg <= 0.1) return false;
-    if (d.laserPulseActive === true) return this.pulseVisibleById.get(d.id) === true;
+    if (!d.activationEnabled || !this.layerVis.scanFillVisible || d.openingDeg <= 0.1) return false;
+    if (d.activationEnabled === true) return this.pulseVisibleById.get(d.id) === true;
     return true;
   }
 
@@ -462,12 +482,12 @@ export class LaserMaplibre {
    */
   private ensureLaserPulse(id: string) {
     const d0 = this.devices.get(id);
-    if (!d0?.laserPulseActive || this.laserPulseTimeouts.has(id)) return;
+    if (!d0?.activationEnabled || this.laserPulseTimeouts.has(id)) return;
     const onMs = Number.isFinite(Number(d0.pulseOnMs)) ? Math.max(200, Number(d0.pulseOnMs)) : DEFAULT_LASER_PULSE_ON_MS;
     const offMs = Number.isFinite(Number(d0.pulseOffMs)) ? Math.max(200, Number(d0.pulseOffMs)) : DEFAULT_LASER_PULSE_OFF_MS;
     const step = (pulseOn: boolean) => {
       const d = this.devices.get(id);
-      if (!d?.laserPulseActive) {
+      if (!d?.activationEnabled) {
         this.laserPulseTimeouts.delete(id);
         return;
       }
@@ -508,63 +528,69 @@ export class LaserMaplibre {
         : disp === "neutral" ? FORCE_COLORS.neutral
         : (d.color ?? this._sectorFillDefaultColor);
       const baseOp = d.fillOpacity ?? this._sectorFillDefaultOpacity;
-      const pulseOn = d.laserPulseActive !== true || this.pulseVisibleById.get(d.id) !== false;
-      const ring = geoSectorCoords(d.lng, d.lat, d.rangeKm, d.headingDeg, d.openingDeg);
 
-      /* ── 扇区填充：脉冲暗相时仍渲染背景（降低透明度），仅扫描亮带消失 ── */
-      const secOpacity = pulseOn ? Math.max(0.08, baseOp * 0.65) : Math.max(0.04, baseOp * 0.3);
-      feats.push({
-        type: "Feature",
-        geometry: { type: "Polygon", coordinates: [ring] },
-        properties: {
-          t: "sec",
-          id: d.id,
-          c,
-          o: secOpacity,
-        },
-      });
+      /* 扇区 / 扫描 / 边线仅 `activationEnabled` 时绘制；中心点与名称仍输出，避免根配置 `activationEnabled: false` 时整层空白且不报错 */
+      if (d.activationEnabled) {
+        const pulseOn = d.activationEnabled !== true || this.pulseVisibleById.get(d.id) !== false;
+        const ring = geoSectorCoords(d.lng, d.lat, d.rangeKm, d.headingDeg, d.openingDeg);
 
-      /* 扫描亮带：仅脉冲亮相时渲染 */
-      if (pulseOn && this.sectorScanGeometryVisible(d)) {
-        const maxRangeM = d.rangeKm * 1000;
-        const progress = (Date.now() % d.scan.cycleMs) / d.scan.cycleMs;
-        const n = Math.max(1, Math.floor(d.scan.bandCount));
-        for (let i = 0; i < n; i++) {
-          const p = (progress + i / n) % 1;
-          const outerM = maxRangeM * p;
-          const innerM = Math.max(0, outerM - d.scan.bandWidthMeters);
-          if (outerM <= 0) continue;
-          const ringCoords = geoSectorRingCoords(
-            d.lng,
-            d.lat,
-            innerM / 1000,
-            Math.min(maxRangeM, outerM) / 1000,
-            d.headingDeg,
-            d.openingDeg,
-            Math.max(12, Math.floor(d.openingDeg / 4)),
-          );
-          if (ringCoords.length < 4) continue;
+        /* ── 扇区填充：脉冲暗相仍渲染背景（降低透明度） ── */
+        if (this.layerVis.fillVisible && d.openingDeg > 0.1) {
+          const secOpacity = pulseOn ? Math.max(0.08, baseOp * 0.65) : Math.max(0.04, baseOp * 0.3);
           feats.push({
             type: "Feature",
-            geometry: { type: "Polygon", coordinates: [ringCoords] },
+            geometry: { type: "Polygon", coordinates: [ring] },
             properties: {
-              t: "scan",
+              t: "sec",
               id: d.id,
-              c: "#FFFFFF",
-              o: Math.max(0.12, baseOp * 0.9),
+              c,
+              o: secOpacity,
             },
           });
         }
-      }
 
-      if (pulseOn && this._border.emit && this.layerVis.lineVisible) {
-        const lineRing = ring[0] === ring[ring.length - 1] ? ring.slice(0, -1) : ring;
-        const lc = this._border.lineColorFixed ?? c;
-        feats.push({
-          type: "Feature",
-          geometry: { type: "LineString", coordinates: [...lineRing, lineRing[0]!] },
-          properties: { t: "ln", id: d.id, c, lc, lw: this._border.lineWidth },
-        });
+        /* 扫描亮带：仅脉冲亮相时渲染 */
+        if (pulseOn && this.sectorScanGeometryVisible(d)) {
+          const maxRangeM = d.rangeKm * 1000;
+          const progress = (Date.now() % d.scan.cycleMs) / d.scan.cycleMs;
+          const n = Math.max(1, Math.floor(d.scan.bandCount));
+          for (let i = 0; i < n; i++) {
+            const p = (progress + i / n) % 1;
+            const outerM = maxRangeM * p;
+            const innerM = Math.max(0, outerM - d.scan.bandWidthMeters);
+            if (outerM <= 0) continue;
+            const ringCoords = geoSectorRingCoords(
+              d.lng,
+              d.lat,
+              innerM / 1000,
+              Math.min(maxRangeM, outerM) / 1000,
+              d.headingDeg,
+              d.openingDeg,
+              Math.max(12, Math.floor(d.openingDeg / 4)),
+            );
+            if (ringCoords.length < 4) continue;
+            feats.push({
+              type: "Feature",
+              geometry: { type: "Polygon", coordinates: [ringCoords] },
+              properties: {
+                t: "scan",
+                id: d.id,
+                c: "#FFFFFF",
+                o: Math.max(0.12, baseOp * 0.9),
+              },
+            });
+          }
+        }
+
+        if (d.openingDeg > 0.1 && pulseOn && this._border.emit && this.layerVis.lineVisible) {
+          const lineRing = ring[0] === ring[ring.length - 1] ? ring.slice(0, -1) : ring;
+          const lc = this._border.lineColorFixed ?? c;
+          feats.push({
+            type: "Feature",
+            geometry: { type: "LineString", coordinates: [...lineRing, lineRing[0]!] },
+            properties: { t: "ln", id: d.id, c, lc, lw: this._border.lineWidth },
+          });
+        }
       }
       if (d.centerIconVisible !== false) {
         const fmc = disp === "friendly" ? d.friendlyMapColor : undefined;
@@ -581,11 +607,10 @@ export class LaserMaplibre {
         });
       }
       if (d.name && d.centerNameVisible !== false) {
-        const fmc = disp === "friendly" ? d.friendlyMapColor : undefined;
         const tc =
           disp === "hostile" || disp === "neutral"
             ? assetMapLabelTextColor(disp, "online", this._assetIconAccent)
-            : assetMapLabelTextColor(disp, "online", this._assetIconAccent, fmc ?? this._label.textColor);
+            : assetMapLabelTextColor(disp, "online", this._assetIconAccent, d.labelFontColor ?? this._label.textColor);
         feats.push({
           type: "Feature",
           geometry: { type: "Point", coordinates: [d.lng, d.lat] },

@@ -3,13 +3,32 @@ import { ALL_DATA_LAYER_IDS } from "@/lib/map-entity-model";
 import type { VectorLayerPanelItem } from "@/lib/map-2d-basemap-layer-panel";
 
 /**
- * 全局 UI / 地图相关 Zustand 状态。
+ * app-store — 全局 UI / 地图相关 Zustand 状态
  *
- * 飞行：`requestFlyTo(lat, lng, zoom)` 写入 `flyToRequest`（不直接改 `mapCenter`）。
- * Map2D / Map3D 监听 `flyToRequest`，用 `seq` 去重后执行 `flyTo`。
- * 对话侧经 `chat-tool-bridge` 调用 `requestFlyTo`。
+ * 【导航状态】
+ *   - topTab: 顶部主 Tab（态势/资产/任务/图层/分析/搜索/设置）
+ *   - leftPanelTab: 左面板子 Tab（航迹/资产/图层/告警）
+ *   - rightPanelTab: 右面板子 Tab（概览/仪表/通信/环境/日志/数据/对话）
+ *   - mapViewMode: 地图模式（2d/3d）
  *
- * 底图：Map2D 用 style（如 Carto）；Map3D 用 `UrlTemplateImageryProvider`。
+ * 【航迹选中与高亮】
+ *   - selectedTrackId: 当前选中的航迹 showID（属性框展示用）
+ *   - highlightedTrackIds: 高亮航迹 ID 列表（地图上特殊渲染）
+ *   - selectTrack(id): 设置选中+高亮，传 null 清除
+ *   - 消灭操作后：若当前选中的是被消灭航迹 → selectTrack(null)
+ *
+ * 【地图飞行】
+ *   - requestFlyTo(lat, lng, zoom): 写入 flyToRequest（不直接改 mapCenter）
+ *   - Map2D / Map3D 监听 flyToRequest，用 seq 去重后执行 flyTo
+ *   - 对话侧经 chat-tool-bridge 调用 requestFlyTo
+ *
+ * 【地图标注】
+ *   - routeLines: 航路/路线标注
+ *   - drawnAreas: 绘制区域标注
+ *   - clearAnnotations(): 清除所有标注（高亮+路线+区域）
+ *
+ * 【底图】
+ *   - Map2D 用 style（如 Carto）；Map3D 用 UrlTemplateImageryProvider
  */
 
 export type MapViewMode = "2d" | "3d";

@@ -37,10 +37,10 @@ export function StatusBar() {
           <Wifi size={10} />
           <span>{wsConnected ? "WebSocket" : "—"}</span>
         </div>
-        <div className="flex items-center gap-1.5 text-[10px] text-nexus-text-secondary">
+        {/* <div className="flex items-center gap-1.5 text-[10px] text-nexus-text-secondary">
           <Monitor size={10} />
           <span>帧率 60</span>
-        </div>
+        </div> */}
       </div>
 
       {/* 快捷操作 */}
@@ -68,13 +68,13 @@ export function StatusBar() {
           3D
         </button>
         <div className="mx-2 h-3 w-px bg-nexus-border" />
-        <button className="flex items-center gap-1 text-[10px] text-nexus-text-secondary hover:text-nexus-text-primary transition-colors">
+        {/* <button className="flex items-center gap-1 text-[10px] text-nexus-text-secondary hover:text-nexus-text-primary transition-colors">
           <Layers size={10} />
           <span>8 图层</span>
         </button>
         <button className="ml-1 flex items-center justify-center rounded p-0.5 text-nexus-text-muted hover:bg-nexus-bg-elevated hover:text-nexus-text-secondary transition-colors">
           <Maximize2 size={10} />
-        </button>
+        </button> */}
       </div>
 
       {/* 坐标 */}

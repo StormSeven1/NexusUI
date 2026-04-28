@@ -1,6 +1,29 @@
+/**
+ * TargetPlacard — 目标属性卡片（航迹/资产选中时弹出）
+ *
+ * 【数据流】
+ *   - 选中航迹/资产 → appStore.selectedTrackId / selectedAssetId
+ *   → 本组件从 track-store / asset-store 取数据 → 展示属性
+ *
+ * 【一键处置】
+ *   - 点击「一键处置」按钮 → buildTargetInfoFromTrack 构建请求体
+ *   → fetchDisposalPlansHttp POST disposalManualGeneratePlanUrl
+ *   → disposalPlanStore.appendFromNormalized(_, "http")
+ *   → DisposalPlanFeed 展示方案卡片
+ *
+ * 【消灭关联】
+ *   - AlertPanel「消灭」后若当前选中的是被消灭航迹 → appStore.selectTrack(null)
+ *   → 本组件关闭
+ */
+
 "use client";
 
 import { cn } from "@/lib/utils";
+import { useAppConfigStore } from "@/stores/app-config-store";
+import { buildTargetInfoFromTrack } from "@/lib/disposal/target-info-from-track";
+import { fetchDisposalPlansHttp } from "@/lib/disposal/disposal-api";
+import { useAppStore } from "@/stores/app-store";
+import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, assetFriendlyColorFromProperties } from "@/lib/map-icons";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
@@ -8,7 +31,9 @@ import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColo
 import { useAlertStore } from "@/stores/alert-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore, isTrackMatchedByAlarm } from "@/stores/track-store";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 export type PlacardKind = "track" | "asset";
 
@@ -72,6 +97,17 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const asset = allAssets.find((a) => a.id === id);
   // console.log("[TargetPlacard] id=", id, "kind=", kind, "asset=", asset ? { id: asset.id, asset_type: asset.asset_type, name: asset.name } : null, "allAssetIds=", allAssets.map(a => `${a.id}(${a.asset_type})`));
   const alerts = useAlertStore((s) => s.alerts);
+  const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
+  const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar);
+  const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
+  const appendDisposalFromHttp = useDisposalPlanStore((s) => s.appendFromNormalized);
+  const [oneClickLoading, setOneClickLoading] = useState(false);
+
+  /* 目标丢失时自动关闭属性框 */
+  useEffect(() => {
+    if (kind === "track" && !track) onClose();
+    if (kind === "asset" && !asset) onClose();
+  }, [kind, track, asset, onClose]);
 
   /** 构建告警 trackId 集合，复用 isTrackMatchedByAlarm 逻辑匹配 */
   const relatedAlerts = useMemo(() => {
@@ -140,6 +176,36 @@ export function TargetPlacard(props: TargetPlacardProps) {
         ? assetIconLoaded.url
         : null;
 
+  const handleOneClickDisposal = useCallback(async () => {
+    if (kind !== "track" || !track) return;
+    await useAppConfigStore.getState().ensureLoaded();
+    setOneClickLoading(true);
+    try {
+      const targetInfo = buildTargetInfoFromTrack(track);
+      const normalized = await fetchDisposalPlansHttp({ targetInfo });
+      if (!normalized?.items?.length) {
+        console.warn("[TargetPlacard] 响应中未解析到处置方案");
+        return;
+      }
+      appendDisposalFromHttp(normalized, "http");
+      if (!rightSidebarOpen) toggleRightSidebar();
+      setRightPanelTab("chat");
+    } catch (e) {
+      console.error("[TargetPlacard] 一键处置失败", e);
+      const msg = e instanceof Error ? e.message : "网络不通畅，请检查网络后重试";
+      toast.error("一键处置失败", { description: msg });
+    } finally {
+      setOneClickLoading(false);
+    }
+  }, [
+    kind,
+    track,
+    appendDisposalFromHttp,
+    setRightPanelTab,
+    toggleRightSidebar,
+    rightSidebarOpen,
+  ]);
+
   const headerColor = kind === "track"
     ? (track ? (FORCE_COLORS[track.disposition] ?? "#a1a1aa") : "#a1a1aa")
     : (assetFriendlyColorFromProperties(asset?.properties as Record<string, unknown> | null) ?? (asset?.asset_type ? getAssetFriendlyColorForAssetType(normalizeAssetType(asset.asset_type)) : null) ?? FORCE_COLORS.friendly);
@@ -147,7 +213,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
   return (
     <div
       className={cn(
-        "pointer-events-auto w-[320px] rounded-xl border border-white/10 bg-[#0c0c0e]/95 p-3 shadow-[0_14px_36px_rgba(0,0,0,0.72)] backdrop-blur-md",
+        "pointer-events-auto w-[300px] rounded-xl border border-white/10 bg-[#0c0c0e]/95 p-3 shadow-[0_14px_36px_rgba(0,0,0,0.72)] backdrop-blur-md",
         className,
       )}
       role="dialog"
@@ -174,12 +240,31 @@ export function TargetPlacard(props: TargetPlacardProps) {
               {kind === "track" && track?.disposition && (
                 <DispositionBadge d={track.disposition} />
               )}
-              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-nexus-text-muted">
-                {subtitle}
-              </span>
+              {kind === "track" && track && (
+                <span className={cn(
+                  "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                  track.type === "air"
+                    ? "border-sky-500/30 bg-sky-500/10 text-sky-400"
+                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+                )}>
+                  {track.type === "air" ? "对空" : "对海"}
+                </span>
+              )}
+              {kind === "asset" && (
+                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-nexus-text-muted">
+                  {subtitle}
+                </span>
+              )}
             </div>
-            <div className="mt-0.5 truncate font-mono text-[10px] text-nexus-text-muted">
-              {id}
+            <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
+              {kind === "track" ? (
+                <span>
+                  <span className="text-nexus-text-secondary">showID:</span> {track?.showID ?? id}
+                  {track?.trackId && track.trackId !== track.showID && (
+                    <span className="ml-2"><span className="text-nexus-text-secondary">trackId:</span> {track.trackId}</span>
+                  )}
+                </span>
+              ) : id}
             </div>
           </div>
         </div>
@@ -197,18 +282,31 @@ export function TargetPlacard(props: TargetPlacardProps) {
       {kind === "track" ? (
         <>
           <SectionTitle>概况</SectionTitle>
-          <div className="mt-1 space-y-1.5">
-            <Row k="传感器" v={track?.sensor ?? "-"} />
+          <div className="mt-1 flex flex-col gap-y-1.5">
+            <Row k="来源" v={track?.sensor ?? "-"} />
             <Row k="最后更新" v={track?.lastUpdate ?? "-"} />
             <Row k="坐标" v={formatLatLng(track?.lat, track?.lng)} />
           </div>
 
           <SectionTitle>运动</SectionTitle>
-          <div className="mt-1 space-y-1.5">
-            <Row k="航速" v={track ? `${track.speed} kn` : "-"} />
-            <Row k="航向" v={track ? `${track.heading}°` : "-"} />
-            <Row k="高度" v={track?.altitude != null ? `${track.altitude}` : "-"} />
-            <Row k="类型" v={track?.type ?? "-"} />
+          <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1.5">
+            <Row k="航速" v={track ? `${track.speed.toFixed(1)} kn` : "-"} />
+            <Row k="航向" v={track ? `${track.heading.toFixed(1)}°` : "-"} />
+            <Row k="高度" v={track?.altitude != null ? `${track.altitude.toFixed(1)}` : "-"} />
+          </div>
+
+          <SectionTitle>处置</SectionTitle>
+          <div className="mt-1">
+            <button
+              type="button"
+              disabled={oneClickLoading}
+              onClick={() => void handleOneClickDisposal()}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 py-2 text-[11px] font-semibold text-sky-300 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {oneClickLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+              一键处置
+            </button>
+            <p className="mt-1 text-[9px] text-nexus-text-muted">拉取方案并显示在右侧「AI 助手」面板</p>
           </div>
 
           <SectionTitle>关联告警</SectionTitle>
@@ -252,12 +350,12 @@ export function TargetPlacard(props: TargetPlacardProps) {
                       </div>
                       <div className="text-[10px] text-nexus-text-muted">{a.timestamp}</div>
                     </div>
-                    {a.title && (
+                    {/* {a.title && (
                       <div className="mt-1 text-[11px] font-medium text-nexus-text-primary">{a.title}</div>
-                    )}
-                    <div className={cn("text-[11px] text-nexus-text-primary", a.title ? "mt-0.5" : "mt-1")}>
+                    )} */}
+                    {/* <div className={cn("text-[11px] text-nexus-text-primary", a.title ? "mt-0.5" : "mt-1")}>
                       {a.message}
-                    </div>
+                    </div> */}
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-nexus-text-muted">
                       {a.source && <span>来源：{a.source}</span>}
                       {a.areaName && <span>区域：{a.areaName}</span>}

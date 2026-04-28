@@ -68,15 +68,15 @@ export function MapContainer() {
       {/* 小地图暂隐藏；恢复：取消上面 MiniMap import 注释并取消下一行注释 */}
       {/* <MiniMap /> */}
 
-      {/* 比例尺 */}
+      {/* 比例尺
       <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2">
         <div className="flex items-center gap-1 rounded nexus-glass px-2 py-1">
           <div className="h-px w-12 bg-nexus-text-secondary" />
           <span className="font-mono text-[9px] text-nexus-text-secondary">10 km</span>
         </div>
-      </div>
+      </div> */}
 
-      {/* 中心十字 */}
+      {/* 中心十字
       <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center">
         <div className="relative h-6 w-6 opacity-20">
           <div className="absolute left-1/2 top-0 h-2 w-px -translate-x-1/2 bg-nexus-text-primary" />
@@ -84,7 +84,7 @@ export function MapContainer() {
           <div className="absolute left-0 top-1/2 h-px w-2 -translate-y-1/2 bg-nexus-text-primary" />
           <div className="absolute right-0 top-1/2 h-px w-2 -translate-y-1/2 bg-nexus-text-primary" />
         </div>
-      </div>
+      </div> */}
 
       {/* 边缘暗角 */}
       <div className="pointer-events-none absolute inset-0 z-[4] shadow-[inset_0_0_100px_rgba(10,10,15,0.8)]" />

@@ -422,3 +422,32 @@
 .nexus-markdown a:hover {
   color: #7ab4e6;
 }
+
+/*
+ * Sonner 用 transform: var(--y) 做纵向堆叠，不能改 --y 做横向入场。
+ * 桌面 top-right：用 right + opacity 横向滑入（不动 transform），时长放慢；需压过运行时注入的样式故用 !important。
+ * --width 在 ol 上定义，会继承到 li。
+ */
+@media (prefers-reduced-motion: no-preference) and (min-width: 601px) {
+  /* 仅最前一条做横向滑入，避免堆叠里的旧 toast 被反复套上 transition 发颤 */
+  ol.nexus-sonner-list[data-sonner-toaster][data-x-position="right"][data-y-position="top"]
+    > li[data-sonner-toast][data-y-position="top"][data-styled="true"][data-front="true"]:not(
+      [data-mounted="true"]
+    ):not([data-removed="true"]) {
+    right: calc(0px - var(--width) - 32px) !important;
+    opacity: 0 !important;
+  }
+
+  ol.nexus-sonner-list[data-sonner-toaster][data-x-position="right"][data-y-position="top"]
+    > li[data-sonner-toast][data-y-position="top"][data-styled="true"][data-front="true"][data-mounted="true"]:not(
+      [data-removed="true"]
+    ) {
+    right: 0 !important;
+    transition:
+      transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.55s cubic-bezier(0.22, 1, 0.36, 1),
+      right 0.78s cubic-bezier(0.22, 1, 0.36, 1),
+      height 0.4s,
+      box-shadow 0.2s !important;
+  }
+}

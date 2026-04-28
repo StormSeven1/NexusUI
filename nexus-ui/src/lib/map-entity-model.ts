@@ -123,8 +123,10 @@ export interface Asset {
   nameLabelVisible?: boolean;
   /** 为 false 时不绘制非雷达的覆盖扇区/圆（光电 `showSector`） */
   showFov?: boolean;
-  /** 友方地图主色：由配置 `*.label.fontColor` 解析进 `AssetData.properties.map_friendly_color` 再经 `adaptAssets` 传入 */
+  /** 友方图标主色：由配置 `*.assetFriendlyColor` 解析进 `AssetData.properties.map_friendly_color` 再经 `adaptAssets` 传入 */
   friendlyMapColor?: string;
+  /** 友方名称字色：由配置 `*.label.fontColor` 解析进 `AssetData.properties.map_label_font_color` 再经 `adaptAssets` 传入 */
+  labelFontColor?: string;
 }
 
 export interface Alert {

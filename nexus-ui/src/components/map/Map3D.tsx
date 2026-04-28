@@ -4,24 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { useTrackStore } from "@/stores/track-store";
-import { isVirtualFromProperties, normalizeAssetType } from "@/lib/map-entity-model";
 import type { Asset, RestrictedZone, Track } from "@/lib/map-entity-model";
 import { mergeZoneFillColor } from "@/components/map/modules/polygon-draw-maplibre";
 import { useZoneStore } from "@/stores/zone-store";
 import { useAssetStore } from "@/stores/asset-store";
+import { useAppConfigStore } from "@/stores/app-config-store";
 import type { ZoneData } from "@/stores/zone-store";
-import type { AssetData } from "@/stores/asset-store";
 import {
-  dispositionFromAssetData,
-  formatCameraTowerMapLabel,
-  formatTowerMapLabel,
-  getAssetFriendlyColorForAssetType,
   getTrackRenderingConfig,
   laserLabelStyleFromBundle,
-  loadResolvedAppConfig,
-  shouldDisplayAssetId,
 } from "@/lib/map-app-config";
-import { FORCE_COLORS } from "@/lib/theme-colors";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import { trackMapDrawHistoryTrails } from "@/components/map/modules/tracks-maplibre";
 import {
@@ -33,8 +25,8 @@ import {
   geoSectorCoords,
   geoRadarSweepCoords,
   resolveTrackMarkerFill,
-  assetFriendlyColorFromProperties,
 } from "@/lib/map-icons";
+import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { AlertTriangle } from "lucide-react";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 import { createCesiumBaseImageryProvider, getMap3DInitialViewFromEnv } from "@/lib/map-3d-config";
@@ -109,6 +101,15 @@ function adaptZones(zones: ZoneData[]): RestrictedZone[] {
   }));
 }
 
+/**
+ * 说明：
+ * 资产 `AssetData -> Asset` 统一适配已迁移到 `src/lib/map-asset-adapter.ts`（`adaptAssetsForMap`）。
+ * 本文件是 3D 编排层，负责：
+ * - Cesium 生命周期
+ * - 3D 资产/航迹/区域实体同步
+ * - 3D 交互与层显隐
+ */
+
 /** 批量创建/刷新 3D 区域实体（先清旧再建新） */
 function syncCesiumZones(
   viewer: CesiumViewer,
@@ -157,55 +158,6 @@ function syncCesiumZones(
     });
     groups.zones.push(ent);
   }
-}
-
-function adaptAssets(assets: AssetData[]): Asset[] {
-  return assets
-    .filter((a) => shouldDisplayAssetId(a.asset_type, a.id, a.name))
-    .map((a) => {
-    const p = a.properties as Record<string, unknown> | null | undefined;
-    const isRadar = String(a.asset_type ?? "").toLowerCase() === "radar";
-    let showRings: boolean | undefined;
-    if (isRadar) {
-      if (p && typeof p.showRings === "boolean") showRings = p.showRings;
-      else showRings = true;
-    }
-    const centerIconVisible = p?.center_icon_visible === false ? false : undefined;
-    let nameLabelVisible: boolean | undefined;
-    if (!isRadar && p?.center_name_visible === false) nameLabelVisible = false;
-    const showFov = p?.fov_sector_visible === false ? false : undefined;
-    const t = normalizeAssetType(a.asset_type);
-    const disp = dispositionFromAssetData(a);
-    let friendlyMapColor: string | undefined;
-    if (disp === "friendly") {
-      friendlyMapColor =
-        assetFriendlyColorFromProperties(p ?? null) ??
-        getAssetFriendlyColorForAssetType(t) ??
-        FORCE_COLORS.friendly;
-    }
-    // 机场和无人机的 name 在入资产时已解析好，直接用；光电/电侦走 id 提取数字
-    let displayName = a.name;
-    if (t === "camera") displayName = formatCameraTowerMapLabel(a.id);
-    else if (t === "tower") displayName = formatTowerMapLabel(a.id);
-    return {
-      id: a.id,
-      name: displayName,
-      type: t,
-      status: a.status as Asset["status"],
-      disposition: disp,
-      lat: a.lat,
-      lng: a.lng,
-      range: a.range_km ?? undefined,
-      heading: a.heading ?? undefined,
-      fovAngle: a.fov_angle ?? undefined,
-      isVirtual: isVirtualFromProperties(a.properties),
-      ...(showRings !== undefined ? { showRings } : {}),
-      ...(centerIconVisible === false ? { centerIconVisible: false } : {}),
-      ...(nameLabelVisible === false ? { nameLabelVisible: false } : {}),
-      ...(showFov === false ? { showFov: false } : {}),
-      ...(friendlyMapColor ? { friendlyMapColor } : {}),
-    };
-  });
 }
 
 /** 与 Map2D 一致：store 全量画航迹 billboard（最新位置）；折线仅在 `trackMapDrawHistoryTrails` 为真时画；超预算整批不画尾迹线，仅保留最新点实体（不删 store） */
@@ -366,7 +318,7 @@ export function Map3D() {
         }
         if (destroyed || !containerRef.current) return;
 
-        const appCfg = await loadResolvedAppConfig();
+        const appCfg = await useAppConfigStore.getState().ensureLoaded();
         const droneLabelStyle = laserLabelStyleFromBundle(appCfg.drones);
         const assetIconAccent: AssetDispositionIconAccent = appCfg.assetDispositionIconAccent ?? {};
         await preloadPublicMapAssetFragments();
@@ -408,7 +360,7 @@ export function Map3D() {
         syncCesiumZones(v, Cesium, groups, adaptZones(useZoneStore.getState().zones));
 
         /* 2) 雷达覆盖（圆/扫描）与光电 FOV（扇形/圆）分开展示，与 2D 图层面板两项一致 */
-        const _assets = adaptAssets(useAssetStore.getState().assets);
+        const _assets = adaptAssetsForMap(useAssetStore.getState().assets);
         for (const asset of _assets) {
           if (!asset.range || asset.range <= 0) continue;
           const sweepColor = STATUS_RGBA[asset.status] ?? STATUS_RGBA["online"];
@@ -481,7 +433,7 @@ export function Map3D() {
             disp,
             asset.status,
             assetIconAccent,
-            disp === "friendly" ? asset.friendlyMapColor : undefined,
+            disp === "friendly" ? asset.labelFontColor : undefined,
           );
           const assetImage = await buildAssetSymbolDataUrl(
             asset.type,

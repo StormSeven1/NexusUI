@@ -41,6 +41,7 @@ import {
   geoSectorCoords,
   getAssetSymbolId,
   MAP_FRIENDLY_COLOR_PROP,
+  MAP_LABEL_FONT_COLOR_PROP,
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
 } from "@/lib/map-icons";
 import type { AppConfigSectorBundle } from "@/lib/map-app-config";
@@ -72,7 +73,8 @@ function mapCameraDeviceRow(
   r: Record<string, unknown>,
   defaultRangeM: number,
   camerasVisibility: Record<string, unknown> | null | undefined,
-  rootFriendlyLabelColor?: string | null,
+  rootAssetFriendlyColor?: string | null,
+  rootLabelFontColor?: string | null,
 ): AssetData | null {
   const id = String(r.deviceId ?? "");
   const c = r.center;
@@ -100,12 +102,15 @@ function mapCameraDeviceRow(
   const fovSectorVisible = r.showSector !== false;
 
   const rowLbl = asRecord(r.label);
-  const rowFc = typeof rowLbl?.fontColor === "string" && rowLbl.fontColor.trim() ? rowLbl.fontColor.trim() : "";
-  const rootFc =
-    typeof rootFriendlyLabelColor === "string" && rootFriendlyLabelColor.trim()
-      ? rootFriendlyLabelColor.trim()
-      : "";
-  const mapFriendly = rowFc || rootFc;
+  const rowLabelColor = typeof rowLbl?.fontColor === "string" && rowLbl.fontColor.trim() ? rowLbl.fontColor.trim() : "";
+  const rootLabelColor =
+    typeof rootLabelFontColor === "string" && rootLabelFontColor.trim() ? rootLabelFontColor.trim() : "";
+  const mapLabelColor = rowLabelColor || rootLabelColor;
+  const rowAssetColor =
+    typeof r.assetFriendlyColor === "string" && r.assetFriendlyColor.trim() ? r.assetFriendlyColor.trim() : "";
+  const rootAssetColor =
+    typeof rootAssetFriendlyColor === "string" && rootAssetFriendlyColor.trim() ? rootAssetFriendlyColor.trim() : "";
+  const mapFriendly = rowAssetColor || rootAssetColor;
 
   return {
     id,
@@ -127,6 +132,7 @@ function mapCameraDeviceRow(
       center_icon_visible: centerIconVisible,
       fov_sector_visible: fovSectorVisible,
       ...(mapFriendly ? { [MAP_FRIENDLY_COLOR_PROP]: mapFriendly } : {}),
+      ...(mapLabelColor ? { [MAP_LABEL_FONT_COLOR_PROP]: mapLabelColor } : {}),
     },
     mission_status: "monitoring",
     assigned_target_id: null,
@@ -144,12 +150,14 @@ export function mapCamerasDevicesPayload(camerasRoot: unknown): AssetData[] {
   const defM = Number(root.defaultRange) || 15_000;
   const vis = asRecord(root.visibility);
   const rootLbl = asRecord(root.label);
-  const rootFriendly =
+  const rootLabelFontColor =
     typeof rootLbl?.fontColor === "string" && rootLbl.fontColor.trim() ? rootLbl.fontColor.trim() : undefined;
+  const rootAssetFriendlyColor =
+    typeof root.assetFriendlyColor === "string" && root.assetFriendlyColor.trim() ? root.assetFriendlyColor.trim() : undefined;
   const out: AssetData[] = [];
   for (const item of root.devices) {
     if (!item || typeof item !== "object") continue;
-    const a = mapCameraDeviceRow(item as Record<string, unknown>, defM, vis, rootFriendly);
+    const a = mapCameraDeviceRow(item as Record<string, unknown>, defM, vis, rootAssetFriendlyColor, rootLabelFontColor);
     if (a) out.push(a);
   }
   return out;
@@ -210,7 +218,7 @@ export function buildFovGeoJSON(assetList: Asset[], accent?: AssetDispositionIco
     if (!showName) continue;
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
-    const friendlyOv = disp === "friendly" ? a.friendlyMapColor : undefined;
+    const friendlyOv = disp === "friendly" ? a.labelFontColor : undefined;
     const labelColor = assetMapLabelTextColor(disp, st, accent ?? null, friendlyOv);
     labelFeatures.push({
       type: "Feature",
@@ -304,6 +312,8 @@ export class OptoelectronicFovModule {
   private coverageVis: OptoelectronicFovVisibility = { ...fovVisDefault };
   private assetDispositionAccent: AssetDispositionIconAccent | null = null;
   private lastFovAssets: Asset[] | null = null;
+  private lastFovDataSig = "";
+  private lastIconDataSig = "";
 
   constructor(map: maplibregl.Map, options?: { insertBeforeLayerId?: string }) {
     this.map = map;
@@ -474,6 +484,8 @@ export class OptoelectronicFovModule {
 
   setAssetDispositionAccent(accent: AssetDispositionIconAccent | null) {
     this.assetDispositionAccent = accent;
+    this.lastFovDataSig = "";
+    this.lastIconDataSig = "";
     this.refreshFovLabelGeoJson();
     this.refreshOptoIcons();
   }
@@ -491,8 +503,13 @@ export class OptoelectronicFovModule {
     const m = this.map;
     const assets = this.lastFovAssets;
     if (!assets) return;
+    const nextSig = this.buildOptoIconDataSig(assets);
+    if (nextSig === this.lastIconDataSig) return;
     const os = m.getSource(OPTO_ASSET_ICON_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (os) os.setData(buildOptoAssetIconGeoJSON(assets) as GeoJSON.FeatureCollection);
+    if (os) {
+      os.setData(buildOptoAssetIconGeoJSON(assets) as GeoJSON.FeatureCollection);
+      this.lastIconDataSig = nextSig;
+    }
   }
 
   applyCamerasBundle(bundle: AppConfigSectorBundle | null) {
@@ -550,12 +567,70 @@ export class OptoelectronicFovModule {
     this.lastFovAssets = assets;
     const m = this.map;
     const f = m.getSource(FOV_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    const nextFovSig = this.buildFovDataSig(assets);
     if (f) {
       f.setData(
         buildFovGeoJSON(assets, this.assetDispositionAccent) as GeoJSON.FeatureCollection,
       );
     }
+    this.lastFovDataSig = nextFovSig;
     this.refreshOptoIcons();
+  }
+
+  /**
+   * camera FOV 的轻量指纹：无关键字段变化时跳过 `setData`，降低 symbol 重排导致的闪烁。
+   */
+  private buildFovDataSig(assets: Asset[]): string {
+    const quantizeDeg = (v: number | undefined): string => {
+      const n = Number(v ?? 0);
+      if (!Number.isFinite(n)) return "0.0";
+      /* 角度容差：小于 0.1° 的变化视为同一档，避免微抖动触发重绘 */
+      const q = Math.round(n * 10) / 10;
+      return q.toFixed(1);
+    };
+    const rows = assets
+      .filter((a) => a.type === "camera")
+      .map((a) => {
+        const range = Number(a.range ?? 0);
+        return [
+          a.id,
+          Number(a.lng).toFixed(6),
+          Number(a.lat).toFixed(6),
+          Number.isFinite(range) ? range.toFixed(3) : "0",
+          quantizeDeg(a.heading),
+          quantizeDeg(a.fovAngle ?? 360),
+          a.showFov === false ? "0" : "1",
+          a.nameLabelVisible === false ? "0" : "1",
+          a.name ?? "",
+          a.status ?? "",
+          a.disposition ?? "",
+          a.labelFontColor ?? "",
+        ].join("|");
+      })
+      .sort();
+    return rows.join(";");
+  }
+
+  /**
+   * 光电中心图标指纹：仅图标相关字段变化时刷新 icon source。
+   */
+  private buildOptoIconDataSig(assets: Asset[]): string {
+    const rows = assets
+      .filter((a) => a.type === "camera")
+      .map((a) =>
+        [
+          a.id,
+          Number(a.lng).toFixed(6),
+          Number(a.lat).toFixed(6),
+          a.centerIconVisible === false ? "0" : "1",
+          a.status ?? "",
+          a.disposition ?? "",
+          a.isVirtual === true ? "1" : "0",
+          a.friendlyMapColor ?? "",
+        ].join("|"),
+      )
+      .sort();
+    return rows.join(";");
   }
 
   dispose() {

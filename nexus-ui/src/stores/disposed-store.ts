@@ -1,8 +1,18 @@
 /**
  * disposed-store — 已处置目标跟踪
  *
- * 处置过的航迹永久过滤：不再接收该航迹的点，也不再接收其告警。
+ * 【作用】处置过的航迹永久过滤：不再接收该航迹的点，也不再接收其告警。
  * 对齐 V2 `disposedStore.js`。
+ *
+ * 【数据流】
+ * 1. AlertPanel「消灭」按钮 → addDisposedTrack(uniqueID, businessTrackId)
+ * 2. track-store.setTracks 入口检查 isTrackDisposed → 已处置航迹直接跳过
+ * 3. alert-store.addAlerts 入口检查 isBusinessTrackDisposed → 已处置告警直接跳过
+ *
+ * 【两种 ID 索引】
+ * - disposedUniqueIDs: 按 uniqueID（= showID，渲染缓存 key），用于航迹过滤
+ * - disposedBusinessTrackIds: 按业务 trackId（告警匹配用），用于告警过滤
+ *   两种 ID 在 distinguishSeaAir 模式下不同：对海用 uniqueID，对空用 trackId
  */
 
 import { create } from "zustand";

@@ -21,7 +21,7 @@
  *
  *   4. 渲染: asset-store → DronesMaplibre.setFromAssets()
  *      ├─ buildDroneGeoJSON() → 生成无人机图标 + 名称 + 航线 GeoJSON
- *      ├─ 无人机图标: 敌我配色 SVG，有 pose 时才渲染
+ *      ├─ 无人机图标: 由 `map-icons.DRONE_MAP_ICON_SOURCE`（`svg` | `generated`）决定装裱 SVG 或 V2 Canvas 三角，有 pose 时才渲染
  *      ├─ 航线: extractWaypoints() → waypointsLineString → LineString
  *      └─ 机场: AirportMaplibre.setFromAssets() → 机场图标 + 名称标签
  *
@@ -36,22 +36,45 @@ import type { AssetDispositionIconAccent, AssetStatus } from "@/lib/map-icons";
 import {
   assetMapLabelTextColor,
   buildAssetSymbolDataUrl,
+  DRONE_FLEET_MAP_IMAGE_FRIENDLY,
+  DRONE_FLEET_MAP_IMAGE_FRIENDLY_DASH,
+  DRONE_FLEET_MAP_IMAGE_FRIENDLY_ALERT,
+  DRONE_FLEET_MAP_IMAGE_FRIENDLY_ALERT_DASH,
+  DRONE_FLEET_MAP_IMAGE_HOSTILE,
+  DRONE_FLEET_MAP_IMAGE_HOSTILE_DASH,
+  DRONE_FLEET_MAP_IMAGE_NEUTRAL,
+  DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH,
+  droneFleetIconUsesGeneratedMode,
+  droneSnIsMapIconAlert,
   geoCircleCoords,
   geoSectorCoords,
   getAssetSymbolId,
   MAP_FRIENDLY_COLOR_PROP,
+  MAP_LABEL_FONT_COLOR_PROP,
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
+  registerDroneFleetTriangleImages,
 } from "@/lib/map-icons";
 import {
+  getAssetFriendlyColorForAssetType,
   getDroneMapRenderingConfig,
   laserLabelStyleFromBundle,
   type AppConfigSectorBundle,
 } from "@/lib/map-app-config";
 import type { DroneTelemetry } from "@/stores/drone-store";
 import { useDroneStore } from "@/stores/drone-store";
+import { useAssetStore } from "@/stores/asset-store";
+import type { ForceDisposition } from "@/lib/theme-colors";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+}
+
+/** 从 asset-store 查找无人机 disposition，默认 friendly */
+function droneDispositionFromAssetStore(sn: string): ForceDisposition {
+  const asset = useAssetStore.getState().assets.find(
+    (a) => a.id === sn && a.asset_type === "drone",
+  );
+  return asset?.disposition ?? "friendly";
 }
 
 function rootVisibilityField(vis: Record<string, unknown> | null | undefined, key: string): boolean | undefined {
@@ -68,7 +91,8 @@ function mapDroneConfigDeviceRow(
   r: Record<string, unknown>,
   defaultRangeM: number,
   dronesVisibility: Record<string, unknown> | null | undefined,
-  rootFriendlyLabelColor?: string | null,
+  rootAssetFriendlyColor?: string | null,
+  rootLabelFontColor?: string | null,
 ): AssetData | null {
   const id = String(r.deviceId ?? "");
   const c = r.center;
@@ -96,12 +120,15 @@ function mapDroneConfigDeviceRow(
   const fovSectorVisible = r.showSector !== false;
 
   const rowLbl = asRecord(r.label);
-  const rowFc = typeof rowLbl?.fontColor === "string" && rowLbl.fontColor.trim() ? rowLbl.fontColor.trim() : "";
-  const rootFc =
-    typeof rootFriendlyLabelColor === "string" && rootFriendlyLabelColor.trim()
-      ? rootFriendlyLabelColor.trim()
-      : "";
-  const mapFriendly = rowFc || rootFc;
+  const rowLabelColor = typeof rowLbl?.fontColor === "string" && rowLbl.fontColor.trim() ? rowLbl.fontColor.trim() : "";
+  const rootLabelColor =
+    typeof rootLabelFontColor === "string" && rootLabelFontColor.trim() ? rootLabelFontColor.trim() : "";
+  const mapLabelColor = rowLabelColor || rootLabelColor;
+  const rowAssetColor =
+    typeof r.assetFriendlyColor === "string" && r.assetFriendlyColor.trim() ? r.assetFriendlyColor.trim() : "";
+  const rootAssetColor =
+    typeof rootAssetFriendlyColor === "string" && rootAssetFriendlyColor.trim() ? rootAssetFriendlyColor.trim() : "";
+  const mapFriendly = rowAssetColor || rootAssetColor;
 
   return {
     id,
@@ -123,6 +150,7 @@ function mapDroneConfigDeviceRow(
       center_icon_visible: centerIconVisible,
       fov_sector_visible: fovSectorVisible,
       ...(mapFriendly ? { [MAP_FRIENDLY_COLOR_PROP]: mapFriendly } : {}),
+      ...(mapLabelColor ? { [MAP_LABEL_FONT_COLOR_PROP]: mapLabelColor } : {}),
     },
     mission_status: "monitoring",
     assigned_target_id: null,
@@ -159,8 +187,10 @@ export function mapDronesDevicesPayload(dronesRoot: unknown): AssetData[] {
   const defM = Number(root.defaultRange) || 15_000;
   const vis = asRecord(root.visibility);
   const rootLbl = asRecord(root.label);
-  const rootFriendly =
+  const rootLabelFontColor =
     typeof rootLbl?.fontColor === "string" && rootLbl.fontColor.trim() ? rootLbl.fontColor.trim() : undefined;
+  const rootAssetFriendlyColor =
+    typeof root.assetFriendlyColor === "string" && root.assetFriendlyColor.trim() ? root.assetFriendlyColor.trim() : undefined;
   const out: AssetData[] = [];
   for (const item of root.devices) {
     if (!item || typeof item !== "object") continue;
@@ -172,7 +202,7 @@ export function mapDronesDevicesPayload(dronesRoot: unknown): AssetData[] {
       const id = String(r.deviceId ?? "?");
       throw new Error(`drones.devices[${id}].assetType 必须为 drone（当前为 ${t || "空"}）`);
     }
-    const a = mapDroneConfigDeviceRow(r, defM, vis, rootFriendly);
+    const a = mapDroneConfigDeviceRow(r, defM, vis, rootAssetFriendlyColor, rootLabelFontColor);
     if (a) out.push(a);
   }
   return out;
@@ -232,7 +262,10 @@ export function buildStaticDroneSitesGeoJSON(
     if (liveLbl && liveLbl.lat != null && liveLbl.lng != null) continue;
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
-    const friendlyOv = disp === "friendly" ? a.friendlyMapColor : undefined;
+    /* 友方无人机站名：只认 `drones.label.fontColor`（与 `applyDronesSectorLabelStyle` 一致），不用 `friendlyMapColor` 染字 */
+    const friendlyOv = disp === "friendly"
+      ? (a.labelFontColor?.trim() || getDroneMapRenderingConfig().labelFontColor?.trim() || "#FFFFFF")
+      : undefined;
     const labelColor = assetMapLabelTextColor(disp, st, accent ?? null, friendlyOv);
     features.push({
       type: "Feature",
@@ -326,7 +359,7 @@ function fovFeatureForDrone(tele: DroneTelemetry): GeoJSON.Feature<GeoJSON.Polyg
  *   message.data = { entityId, waypoints: [{ longitude, latitude, height, index }, ...], executionState, ... }
  *   waypoints 直接在载荷顶层，每个航点含 longitude / latitude。
  *
- * 本函数兼容多种可能的后端载荷格式：
+ * 本函数支持多种后端载荷格式：
  *   - task.waypoints（V2 标准格式）
  *   - task.points / task.flightPoints / task.route / task.flight_path
  *   - task.data.waypoints / task.payload.waypoints / task.flightPlan.waypoints（嵌套格式）
@@ -373,7 +406,7 @@ function extractWaypoints(task: Record<string, unknown>): unknown[] | null {
  *   5. 航线颜色按目标类型区分：对海白色、对空黄色
  *
  * V3 简化：不画航点圆点，仅画航线折线（实兵实线、虚兵虚线，由 DRONES_ROUTE_SOLID / DASH 分图层）。
- * 坐标字段兼容：longitude/lng/lon + latitude/lat，以及嵌套 position.location 等。
+ * 坐标字段：longitude/lng/lon + latitude/lat，以及嵌套 position.location 等。
  */
 function waypointsLineString(
   task: Record<string, unknown> | null,
@@ -386,7 +419,7 @@ function waypointsLineString(
   for (const wp of wps) {
     if (!wp || typeof wp !== "object") continue;
     const o = wp as Record<string, unknown>;
-    /* 坐标字段：与 V2 wp.longitude / wp.latitude 一致，同时兼容嵌套格式 */
+    /* 坐标字段：与 V2 wp.longitude / wp.latitude 一致，同时支持嵌套格式 */
     const pos = o.position ?? o.location ?? o.coordinate ?? o.coord;
     let lng: number, lat: number;
     if (pos && typeof pos === "object" && !Array.isArray(pos)) {
@@ -469,6 +502,7 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
     const fov = fovFeatureForDrone(tele);
     if (fov) features.push(fov);
 
+    const disp = droneDispositionFromAssetStore(tele.sn);
     features.push({
       type: "Feature",
       properties: {
@@ -476,6 +510,10 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
         sn: tele.sn,
         heading: pose.headingDeg,
         virt: tele.virtualTroop ? 1 : 0,
+        disp,
+        ...(droneFleetIconUsesGeneratedMode()
+          ? { alert: droneSnIsMapIconAlert(tele.sn) ? 1 : 0 }
+          : {}),
       },
       geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
     });
@@ -507,6 +545,9 @@ export class DronesMaplibre {
   private unsub: (() => void) | null = null;
   private timeoutTimer: ReturnType<typeof setInterval> | null = null;
   private pulseAnimId: number | null = null;
+  /** 渲染节流：与 V2 DroneRenderer.scheduleRender 一致，避免高频更新导致标签闪烁 */
+  private renderScheduled = false;
+  private renderRafId: number | null = null;
 
   constructor(map: maplibregl.Map, options?: { insertBeforeLayerId?: string }) {
     this.map = map;
@@ -521,9 +562,9 @@ export class DronesMaplibre {
     if (!m.getSource(DRONES_SOURCE)) {
       m.addSource(DRONES_SOURCE, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     }
-    const loadDroneImg = async (virtual: boolean, imageId: string) => {
+    const loadDroneImgSvgMode = async (virtual: boolean, imageId: string) => {
       if (m.hasImage(imageId)) return;
-      const fc = getDroneMapRenderingConfig().mapFriendlyColor;
+      const fc = getAssetFriendlyColorForAssetType("drone");
       const url = await buildAssetSymbolDataUrl("drone", "online", virtual, "friendly", accent, fc);
       const img = await new Promise<HTMLImageElement>((resolve, reject) => {
         const image = new Image(56, 56);
@@ -533,8 +574,15 @@ export class DronesMaplibre {
       });
       m.addImage(imageId, img, { pixelRatio: 2 });
     };
-    await loadDroneImg(false, DRONE_MAP_IMAGE_REAL);
-    await loadDroneImg(true, DRONE_MAP_IMAGE_VIRT);
+    if (droneFleetIconUsesGeneratedMode()) {
+      const fc = getAssetFriendlyColorForAssetType("drone");
+      await registerDroneFleetTriangleImages(m, {
+        friendlyColor: fc || undefined,
+      });
+    } else {
+      await loadDroneImgSvgMode(false, DRONE_MAP_IMAGE_REAL);
+      await loadDroneImgSvgMode(true, DRONE_MAP_IMAGE_VIRT);
+    }
 
     if (!m.getSource(DRONES_STATIC_SOURCE)) {
       m.addSource(DRONES_STATIC_SOURCE, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
@@ -607,10 +655,13 @@ export class DronesMaplibre {
       "line-width": cfg0.plannedRouteLineWidth,
       "line-opacity": cfg0.plannedRouteLineOpacity,
     };
-    addLine(DRONES_ROUTE_SOLID, ["all", ["==", ["get", "kind"], "route"], ["!=", ["get", "virt"], 1]], routePaintBase);
+    addLine(DRONES_ROUTE_SOLID, ["all", ["==", ["get", "kind"], "route"], ["!=", ["get", "virt"], 1]], {
+      ...routePaintBase,
+      "line-dasharray": [4, 2],
+    });
     addLine(DRONES_ROUTE_DASH, ["all", ["==", ["get", "kind"], "route"], ["==", ["get", "virt"], 1]], {
       ...routePaintBase,
-      "line-dasharray": [5, 4],
+      "line-dasharray": [4, 2],
     });
     const trailPaintBase = {
       "line-color": cfg0.historyTrailLineColor,
@@ -619,8 +670,7 @@ export class DronesMaplibre {
     };
     addLine(DRONES_TRAIL_SOLID, ["all", ["==", ["get", "kind"], "trail"], ["!=", ["get", "virt"], 1]], trailPaintBase);
     addLine(DRONES_TRAIL_DASH, ["all", ["==", ["get", "kind"], "trail"], ["==", ["get", "virt"], 1]], {
-      ...trailPaintBase,
-      "line-dasharray": [5, 4],
+      ...trailPaintBase
     });
 
     if (!m.getLayer(DRONES_FOV_LAYER)) {
@@ -648,16 +698,51 @@ export class DronesMaplibre {
           source: DRONES_SOURCE,
           filter: ["==", ["get", "kind"], "marker"],
           layout: {
-            "icon-image": [
-              "case",
-              ["==", ["get", "virt"], 1],
-              DRONE_MAP_IMAGE_VIRT,
-              DRONE_MAP_IMAGE_REAL,
-            ],
+            "icon-image": droneFleetIconUsesGeneratedMode()
+              ? [
+                  "case",
+                  ["==", ["get", "disp"], "hostile"],
+                  [
+                    "case",
+                    ["==", ["get", "virt"], 1],
+                    DRONE_FLEET_MAP_IMAGE_HOSTILE_DASH,
+                    DRONE_FLEET_MAP_IMAGE_HOSTILE,
+                  ],
+                  ["==", ["get", "disp"], "neutral"],
+                  [
+                    "case",
+                    ["==", ["get", "virt"], 1],
+                    DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH,
+                    DRONE_FLEET_MAP_IMAGE_NEUTRAL,
+                  ],
+                  /* friendly */
+                  [
+                    "case",
+                    ["==", ["get", "virt"], 1],
+                    [
+                      "case",
+                      ["==", ["get", "alert"], 1],
+                      DRONE_FLEET_MAP_IMAGE_FRIENDLY_ALERT_DASH,
+                      DRONE_FLEET_MAP_IMAGE_FRIENDLY_DASH,
+                    ],
+                    [
+                      "case",
+                      ["==", ["get", "alert"], 1],
+                      DRONE_FLEET_MAP_IMAGE_FRIENDLY_ALERT,
+                      DRONE_FLEET_MAP_IMAGE_FRIENDLY,
+                    ],
+                  ],
+                ]
+              : [
+                  "case",
+                  ["==", ["get", "virt"], 1],
+                  DRONE_MAP_IMAGE_VIRT,
+                  DRONE_MAP_IMAGE_REAL,
+                ],
             "icon-rotate": ["coalesce", ["get", "heading"], 0],
             "icon-rotation-alignment": "map",
             "icon-pitch-alignment": "map",
-            "icon-size": MAPLIBRE_ASSET_CENTER_ICON_SIZE,
+            "icon-size": droneFleetIconUsesGeneratedMode() ? 1 : MAPLIBRE_ASSET_CENTER_ICON_SIZE,
             "icon-allow-overlap": true,
             "icon-ignore-placement": true,
           },
@@ -725,10 +810,8 @@ export class DronesMaplibre {
 
     this.applyPaintFromConfig();
     this.refreshFromStore();
-    this.unsub = useDroneStore.subscribe((s) => {
-      if (!m.getSource(DRONES_SOURCE)) return;
-      const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource;
-      src.setData(buildDroneGeoJSON(s.drones));
+    this.unsub = useDroneStore.subscribe(() => {
+      this.scheduleRender();
     });
 
     this.startTimeoutPrune();
@@ -835,6 +918,21 @@ export class DronesMaplibre {
     }, tickMs);
   }
 
+  /** 节流渲染：合并同一帧内的多次 store 更新，避免标签闪烁（对齐 V2 scheduleRender） */
+  private scheduleRender() {
+    if (this.renderScheduled) return;
+    this.renderScheduled = true;
+    this.renderRafId = requestAnimationFrame(() => {
+      this.renderScheduled = false;
+      this.renderRafId = null;
+      const m = this.map;
+      if (!m.getSource(DRONES_SOURCE)) return;
+      const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource;
+      const drones = useDroneStore.getState().drones;
+      src.setData(buildDroneGeoJSON(drones));
+    });
+  }
+
   /** 配置热读：刷新线/FOV 颜色（不改变图层 id） */
   applyPaintFromConfig() {
     const m = this.map;
@@ -888,6 +986,11 @@ export class DronesMaplibre {
       cancelAnimationFrame(this.pulseAnimId);
       this.pulseAnimId = null;
     }
+    if (this.renderRafId != null) {
+      cancelAnimationFrame(this.renderRafId);
+      this.renderRafId = null;
+      this.renderScheduled = false;
+    }
     this.unsub?.();
     this.unsub = null;
     const m = this.map;
@@ -909,7 +1012,20 @@ export class DronesMaplibre {
     if (m.getSource(DRONES_SOURCE)) m.removeSource(DRONES_SOURCE);
     if (m.getSource(DRONES_ROUTE_END_SOURCE)) m.removeSource(DRONES_ROUTE_END_SOURCE);
     if (m.getSource(DRONES_STATIC_SOURCE)) m.removeSource(DRONES_STATIC_SOURCE);
-    if (m.hasImage(DRONE_MAP_IMAGE_REAL)) m.removeImage(DRONE_MAP_IMAGE_REAL);
-    if (m.hasImage(DRONE_MAP_IMAGE_VIRT)) m.removeImage(DRONE_MAP_IMAGE_VIRT);
+    const fleetImageIds = droneFleetIconUsesGeneratedMode()
+      ? [
+          DRONE_FLEET_MAP_IMAGE_FRIENDLY,
+          DRONE_FLEET_MAP_IMAGE_FRIENDLY_DASH,
+          DRONE_FLEET_MAP_IMAGE_FRIENDLY_ALERT,
+          DRONE_FLEET_MAP_IMAGE_FRIENDLY_ALERT_DASH,
+          DRONE_FLEET_MAP_IMAGE_HOSTILE,
+          DRONE_FLEET_MAP_IMAGE_HOSTILE_DASH,
+          DRONE_FLEET_MAP_IMAGE_NEUTRAL,
+          DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH,
+        ]
+      : [DRONE_MAP_IMAGE_REAL, DRONE_MAP_IMAGE_VIRT];
+    for (const id of fleetImageIds) {
+      if (m.hasImage(id)) m.removeImage(id);
+    }
   }
 }

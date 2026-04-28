@@ -1,6 +1,6 @@
 {
   "_字段说明": {
-    "_关于本块": "以下键名均以 _ 开头，仅作文档，程序加载配置时会忽略。正式配置从下面的 radar、cameras、**airports**、**drones**、laserWeapons、tdoa、trackRendering、factory（**仅**敌方/中立配色覆盖）等开始。**友方**各资产类型默认着色由**各根键根级** `friendlyColor`（`cameras` 另有 `friendlyColorTower`）提供，见 `map-app-config` 的 `getFriendlyColorForAssetType`。**显示过滤**（相机/机场/无人机黑名单、区域白名单）在源码 `src/lib/map-display-filters.ts` 硬编码，不在本文件配置。",
+    "_关于本块": "以下键名均以 _ 开头，仅作文档，程序加载配置时会忽略。正式配置从下面的 radar、cameras、**airports**、**drones**、laserWeapons、tdoa、trackRendering、factory（**仅**敌方/中立配色覆盖）等开始。**友方**各资产类型在列表/通用图标的默认色由**各根键根级** `assetFriendlyColor` 提供，见 `getAssetFriendlyColorForAssetType`。激光/TDOA 专题扇区填充默认值用 **`sectorFillDefaultColor` / `sectorFillDefaultOpacity`**（与 `assetFriendlyColor` 不同）。雷达距离环友方环线优先 `assetFriendlyColor`，否则 **`ringLineFallbackColor`**；环线默认透明度 **`ringLineDefaultOpacity`**。**显示过滤**在源码 `src/lib/map-display-filters.ts` 硬编码，不在本文件配置。",
     "_数据流_资产与资产列表": "启动时 `loadResolvedAppConfig` 将 **radar、cameras.devices、laserWeapons.devices、tdoa.devices、airports.devices、drones.devices** 合并为 `configAssetBase`，再与 WebSocket 推送实体在 `mergeDynamicAndStaticAssets` 里按 **id** 合并（同 id 一般以动态为准；含静态 **airport / drone** 与 WS 同 id 时亦以动态为准；对 radar / camera / laser / tdoa 等与 WS **asset_type** 明显冲突时有保护逻辑）。结果写入 **`useAssetStore`**，**资产列表**只读该 store。**地图**：图层面板由 `buildDataLayerPanelRows(assets)` 按 **`asset_type`** 列出 `lyr-radar-coverage` / `lyr-opto-fov` / `lyr-laser` / `lyr-tdoa` 等；资产 billboard 依类型、在线态、敌我、实兵/虚兵选图标；**雷达距离环、光电 FOV、激光/TDOA 扇区** 由各自专题层绘制。激光/TDOA 在 store 里的行带 `properties.center_icon_visible: false`，中心点只在专题层画，避免与资产图标叠两个标。",
 
     "factory": {
@@ -36,7 +36,7 @@
     },
 
     "radar": {
-      "_类型": "对象，与 `cameras` / `laserWeapons` 同形：`visibility` 为各雷达站默认；`devices` 为雷达站数组。兼容旧版根级 **`radar: [ ... ]`** 纯数组（无全局 `visibility` 时仍可加载）。",
+      "_类型": "对象，与 `cameras` / `laserWeapons` 同形：`visibility` 为各雷达站默认；`devices` 为雷达站数组。支持根级 **`radar: [ ... ]`** 纯数组（无全局 `visibility` 时仍可加载）。",
       "visibility": {
         "centerNameVisible": "各雷达条目中未显式写 `centerNameVisible` 时的默认是否显示距离环中心名。",
         "centerIconVisible": "各雷达条目中未显式写 `centerIconVisible` 时的默认是否显示资产图层雷达图标。"
@@ -82,6 +82,7 @@
       "_类型": "对象；描述光电塔、摄像头等静态设备及其扇形覆盖。",
       "defaultRange": "下面 devices 里某条没写 range 时，默认覆盖半径多少米。",
       "sectorBorder": {
+        "_与根级扇区线": "光电根级另有 `sectorLine` / `sectorLineWidth` 等，与 `sectorBorder` 可能并存：实现上由 `optoelectronic-fov-maplibre` 等决定取哪一套；**不要**与下面 `drones.fovLineColor` 混淆——后者仅用于无人机 **fill 面** 的描边。",
         "lineWidth": "扇形外框线宽度；0 或无效数字表示不画扇形边框。",
         "lineColor": "扇形边框颜色；null 表示跟设备类型默认配色走。",
         "lineDash": "扇形边框虚线段长度数组；空数组常表示实线。"
@@ -114,14 +115,13 @@
     },
 
     "airports": {
-      "_类型": "对象。**Dock 默认显隐** + **静态机场** 共用本根键：`parseAirportMapConfig` 读取根级 **`centerIconVisible` / `centerNameVisible`**（与已废弃的独立 `airportMap` 语义一致）；`mapAirportsDevicesPayload`（`airport-maplibre.ts`）读取 **`devices[]`** 等，与 `cameras` 同形子集一并解析。",
+      "_类型": "对象。**Dock 默认显隐** + **静态机场** 共用本根键：`parseAirportMapConfig` 读取根级 **`centerIconVisible` / `centerNameVisible`**；`mapAirportsDevicesPayload`（`airport-maplibre.ts`）读取 **`devices[]`** 等，与 `cameras` 同形子集一并解析。",
       "centerIconVisible": "Dock/WS 机场资产默认是否显示中心图标；写入 Dock 推送行的 `properties.center_icon_visible`（见 `useUnifiedWsFeed`）。**虚兵/实兵**仍只认各 Dock **WS 报文**，不由本键决定。",
       "centerNameVisible": "Dock/WS 机场默认是否显示站点名称。",
       "defaultRange": "同 `cameras.defaultRange`；`devices[]` 单条未写 `range` 时的默认覆盖半径（米）。",
       "sectorBorder": "同 `cameras.sectorBorder`；静态机场若画扇区/圆时使用。",
       "visibility": "同 `cameras.visibility`（`sectorFillVisible`、`centerIconVisible`、`centerNameVisible` 等）。",
       "label": "同 `laserWeapons.label`；友方 **`fontColor`** 会写入静态设备 `properties.map_friendly_color`，供地图名称与图标 tint。激光/TDOA 扇区名称层使用 **`text-anchor: top`**，与光电 `fov-label`、机场 **`nexus-airport-label`** 一致，避免名与标重叠。",
-      "_兼容旧键_airportMap": "解析为 **`ap ?? legacy`**：仅当根级**没有**可解析的 **`airports` 对象**时，才读 **`airportMap` / `airport`**；**一旦存在 `airports`**，Dock 显隐**只**看其根级 `centerIconVisible`/`centerNameVisible`（缺省为 true），旧独立键**不参与**。",
       "devices": {
         "_类型": "数组；每个元素一条**静态机场**配置。`mapAirportsDevicesPayload`（`airport-maplibre.ts`）逐条解析（与 `cameras.devices` **同一套字段**），再强制校验 **`assetType`** 为 **`airport`**。合并进 **`configAssetBase`**，**进资产列表**；2D 地图由 **`AirportStaticMaplibre`** 绘制 **`nexus-airport-icon` / `nexus-airport-label`**，与光电 **`OptoelectronicFovModule`** 解耦。",
         "_根级合并": "每条设备会与根对象 **`airports.defaultRange`**（未写 `range` 时的默认射程米）、**`airports.visibility`**（`centerIconVisible` / `centerNameVisible` 等与 `mergeRootAndDeviceVisible` 合并）、**`airports.label.fontColor`**（友方字色 / `map_friendly_color` 根默认）一起解析；单条可覆盖根级。",
@@ -148,27 +148,29 @@
     },
 
     "drones": {
-      "_类型": "对象。**无人机地图渲染参数** 与 **静态无人机 `devices[]`** 写在同一根键 **`drones`**：`parseDroneMapRenderingConfig` 抽取 **`maxFovRange`、`routeLineColor`、`fovFillColor`** 等（排除 `devices`、`label`、`visibility`、`sectorBorder`、`scan` 等扇区块）；`mapDronesDevicesPayload` 解析 **`devices[]`**。",
+      "_类型": "对象。**无人机地图渲染参数** 与 **静态无人机 `devices[]`** 写在同一根键 **`drones`**：`parseDroneMapRenderingConfig` 抽取 **`maxFovRange`、`plannedRouteLine*`、`historyTrailLine*`、`fovFillColor`** 等（排除 `devices`、`label`、`visibility`、`sectorBorder`、`scan` 等扇区块）；`mapDronesDevicesPayload` 解析 **`devices[]`**。",
       "maxFovRange": "视场最大地面射程（米）；`drones-maplibre` / `drone-store` 使用。",
       "horizontalFov": "视场水平角（度）。",
       "showFovSector": "是否绘制视场扇形。",
-      "maxHistoryPoints": "历史折线最大点数（store 内抽稀）。",
+      "maxHistoryPoints": "无人机 **drone-store** 内单路遥测历史折线最大点数（与航迹 `trackRendering` 无关）。",
       "timeoutSeconds": "无包超时移除（秒）。",
       "timeoutCheckIntervalMs": "超时轮询间隔（毫秒）。",
       "highFreqPositionMaxAgeMs": "高频位置新鲜窗口（毫秒）。",
-      "showHistoryTrail": "是否画历史轨迹；实兵实线 / 虚兵虚线。",
-      "showPlannedRoute": "是否画计划航线。",
+      "showHistoryTrail": "是否画历史飞迹（`kind: trail`）；实兵实线 / 虚兵虚线。",
+      "showPlannedRoute": "是否画任务航线（航路点连线，`kind: route`）。",
       "showSnLabel": "是否显示 SN 标签。",
-      "routeLineColor": "航线/轨迹线颜色。",
-      "routeLineWidth": "线宽。",
-      "routeLineOpacity": "线透明度。",
+      "plannedRouteLineColor": "任务航线颜色（航路点折线）。",
+      "plannedRouteLineWidth": "任务航线线宽。",
+      "plannedRouteLineOpacity": "任务航线透明度。",
+      "historyTrailLineColor": "历史飞迹颜色（与任务航线独立）。",
+      "historyTrailLineWidth": "历史飞迹线宽。",
+      "historyTrailLineOpacity": "历史飞迹透明度。",
       "fovFillColor": "视场填充色。",
       "fovFillOpacity": "视场填充透明度。",
-      "fovLineColor": "视场轮廓色。",
-      "sectorBorder": "与光电同形；本层一般线宽为 0。",
+      "fovLineColor": "**会生效**：由 `parseDroneMapRenderingConfig` 读取，在 `drones-maplibre` 里作为动态 UAV 视场 **fill** 的 `fill-outline-color`（地图上能看到的扇形描边）。",
+      "sectorBorder": "**与 `fovLineColor` 不是一回事**：同形字段会进 `parseSectorBundle(drones)`，但 **当前 2D 实现里**只有激光/TDOA 专题层会 `setSectorBorder(laserSectorBorderFromBundle(...))`，**无人机专题层未读取本块来画边线**；静态 `drone` 扇区面本身也未画（见 `devices` 说明）。示例里可 **整段省略**；若写上且 `lineWidth: 0`，仅表示与其它资产块配置结构对齐的占位。",
       "visibility": "与光电同形；控制静态无人机条目默认显隐等。",
       "label": "与 `laserWeapons.label` 同形；**`fontColor`** 解析为 `parseDroneMapRenderingConfig` 的 **`mapFriendlyColor`**，供友方无人机符号预染；**`fontSize` / `textFont` / `textOffset` / `haloColor` / `haloWidth`** 由 `DronesMaplibre.applyDronesSectorLabelStyle(appCfg.drones)` 同步到 **静态站名层**与**机队 SN 标签层**（与光电 `fov-label` 使用同一套 `laserLabelStyleFromBundle` 规则）。",
-      "_兼容旧键_droneMapRendering": "**有 `drones` 对象时**：渲染键**只**从 **`drones`** 扁平字段（及 **`drones.label.fontColor`→`mapFriendlyColor`**）读取，**不会**再读 **`droneMapRendering`**。**无 `drones` 时**才整表采用 **`droneMapRendering`**。根级旧 **`drone`** 始终仅用于在 **`maxFovRange` / `horizontalFov`** 缺省时回填（与上列来源组合取值）。",
       "devices": {
         "_类型": "数组；每个元素一条**静态无人机**（配置态站点/占位），经 `mapDronesDevicesPayload` → **`mapDroneConfigDeviceRow`**，与 **`cameras.devices` 字段集相同**，再强制 **`assetType`** 为 **`drone`**。合并进 **`configAssetBase`**；**实时无人机轨迹/FOV** 由 **`drones-maplibre` + `useDroneStore`** 等独立管线；**静态站名样式**由根 **`drones.label`** 驱动（见上）。",
         "_根级合并": "与 **`drones.defaultRange`**、**`drones.visibility`**、**`drones.label.fontColor`** 的合并规则同 **`airports.devices`**（见上）。",
@@ -195,8 +197,12 @@
     },
 
     "laserWeapons": {
-      "_类型": "对象；激光武器扇区 + 扫描动画 + 标签。与 tdoa 结构相同，仅默认扫描参数不同；另支持根级与单台的「激光脉冲」参数（见 laserPulseOnMs / laserPulseOffMs、devices[].laserPulseActive），行为对齐旧版 LaserSectorOverlayTool。**devices 每条**除驱动 `LaserMaplibre` 外，会同步生成 **`asset_type: laser`** 的 `AssetData` 写入 **`useAssetStore`**（供资产列表与统一实体 id），地图中心点仍只由专题层绘制（store 行 `center_icon_visible: false）。",
+      "_类型": "对象；激光武器扇区 + 扫描动画 + 标签。与 tdoa 结构相同，仅默认扫描参数不同；另支持根级与单台的「激光脉冲」参数（见 laserPulseOnMs / laserPulseOffMs、devices[].pulseOnMs/pulseOffMs），行为对齐旧版 LaserSectorOverlayTool。**devices 每条**除驱动 `LaserMaplibre` 外，会同步生成 **`asset_type: laser`** 的 `AssetData` 写入 **`useAssetStore`**（供资产列表与统一实体 id），地图中心点仍只由专题层绘制（store 行 `center_icon_visible: false）。",
+      "activationEnabled": "根级布尔；`loadResolvedAppConfig` 时写入激光专题激活态。`false` 时各设备默认不显示扇区/扫描（单台可写同名键覆盖）；处置等运行时可改写设备级该字段。",
+      "assetFriendlyColor": "友方激光在资产列表/通用图标的默认色（与专题扇区填充 **`sectorFillDefaultColor`** 不同）。",
       "defaultRange": "devices 里没写 range 时，扇区默认射程（米）。",
+      "sectorFillDefaultColor": "专题层 `LaserMaplibre`：设备未写 `color` 时扇区填充色。",
+      "sectorFillDefaultOpacity": "专题层：设备未写 `opacity` 时扇区填充透明度。",
       "label": {
         "fontSize": "设备名称标签字号。",
         "fontColor": "友方中心名字色，并写入静态激光 store 行的 `map_friendly_color`（敌/中仍走 `factory.assetIcons`）。",
@@ -206,13 +212,13 @@
         "textFont": "字形栈，须与地图样式里有的字体一致。"
       },
       "scan": {
-        "enabled": "false 时关闭扫描高亮动画。",
+        "_说明": "**不是**图层开关：旧版 `scan.enabled` 已去掉，整台激光显隐（扇区+亮带+脉冲逻辑）**只**由 **`activationEnabled`**（根级/单台/处置改写）决定。本对象**仅在已激活、需要画扫描亮带时**生效，用来调动画手感；整段不写则代码用默认 cycleMs/tickMs/bandCount/bandWidthMeters。",
         "cycleMs": "扫描亮带绕扇区走完一整圈的时间（毫秒）。",
         "tickMs": "动画刷新间隔（毫秒）；激光默认常用更小值。",
         "bandCount": "同心亮带条数。",
         "bandWidthMeters": "每条亮带在径向上的厚度（米）。"
       },
-      "laserPulseOnMs": "可选，根级默认。激光脉冲模式：「激活」阶段时长（毫秒），此阶段扇区底色与径向扫描亮带同时显示，默认 10000。仅对 devices 里 laserPulseActive 为 true 的条目生效；单台可写 pulseOnMs 覆盖。",
+      "laserPulseOnMs": "可选，根级默认。激光脉冲模式：「激活」阶段时长（毫秒），此阶段扇区底色与径向扫描亮带同时显示，默认 10000。activationEnabled=true 时生效；单台可写 pulseOnMs 覆盖。",
       "laserPulseOffMs": "可选，根级默认。激光脉冲模式：「间歇」阶段时长（毫秒），此阶段仅保留扇区底色、不生成扫描亮带，地图可停高频 setData；默认 3000。单台可写 pulseOffMs 覆盖。",
       "sectorBorder": {
         "lineWidth": "扇区轮廓线宽度；≤0 不画轮廓线。",
@@ -220,9 +226,7 @@
         "lineDash": "轮廓线虚线样式。"
       },
       "visibility": {
-        "sectorFillVisible": "是否显示扇区填充。",
-        "sectorScanVisible": "false 时不显示扫描动画层，并等价于关掉扫描。",
-        "centerIconVisible": "默认是否显示扇区中心点；`devices[].centerIconVisible` 显式 boolean 时覆盖。",
+        "centerIconVisible": "默认是否显示扇区中心点；`devices[].centerIconVisible` 显式 boolean 时覆盖。激光专题层扇区填充/扫描亮带显隐由 **`activationEnabled`** 与运行时激活逻辑控制，本块不写 `sectorFillVisible` / `sectorScanVisible`。",
         "centerNameVisible": "默认是否显示设备名称；`devices[].centerNameVisible` 显式 boolean 时覆盖；只要有一台合并后为 true，名称图层即开启。"
       },
       "devices": {
@@ -237,24 +241,24 @@
           "range": "射程（米）。",
           "color": "扇区填充主色。",
           "opacity": "扇区填充透明度。",
-          "showSector": "false 时默认不加载该条扇区几何；若同时设置 laserPulseActive 为 true，则仍会画扇区（用于仅脉冲展示、与旧版一致）。",
+          "activationEnabled": "可选 boolean：显式覆盖根级 `activationEnabled`；不写则继承根级。",
           "virtualTroop": "虚兵样式。",
           "disposition": "可选，敌我属性（friendly / hostile / neutral），默认 friendly；写入激光/TDOA 设备模型。",
           "centerNameVisible": "可选 boolean：显式 true/false 覆盖根 `visibility.centerNameVisible`；不写则继承根级。",
           "centerIconVisible": "可选 boolean：显式覆盖根 `visibility.centerIconVisible`；不写则继承根级。",
-          "laserPulseActive": "可选 boolean；true 启用激光脉冲：按 laserPulseOnMs / laserPulseOffMs（或本条 pulseOnMs / pulseOffMs）在「激活（有扫描亮带）」与「间歇（仅底色）」之间循环；false 或不写则与普通模式一致，由 scan.enabled 决定是否全程扫描。",
           "pulseOnMs": "可选正数；本条激活阶段毫秒数，覆盖根级 laserPulseOnMs。",
           "pulseOffMs": "可选正数；本条间歇阶段毫秒数，覆盖根级 laserPulseOffMs。",
-          "scan": "可选；单台覆盖全局 scan 的 enabled、cycleMs、tickMs、bandCount、bandWidthMeters 等。"
+          "scan": "可选；**仅**覆盖本条在根 `laserWeapons.scan` 之上的动画参数（同上 `_说明`，不设开关）。显隐仍只认本条 **`activationEnabled`**（及根级、处置改写）。"
         }
       }
     },
 
     "tdoa": {
-      "_说明": "结构与 laserWeapons 相同（不含激光脉冲 laserPulse* 字段；TDOA 侧未实现脉冲）。**devices 每条**除驱动 `TdoaMaplibre` 外，会同步生成 **`asset_type: tdoa`** 写入 **`useAssetStore`**（规则同 laserWeapons）。根对象上「defaultSectorRange」与「defaultRange」含义相同：设备未写 range 时的默认射程（米）；本示例用 defaultSectorRange，写 defaultRange 也可以。",
+      "_说明": "结构与 laserWeapons 相同，但无根级/设备级 **`laserPulseOnMs` / `laserPulseOffMs` / `pulseOnMs` / `pulseOffMs`**。**devices 每条**除驱动 `TdoaMaplibre` 外，会同步生成 **`asset_type: tdoa`** 写入 **`useAssetStore`**（规则同 laserWeapons）。根对象上「defaultSectorRange」与「defaultRange」含义相同：设备未写 range 时的默认射程（米）；本示例用 defaultSectorRange，写 defaultRange 也可以。**`assetFriendlyColor`** 与 **`sectorFillDefaultColor` / `sectorFillDefaultOpacity`** 语义同 laserWeapons。",
+      "activationEnabled": "根级布尔；`loadResolvedAppConfig` 时写入 TDOA 专题激活态。`false` 时各设备默认不显示扇区/扫描（单台可写同名键覆盖）；处置等运行时可改写设备级该字段。",
       "defaultSectorRange": "默认射程（米），见上。",
       "label": "同 laserWeapons.label。",
-      "scan": "同 laserWeapons.scan；TDOA 默认 tickMs、bandWidthMeters 在代码里与激光不同。",
+      "scan": "同 `laserWeapons.scan`（含其中 `_说明`：与 **`activationEnabled`** 分工）；TDOA 默认 tickMs、bandWidthMeters 在代码里与激光不同。",
       "sectorBorder": "同 laserWeapons.sectorBorder。",
       "visibility": "同 laserWeapons.visibility。",
       "devices": "同 laserWeapons.devices（每条表示一个 TDOA 扇区设备）；**每项须含 assetType: tdoa**。"
@@ -269,9 +273,10 @@
         "underwater": "水下：同上。"
       },
       "trackDisplay": {
-        "_说明": "仅两项生效。",
+        "_说明": "下列子键均生效。",
         "showTrackId": "是否显示航迹名称标签图层。",
-        "maxViewportPoints": "地图**展示层顶点预算**：对当前 store 里每条航迹估算 `1 + len(historyTrail)`；总和 ≤ 本值时 MapLibre/Cesium **绘制**历史折线；超出则**只跳过折线绘制**，当前点仍画，`historyTrail` 在 store 中**不删**。与「超时删除」无关。",
+        "maxViewportPoints": "全图航迹**折线顶点总预算**：对当前渲染集每条航迹估算 `1 + len(historyTrail)`，求和。≤ 本值：画历史折线 + 当前点符号。**大于本值：整批不画折线**。**`0` 或负数：不画任何历史折线**（仅符号）。无效/非有限数字时按「不限制」处理。store 内 `historyTrail` **不删**。与 `maxHistoryPointsPerTrack` 独立。",
+        "maxHistoryPointsPerTrack": "单条航迹在 `track-store` 内 `historyTrail` **最多保留点数**（`ws-track-normalize.maxStoredTrailPointsPerTrack`）；与全图顶点预算 `maxViewportPoints` **无关**。",
         "_trackTimeout": "见 `trackTimeout`：**仅**定时任务扫 `track-store` 调用 `filterTracksByTimeout` 删超时目标；地图渲染**不**参与超时判断。"
       },
       "trackTimeout": {
@@ -287,14 +292,14 @@
   },
 
   "radar": {
-    "friendlyColor": "#6ee7b7",
+    "assetFriendlyColor": "#34d399",
     "defaultMaxRange": 12000,
     "defaultInterval": 12000,
     "defaultShowRings": true,
-    "defaultOpacity": 0.4,
+    "ringLineDefaultOpacity": 0.4,
     "defaultRingFillOpacity": 0.08,
     "defaultRingFillColor": "#00FF00",
-    "defaultColor": "#00FF00",
+    "ringLineFallbackColor": "#00FF00",
     "defaultRingLineWidth": 1,
     "defaultRingLineDash": [4,4],
     "defaultVirtualTroop": false,
@@ -308,7 +313,7 @@
     },
     "label": {
       "fontSize": 10,
-      "fontColor": "#6ee7b7",
+      "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
       "textOffset": [0, 1.8],
@@ -340,6 +345,7 @@
     {
       "id": "home",
       "name": "home",
+      "assetFriendlyColor": "#34d399",
       "assetType": "radar",
       "center": [122.089, 37.545],
       "maxRange": 2000,
@@ -363,7 +369,7 @@
       "centerNameVisible": true,
       "label": {
         "fontSize": 10,
-        "fontColor": "#6ee7b7",
+        "fontColor": "#34d399",
         "haloColor": "#09090b",
         "haloWidth": 1.5,
         "textOffset": [0, 1.8],
@@ -400,10 +406,11 @@
 
   
   "cameras": {
-    "friendlyColor": "#6ee7b7",
+    "assetFriendlyColor": "#34d399",
     "defaultRange": 15000,
-    "sectorFill":  "#c6d7a7",
-    "sectorLine": "#aaea33",
+    "sectorFill":  "#4704f3",
+    "sectorFillOpacity": 0.10,
+    "sectorLine": "#a3eb1d",
     "sectorLineWidth": 1.2,
     "sectorLineOpacity": 0.4,
     "sectorLineDashVirtual": [6, 4],
@@ -420,7 +427,7 @@
     },
     "label": {
       "fontSize": 10,
-      "fontColor": "#6ee7b7",
+      "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
       "textOffset": [0, 1.8],
@@ -431,9 +438,10 @@
   },
 
   "tower": {
-    "friendlyColor": "#6ee7b7",
+    "assetFriendlyColor": "#6ee7b7",
     "defaultRange": 15000,
     "sectorFill": "rgba(52,211,153,0.10)",
+    "sectorFillOpacity": 0.10,
     "sectorLine": "#34d399",
     "sectorLineWidth": 1.2,
     "sectorLineOpacity": 0.4,
@@ -463,7 +471,7 @@
 
 
   "airports": {
-    "friendlyColor": "#6ee7b7",
+    "assetFriendlyColor": "#34d399",
     "centerIconVisible": true,
     "centerNameVisible": true,
     "defaultRange": 15000,
@@ -479,7 +487,7 @@
     },
     "label": {
       "fontSize": 10,
-      "fontColor": "#6ee7b7",
+      "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
       "textOffset": [0, 1.8],
@@ -490,7 +498,7 @@
   },
 
   "drones": {
-    "friendlyColor": "#6ee7b7",
+    "assetFriendlyColor": "#34d399",
     "defaultRange": 15000,
     "maxFovRange": 3000,
     "horizontalFov": 30,
@@ -502,17 +510,15 @@
     "showHistoryTrail": true,
     "showPlannedRoute": true,
     "showSnLabel": true,
-    "routeLineColor": "#38bdf8",
-    "routeLineWidth": 2,
-    "routeLineOpacity": 0.75,
+    "plannedRouteLineColor": "#ffffff",
+    "plannedRouteLineWidth": 2,
+    "plannedRouteLineOpacity": 0.75,
+    "historyTrailLineColor": "#58bee3",
+    "historyTrailLineWidth": 1.5,
+    "historyTrailLineOpacity": 0.64,
     "fovFillColor": "#38bdf8",
     "fovFillOpacity": 0.12,
     "fovLineColor": "#7dd3fc",
-    "sectorBorder": {
-      "lineWidth": 0,
-      "lineColor": null,
-      "lineDash": []
-    },
     "visibility": {
       "sectorFillVisible": true,
       "centerIconVisible": true,
@@ -520,7 +526,7 @@
     },
     "label": {
       "fontSize": 10,
-      "fontColor": "#6ee7b7",
+      "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
       "textOffset": [0, 1.8],
@@ -531,20 +537,20 @@
   },
 
   "tdoa": {
-    "friendlyColor": "#6ee7b7",
+    "activationEnabled": false,
+    "assetFriendlyColor": "#34d399",
     "defaultSectorRange": 15000,
-    "defaultColor": "#fb923c",
-    "defaultOpacity": 0.30,
+    "sectorFillDefaultColor": "#fb923c",
+    "sectorFillDefaultOpacity": 0.30,
     "label": {
       "fontSize": 10,
-      "fontColor": "#6ee7b7",
+      "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
       "textOffset": [0, 1.8],
       "textFont": ["Open Sans Regular"]
     },
     "scan": {
-      "enabled": true,
       "cycleMs": 2000,
       "tickMs": 100,
       "bandCount": 9,
@@ -556,14 +562,12 @@
       "lineDash": []
     },
     "visibility": {
-      "sectorFillVisible": true,
-      "sectorScanVisible": true,
       "centerIconVisible": true,
       "centerNameVisible": false
     },
     "devices": [
       {
-        "deviceId": "tdoa-1",
+        "deviceId": "TDOA",
         "name": "TDOA",
         "assetType": "tdoa",
         "center": [122.098000, 37.548900],
@@ -572,12 +576,11 @@
         "range": 5000,
         "color": "#ef1313",
         "opacity": 0.2,
-        "showSector": true,
         "virtualTroop": false,
         "disposition": "friendly",
         "centerNameVisible": true,
+        "activationEnabled": false,
         "scan": {
-          "enabled": true,
           "cycleMs": 2000,
           "tickMs": 100,
           "bandCount": 9,
@@ -588,20 +591,20 @@
   },
 
   "laserWeapons": {
-    "friendlyColor": "#6ee7b7",
+    "activationEnabled": false,
+    "assetFriendlyColor": "#34d399",
     "defaultRange": 12000,
-    "defaultColor": "#fb7185",
-    "defaultOpacity": 0.35,
+    "sectorFillDefaultColor": "#fb7185",
+    "sectorFillDefaultOpacity": 0.35,
     "label": {
       "fontSize": 10,
-      "fontColor": "#6ee7b7",
+      "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
       "textOffset": [0, 1.8],
       "textFont": ["Open Sans Regular"]
     },
     "scan": {
-      "enabled": true,
       "cycleMs": 2000,
       "tickMs": 90,
       "bandCount": 9,
@@ -615,8 +618,6 @@
       "lineDash": []
     },
     "visibility": {
-      "sectorFillVisible": true,
-      "sectorScanVisible": true,
       "centerIconVisible": true,
       "centerNameVisible": true
     },
@@ -631,13 +632,10 @@
         "range": 1500,
         "color": "#ffffff",
         "opacity": 0.35,
-        "showSector": true,
         "virtualTroop": false,
-        "disposition": "hostile",
+        "disposition": "friendly",
         "centerNameVisible": true,
-        "laserPulseActive": true,
         "scan": {
-          "enabled": true,
           "cycleMs": 2000,
           "tickMs": 90,
           "bandCount": 9,
@@ -649,13 +647,14 @@
 
   "trackRendering": {
     "trackTypeStyles": {
-      "sea": { "idColor": "#FFFFFF", "pointSize": 3, "idSize": 8 },
-      "air": { "idColor": "#FFFF00", "pointSize": 3, "idSize": 8 },
-      "underwater": { "idColor": "#FFFFFF", "pointSize": 3, "idSize": 8 }
+      "sea": { "idColor": "#FFFFFF", "pointSize": 4, "idSize": 10 },
+      "air": { "idColor": "#FFFF00", "pointSize": 4, "idSize": 10 },
+      "underwater": { "idColor": "#FFFFFF", "pointSize": 4, "idSize": 10 }
     },
     "trackDisplay": {
       "showTrackId": true,
-      "maxViewportPoints": 2000
+      "maxViewportPoints": 2000,
+      "maxHistoryPointsPerTrack": 10
     },
     "trackTimeout": {
       "enabled": true,
@@ -671,12 +670,7 @@
     "assetIcons": {
       "hostile": "#3b82f6",
       "neutral": "#737378"
-    },
-    "iconSize": [
-      [5, 0.62],
-      [10, 0.88],
-      [15, 1.12]
-    ]
+    }
   },
 
   "websocket": {
@@ -695,7 +689,27 @@
   "http": {
     "backendUrl": "http://192.168.18.141:26003",
     "imagePollIntervalMs": 3000,
-    "imageFetchTimeoutMs": 1000
+    "imageFetchTimeoutMs": 1000,
+    "chat": {
+      "_说明": "处置相关 HTTP 配置：手动产生方案、执行方案、处置结束",
+      "disposalPlanWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream",
+      "disposalManualGeneratePlanUrl": "http://192.168.18.103:8000/api/v1/tasks/target-engagement/manual-generate-plan",
+      "disposalExecuteUrl": "http://192.168.18.103:8000/api/v1/tasks/grpc-disposal/execute",
+      "disposalEndUrl": "http://192.168.18.110:8019/api/alarm_filter",
+      "disposalHttpTimeoutMs": 8000,
+      "disposalExecuteTimeoutMs": 8000,
+      "autoDisposalWsConnectTimeoutMs": 10000,
+      "quickWorkflowUrl": "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
+      "quickWorkflowTimeoutMs": 5000
+    }
+  },
+
+  "assetTargetLine": {
+    "_说明": "处置方案执行后地图上资产→目标的动态连线。固定明显虚线+流动点；flowCycleMs 越大流动越慢；flowPointRadius 控制流动点大小。",
+    "color": "#22d3ee",
+    "lineWidth": 2.5,
+    "flowCycleMs": 2500,
+    "flowPointRadius": 2.0
   },
 
   "trackIdMode": {

@@ -1,36 +1,69 @@
 /**
  * alert-store — 实时告警列表（对齐 V2 appState.js 逻辑）
  *
- * - `upsertAlarm` / `upsertThreat`：按 trackId 去重，更新时只更新该条
- * - `alarmTrackIds` Set：当前有效告警的 trackId 集合
- * - `alarmTrackRevision`：仅在 alarmTrackIds Set **真正变化**时递增（新增/移除 trackId）
- *   → 航迹层订阅此数字变化来触发 syncWithAlarms
- * - `removeStaleAlarms`：超过 `ALARM_STALE_MS` 未更新的告警移除
+ * 【数据流】
+ *   WS 推送（alert_batch / map_command alert / alert / threat）
+ *   → ws-alert-normalize 归一化 → upsertAlarm / upsertThreat / addAlerts
+ *   → AlertPanel UI 展示
+ *
+ * 【去重策略】
+ *   - 优先按业务 trackId 去重（同一 trackId 只维护最新一条）
+ *   - 无 trackId 时按 id 去重
+ *
+ * 【处置过滤】
+ *   - upsertAlarm / upsertThreat / addAlerts 入口检查 disposedStore
+ *   - 已处置 trackId 的告警直接跳过，不入库
+ *   - removeAlarmItemsByTrackId：消灭按钮调用，从列表中移除指定 trackId 的告警
+ *
+ * 【版本号机制】
+ *   - alarmTrackRevision：仅在 alarmTrackIds Set **真正变化**时递增
+ *   - 航迹层订阅此数字变化来触发 syncWithAlarms（提升/降级渲染层航迹）
+ *
+ * 【过期清理】
+ *   - removeStaleAlarms：超过 ALARM_STALE_MS（25s）未更新的告警移除
+ *   - MAX_ALERTS：最多保留 200 条告警
  */
 
 import { create } from "zustand";
 import { useDisposedStore } from "@/stores/disposed-store";
 
 export interface AlertData {
+  /** 告警唯一 ID（由前端生成或后端提供） */
   id: string;
+  /** 严重级别 */
   severity: "critical" | "warning" | "info";
+  /** 告警消息内容 */
   message: string;
+  /** 告警时间戳 */
   timestamp: string;
+  /** 业务航迹 trackId（告警匹配用，用于关联航迹和处置） */
   trackId?: string;
+  /** 告警目标纬度 */
   lat?: number;
+  /** 告警目标经度 */
   lng?: number;
+  /** 告警类型（如「入侵」「异常」） */
   type?: string;
   /** 告警/威胁类型标记 */
   alarmType?: "alert" | "threat";
+  /** 首次发现时间（ms 时间戳） */
   firstSeenTime?: number;
+  /** 最后更新时间（ms 时间戳） */
   lastUpdateTime?: number;
   /** 标题（与 message 分离展示） */
   title?: string;
+  /** 告警来源（如「雷达」「光电」） */
   source?: string;
+  /** 告警等级（数值） */
   alarmLevel?: number;
+  /** 区域名称 */
   areaName?: string;
+  /** 详细描述 */
   detail?: string;
+  /** uniqueID（与 track-store showID 对应） */
   uniqueID?: string;
+  /** 查证图片 URL */
+  imageUrl?: string;
 }
 
 /** 告警过期时间（对齐 V2 ALARM_STALE_MS = 25s） */
@@ -147,7 +180,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });
     }),
 
-  /** 批量添加（兼容旧 WS 接口） */
+  /** 批量添加告警 */
   addAlerts: (newAlerts) => {
     const s = get();
     for (const a of newAlerts) {

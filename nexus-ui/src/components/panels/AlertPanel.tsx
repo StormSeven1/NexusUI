@@ -9,10 +9,14 @@
 import { useAppStore } from "@/stores/app-store";
 import { useAlertStore, type AlertData } from "@/stores/alert-store";
 import { useTrackStore, getRenderCache } from "@/stores/track-store";
+import { useDisposedStore } from "@/stores/disposed-store";
+import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, AlertCircle, Info, ExternalLink, Zap } from "lucide-react";
+import { sendDisposalEndRequest } from "@/lib/disposal/disposal-api";
+import { AlertTriangle, AlertCircle, Info, X } from "lucide-react";
 import { useCallback, useMemo } from "react";
+import { toast } from "sonner";
 
 const SEVERITY_STYLES = {
   critical: {
@@ -43,10 +47,26 @@ const SEVERITY_STYLES = {
 
 type SeverityKey = keyof typeof SEVERITY_STYLES;
 
+/**
+ * 告警面板 — 消费 alert-store 的实时数据。
+ *
+ * 【数据流】`useUnifiedWsFeed`（`alert_batch` / `map_command` alert / `alert`）经 `ws-alert-normalize` 归一化 → `addAlerts` → 本列表。
+ *
+ * 【消灭按钮逻辑】（对齐 V2 LeftPanel.handleFinishDisposalClick + TaskProgress.endDisposalByTarget）
+ * 1. 调用 sendDisposalEndRequest(trackid, isAirTrack) → PUT disposalEndUrl+disposalEndPath?type=&trackid=
+ * 2. 标记已处置：disposedStore.addDisposedTrack(uniqueID, businessTrackId)
+ * 3. 清除告警：alertStore.removeAlarmItemsByTrackId(trackId)
+ * 4. 清除选中/高亮：appStore.selectTrack(null)（若当前选中的是该航迹）
+ * 5. 清除处置方案连接线与激光/TDOA 激活：disposalPlanStore.cleanupEffectsForMissingTargets()
+ * 6. 清除航迹渲染缓存：trackStore.syncWithAlarms 更新后自动过滤已处置航迹
+ */
 export function AlertPanel() {
-  const { selectTrack } = useAppStore();
+  const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
   const alerts = useAlertStore((s) => s.alerts);
+  const removeAlarmItemsByTrackId = useAlertStore((s) => s.removeAlarmItemsByTrackId);
   const shadowTracks = useTrackStore((s) => s.shadowTracks);
+  const addDisposedTrack = useDisposedStore((s) => s.addDisposedTrack);
+  const cleanupEffectsForMissingTargets = useDisposalPlanStore((s) => s.cleanupEffectsForMissingTargets);
 
   /** 告警 trackId → 航迹 showID（用于 selectTrack） */
   const resolveShowIdFromAlarmTrackId = useCallback(
@@ -118,10 +138,19 @@ export function AlertPanel() {
             <div
               key={alert.id}
               className={cn(
-                "border-b border-white/[0.03] border-l-2 px-3 py-3",
+                "border-b border-white/[0.03] border-l-2 px-3 py-3 cursor-pointer transition-colors hover:bg-white/[0.03]",
                 style.border,
                 style.bg
               )}
+              onClick={() => {
+                if (!alert.trackId) return;
+                const showId = resolveShowIdFromAlarmTrackId(alert.trackId);
+                if (!showId) return;
+                selectTrack(showId);
+                /* 从渲染缓存获取航迹坐标，飞过去 */
+                const t = getRenderCache().get(showId);
+                if (t) requestFlyTo(t.lat, t.lng, 11);
+              }}
             >
               <div className="flex items-start gap-2">
                 <Icon size={14} className={cn("mt-0.5 shrink-0", style.iconColor)} />
@@ -134,12 +163,12 @@ export function AlertPanel() {
                       {alert.timestamp}
                     </span>
                   </div>
-                  {alert.title && (
+                  {/* {alert.title && (
                     <p className="mt-0.5 text-[11px] font-medium text-nexus-text-primary">{alert.title}</p>
-                  )}
-                  <p className="mt-0.5 text-xs leading-relaxed text-nexus-text-primary">
+                  )} */}
+                  {/* <p className="mt-0.5 text-xs leading-relaxed text-nexus-text-primary">
                     {alert.message}
-                  </p>
+                  </p> */}
                   <div className="mt-1 space-y-0.5 text-[10px] text-nexus-text-muted">
                     {alert.trackId && (
                       <div>
@@ -156,7 +185,7 @@ export function AlertPanel() {
                     {alert.lat != null && alert.lng != null && Number.isFinite(alert.lat) && Number.isFinite(alert.lng) && (
                       <div>
                         <span className="text-nexus-text-secondary">坐标：</span>
-                        {alert.lng.toFixed(5)}, {alert.lat.toFixed(5)}
+                        {alert.lng.toFixed(4)}, {alert.lat.toFixed(4)}
                       </div>
                     )}
                     {alert.areaName && (
@@ -196,18 +225,54 @@ export function AlertPanel() {
                       />
                     </div>
                   )}
-                  {alert.trackId && (
-                    <button
-                      onClick={() => {
-                        const showId = resolveShowIdFromAlarmTrackId(alert.trackId!);
-                        if (showId) selectTrack(showId);
-                      }}
-                      className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-nexus-text-secondary hover:text-nexus-text-primary hover:underline"
-                    >
-                      <ExternalLink size={10} />
-                      查看航迹 {alert.trackId}
-                    </button>
-                  )}
+                  <div className="mt-1.5 flex items-center gap-2">
+                    {alert.trackId && (
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const trackId = alert.trackId!;
+                          // 判断对空/对海：通过渲染缓存查找航迹类型
+                          let isAirTrack = false;
+                          for (const [, t] of getRenderCache()) {
+                            if (t.trackId === trackId) {
+                              isAirTrack = t.type === "air";
+                              break;
+                            }
+                          }
+
+                          try {
+                            // 1. 发送处置结束 HTTP 请求（PUT alarm_filter?type=&trackid=）
+                            const httpOk = await sendDisposalEndRequest(trackId, isAirTrack);
+
+                            // 2. 标记已处置（后续 WS 推送的该航迹点和告警都会被过滤）
+                            const showId = resolveShowIdFromAlarmTrackId(trackId);
+                            addDisposedTrack(showId ?? undefined, trackId);
+
+                            // 3. 清除告警列表中该 trackId 的条目
+                            removeAlarmItemsByTrackId(trackId);
+
+                            // 4. 若当前选中的是该航迹，取消选中/高亮
+                            if (selectedTrackId && selectedTrackId === showId) {
+                              selectTrack(null);
+                            }
+
+                            // 5. 清除处置方案连接线与激光/TDOA 激活状态
+                            cleanupEffectsForMissingTargets();
+
+                            const hint = httpOk ? "已通知后端" : "后端通知可能未送达";
+                            toast.success(`已消灭目标 ${trackId}（${hint}）`);
+                          } catch (err) {
+                            console.error("[AlertPanel] 消灭操作失败:", err);
+                            toast.error(`消灭失败: ${err instanceof Error ? err.message : "未知错误"}`);
+                          }
+                        }}
+                        className="flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 hover:border-emerald-500/60"
+                      >
+                        <X size={10} />
+                        消灭
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
