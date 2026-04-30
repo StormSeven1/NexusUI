@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # 日志配置
     LOG_LEVEL: str = "INFO"
     LOG_FILE: str = "logs/app.log"
+
+    # 相机任务转发默认目标（请求体无 backendBaseUrl 时使用；与现场实体服务一致）
+    CAMERA_TASK_BACKEND_BASE_URL: str = "http://192.168.18.141:8088"
     
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -81,6 +81,23 @@ function ensurePmtilesProtocol(): void {
 }
 
 /**
+ * Next HTTPS dev 与样式里 `http://.../tiles/*.pmtiles` 不一致时，浏览器会对 TLS 端口发明文 HTTP → `net::ERR_EMPTY_RESPONSE`。
+ * 约定：`public/tiles/` 下的离线瓦片与前端同源，将 `pmtiles://http(s)://任意主机/tiles/...` 改为当前页 `origin` + 路径。
+ */
+function rewritePmtilesUrlForPageOrigin(url: string): string {
+  const prefix = "pmtiles://";
+  if (!url.startsWith(prefix)) return url;
+  const inner = url.slice(prefix.length);
+  try {
+    const u = new URL(inner);
+    if (!u.pathname.startsWith("/tiles/")) return url;
+    return `${prefix}${window.location.origin}${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
  * MapLibre 5 对 sprite 会先 `new URL(sprite)`（无 base），相对路径会报错。
  * 样式里可写相对样式文件的路径，在此按样式 JSON 的 URL 转为绝对地址。
  *
@@ -97,6 +114,15 @@ export function createMaplibreTransformStyle(styleJsonUrl: string): TransformSty
         new URL(o.sprite);
       } catch {
         o.sprite = new URL(o.sprite, base).href;
+      }
+    }
+    if (o.sources && typeof o.sources === "object") {
+      o.sources = { ...o.sources };
+      for (const key of Object.keys(o.sources)) {
+        const src = o.sources[key] as { url?: string } | undefined;
+        if (src && typeof src === "object" && typeof src.url === "string") {
+          o.sources[key] = { ...src, url: rewritePmtilesUrlForPageOrigin(src.url) };
+        }
       }
     }
     return o;

@@ -384,7 +384,7 @@ export class PolygonDrawMaplibre {
     if (this.ctxH) this.map.off("contextmenu", this.ctxH);
     this.clickH = this.moveH = this.ctxH = null;
     this.map.getCanvas().style.cursor = "";
-    this.map.doubleClickZoom?.enable();
+    this.map.doubleClickZoom?.disable();
     this.ring = [];
     this.preview = null;
     this.redraw();

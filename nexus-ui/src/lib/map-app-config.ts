@@ -29,6 +29,7 @@ import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import { MAP_FRIENDLY_COLOR_PROP, MAP_LABEL_FONT_COLOR_PROP } from "@/lib/map-icons";
+import { canonicalEntityId } from "@/lib/camera-entity-id";
 import {
   mapRadarPayload,
   type RadarMapGlobals,
@@ -167,12 +168,13 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
   /* ── 1. 提取实体 ID ── */
   /* 【重要】所有资产统一使用 entityId 字段作为唯一 key；
    * entityId 是后端为每个实体分配的唯一标识符，贯穿 WS 消息、航迹关联、资产渲染全流程。
-   * 如果 WS 实体行没有 entityId，这条数据无法入库，直接报错丢弃。 */
-  const id = String(r.entityId ?? r.entity_id ?? "").trim();
-  if (!id) {
+   * 光电 DDS / `camera` WS 与 `app-config` 的 deviceId 统一经 `canonicalEntityId`，否则 id 不一致时 PTZ 写到别的行、扇区不更新。 */
+  const rawEntityId = String(r.entityId ?? r.entity_id ?? "").trim();
+  if (!rawEntityId) {
     console.error("[mapOneEntityRow] ✘ 实体缺少 entityId，丢弃:", JSON.stringify(r).slice(0, 300));
     return null;
   }
+  const id = canonicalEntityId(rawEntityId);
 
   /* ── 2. 提取 WGS84 坐标 ── */
   /* 优先级：顶层 r.lat/r.latitude → 嵌套 r.location.position.latitudeDegrees */
@@ -1053,6 +1055,154 @@ export function filterTracksByTimeout(tracks: Track[]): Track[] {
   });
 }
 
+/**
+ * 根键 `cameraManagement`：与 Qt `CameraControlClient` 相机管理服务 HTTP 一致。
+ * `owner.entityId` 应与 entities / 光电右键当前流的 `entityId` 一致；可配 `seaOwnerEntityId` / `skyOwnerEntityId`，
+ * 否则用 `seaCameraIndex` / `skyCameraIndex` 回退为 `camera_NNN`。
+ */
+export type CameraManagementConfig = {
+  host: string;
+  port: number;
+  /** POST 路径：缺省或未写时与光电视频 BFF 一致为 `/api/v1/tasks`；显式 `""` 为 Qt 根路径 `/` */
+  path?: string;
+  userId: string;
+  userPriority: number;
+  /**
+   * `TargetCollectionIMChildTask` 的 `createdBy.user`（Qt 成功样例多为 operator / 0）；缺省则 IM 任务用 operator+0，PTZ 仍用 userId+userPriority。
+   */
+  imTaskUserId?: string;
+  imTaskUserPriority?: number;
+  /** 对海等业务默认光电序号，常为 1 → owner `camera_001`（无 `seaOwnerEntityId` 时回退） */
+  seaCameraIndex: number;
+  /** 对空等业务默认光电序号，常为 4 → owner `camera_004`（无 `skyOwnerEntityId` 时回退） */
+  skyCameraIndex: number;
+  /** 对海任务默认 `owner.entityId`，优先于序号格式化；与 entities / 光电右键流的 `entityId` 一致 */
+  seaOwnerEntityId?: string;
+  /** 对空任务默认 `owner.entityId` */
+  skyOwnerEntityId?: string;
+  requestTimeoutMs: number;
+};
+
+function parseCameraManagementConfig(root: Record<string, unknown>): CameraManagementConfig | null {
+  const cm = asRecord(root.cameraManagement);
+  if (!cm) return null;
+  const host = typeof cm.host === "string" ? cm.host.trim() : "";
+  const portN = Number(cm.port);
+  if (!host || !Number.isFinite(portN) || portN <= 0) return null;
+  const userId = typeof cm.userId === "string" && cm.userId.trim() ? cm.userId.trim() : "web";
+  const userPriority = Number.isFinite(Number(cm.userPriority)) ? Number(cm.userPriority) : 1;
+  let path: string | undefined;
+  if (Object.prototype.hasOwnProperty.call(cm, "path")) {
+    const pv = cm.path;
+    if (pv == null) path = undefined;
+    else if (typeof pv === "string") path = pv.trim();
+  }
+  const seaCameraIndex = Number.isFinite(Number(cm.seaCameraIndex)) ? Number(cm.seaCameraIndex) : 1;
+  const skyCameraIndex = Number.isFinite(Number(cm.skyCameraIndex)) ? Number(cm.skyCameraIndex) : 4;
+  const requestTimeoutMs = Number.isFinite(Number(cm.requestTimeoutMs))
+    ? Math.max(1000, Number(cm.requestTimeoutMs))
+    : 60000;
+  const seaOwnerEntityId =
+    typeof cm.seaOwnerEntityId === "string" && cm.seaOwnerEntityId.trim()
+      ? cm.seaOwnerEntityId.trim()
+      : undefined;
+  const skyOwnerEntityId =
+    typeof cm.skyOwnerEntityId === "string" && cm.skyOwnerEntityId.trim()
+      ? cm.skyOwnerEntityId.trim()
+      : undefined;
+  const imTaskUserId =
+    typeof cm.imTaskUserId === "string" && cm.imTaskUserId.trim()
+      ? cm.imTaskUserId.trim()
+      : undefined;
+  const imTaskUserPriority = Number.isFinite(Number(cm.imTaskUserPriority))
+    ? Number(cm.imTaskUserPriority)
+    : undefined;
+
+  return {
+    host,
+    port: portN,
+    path,
+    userId,
+    userPriority,
+    imTaskUserId,
+    imTaskUserPriority,
+    seaCameraIndex,
+    skyCameraIndex,
+    seaOwnerEntityId,
+    skyOwnerEntityId,
+    requestTimeoutMs,
+  };
+}
+
+/**
+ * 浏览器端：`NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL`（与 `.env.local` 一致）
+ * 例 `http://192.168.1.10:8088`；可带 path，则元任务 POST 走该 path。
+ */
+function parsePublicCameraManagementEnvUrl():
+  | { origin: string; host: string; port: number; path: string }
+  | null {
+  if (typeof process === "undefined") return null;
+  const raw = process.env.NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL?.trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    const port =
+      u.port !== "" ? parseInt(u.port, 10) : u.protocol === "https:" ? 443 : 80;
+    if (!u.hostname || !Number.isFinite(port)) return null;
+    const path =
+      u.pathname && u.pathname !== "/" ? u.pathname.replace(/\/$/, "") : "";
+    return {
+      origin: `${u.protocol}//${u.host}`,
+      host: u.hostname,
+      port,
+      path,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** env 存在时覆盖 host/port；pathname 仅当 URL 自带 path 时写入，否则 `path: undefined` → 客户端默认 `/api/v1/tasks`（与 PTZ BFF 同址） */
+function mergeCameraManagementWithEnv(parsed: CameraManagementConfig | null): CameraManagementConfig | null {
+  const env = parsePublicCameraManagementEnvUrl();
+  if (!env) return parsed;
+  const base: CameraManagementConfig = parsed ?? {
+    host: env.host,
+    port: env.port,
+    userId: "web",
+    userPriority: 1,
+    seaCameraIndex: 1,
+    skyCameraIndex: 4,
+    requestTimeoutMs: 60000,
+  };
+  const envPath =
+    env.path !== ""
+      ? env.path.startsWith("/")
+        ? env.path
+        : `/${env.path}`
+      : undefined;
+  /** env 仅 origin 时：丢弃 app-config 里显式写的空 path（旧 Qt 根路径），改为默认 `/api/v1/tasks` */
+  const mergedPath =
+    envPath !== undefined ? envPath : base.path === "" ? undefined : base.path;
+  return {
+    ...base,
+    host: env.host,
+    port: env.port,
+    path: mergedPath,
+  };
+}
+
+/**
+ * 光电视频 PTZ（拖动/方向键）：`taskBackendBaseUrl` 默认值，与相机管理同源。
+ * BFF `/api/camera-task/ptz-*` 会请求 `{origin}/api/v1/tasks`。
+ */
+export function getDefaultEoCameraTaskBackendBaseUrl(): string {
+  const env = parsePublicCameraManagementEnvUrl();
+  if (env) return env.origin;
+  return "http://192.168.18.141:8088";
+}
+
 export type ResolvedAppConfig = {
   /** 与 WS 合并前的配置静态实体：见 `mergeConfigAssetBase`（含 `airports` / `drones`） */
   configAssetBase: AssetData[];
@@ -1076,6 +1226,18 @@ export type ResolvedAppConfig = {
   laserActivationEnabled: boolean;
   /** TDOA bundle `activationEnabled`：false 时扇区/扫描均不显示 */
   tdoaActivationEnabled: boolean;
+  /**
+   * 根键 `ui.gptInterfaceRightPanel`：true 时右侧助手不使用原 `ChatPanelLegacy`（会话、处置 WS 等）。
+   * 光电视频截图预览流程不依赖此项。
+   */
+  gptInterfaceRightPanel: boolean;
+  /**
+   * 根键 `ui.chatDisposalPlanWsEnabled`：false 时右侧 AI 助手（`ChatPanelLegacy`）不连接处置/决策方案 WebSocket，不接收 `onPlanReady` 推送。
+   * 缺省为 true（保持与历史行为一致）。
+   */
+  chatDisposalPlanWsEnabled: boolean;
+  /** 根键 `cameraManagement`：光电元任务 HTTP；无配置时为 null */
+  cameraManagement: CameraManagementConfig | null;
 };
 
 function mergeProperties(
@@ -1376,6 +1538,10 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   const tdoaActivationEnabled = tdoaBundle?.activationEnabled === true;
   applyLaserActivation(laserActivationEnabled);
   applyTdoaActivation(tdoaActivationEnabled);
+  const uiRoot = asRecord(root.ui);
+  const gptInterfaceRightPanel = uiRoot?.gptInterfaceRightPanel === true;
+  /** 缺省 true：仅当配置显式写 `false` 时关闭助手侧处置方案 WS */
+  const chatDisposalPlanWsEnabled = uiRoot?.chatDisposalPlanWsEnabled !== false;
   return {
     configAssetBase,
     cameras: camerasBundle,
@@ -1389,6 +1555,9 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
     iconSizeStops: parseIconSizeStops(root),
     laserActivationEnabled,
     tdoaActivationEnabled,
+    gptInterfaceRightPanel,
+    chatDisposalPlanWsEnabled,
+    cameraManagement: mergeCameraManagementWithEnv(parseCameraManagementConfig(root)),
   };
 }
 
@@ -1821,6 +1990,9 @@ export async function loadResolvedAppConfig(customUrl?: string): Promise<Resolve
     iconSizeStops: null,
     laserActivationEnabled: false,
     tdoaActivationEnabled: false,
+    gptInterfaceRightPanel: false,
+    chatDisposalPlanWsEnabled: true,
+    cameraManagement: null,
   };
   if (typeof window === "undefined") return empty;
   const url = configUrl(customUrl);

@@ -24,13 +24,13 @@ import { buildTargetInfoFromTrack } from "@/lib/disposal/target-info-from-track"
 import { fetchDisposalPlansHttp } from "@/lib/disposal/disposal-api";
 import { useAppStore } from "@/stores/app-store";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
-import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, assetFriendlyColorFromProperties } from "@/lib/map-icons";
+import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, assetFriendlyColorFromProperties, getFusionTrackMarkerFill, resolveTrackPointFill } from "@/lib/map-icons";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
 import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
 import { useAlertStore } from "@/stores/alert-store";
 import { useAssetStore } from "@/stores/asset-store";
-import { useTrackStore, isTrackMatchedByAlarm } from "@/stores/track-store";
+import { useTrackStore, isTrackMatchedByAlarm, getEffectiveTrackDisposition } from "@/stores/track-store";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -138,9 +138,19 @@ export function TargetPlacard(props: TargetPlacardProps) {
     if (kind !== "track" || !track) return null;
     const tr = getTrackRenderingConfig();
     const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
-    const friendlyFill = track.disposition === "friendly" ? ts.idColor : undefined;
-    return buildMarkerSymbolDataUrl(track.type, track.disposition, undefined, track.isVirtual === true, friendlyFill);
+    const eff = getEffectiveTrackDisposition(track);
+    const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
+    return buildMarkerSymbolDataUrl(
+      track.type,
+      eff,
+      undefined,
+      track.isVirtual === true,
+      friendlyFill,
+      eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
+    );
   }, [kind, track]);
+
+  const trackDispBadge = kind === "track" && track ? getEffectiveTrackDisposition(track) : null;
 
   const [assetIconLoaded, setAssetIconLoaded] = useState<{ id: string; url: string } | null>(null);
 
@@ -206,9 +216,18 @@ export function TargetPlacard(props: TargetPlacardProps) {
     rightSidebarOpen,
   ]);
 
-  const headerColor = kind === "track"
-    ? (track ? (FORCE_COLORS[track.disposition] ?? "#a1a1aa") : "#a1a1aa")
-    : (assetFriendlyColorFromProperties(asset?.properties as Record<string, unknown> | null) ?? (asset?.asset_type ? getAssetFriendlyColorForAssetType(normalizeAssetType(asset.asset_type)) : null) ?? FORCE_COLORS.friendly);
+  const headerColor = (() => {
+    if (kind !== "track" || !track) {
+      return assetFriendlyColorFromProperties(asset?.properties as Record<string, unknown> | null) ??
+        (asset?.asset_type ? getAssetFriendlyColorForAssetType(normalizeAssetType(asset.asset_type)) : null) ??
+        FORCE_COLORS.friendly;
+    }
+    const eff = getEffectiveTrackDisposition(track);
+    const tr = getTrackRenderingConfig();
+    const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
+    const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
+    return resolveTrackPointFill(track, eff, null, friendlyFill);
+  })();
 
   return (
     <div
@@ -237,8 +256,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
               <div className="truncate text-xs font-semibold text-nexus-text-primary">
                 {title}
               </div>
-              {kind === "track" && track?.disposition && (
-                <DispositionBadge d={track.disposition} />
+              {kind === "track" && trackDispBadge && (
+                <DispositionBadge d={trackDispBadge} />
               )}
               {kind === "track" && track && (
                 <span className={cn(

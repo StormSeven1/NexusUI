@@ -9,16 +9,11 @@ import { Search, Star, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { useAppStore } from "@/stores/app-store";
-import { useTrackStore } from "@/stores/track-store";
+import { useTrackStore, getEffectiveTrackDisposition, isTrackAlarmLinked } from "@/stores/track-store";
+import { getFusionTrackMarkerFill } from "@/lib/map-icons";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
-import type { ForceDisposition } from "@/lib/theme-colors";
-
-const DISPOSITION_ORDER: ForceDisposition[] = [
-  "hostile",
-  "friendly",
-  "neutral",
-];
+import type { Track } from "@/lib/map-entity-model";
 
 /** 根据航迹 ID 模式返回列表显示的标识：18.141 显示 trackId，28.9 对空显示 showID，对海显示 trackId */
 function trackDisplayId(track: { showID: string; trackId?: string; type: string }): string {
@@ -37,6 +32,66 @@ function trackDisplayId(track: { showID: string; trackId?: string; type: string 
 function formatHeading2(heading: unknown): string {
   const n = typeof heading === "number" ? heading : Number(heading);
   return Number.isFinite(n) ? n.toFixed(2) : "--";
+}
+
+function TrackListRow({
+  track,
+  selectedTrackId,
+  onSelect,
+}: {
+  track: Track;
+  selectedTrackId: string | null;
+  onSelect: () => void;
+}) {
+  const disp = getEffectiveTrackDisposition(track);
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        "flex w-full items-start gap-2.5 border-b border-nexus-border px-3 py-2.5 text-left transition-colors",
+        selectedTrackId === track.id
+          ? "bg-nexus-accent-glow/10 border-l-2 border-l-nexus-accent"
+          : "hover:bg-nexus-bg-elevated"
+      )}
+    >
+      <MilSymbol
+        type={track.type}
+        disposition={disp}
+        virtual={track.isVirtual === true}
+        neutralFusionFill={disp === "neutral" ? getFusionTrackMarkerFill(track) : undefined}
+        size="sm"
+        className="mt-0.5 shrink-0"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-1">
+          <span className="truncate text-xs font-medium text-nexus-text-primary">
+            {track.name}
+          </span>
+          {track.starred && (
+            <Star
+              size={10}
+              className="shrink-0 text-amber-400"
+              fill="currentColor"
+            />
+          )}
+        </div>
+        <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-nexus-text-muted">
+          <span>{trackDisplayId(track)}</span>
+          <span>·</span>
+          <span>
+            {track.lat.toFixed(2)}°N, {Math.abs(track.lng).toFixed(2)}°
+            {track.lng >= 0 ? "E" : "W"}
+          </span>
+        </div>
+        <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
+          {typeof track.speed === "number" ? track.speed.toFixed(1) : track.speed} kn · 航向 {formatHeading2(track.heading)}°
+          {track.type === "air" && track.altitude ? ` · 高度 ${track.altitude.toFixed(1)}ft` : ""}
+          {track.type === "underwater" ? ` · 深度 ${track.altitude || 0}m` : ""}
+        </div>
+      </div>
+    </button>
+  );
 }
 
 export function TrackListPanel() {
@@ -63,13 +118,11 @@ export function TrackListPanel() {
     return tracks;
   }, [search, filterStarred, allTracks]);
 
-  const grouped = useMemo(() => {
-    const groups: Record<string, typeof filtered> = {};
-    for (const d of DISPOSITION_ORDER) {
-      const items = filtered.filter((t) => t.disposition === d);
-      if (items.length > 0) groups[d] = items;
-    }
-    return groups;
+  /** 左侧分栏：告警关联（渲染层）与其余目标 */
+  const { alarmLinkedTracks, otherTracks } = useMemo(() => {
+    const alarmLinkedTracks = filtered.filter((t) => isTrackAlarmLinked(t));
+    const otherTracks = filtered.filter((t) => !isTrackAlarmLinked(t));
+    return { alarmLinkedTracks, otherTracks };
   }, [filtered]);
 
   return (
@@ -115,66 +168,50 @@ export function TrackListPanel() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {Object.entries(grouped).map(([disposition, tracks]) => (
-          <div key={disposition}>
-            <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-nexus-border bg-nexus-bg-elevated px-3 py-1.5 backdrop-blur-sm">
-              <ForceTag disposition={disposition as ForceDisposition} />
-              <span className="text-[10px] text-nexus-text-muted">
-                {tracks.length}
+        {alarmLinkedTracks.length > 0 && (
+          <div>
+            <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-nexus-border bg-nexus-bg-elevated px-3 py-1.5 backdrop-blur-sm">
+              <span className="text-[10px] font-semibold tracking-wide text-nexus-text-secondary">
+                告警关联目标
               </span>
+              <ForceTag disposition="hostile" />
+              <span className="text-[10px] text-nexus-text-muted">{alarmLinkedTracks.length}</span>
             </div>
-
-            {tracks.map((track) => (
-              <button
+            {alarmLinkedTracks.map((track) => (
+              <TrackListRow
                 key={track.id}
-                onClick={() => {
+                track={track}
+                selectedTrackId={selectedTrackId}
+                onSelect={() => {
                   selectTrack(track.id);
                   requestFlyTo(track.lat, track.lng, 11);
                 }}
-                className={cn(
-                  "flex w-full items-start gap-2.5 border-b border-nexus-border px-3 py-2.5 text-left transition-colors",
-                  selectedTrackId === track.id
-                    ? "bg-nexus-accent-glow/10 border-l-2 border-l-nexus-accent"
-                    : "hover:bg-nexus-bg-elevated"
-                )}
-              >
-                <MilSymbol
-                  type={track.type}
-                  disposition={track.disposition}
-                  size="sm"
-                  className="mt-0.5 shrink-0"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="truncate text-xs font-medium text-nexus-text-primary">
-                      {track.name}
-                    </span>
-                    {track.starred && (
-                      <Star
-                        size={10}
-                        className="shrink-0 text-amber-400"
-                        fill="currentColor"
-                      />
-                    )}
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-nexus-text-muted">
-                    <span>{trackDisplayId(track)}</span>
-                    <span>·</span>
-                    <span>
-                      {track.lat.toFixed(2)}°N, {Math.abs(track.lng).toFixed(2)}°
-                      {track.lng >= 0 ? "E" : "W"}
-                    </span>
-                  </div>
-                  <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
-                    {typeof track.speed === "number" ? track.speed.toFixed(1) : track.speed} kn · 航向 {formatHeading2(track.heading)}°
-                    {track.type === "air" && track.altitude ? ` · 高度 ${track.altitude.toFixed(1)}ft` : ""}
-                    {track.type === "underwater" ? ` · 深度 ${track.altitude || 0}m` : ""}
-                  </div>
-                </div>
-              </button>
+              />
             ))}
           </div>
-        ))}
+        )}
+        {otherTracks.length > 0 && (
+          <div>
+            <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-nexus-border bg-nexus-bg-elevated px-3 py-1.5 backdrop-blur-sm">
+              <span className="text-[10px] font-semibold tracking-wide text-nexus-text-secondary">
+                其他目标
+              </span>
+              <ForceTag disposition="neutral" />
+              <span className="text-[10px] text-nexus-text-muted">{otherTracks.length}</span>
+            </div>
+            {otherTracks.map((track) => (
+              <TrackListRow
+                key={track.id}
+                track={track}
+                selectedTrackId={selectedTrackId}
+                onSelect={() => {
+                  selectTrack(track.id);
+                  requestFlyTo(track.lat, track.lng, 11);
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

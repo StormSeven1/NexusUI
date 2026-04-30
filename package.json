@@ -1,0 +1,13 @@
+{
+  "name": "nexus-ui-repo-root",
+  "private": true,
+  "description": "前端在子目录 nexus-ui/；根目录可 npm run dev / dev:https",
+  "scripts": {
+    "dev": "npm run dev --prefix nexus-ui",
+    "dev:https": "npm run dev:https --prefix nexus-ui",
+    "dev:https:restart": "npm run dev:https:restart --prefix nexus-ui",
+    "build": "npm run build --prefix nexus-ui",
+    "start": "npm run start --prefix nexus-ui",
+    "lint": "npm run lint --prefix nexus-ui"
+  }
+}

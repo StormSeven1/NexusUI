@@ -700,7 +700,8 @@
       "disposalExecuteTimeoutMs": 8000,
       "autoDisposalWsConnectTimeoutMs": 10000,
       "quickWorkflowUrl": "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
-      "quickWorkflowTimeoutMs": 5000
+      "quickWorkflowTimeoutMs": 5000,
+      "quickWorkflowStatusWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream"
     }
   },
 
@@ -714,5 +715,16 @@
 
   "trackIdMode": {
     "distinguishSeaAir": false
+  },
+
+  "cameraManagement": {
+    "_说明": "host/port 可被 NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL 覆盖。不写 path 或省略时 POST 默认 /api/v1/tasks（与光电视频 PTZ 同源）；仅兼容 Qt 根路径时写 \"path\": \"\"。",
+    "host": "127.0.0.1",
+    "port": 8080,
+    "userId": "web",
+    "userPriority": 1,
+    "seaCameraIndex": 1,
+    "skyCameraIndex": 4,
+    "requestTimeoutMs": 60000
   }
 }

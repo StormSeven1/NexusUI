@@ -5,10 +5,12 @@ import {
   getMarkerSymbolId,
   TRACK_SELECT_RING_ID,
   LOCK_ON_IMAGE_ID,
-  resolveTrackMarkerFill,
+  resolveTrackPointFill,
+  getFusionTrackMarkerFill,
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
 import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
+import { getEffectiveTrackDisposition } from "@/stores/track-store";
 
 /** GeoJSON source id：航迹点、折线、高亮环、锁定圈共用 */
 export const TRACK_SOURCE = "tracks-source";
@@ -66,6 +68,12 @@ export function buildTrackGeoJSON(
 
   for (const t of trackList) {
     const trail = t.historyTrail;
+    const disp = getEffectiveTrackDisposition(t);
+    const neutralFusion = disp === "neutral" ? getFusionTrackMarkerFill(t) : undefined;
+    const style = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
+    const friendlyFill = disp === "friendly" ? style.idColor : undefined;
+    const pointFill = resolveTrackPointFill(t, disp, accent ?? null, friendlyFill);
+
     if (drawTrails && trail && trail.length >= 1) {
       const coords: [number, number][] = [
         ...trail.map(([lng, lat]) => [lng, lat] as [number, number]),
@@ -77,22 +85,15 @@ export function buildTrackGeoJSON(
           geometry: { type: "LineString", coordinates: coords },
           properties: {
             trackId: t.id,
-            lineColor: resolveTrackMarkerFill(
-              t.disposition,
-              accent ?? null,
-              t.disposition === "friendly"
-                ? (tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea).idColor
-                : undefined,
-            ),
+            lineColor: pointFill,
           },
         });
       }
     }
 
-    const ts = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
+    const ts = style;
     const v = t.isVirtual === true;
     const iconScale = Math.max(0.55, Math.min(1.5, ts.pointSize / 3.5));
-    const friendlyFill = t.disposition === "friendly" ? ts.idColor : undefined;
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [t.lng, t.lat] as [number, number] },
@@ -109,14 +110,14 @@ export function buildTrackGeoJSON(
           ? (t.type === "air" ? t.showID : (t.trackId ?? t.showID))
           : (t.trackId ?? t.showID),
         type: t.type,
-        disposition: t.disposition,
+        disposition: disp,
         speed: t.speed,
         heading: t.heading,
         course: t.course ?? null,
         altitude: t.altitude ?? null,
-        color: resolveTrackMarkerFill(t.disposition, accent ?? null, friendlyFill),
-        symbolId: getMarkerSymbolId(t.type, t.disposition, v, friendlyFill),
-        labelColor: ts.idColor,
+        color: pointFill,
+        symbolId: getMarkerSymbolId(t.type, disp, v, friendlyFill, neutralFusion),
+        labelColor: disp === "neutral" ? pointFill : ts.idColor,
         labelTextSize: Math.max(6, Math.min(22, ts.idSize)),
         iconScale,
       },
@@ -152,8 +153,9 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
     h = Math.imul(h, 16777619) >>> 0;
     h ^= t.speed | 0;
     h = Math.imul(h, 16777619) >>> 0;
-    for (let i = 0; i < t.disposition.length; i++) {
-      h ^= t.disposition.charCodeAt(i);
+    const eff = getEffectiveTrackDisposition(t);
+    for (let i = 0; i < eff.length; i++) {
+      h ^= eff.charCodeAt(i);
       h = Math.imul(h, 16777619) >>> 0;
     }
     const tl = t.historyTrail?.length ?? 0;

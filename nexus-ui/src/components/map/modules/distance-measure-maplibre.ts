@@ -202,7 +202,7 @@ export class DistanceMeasureMaplibre {
     if (this.dblHandler) this.map.off("dblclick", this.dblHandler);
     this.clickHandler = this.moveHandler = this.ctxHandler = this.dblHandler = null;
     this.map.getCanvas().style.cursor = "";
-    this.map.doubleClickZoom?.enable();
+    this.map.doubleClickZoom?.disable();
     this.clear();
   }
 

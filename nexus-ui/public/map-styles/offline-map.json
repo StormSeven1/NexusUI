@@ -3,7 +3,7 @@
   "name": "本地地图",
   "metadata": {
     "maputnik:renderer": "mlgljs",
-    "nexus:note": "默认指向本机 npm run dev (24000)。部署到别的域名时请把 sources.openmaptiles.url 里的 http://localhost:24000 改成你的站点根地址。",
+    "nexus:note": "PMTiles 若路径为 /tiles/...，前端会改为当前页同源（避免 Next HTTPS dev 下仍请求 http 导致 net::ERR_EMPTY_RESPONSE）。跨机托管的 PMTiles 勿放在 /tiles/ 路径下。",
     "nexus:glyphs": "字形放在 public/fonts/<字体名>/*.pbf，样式 glyphs 为 ../fonts/{fontstack}/{range}.pbf；图层 text-font 须与文件夹名一致（如 Noto Sans Regular）",
     "nexus:sprite": "与 glyphs 相同可写相对样式路径如 ../map-sprites/.../sprite；由 map-libre-basemap transformStyle 按样式 JSON URL 转为绝对地址"
   },
@@ -12,7 +12,7 @@
   "sources": {
     "openmaptiles": {
       "type": "vector",
-      "url": "pmtiles://http://localhost:24000/tiles/map.pmtiles"
+      "url": "pmtiles://http://192.168.18.141:22301/tiles/map.pmtiles"
     }
   },
   "layers": [

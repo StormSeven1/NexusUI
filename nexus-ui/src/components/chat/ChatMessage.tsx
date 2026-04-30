@@ -242,9 +242,9 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
 
       {/* 消息体 */}
       <div className={cn("min-w-0 flex-1 space-y-1", isUser && "text-right")}>
-        <span className="text-[10px] font-medium text-nexus-text-muted">
-          {isUser ? "操作员" : "Nexus AI"}
-        </span>
+        {!isUser && (
+          <span className="block text-left text-[10px] font-medium text-nexus-text-muted">Nexus AI</span>
+        )}
 
         {isThinking ? (
           <div className="flex h-[18px] items-center">
@@ -294,21 +294,22 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
               const isImage = part.mediaType?.startsWith("image/");
               if (isImage) {
                 return (
-                  <Image
-                    key={key}
-                    src={part.url}
-                    alt={part.filename ?? "附件"}
-                    width={320}
-                    height={160}
-                    unoptimized
-                    className="mt-1 max-h-40 rounded-md border border-white/[0.06]"
-                  />
+                  <div key={key} className={cn("mt-1", isUser && "flex justify-end")}>
+                    <Image
+                      src={part.url}
+                      alt={part.filename ?? "附件"}
+                      width={320}
+                      height={160}
+                      unoptimized
+                      className="max-h-40 rounded-md border border-white/[0.06]"
+                    />
+                  </div>
                 );
               }
               return (
-                <NxBadge key={key} variant="info" className="mt-1">
-                  {part.filename ?? "文件附件"}
-                </NxBadge>
+                <div key={key} className={cn("mt-1", isUser && "flex justify-end")}>
+                  <NxBadge variant="info">{part.filename ?? "文件附件"}</NxBadge>
+                </div>
               );
             }
 

@@ -243,7 +243,7 @@ export class AngleMeasureMaplibre {
     for (const { ev, fn } of this.handlers) this.map.off(ev, fn);
     this.handlers = [];
     this.map.getCanvas().style.cursor = "";
-    this.map.doubleClickZoom?.enable();
+    this.map.doubleClickZoom?.disable();
     this.origin = null;
     this.current = null;
     this.isMeasuring = false;

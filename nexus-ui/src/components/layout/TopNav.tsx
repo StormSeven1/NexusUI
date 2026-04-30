@@ -12,6 +12,7 @@ import {
   Settings
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { EoVideoTopLauncher } from "@/components/eo-video/EoVideoTopLauncher";
 
 // 顶部Tab配置
 const TOP_TABS = [
@@ -170,6 +171,7 @@ export function TopNav() {
 
       {/* 右侧功能区 */}
       <div className="flex h-full items-center gap-3 border-l border-nexus-border px-4">
+        <EoVideoTopLauncher />
         {/* 时间显示 */}
         <div
           className="font-mono text-xs text-nexus-text-secondary"

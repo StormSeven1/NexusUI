@@ -25,6 +25,16 @@ import type { Asset } from "@/lib/map-entity-model";
 import { useZoneStore } from "@/stores/zone-store";
 import { useAssetStore, type AssetData } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
+import {
+  buildImportantTrackTaskBody,
+  buildLookAtChildTaskBody,
+  CameraManagementClient,
+  DEFAULT_LOOK_AT_CHECK_TIME,
+} from "@/lib/camera-management-client";
+import {
+  ensureEntitiesTrackTaskCache,
+  listTrackTaskOwnerEntityIds,
+} from "@/lib/entities-track-task-cache";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 import {
   buildMarkerSymbolDataUrl,
@@ -131,6 +141,31 @@ const ASSET_POINT_PICK_LAYERS = [
   TDOA_CENTER,
 ];
 
+/** 双击地图触发光电对准时排除：航迹符号 + 资产符号（与「空白处」语义一致） */
+const MAP_LOOK_AT_BLOCK_LAYERS = [TRACK_SYMBOL, ...ASSET_POINT_PICK_LAYERS];
+
+/** 仅查询样式中已存在的 layer，避免 id 未就绪或空数组触发 MapLibre 运行时异常（如 refresh 后短时竞态） */
+function queryRenderedFeaturesSafe(
+  map: maplibregl.Map,
+  point: maplibregl.PointLike,
+  layerIds: readonly string[],
+): ReturnType<maplibregl.Map["queryRenderedFeatures"]> {
+  const layers = layerIds.filter((id) => Boolean(id) && map.getLayer(id));
+  if (layers.length === 0) return [];
+  try {
+    return map.queryRenderedFeatures(point, { layers });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * `NEXT_PUBLIC_DISABLE_MAP_TRACK_RENDERING=true` 时不绘制航迹点/线/标牌（track-store 仍更新）。
+ * 不设或 `false` 为正常显示；修改后须重启 dev / 重建。
+ */
+const DISABLE_MAP_TRACK_RENDERING =
+  typeof process !== "undefined" && process.env.NEXT_PUBLIC_DISABLE_MAP_TRACK_RENDERING === "true";
+
 /*
  * ── 限制区 / 多边形在地图上的三套东西（勿混为一谈）──
  *
@@ -221,6 +256,14 @@ function applyLayerPanelVisibilityFromStore(
         if (!map.getLayer(ml)) continue;
         map.setLayoutProperty(ml, "visibility", zoneVis ? "visible" : "none");
       } catch { /* 图层尚未就绪，跳过 */ }
+    }
+  }
+  if (DISABLE_MAP_TRACK_RENDERING) {
+    for (const ml of LAYER_MAPPING[LYR_TRACKS]) {
+      try {
+        if (!map.getLayer(ml)) continue;
+        map.setLayoutProperty(ml, "visibility", "none");
+      } catch { /* */ }
     }
   }
 }
@@ -324,6 +367,20 @@ async function loadSvgImage(src: string, size: number): Promise<HTMLImageElement
   });
 }
 
+/** 相机元任务 `targetcollection.trackID`：约定为航迹 `uniqueID`（整型；与 Qt `alarmTrackID` / 后端一致） */
+function numericTrackIdForCameraTask(track: Track): number {
+  const s = String(track.trackId ?? "").trim();
+  if (!s) return 0;
+  const n = Number(s);
+  if (Number.isFinite(n)) return Math.trunc(n);
+  const digits = s.replace(/\D/g, "");
+  if (digits) {
+    const n2 = parseInt(digits, 10);
+    if (Number.isFinite(n2)) return n2;
+  }
+  return 0;
+}
+
 /* ---------- Map2D ---------- */
 
 export function Map2D() {
@@ -343,6 +400,8 @@ export function Map2D() {
   const dronesRef = useRef<DronesMaplibre | null>(null);
   /** 资产刷新：保存最新快照，订阅触发时立即下发到各专题模块 */
   const assetsPendingRef = useRef<AssetData[]>([]);
+  /** 由下方 `flushAssets` 赋值，供地图 init 结束后再刷一遍（避免 init 长时间 await 期间 WS 已更新但图层仍用旧快照） */
+  const flushMapAssetsRef = useRef<(() => void) | null>(null);
   /** 供静态无人机站址图层与资产更新时 `assetMapLabelTextColor` 等一致 */
   const assetDispositionAccentRef = useRef<AssetDispositionIconAccent>({});
   const polygonDrawRef = useRef<PolygonDrawMaplibre | null>(null);
@@ -410,6 +469,7 @@ export function Map2D() {
       pitch: 0, bearing: 0,
       attributionControl: false,
     });
+    map.doubleClickZoom.disable();
     map.setStyle(style, { transformStyle });
 
     /** style 变化后把图层面板 visibility 再写一遍（函数内逐图层 try-catch，无需守卫） */
@@ -435,29 +495,113 @@ export function Map2D() {
         console.warn("basemap style parse:", e);
       }
 
-      /* 首帧 idle 后再应用 `layerVisibility` / `basemapVectorVisibility`，减轻 symbol 首帧闪烁 */
+      /* 首帧 idle：面板显隐 + 资产图层（init 尚未跑完时 flush 对光电为 no-op，无妨） */
       map.once("idle", () => {
         applyLayerPanelVisibilityFromStore(map, useAppStore.getState());
+        flushMapAssetsRef.current?.();
       });
 
       const init = async () => {
-        /* 配置通过 app-config-store 统一加载，Map2D 只消费资产 store 的当前快照 */
+        /*
+         * 专题层须在 `ensureLoaded()` 之前挂载：`app-config.json` 若从网络慢拉（数秒～十余秒），先 await 会导致
+         * `optoFovRef` 等长时间为空；此时 `useUnifiedWsFeed` 若已随配置就绪推送 camera 帧，store 在变而地图无法 setData，表现为固定延迟。
+         * 先用 store 中已缓存的 `config`（可能仍为 null）+ 当前 asset-store；`ensureLoaded` resolve 后再用正式 bundle 覆盖并刷新图层。
+         */
+        const preCfg = useAppConfigStore.getState().config;
+        const currentAssetDataEarly = useAssetStore.getState().assets;
+        const _assetsEarly = adaptAssetsForMap(currentAssetDataEarly);
+        const assetIconAccentEarly: AssetDispositionIconAccent = preCfg?.assetDispositionIconAccent ?? {};
+        assetDispositionAccentRef.current = assetIconAccentEarly;
+
+        /* 限制区：`POLY_ZONES_SOURCE`（`polydraw2-zones-src`）；数据 `useZoneStore.zones`。标绘草稿为另一套：`POLY_DRAW_SOURCE`（`polydraw2-source`），由 `poly.initDraft()` 挂载，见 `polygon-draw-maplibre.ts` */
+        const poly = new PolygonDrawMaplibre(map, {
+          onComplete: (p) => {
+            poly.deactivate();
+            useMapMeasureUi.getState().setActiveDrawTool(null);
+            setPolyAreaName("");
+            setPolyStrokeColor(POLY_DIALOG_DEFAULT_STROKE);
+            setPolyFillColor(POLY_DIALOG_DEFAULT_FILL);
+            setPolyFillOpacity(POLY_DIALOG_DEFAULT_FILL_OPACITY);
+            setPolyPending(p);
+          },
+        });
+        polygonDrawRef.current = poly;
+        poly.initCommittedZones();
+        poly.setCommittedZones(useZoneStore.getState().zones);
+
+        /* 航迹：source + 高亮环；专题层插在 `HIGHLIGHT_LAYER` 之下；符号层在预载位图之后再装 */
+        const tracksMod = new TracksMaplibre(map);
+        tracksMod.setTrackDispositionAccent(assetIconAccentEarly);
+        tracksMod.installSourceAndHighlight(
+          DISABLE_MAP_TRACK_RENDERING ? [] : useTrackStore.getState().tracks,
+        );
+        tracksRef.current = tracksMod;
+
+        /* 雷达：距离环、十字线、距离/角度/中心名标签、雷达站图标 */
+        const radarCov = new RadarCoverageModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        radarCov.install();
+        radarCov.setAssetDispositionAccent(assetIconAccentEarly);
+        radarCov.setFromAssets(_assetsEarly, currentAssetDataEarly);
+        radarCovRef.current = radarCov;
+
+        /* 光电 FOV 与相机中心图标；仅处理 camera，不含 tower（电侦） */
+        const optoFov = new OptoelectronicFovModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        optoFov.install();
+        optoFov.setAssetDispositionAccent(assetIconAccentEarly);
+        optoFov.applyCamerasBundle(preCfg?.cameras ?? null);
+        optoFov.setFromAssets(_assetsEarly);
+        optoFovRef.current = optoFov;
+
+        /* 电侦（tower）：独立渲染模块，不与光电共用任何图层 */
+        const towerMod = new TowerMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        towerMod.install();
+        towerMod.setAssetDispositionAccent(assetIconAccentEarly);
+        towerMod.applyFovStyleFromBundle(preCfg?.tower ?? null);
+        towerMod.setFromAssets(_assetsEarly);
+        towerModRef.current = towerMod;
+
+        const airportStatic = new AirportStaticMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        airportStatic.install();
+        airportStatic.setAssetDispositionAccent(assetIconAccentEarly);
+        airportStatic.applyAirportsBundle(preCfg?.airports ?? null);
+        airportStatic.setFromAssets(_assetsEarly);
+        airportStaticRef.current = airportStatic;
+
+        flushMapAssetsRef.current?.();
+
         const appCfg = await useAppConfigStore.getState().ensureLoaded();
         const currentAssetData = useAssetStore.getState().assets;
         const _assets = adaptAssetsForMap(currentAssetData);
-
         const assetIconAccent: AssetDispositionIconAccent = appCfg.assetDispositionIconAccent ?? {};
         assetDispositionAccentRef.current = assetIconAccent;
+
+        tracksMod.setTrackDispositionAccent(assetIconAccent);
+        radarCov.setAssetDispositionAccent(assetIconAccent);
+        optoFov.setAssetDispositionAccent(assetIconAccent);
+        optoFov.applyCamerasBundle(appCfg.cameras);
+        towerMod.setAssetDispositionAccent(assetIconAccent);
+        towerMod.applyFovStyleFromBundle(appCfg.tower);
+        airportStatic.setAssetDispositionAccent(assetIconAccent);
+        airportStatic.applyAirportsBundle(appCfg.airports);
+        radarCov.setFromAssets(_assets, currentAssetData);
+        optoFov.setFromAssets(_assets);
+        towerMod.setFromAssets(_assets);
+        airportStatic.setFromAssets(_assets);
+
         /* 与 `adaptAssetsForMap` 友方第二回退一致：根键 `assetFriendlyColor` 须参与预注册，否则 `drones.devices` 为空时 `asset-drone-*-mf#…` 未 addImage */
         const assetIconPreregRootFriendlyTints = PUBLIC_MAP_ASSET_TYPES.map((t) => getAssetFriendlyColorForAssetType(t));
+
         /* `map.addImage` 预注册各图层 `layout["icon-image"]` 用到的位图；`hasImage` 为真则跳过。并行加载以缩短首帧等待 */
         await Promise.all([
           /* 航迹点符号：空/海/潜 × 敌我中（`getAllMarkerSymbolKeys`），供 `TRACK_SYMBOL` 等 */
-          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill }) => {
+          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill }) => {
             if (!map.hasImage(id)) {
               map.addImage(
                 id,
-                await loadSvgImage(buildMarkerSymbolDataUrl(type, disposition, assetIconAccent, virtual, friendlyFill), 64),
+                await loadSvgImage(
+                  buildMarkerSymbolDataUrl(type, disposition, assetIconAccent, virtual, friendlyFill, neutralFusionFill),
+                  64,
+                ),
                 { pixelRatio: 2 },
               );
             }
@@ -479,60 +623,11 @@ export function Map2D() {
           }),
         ]);
 
-        /* 限制区：`POLY_ZONES_SOURCE`（`polydraw2-zones-src`）；数据 `useZoneStore.zones`。标绘草稿为另一套：`POLY_DRAW_SOURCE`（`polydraw2-source`），由 `poly.initDraft()` 挂载，见 `polygon-draw-maplibre.ts` */
-        const poly = new PolygonDrawMaplibre(map, {
-          onComplete: (p) => {
-            poly.deactivate();
-            useMapMeasureUi.getState().setActiveDrawTool(null);
-            setPolyAreaName("");
-            setPolyStrokeColor(POLY_DIALOG_DEFAULT_STROKE);
-            setPolyFillColor(POLY_DIALOG_DEFAULT_FILL);
-            setPolyFillOpacity(POLY_DIALOG_DEFAULT_FILL_OPACITY);
-            setPolyPending(p);
-          },
-        });
-        polygonDrawRef.current = poly;
-        poly.initCommittedZones();
-        poly.setCommittedZones(useZoneStore.getState().zones);
-
-        /* 航迹：source + 高亮环；专题层插在 `HIGHLIGHT_LAYER` 之下；符号层在雷达/光电之后安装 */
-        const tracksMod = new TracksMaplibre(map);
-        tracksMod.setTrackDispositionAccent(assetIconAccent);
-        tracksMod.installSourceAndHighlight(useTrackStore.getState().tracks);
-        tracksRef.current = tracksMod;
-
-        /* 雷达：距离环、十字线、距离/角度/中心名标签、雷达站图标 */
-        const radarCov = new RadarCoverageModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
-        radarCov.install();
-        radarCov.setAssetDispositionAccent(assetIconAccent);
-        radarCov.setFromAssets(_assets, currentAssetData);
-        radarCovRef.current = radarCov;
-
-        /* 光电 FOV 与相机中心图标；仅处理 camera，不含 tower（电侦） */
-        const optoFov = new OptoelectronicFovModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
-        optoFov.install();
-        optoFov.setAssetDispositionAccent(assetIconAccent);
-        optoFov.applyCamerasBundle(appCfg.cameras);
-        optoFov.setFromAssets(_assets);
-        optoFovRef.current = optoFov;
-
-        /* 电侦（tower）：独立渲染模块，不与光电共用任何图层 */
-        const towerMod = new TowerMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
-        towerMod.install();
-        towerMod.setAssetDispositionAccent(assetIconAccent);
-        towerMod.applyFovStyleFromBundle(appCfg.tower);
-        towerMod.setFromAssets(_assets);
-        towerModRef.current = towerMod;
-
-        const airportStatic = new AirportStaticMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
-        airportStatic.install();
-        airportStatic.setAssetDispositionAccent(assetIconAccent);
-        airportStatic.applyAirportsBundle(appCfg.airports);
-        airportStatic.setFromAssets(_assets);
-        airportStaticRef.current = airportStatic;
-
         tracksMod.installSymbolLayers();
         tracksMod.applyTrackRenderingLayout();
+        if (DISABLE_MAP_TRACK_RENDERING) {
+          tracksMod.setTracks([]);
+        }
 
         const dronesMod = new DronesMaplibre(map, { insertBeforeLayerId: LOCK_ON });
         await dronesMod.install(assetIconAccent);
@@ -622,27 +717,174 @@ export function Map2D() {
           setPlacard((p) => (p ? { ...p, x, y } : p));
         };
 
-        /* 点中航迹符号：仅在有有效要素时互斥清空资产并选中航迹（无效点击不执行分支，避免「return 后仍赋值」的阅读歧义） */
-        map.on("click", TRACK_SYMBOL, (e) => {
-          const f = e.features?.[0];
-          const id = f?.properties?.id as string | undefined;
-          if (id && f) {
-            selectAssetRef.current(null);
-            selectTrackRef.current(id);
-            const c = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
-            const { x, y } = projectPlacard(c[0], c[1]);
-            setPlacard({ kind: "track", id, lng: c[0], lat: c[1], x, y });
-          }
+        if (!DISABLE_MAP_TRACK_RENDERING) {
+          /* 点中航迹符号：仅在有有效要素时互斥清空资产并选中航迹（无效点击不执行分支，避免「return 后仍赋值」的阅读歧义） */
+          map.on("click", TRACK_SYMBOL, (e) => {
+            const f = e.features?.[0];
+            const id = f?.properties?.id as string | undefined;
+            if (id && f) {
+              selectAssetRef.current(null);
+              selectTrackRef.current(id);
+              const c = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
+              const { x, y } = projectPlacard(c[0], c[1]);
+              setPlacard({ kind: "track", id, lng: c[0], lat: c[1], x, y });
+            }
+          });
+
+          /* 双击航迹：重点关注采集（TargetCollectionIMChildTask），控制台打印完整 POST JSON */
+          map.on("dblclick", TRACK_SYMBOL, (e) => {
+            const ev = e.originalEvent;
+            if (typeof ev.preventDefault === "function") ev.preventDefault();
+            const f = e.features?.[0];
+            const id = f?.properties?.id as string | undefined;
+            if (!id || !f) return;
+            const track = useTrackStore.getState().tracks.find((t) => t.id === id);
+            if (!track) return;
+            void useAppConfigStore
+              .getState()
+              .ensureLoaded()
+              .then(async (cfg) => {
+                const cm = cfg.cameraManagement;
+                const isSea = track.type === "sea" || track.type === "underwater";
+                const alarmDataType = isSea ? 0 : 1;
+                const trackIDNum = numericTrackIdForCameraTask(track);
+                /* 与 Qt 远程 `CAMERA_IMPORTANT_TRACK` 一致：经纬 0；action/alarmTime/trackTime/alarmID 由 buildImportantTrackTaskBody 归一化 */
+                const target = {
+                  latitude: 0,
+                  longitude: 0,
+                  type: alarmDataType,
+                  trackID: trackIDNum,
+                  shipType: isSea ? 3 : 0,
+                };
+                if (!cm) {
+                  console.warn("[map-track-dblclick] cameraManagement 未配置，仅拟定字段（未发送）:", {
+                    target,
+                  });
+                  return;
+                }
+                try {
+                  await ensureEntitiesTrackTaskCache();
+                } catch (err: unknown) {
+                  console.error("[map-track-dblclick] 实体快照加载失败，未发送任务:", err);
+                  return;
+                }
+                const owners = listTrackTaskOwnerEntityIds();
+                if (owners.length === 0) {
+                  console.warn(
+                    "[map-track-dblclick] 无可用航迹任务 owner（需 hasPtz=1 且 parent_device_id 为空）",
+                  );
+                  return;
+                }
+                console.log("[map-track-dblclick] 将下发相机数:", owners.length, owners.join(", "));
+                const client = CameraManagementClient.fromConfig(cm);
+                if (!client) return;
+                for (const ownerId of owners) {
+                  const body = buildImportantTrackTaskBody(cm, ownerId, target, { taskIdSuffix: ownerId });
+                  console.log("[map-track-dblclick] 发送 owner=", ownerId, "\n", JSON.stringify(body, null, 2));
+                  const res = await client.publishTask(body);
+                  if (res.networkError) {
+                    console.warn(
+                      "[map-track-dblclick] 相机管理请求失败:",
+                      ownerId,
+                      res.networkError,
+                      "URL:",
+                      client.publishUrl,
+                    );
+                    continue;
+                  }
+                  console.log(
+                    "[map-track-dblclick] HTTP 结果:",
+                    ownerId,
+                    res.status,
+                    res.ok ? "ok" : "fail",
+                    res.executionState ?? "",
+                    res.errorMessage ?? "",
+                  );
+                }
+              })
+              .catch((err: unknown) => console.error("[map-track-dblclick]", err));
+          });
+        }
+
+        /* 双击地图空白：光电对准经纬度（Qt `CMainWindow::CameraFocusOnPos` 远程 `CAMERA_LOOK_AT_CHILD`），仅父相机 */
+        map.on("dblclick", (e) => {
+          if (queryRenderedFeaturesSafe(map, e.point, MAP_LOOK_AT_BLOCK_LAYERS).length) return;
+          const ev = e.originalEvent;
+          if (typeof ev.preventDefault === "function") ev.preventDefault();
+          const lat = e.lngLat.lat;
+          const lng = e.lngLat.lng;
+          void useAppConfigStore
+            .getState()
+            .ensureLoaded()
+            .then(async (cfg) => {
+              const cm = cfg.cameraManagement;
+              if (!cm) {
+                console.warn("[map-look-at-dblclick] cameraManagement 未配置，未发送");
+                return;
+              }
+              try {
+                await ensureEntitiesTrackTaskCache();
+              } catch (err: unknown) {
+                console.error("[map-look-at-dblclick] 实体快照加载失败:", err);
+                return;
+              }
+              const owners = listTrackTaskOwnerEntityIds();
+              if (owners.length === 0) {
+                console.warn("[map-look-at-dblclick] 无可用 owner（需 hasPtz=1 且 parent_device_id 为空）");
+                return;
+              }
+              const lookAt = {
+                latitude: lat,
+                longitude: lng,
+                trackID: 0,
+                shipType: 3,
+                checkTime: DEFAULT_LOOK_AT_CHECK_TIME,
+              };
+              console.log(
+                "[map-look-at-dblclick] 对准 lat/lng",
+                lat,
+                lng,
+                "→",
+                owners.length,
+                "台:",
+                owners.join(", "),
+              );
+              const client = CameraManagementClient.fromConfig(cm);
+              if (!client) return;
+              for (const ownerId of owners) {
+                const body = buildLookAtChildTaskBody(cm, ownerId, lookAt, { taskIdSuffix: ownerId });
+                console.log("[map-look-at-dblclick] owner=", ownerId, "\n", JSON.stringify(body, null, 2));
+                const res = await client.publishTask(body);
+                if (res.networkError) {
+                  console.warn(
+                    "[map-look-at-dblclick] 请求失败:",
+                    ownerId,
+                    res.networkError,
+                    client.publishUrl,
+                  );
+                  continue;
+                }
+                console.log(
+                  "[map-look-at-dblclick] HTTP",
+                  ownerId,
+                  res.status,
+                  res.ok ? "ok" : "fail",
+                  res.executionState ?? "",
+                  res.errorMessage ?? "",
+                );
+              }
+            })
+            .catch((err: unknown) => console.error("[map-look-at-dblclick]", err));
         });
 
         /* 悬停于航迹符号或资产点/符号层之一则 pointer 光标 */
         map.on("mousemove", (e) => {
-          const onTrack = map.queryRenderedFeatures(e.point, { layers: [TRACK_SYMBOL] }).length > 0;
+          const onTrack = queryRenderedFeaturesSafe(map, e.point, [TRACK_SYMBOL]).length > 0;
           if (onTrack) {
             map.getCanvas().style.cursor = "pointer";
             return;
           }
-          const onAsset = map.queryRenderedFeatures(e.point, { layers: ASSET_POINT_PICK_LAYERS }).length > 0;
+          const onAsset = queryRenderedFeaturesSafe(map, e.point, ASSET_POINT_PICK_LAYERS).length > 0;
           map.getCanvas().style.cursor = onAsset ? "pointer" : "";
         });
 
@@ -651,8 +893,8 @@ export function Map2D() {
          * 若仍未命中有效资产 id，则关闭标牌、清空航迹/资产选中及多选高亮（属性框与列表选中联动 store）。
          */
         map.on("click", (e) => {
-          if (map.queryRenderedFeatures(e.point, { layers: [TRACK_SYMBOL] }).length) return;
-          const hits = map.queryRenderedFeatures(e.point, { layers: ASSET_POINT_PICK_LAYERS });
+          if (queryRenderedFeaturesSafe(map, e.point, [TRACK_SYMBOL]).length) return;
+          const hits = queryRenderedFeaturesSafe(map, e.point, ASSET_POINT_PICK_LAYERS);
           const raw = hits[0];
           if (raw) {
             const id = assetIdFromPickFeature(raw);
@@ -683,6 +925,10 @@ export function Map2D() {
 
         /* init 内图层已加齐，再按 `layerVisibility` / `basemapVectorVisibility` 统一设 visibility */
         applyLayerPanelVisibilityFromStore(map, useAppStore.getState());
+
+        /* init 里多次 await，期间 asset-store 可能已由 camera / entity_status 更新；用最新快照再刷光电/雷达等，否则会一直停在 init 前半段那一帧 */
+        assetsPendingRef.current = useAssetStore.getState().assets;
+        flushMapAssetsRef.current?.();
       };
 
       void init()
@@ -926,15 +1172,15 @@ export function Map2D() {
   useEffect(() => {
     const flush = () => {
       tracksFlushRafRef.current = null;
+      /* 每帧最多一次：原先每次 store 变更都跑，航迹洪峰时拖住主线程 → 光电刷新被挤占 */
+      useDisposalPlanStore.getState().cleanupEffectsForMissingTargets();
       if (!tracksRef.current) return;
-      tracksRef.current.setTracks(tracksPendingRef.current);
+      tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : tracksPendingRef.current);
     };
     const unsub = useTrackStore.subscribe((s) => {
       tracksPendingRef.current = s.tracks;
       if (tracksFlushRafRef.current != null) return;
       tracksFlushRafRef.current = requestAnimationFrame(flush);
-      /* 目标消失后：同步清理资产→目标连线，并释放激光/TDOA 的处置激活态 */
-      useDisposalPlanStore.getState().cleanupEffectsForMissingTargets();
       // 标牌跟随选中航迹位置更新
       const cur = placardRef.current;
       if (cur?.kind === "track") {
@@ -960,38 +1206,60 @@ export function Map2D() {
   /* zone-store / asset-store → 地图：光电 FOV 扇区朝向/开角来自 `adaptAssetsForMap` 的 `heading`/`fovAngle`（静态+动态已在资产入口统一合并） */
   useEffect(() => {
     let pendingAssetFlush = false;
-    let onStyleReady: (() => void) | null = null;
+    let onStyleIdleFlush: (() => void) | null = null;
+
+    const detachStyleIdle = () => {
+      const map = mapRef.current;
+      if (map && onStyleIdleFlush) {
+        map.off("idle", onStyleIdleFlush);
+      }
+      onStyleIdleFlush = null;
+    };
 
     const armStyleReadyFlush = () => {
       const map = mapRef.current;
-      if (!map || onStyleReady) return;
-      onStyleReady = () => {
-        onStyleReady = null;
+      if (!map) return;
+      /* 新一次「等 style」刷新：先卸旧 idle，避免早先 `if (handler) return` 把后续更新永久拦住 */
+      detachStyleIdle();
+      onStyleIdleFlush = () => {
+        detachStyleIdle();
         if (!pendingAssetFlush) return;
         pendingAssetFlush = false;
         flushAssets();
       };
-      map.once("idle", onStyleReady);
+      map.on("idle", onStyleIdleFlush);
     };
 
     const flushAssets = () => {
       const m = mapRef.current;
       if (!m) return;
-      /* style 未就绪：记录 pending，等 idle 后补刷一次，避免丢实时更新且不做高频自旋 */
-      if (!m.isStyleLoaded()) {
-        pendingAssetFlush = true;
-        console.log("flushAssets style not loaded, retry");
-        armStyleReadyFlush();
-        return;
-      }
-      const assetSnap = assetsPendingRef.current;
+      const assetSnap = useAssetStore.getState().assets;
+      assetsPendingRef.current = assetSnap;
       const adapted = adaptAssetsForMap(assetSnap);
-      /* 雷达/光电/电侦/机场/无人机：由各专题模块 setFromAssets 驱动 */
-      radarCovRef.current?.setFromAssets(adapted, assetSnap);
-      optoFovRef.current?.setFromAssets(adapted);
-      towerModRef.current?.setFromAssets(adapted);
-      airportStaticRef.current?.setFromAssets(adapted);
-      dronesRef.current?.setStaticDroneSitesFromAssets(adapted, assetDispositionAccentRef.current);
+
+      /*
+       * 勿在 `!isStyleLoaded()` 时整段 return：PMTiles/底图持续加载时 MapLibre 可能长期报 style 未就绪，
+       * 但光电等 GeoJSON source 已存在，仍须 `setData`；否则刷新后首帧对、WS 更新永远不进地图。
+       */
+      if (m.isStyleLoaded()) {
+        detachStyleIdle();
+        pendingAssetFlush = false;
+      } else {
+        pendingAssetFlush = true;
+        armStyleReadyFlush();
+      }
+
+      try {
+        radarCovRef.current?.setFromAssets(adapted, assetSnap);
+        optoFovRef.current?.setFromAssets(adapted);
+        towerModRef.current?.setFromAssets(adapted);
+        airportStaticRef.current?.setFromAssets(adapted);
+        dronesRef.current?.setStaticDroneSitesFromAssets(adapted, assetDispositionAccentRef.current);
+      } catch {
+        /* style 过渡 / 切片加载中间态 */
+      }
+
+      if (!m.isStyleLoaded()) return;
 
       /* 激光/TDOA：先按类型分桶，再批量 upsert，避免高频逐条刷新 */
       const tools = measureToolRefs.current;
@@ -1014,6 +1282,10 @@ export function Map2D() {
       }
     };
 
+    flushMapAssetsRef.current = flushAssets;
+    assetsPendingRef.current = useAssetStore.getState().assets;
+    flushAssets();
+
     const unsubZ = useZoneStore.subscribe((s) => {
       polygonDrawRef.current?.setCommittedZones(s.zones);
     });
@@ -1023,13 +1295,10 @@ export function Map2D() {
       useDisposalPlanStore.getState().cleanupEffectsForMissingTargets();
     });
     return () => {
+      flushMapAssetsRef.current = null;
+      detachStyleIdle();
       unsubZ();
       unsubA();
-      const map = mapRef.current;
-      if (map && onStyleReady) {
-        map.off("idle", onStyleReady);
-        onStyleReady = null;
-      }
     };
   }, []);
 

@@ -132,7 +132,7 @@
  *         (名称从第1步解析的 displayName 取，坐标从 relationships 取)
  */
 
-import { useEffect } from "react";
+import { useEffect, startTransition } from "react";
 import { toast } from "sonner";
 import { useTrackStore } from "@/stores/track-store";
 import { useAlertStore } from "@/stores/alert-store";
@@ -141,21 +141,187 @@ import { useAssetStore } from "@/stores/asset-store";
 import type { ZoneData } from "@/stores/zone-store";
 import { useZoneStore } from "@/stores/zone-store";
 import { useDroneStore } from "@/stores/drone-store";
+import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import {
   mapEntitiesPayload,
   mergeDynamicAndStaticAssets,
+  getCoordinateTransformConfig,
   getTrackRenderingConfig,
   getWebSocketConfig,
   getHttpConfig,
   shouldDisplayAssetId,
   shouldDisplayZone,
 } from "@/lib/map-app-config";
+import type { TrackWorkerConfig, TrackWorkerResult } from "@/lib/track-parse-worker";
 import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
 import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
-import { normalizeAssetType, type Track } from "@/lib/map-entity-model";
+import { normalizeAssetType, type PublicMapAssetType, type Track } from "@/lib/map-entity-model";
 import { recordTrackReceived, recordAlertReceived, recordZoneReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
+import { canonicalEntityId } from "@/lib/camera-entity-id";
+
+/**
+ * 联调：`.env.local` 设 `NEXT_PUBLIC_WS_DISABLE_TRACK_INGEST=true` 时不处理航迹类 WS、不写 `track-store`，
+ * 并跳过航迹修剪定时器 / 查证图片轮询 / 告警 revision→航迹同步（`entity_status`、camera、告警列表等仍照常）。
+ * 同时对该类消息尽量 **不做 JSON.parse**：大包 trackbatch 解析会长时间占主线程，拖慢同连接上后续光电帧。
+ */
+const WS_DISABLE_TRACK_INGEST =
+  typeof process !== "undefined" && process.env.NEXT_PUBLIC_WS_DISABLE_TRACK_INGEST === "true";
+
+/** 信封前若干字节内嗅探 `type`；嗅探失败则回退完整 parse（避免误判嵌套里 `"type":"Track"` 等） */
+function peekWsTopLevelTypePrefix(raw: string, maxScan = 4096): string | null {
+  const head = raw.charCodeAt(0) === 0xfeff ? raw.slice(1, maxScan) : raw.slice(0, maxScan);
+  const m = /"type"\s*:\s*"([^"\\]*)"/i.exec(head);
+  return m ? m[1]!.trim().toLowerCase() : null;
+}
+
+/** 在禁用航迹摄入（`WS_DISABLE_TRACK_INGEST=true`）时，直接按前缀嗅探丢弃的航迹消息类型集合 */
+const WS_SKIP_PARSE_WHEN_TRACK_INGEST_DISABLED = new Set(["trackbatch", "track_update", "track_snapshot"]);
+
+/**
+ * 航迹批量包在 Worker 内完成 JSON.parse + normalize，完全不阻塞主线程。
+ * 主线程只做最终的 setTracks（Zustand update + MapLibre setData）。
+ * 覆盖 trackbatch / track_update / track_snapshot；单条 track 仍走主线程（帧较小）。
+ */
+const WORKER_TRACK_TYPES = new Set(["trackbatch", "track_update", "track_snapshot"]);
+
+// ── 航迹蓄水池：同一时间窗口内多个 trackbatch 合并，主线程每 TRACK_FLUSH_INTERVAL_MS 只调一次 setTracks ──
+/**
+ * 根本问题：trackbatch 高频到达（如每 100ms 一包×500 条），即使 JSON.parse 在 Worker 完成，
+ * Worker 的 onmessage 仍逐包调 setTracks，setTracks 本身的 Map 迭代仍在主线程占时 → 光电被挤占。
+ *
+ * 方案：把 Worker/主线程解析出的 Track 先积入 `_trackAccumulator`（以 showID 为 key，后来覆盖前值），
+ * 以 TRACK_FLUSH_INTERVAL_MS 为周期统一调 setTracks 一次。
+ * - camera/optodata/entity_status 不经此路径，继续同步处理。
+ * - 单条 `track` 小包直接走同步路径（帧小，parse 快，无需积压）。
+ */
+const TRACK_FLUSH_INTERVAL_MS = 500;
+const _trackAccumulator = new Map<string, import("@/lib/map-entity-model").Track>();
+let _trackFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let _trackFlushTimestamp: string | undefined;
+
+function scheduleTrackFlush() {
+  if (_trackFlushTimer != null) return;
+  _trackFlushTimer = setTimeout(() => {
+    _trackFlushTimer = null;
+    if (_trackAccumulator.size === 0) return;
+    const batch = [..._trackAccumulator.values()];
+    _trackAccumulator.clear();
+    const ts = _trackFlushTimestamp;
+    _trackFlushTimestamp = undefined;
+    /* 航迹合并为低优先级过渡更新，让光电/资产等更「急」的渲染与 input 先跑 */
+    startTransition(() => {
+      useTrackStore.getState().setTracks(batch, ts !== undefined ? { lastUpdate: ts } : undefined);
+      for (const t of batch) recordTrackReceived(!!t.isAirTrack);
+    });
+  }, TRACK_FLUSH_INTERVAL_MS);
+}
+
+/** 丢弃未 flush 的航迹（如 cleartracks），避免清空后下一 tick 仍写入旧数据 */
+function discardPendingTrackAccumulator() {
+  if (_trackFlushTimer !== null) {
+    clearTimeout(_trackFlushTimer);
+    _trackFlushTimer = null;
+  }
+  _trackAccumulator.clear();
+  _trackFlushTimestamp = undefined;
+}
+
+function accumulateTracks(
+  tracks: import("@/lib/map-entity-model").Track[],
+  timestamp?: string,
+) {
+  for (const t of tracks) _trackAccumulator.set(t.showID, t);
+  if (timestamp) _trackFlushTimestamp = timestamp;
+  scheduleTrackFlush();
+}
+
+// ── 航迹解析 Worker 单例：JSON.parse + normalize 在工作线程，结果入蓄水池 ──
+let _trackWorker: Worker | null = null;
+let _workerAvailable = typeof Worker !== "undefined";
+
+function getTrackWorker(): Worker | null {
+  if (!_workerAvailable) return null;
+  if (_trackWorker) return _trackWorker;
+  try {
+    const w = new Worker(new URL("../lib/track-parse-worker.ts", import.meta.url));
+    w.onmessage = (e: MessageEvent<TrackWorkerResult>) => {
+      const { tracks, timestamp } = e.data;
+      if (tracks.length) {
+        accumulateTracks(tracks as import("@/lib/map-entity-model").Track[], timestamp);
+      }
+    };
+    w.onerror = (err) => {
+      console.warn("[track-worker] 不可用，降级主线程处理", err.message ?? err);
+      _trackWorker = null;
+      _workerAvailable = false;
+    };
+    _trackWorker = w;
+    sendTrackWorkerConfig();
+    return w;
+  } catch {
+    _workerAvailable = false;
+    return null;
+  }
+}
+
+function sendTrackWorkerConfig() {
+  const w = getTrackWorker();
+  if (!w) return;
+  const tCfg = getTrackRenderingConfig();
+  const cCfg = getCoordinateTransformConfig();
+  const config: TrackWorkerConfig = {
+    coordinateTransformEnabled: cCfg.enabled,
+    airIconHeadingOffsetDeg: tCfg.airIconHeadingOffsetDeg,
+    airDefaultCourseDeg: tCfg.airDefaultCourseDeg,
+  };
+  w.postMessage({ type: "init", config });
+}
+
+/** 大批量航迹优先走 Worker（JSON.parse 在子线程），Worker 不可用则主线程解析后直接积入蓄水池 */
+function postTrackPayloadToWorkerOrAccumulate(raw: string) {
+  const w = getTrackWorker();
+  if (w) {
+    w.postMessage({ type: "parse", raw });
+  } else {
+    try {
+      const msg = JSON.parse(raw) as Record<string, unknown>;
+      const type = String((msg.type as string | undefined) ?? "").toLowerCase();
+      const timestamp = msg.timestamp ? String(msg.timestamp) : undefined;
+      let tracks: import("@/lib/map-entity-model").Track[] = [];
+      if (type === "trackbatch") {
+        const arr = msg.data;
+        if (Array.isArray(arr)) {
+          tracks = arr.map((item) => {
+            if (!item || typeof item !== "object") return null;
+            const envelope = item as Record<string, unknown>;
+            return normalizeIncomingTrack(envelope.data ?? envelope);
+          }).filter(Boolean) as import("@/lib/map-entity-model").Track[];
+        }
+      } else {
+        const arr = msg.tracks;
+        if (Array.isArray(arr)) tracks = normalizeIncomingTrackList(arr);
+      }
+      if (tracks.length) accumulateTracks(tracks, timestamp);
+    } catch {
+      /* 静默丢弃解析失败的包 */
+    }
+  }
+}
+
+/** 光电 Camera WS 调试：development 默认开；生产需 `NEXT_PUBLIC_DEBUG_WS_CAMERA=true`；全关设 `NEXT_PUBLIC_DEBUG_WS_CAMERA=false` */
+function wsCameraDebugEnabled(): boolean {
+  if (typeof process === "undefined") return false;
+  if (process.env.NEXT_PUBLIC_DEBUG_WS_CAMERA === "false") return false;
+  if (process.env.NEXT_PUBLIC_DEBUG_WS_CAMERA === "true") return true;
+  return process.env.NODE_ENV === "development";
+}
+
+function logWsCamera(label: string, payload: Record<string, unknown>) {
+  if (!wsCameraDebugEnabled()) return;
+  console.info(`[NexusUI WS camera] ${label}`, payload);
+}
 
 /** 与 WS 全量资产列表合并：先静态后动态，同 id 以 WS 为准 */
 let configAssetBaseCache: AssetData[] = [];
@@ -176,6 +342,11 @@ async function reloadAppConfigAssetBase() {
       ? rootDefaultRangeM / 1000
       : undefined;
   rebuildAndCommitAssetSnapshot();
+  try {
+    sendTrackWorkerConfig();
+  } catch {
+    /* Worker 或非浏览器环境不可用 */
+  }
 }
 
 function mergeAssetRowsById(base: AssetData[], overlays: AssetData[]): AssetData[] {
@@ -198,8 +369,9 @@ function rebuildAndCommitAssetSnapshot() {
 function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows: AssetData[]): AssetData[] {
   if (prevRows.length === 0) return incomingRows;
   const prevById = new Map(prevRows.map((r) => [r.id, r]));
-  return incomingRows.map((row) => {
-    const prev = prevById.get(row.id);
+  const incomingById = new Map(incomingRows.map((r) => [r.id, r]));
+
+  const mergeOne = (row: AssetData, prev: AssetData | undefined): AssetData => {
     if (!prev) return row;
     return {
       ...row,
@@ -216,7 +388,17 @@ function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows:
           ? Number(row.range_km)
           : prev.range_km,
     };
-  });
+  };
+
+  const out: AssetData[] = incomingRows.map((row) => mergeOne(row, prevById.get(row.id)));
+
+  /* 相机：部分环境 entity_status 不全量带光电，仅 DDS camera 在推角；若只按 incoming map 会丢掉仅有实时流的行，合并后只剩静态角 → 「不刷新不变」 */
+  for (const prev of prevRows) {
+    if (prev.asset_type !== "camera") continue;
+    if (incomingById.has(prev.id)) continue;
+    out.push(prev);
+  }
+  return out;
 }
 
 /**
@@ -297,21 +479,42 @@ function extractCameraLatLng(d: Record<string, unknown>): { lat: number; lng: nu
   return null;
 }
 
-/** 相机实时朝向（度）：当前协议固定用 `originPtz.pan`（无则 `ptz.pan`），不做默认值兜底。 */
+/** DDS 全景：地图方位 ≈ `ptz.pan + panoOffset`（与常见帧里 `originPtz.pan` 一致）；缺 `panoOffset` 时用 origin→ptz。 */
 function parseCameraBearingDeg(d: Record<string, unknown>): number | undefined {
   const originPtz = d.originPtz as Record<string, unknown> | undefined;
   const ptz = d.ptz as Record<string, unknown> | undefined;
-  const v = originPtz?.pan ?? ptz?.pan;
+  const pPan = Number(ptz?.pan);
+  const pano = Number(d.panoOffset);
+  if (Number.isFinite(pPan) && Number.isFinite(pano)) {
+    return pPan + pano;
+  }
+  const v = originPtz?.pan ?? ptz?.pan ?? d.pan ?? d.p;
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** 相机实时视场开角（度）：当前协议固定用 `fov.horizontal`，不做默认值兜底。 */
+/**
+ * 相机水平视场开角（度）：`fov.horizontal`、DDS `FOVStatus.hs`（`fov.hs`）、顶层别名。
+ */
 function parseCameraHorizontalFovDeg(d: Record<string, unknown>): number | undefined {
   const fov = d.fov as Record<string, unknown> | undefined;
-  const v = fov?.horizontal;
+  const v = fov?.horizontal ?? fov?.hs ?? d.horizontalFov ?? d.horizontal_fov ?? d.hs;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** 部分网关把载荷放在 `msg.data`，也有字段摊在根上；id 在信封、PTZ/FOV 在 data 时合并。仅在 camera/optoelectronic/optodata 分支调用。 */
+function unwrapCameraWsMessagePayload(msg: Record<string, unknown>): Record<string, unknown> {
+  const data = msg.data;
+  if (data != null && typeof data === "object" && !Array.isArray(data)) {
+    const inner = data as Record<string, unknown>;
+    const merged: Record<string, unknown> = { ...inner };
+    for (const k of ["entityId", "cameraId", "deviceId", "id"] as const) {
+      if (merged[k] == null && msg[k] != null) merged[k] = msg[k];
+    }
+    return merged;
+  }
+  return msg;
 }
 
 /** 相机实时射程（千米）：当前协议固定用 `range_km`，不做默认值兜底。 */
@@ -583,15 +786,15 @@ function handleAlarmItem(raw: Record<string, unknown>) {
  *            → applyAssetListFromWs → 与静态配置合并 → asset-store.setAssets
  *   → 第3步：同步 airport/drone 到 asset-store
  */
-function dispatchWsMessage(raw: string) {
-  try {
-    const msg = JSON.parse(raw) as Record<string, unknown>;
-    const type = (msg.type as string | undefined)?.toLowerCase();
-    if (!type) return;
+function dispatchWsMessageSync(raw: string) {
+  const msg = JSON.parse(raw) as Record<string, unknown>;
+  const type = (msg.type as string | undefined)?.toLowerCase();
+  if (!type) return;
 
-    switch (type) {
+  switch (type) {
       // ── 航迹 ──
       case "trackbatch": {
+        if (WS_DISABLE_TRACK_INGEST) break;
         // V2 trackBatch: data = [{ type: "Track", data: {...} }]
         const arr = msg.data;
         if (Array.isArray(arr)) {
@@ -602,33 +805,33 @@ function dispatchWsMessage(raw: string) {
               const inner = envelope.data ?? envelope;
               return normalizeIncomingTrack(inner);
             })
-            .filter(Boolean);
-          if (tracks.length) {
-            useTrackStore.getState().setTracks(tracks as Track[]);
-            for (const t of tracks as Track[]) recordTrackReceived(!!t.isAirTrack);
-          }
+            .filter(Boolean) as Track[];
+          if (tracks.length)
+            accumulateTracks(tracks, msg.timestamp ? String(msg.timestamp) : undefined);
         }
-        if (msg.timestamp) useTrackStore.getState().setLastUpdate(String(msg.timestamp));
         break;
       }
       case "track": {
+        if (WS_DISABLE_TRACK_INGEST) break;
         // V2 单条 Track
         const t = normalizeIncomingTrack(msg.data ?? msg);
         if (t) {
-          useTrackStore.getState().setTracks([t]);
-          recordTrackReceived(!!t.isAirTrack);
+          const ts = msg.timestamp ? String(msg.timestamp) : undefined;
+          startTransition(() => {
+            useTrackStore.getState().setTracks([t], ts !== undefined ? { lastUpdate: ts } : undefined);
+            recordTrackReceived(!!t.isAirTrack);
+          });
         }
-        if (msg.timestamp) useTrackStore.getState().setLastUpdate(String(msg.timestamp));
         break;
       }
       case "track_update":
       case "track_snapshot": {
+        if (WS_DISABLE_TRACK_INGEST) break;
         const tracks = msg.tracks as unknown[] | undefined;
         if (Array.isArray(tracks)) {
           const normalized = normalizeIncomingTrackList(tracks);
-          useTrackStore.getState().setTracks(normalized);
-          for (const t of normalized) recordTrackReceived(!!t.isAirTrack);
-          if (msg.timestamp) useTrackStore.getState().setLastUpdate(String(msg.timestamp));
+          if (normalized.length)
+            accumulateTracks(normalized, msg.timestamp ? String(msg.timestamp) : undefined);
         }
         break;
       }
@@ -769,58 +972,92 @@ function dispatchWsMessage(raw: string) {
 
       // ── 光电 ──
       case "camera":
-      case "optoelectronic": {
-        // V2 `App.vue`：PTZ.pan=水平角、fov.horizontal=开角；仅按报文字段解析，不做默认值兜底
-        const d = msg.data as Record<string, unknown> | undefined;
-        if (d) {
-          const entityId = String(d.entityId ?? "");
-          if (entityId) {
-            const atType = normalizeAssetType(String(d.asset_type ?? d.type ?? "camera"));
-            if (!shouldDisplayAssetId(atType, entityId)) break;
-            const originPtz = d.originPtz as Record<string, unknown> | undefined;
-            const ptz = d.ptz as Record<string, unknown> | undefined;
-            const rawHeading = originPtz?.pan ?? ptz?.pan;
-            const hasHeading = rawHeading != null && Number.isFinite(Number(rawHeading));
-            const bearing = hasHeading ? parseCameraBearingDeg(d) : undefined;
-
-            const fovObj = d.fov as Record<string, unknown> | undefined;
-            const rawFov = fovObj?.horizontal;
-            const hasFov = rawFov != null && Number.isFinite(Number(rawFov)) && Number(rawFov) > 0;
-            const fovDeg = hasFov ? parseCameraHorizontalFovDeg(d) : undefined;
-
-            const rawRange = d.range_km;
-            const hasRange = rawRange != null && Number.isFinite(Number(rawRange)) && Number(rawRange) > 0;
-            const rangeKm = hasRange ? parseCameraRangeKm(d) : undefined;
-            const effectiveRangeKm = rangeKm ?? cameraDefaultRangeKm(entityId);
-            const status = d.online === false ? "offline" : "online";
-            const baseProps: Record<string, unknown> = {
-              config_kind: "camera",
-              ...(typeof d.properties === "object" && d.properties ? (d.properties as Record<string, unknown>) : {}),
-            };
-            if (d.taskType != null) baseProps.taskType = d.taskType;
-            if (d.executionState != null) baseProps.executionState = d.executionState;
-            if (d.online !== undefined) baseProps.online = d.online;
-
-            const patch: Partial<AssetData> = {
-              mission_status: "monitoring",
-              properties: baseProps,
-            };
-            if (bearing !== undefined) patch.heading = bearing;
-            if (fovDeg !== undefined) patch.fov_angle = fovDeg;
-            if (effectiveRangeKm !== undefined) patch.range_km = effectiveRangeKm;
-            const ll = extractCameraLatLng(d);
-            if (ll) {
-              patch.lat = ll.lat;
-              patch.lng = ll.lng;
+      case "optoelectronic":
+      case "optodata": {
+        // V2 / DDS：pan + fov.horizontal 或 fov.hs（FastDDS FOVStatus.hs）；载荷可能在 data 或根上
+        const d = unwrapCameraWsMessagePayload(msg);
+        const rawId = String(d.entityId ?? d.cameraId ?? d.deviceId ?? d.id ?? "").trim();
+        logWsCamera("frame", {
+          wsType: type,
+          rawId: rawId || "(empty)",
+          hasDataObject: msg.data != null && typeof msg.data === "object",
+        });
+        const rawForDds = rawId;
+        if (rawForDds) {
+          useEoCameraDdsStatusStore.getState().ingestCameraPayload({
+            ...d,
+            entityId: canonicalEntityId(rawForDds),
+          });
+        }
+        const entityId = rawId ? canonicalEntityId(rawId) : "";
+        if (!entityId) {
+          logWsCamera("skip:no-entityId", { rawId, keys: Object.keys(d).slice(0, 24) });
+          break;
+        }
+        if (entityId) {
+          /* 勿用 `d.type`：载荷里可能是任务/本体类型等非 map 资产枚举，`normalizeAssetType` 会抛错并被 dispatch 外层 catch 吞掉 → 扇区永不更新 */
+          let atType: PublicMapAssetType = "camera";
+          if (d.asset_type != null && String(d.asset_type).trim() !== "") {
+            try {
+              atType = normalizeAssetType(String(d.asset_type));
+            } catch {
+              atType = "camera";
             }
+          }
+          if (!shouldDisplayAssetId(atType, entityId)) {
+            logWsCamera("skip:shouldDisplayAssetId=false", { entityId, atType });
+            break;
+          }
+          const bearing = parseCameraBearingDeg(d);
+          const fovDeg = parseCameraHorizontalFovDeg(d);
 
-            /* 把实时 PTZ/坐标/状态写入 lastWsAssetList，再走统一重建通道 → setAssets → Map2D 订阅 → flushAssets */
-            const now = isoNow();
-            const wsIdx = lastWsAssetList.findIndex((a) => a.id === entityId);
-            if (wsIdx >= 0) {
-              const prev = lastWsAssetList[wsIdx]!;
-              const nextWs = [...lastWsAssetList];
-              nextWs[wsIdx] = {
+          const rawRange = d.range_km;
+          const hasRange = rawRange != null && Number.isFinite(Number(rawRange)) && Number(rawRange) > 0;
+          const rangeKm = hasRange ? parseCameraRangeKm(d) : undefined;
+          const effectiveRangeKm = rangeKm ?? cameraDefaultRangeKm(entityId);
+          const status = d.online === false ? "offline" : "online";
+          const ptzPan = Number((d.ptz as Record<string, unknown> | undefined)?.pan);
+          const originPan = Number((d.originPtz as Record<string, unknown> | undefined)?.pan);
+          const panoOff = Number(d.panoOffset);
+          logWsCamera("parsed", {
+            entityId,
+            bearing,
+            fovDeg,
+            effectiveRangeKm,
+            ptzPan: Number.isFinite(ptzPan) ? ptzPan : "(none)",
+            originPan: Number.isFinite(originPan) ? originPan : "(none)",
+            panoOffset: Number.isFinite(panoOff) ? panoOff : "(none)",
+            hasLatLng: !!extractCameraLatLng(d),
+          });
+          const baseProps: Record<string, unknown> = {
+            config_kind: "camera",
+            ...(typeof d.properties === "object" && d.properties ? (d.properties as Record<string, unknown>) : {}),
+          };
+          if (d.taskType != null) baseProps.taskType = d.taskType;
+          if (d.executionState != null) baseProps.executionState = d.executionState;
+          if (d.online !== undefined) baseProps.online = d.online;
+
+          const patch: Partial<AssetData> = {
+            mission_status: "monitoring",
+            properties: baseProps,
+          };
+          if (bearing !== undefined) patch.heading = bearing;
+          if (fovDeg !== undefined) patch.fov_angle = fovDeg;
+          if (effectiveRangeKm !== undefined) patch.range_km = effectiveRangeKm;
+          const ll = extractCameraLatLng(d);
+          if (ll) {
+            patch.lat = ll.lat;
+            patch.lng = ll.lng;
+          }
+
+          /* 把实时 PTZ/坐标/状态写入 lastWsAssetList，再走统一重建通道 → setAssets → Map2D 订阅 → flushAssets */
+          const now = isoNow();
+          const others = lastWsAssetList.filter((a) => a.id !== entityId);
+          const prev = lastWsAssetList.find((a) => a.id === entityId);
+          if (prev) {
+            lastWsAssetList = [
+              ...others,
+              {
                 ...prev,
                 status,
                 properties: { ...(prev.properties as Record<string, unknown> | null ?? {}), ...baseProps },
@@ -830,36 +1067,65 @@ function dispatchWsMessage(raw: string) {
                 ...(patch.lat !== undefined ? { lat: patch.lat } : {}),
                 ...(patch.lng !== undefined ? { lng: patch.lng } : {}),
                 updated_at: now,
-              };
-              lastWsAssetList = nextWs;
-            } else {
-              lastWsAssetList = [
-                ...lastWsAssetList,
-                {
-                  id: entityId,
-                  name: String(d.name ?? d.entityName ?? entityId),
-                  asset_type: atType,
-                  status,
-                  disposition: parseForceDisposition(d.disposition, "friendly"),
-                  lat: ll?.lat ?? 0,
-                  lng: ll?.lng ?? 0,
-                  range_km: effectiveRangeKm ?? null,
-                  heading: bearing ?? null,
-                  fov_angle: fovDeg ?? null,
-                  properties: {
-                    ...baseProps,
-                    ...(!ll ? { center_icon_visible: false, fov_sector_visible: false, ws_camera_pending_position: true } : {}),
-                  },
-                  mission_status: "monitoring",
-                  assigned_target_id: null,
-                  target_lat: null,
-                  target_lng: null,
-                  created_at: now,
-                  updated_at: now,
+              },
+            ];
+          } else {
+            lastWsAssetList = [
+              ...others,
+              {
+                id: entityId,
+                name: String(d.name ?? d.entityName ?? entityId),
+                asset_type: atType,
+                status,
+                disposition: parseForceDisposition(d.disposition, "friendly"),
+                lat: ll?.lat ?? 0,
+                lng: ll?.lng ?? 0,
+                range_km: effectiveRangeKm ?? null,
+                heading: bearing ?? null,
+                fov_angle: fovDeg ?? null,
+                properties: {
+                  ...baseProps,
+                  ...(!ll ? { center_icon_visible: false, fov_sector_visible: false, ws_camera_pending_position: true } : {}),
                 },
-              ];
+                mission_status: "monitoring",
+                assigned_target_id: null,
+                target_lat: null,
+                target_lng: null,
+                created_at: now,
+                updated_at: now,
+              },
+            ];
+          }
+          rebuildAndCommitAssetSnapshot();
+          const assetsSnap = useAssetStore.getState().assets;
+          const row = assetsSnap.find((a) => a.id === entityId);
+          const cameraIdsOnMap = assetsSnap.filter((a) => a.asset_type === "camera").map((a) => a.id);
+          logWsCamera("after-rebuild", {
+            entityId,
+            lastWsHadPrevRow: !!prev,
+            lastWsCameraRows: lastWsAssetList.filter((r) => r.asset_type === "camera").map((r) => r.id),
+            inStore: !!row,
+            storeHeading: row?.heading ?? "(null)",
+            storeFov: row?.fov_angle ?? "(null)",
+            storeRangeKm: row?.range_km ?? "(null)",
+            cameraIdsInStore: cameraIdsOnMap,
+          });
+          /* 与 C2 行为对齐：重建快照后再直接 patch store，避免 lastWsAssetList/合并链路与屏上 id 不一致时扇区不刷新 */
+          const canMerge = assetsSnap.some((a) => a.id === entityId);
+          if (canMerge) {
+            const direct: Partial<AssetData> = {};
+            if (bearing !== undefined) direct.heading = bearing;
+            if (fovDeg !== undefined) direct.fov_angle = fovDeg;
+            if (effectiveRangeKm !== undefined) direct.range_km = effectiveRangeKm;
+            if (ll) {
+              direct.lat = ll.lat;
+              direct.lng = ll.lng;
             }
-            rebuildAndCommitAssetSnapshot();
+            direct.status = status;
+            useAssetStore.getState().mergeAssetFields(entityId, direct);
+            logWsCamera("mergeAssetFields", { entityId, keys: Object.keys(direct) });
+          } else {
+            logWsCamera("skip:mergeAssetFields(no row in store after rebuild)", { entityId, cameraIdsInStore: cameraIdsOnMap });
           }
         }
         break;
@@ -918,7 +1184,10 @@ function dispatchWsMessage(raw: string) {
         useDroneStore.getState().clearDrones();
         relationshipAssetsCache = [];
         rebuildAndCommitAssetSnapshot();
-        if (type === "cleartracks") useTrackStore.getState().clearAllTracks();
+        if (type === "cleartracks" && !WS_DISABLE_TRACK_INGEST) {
+          discardPendingTrackAccumulator();
+          useTrackStore.getState().clearAllTracks();
+        }
         break;
 
       // ── 资产事件 ──
@@ -949,8 +1218,27 @@ function dispatchWsMessage(raw: string) {
       default:
         break;
     }
-  } catch {
-    /* 忽略非法 JSON */
+}
+
+function dispatchWsMessage(raw: string) {
+  try {
+    if (WS_DISABLE_TRACK_INGEST) {
+      const earlyType = peekWsTopLevelTypePrefix(raw);
+      if (earlyType && WS_SKIP_PARSE_WHEN_TRACK_INGEST_DISABLED.has(earlyType)) {
+        return;
+      }
+    } else {
+      const earlyType = peekWsTopLevelTypePrefix(raw);
+      if (earlyType && WORKER_TRACK_TYPES.has(earlyType)) {
+        postTrackPayloadToWorkerOrAccumulate(raw);
+        return;
+      }
+    }
+    dispatchWsMessageSync(raw);
+  } catch (e) {
+    if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_DEBUG_WS_CAMERA === "true") {
+      console.warn("[NexusUI WS] dispatchWsMessage error (完整 JSON 可能被截断)", e, String(raw).slice(0, 500));
+    }
   }
 }
 
@@ -1000,7 +1288,17 @@ function openConnection() {
   };
 
   socket.onmessage = (ev) => {
-    dispatchWsMessage(ev.data as string);
+    const data = ev.data;
+    if (typeof data === "string") {
+      dispatchWsMessage(data);
+      return;
+    }
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      void data
+        .text()
+        .then((raw) => dispatchWsMessage(raw))
+        .catch(() => {});
+    }
   };
 
   socket.onerror = () => {
@@ -1026,6 +1324,7 @@ function openConnection() {
 // ── 定时器 ──
 
 function startTrackStalePrune() {
+  if (WS_DISABLE_TRACK_INGEST) return;
   if (ws.trackPruneTimer) clearInterval(ws.trackPruneTimer);
   const tick = () => Math.max(500, getTrackRenderingConfig().trackTimeout.checkIntervalMs);
   ws.trackPruneTimer = setInterval(() => {
@@ -1039,7 +1338,7 @@ function startAlarmCleanup() {
     const before = useAlertStore.getState().alerts.length;
     useAlertStore.getState().removeStaleAlarms();
     const after = useAlertStore.getState().alerts.length;
-    if (before !== after) {
+    if (before !== after && !WS_DISABLE_TRACK_INGEST) {
       useTrackStore.getState().syncWithAlarms(useAlertStore.getState().alarmTrackIds);
     }
   }, 5_000);
@@ -1055,7 +1354,9 @@ function startAlertRevisionSync() {
   ws.alertRevisionUnsub = useAlertStore.subscribe((state) => {
     if (state.alarmTrackRevision !== lastRev) {
       lastRev = state.alarmTrackRevision;
-      useTrackStore.getState().syncWithAlarms(state.alarmTrackIds);
+      if (!WS_DISABLE_TRACK_INGEST) {
+        useTrackStore.getState().syncWithAlarms(state.alarmTrackIds);
+      }
     }
   });
 }
@@ -1065,8 +1366,12 @@ function stopAlertRevisionSync() {
 }
 
 // ── 查证图片轮询 ──
+/** GET /api/image/{id} 连续 404 时暂缓该 ID，减少控制台刷屏 */
+const imageNotFoundUntil = new Map<string, number>();
+const IMAGE_404_RETRY_AFTER_MS = 5 * 60 * 1000;
 
 function startImagePolling() {
+  if (WS_DISABLE_TRACK_INGEST) return;
   if (ws.imagePollTimer) clearInterval(ws.imagePollTimer);
   const httpCfg = getHttpConfig();
   const { getRenderCache } = require("@/stores/track-store") as { getRenderCache: () => Map<string, import("@/lib/map-entity-model").Track> };
@@ -1074,13 +1379,22 @@ function startImagePolling() {
 
   ws.imagePollTimer = setInterval(async () => {
     const cache = getRenderCache();
+    const now = Date.now();
     for (const [showID, track] of cache) {
       try {
+        const resumeAt = imageNotFoundUntil.get(showID);
+        if (resumeAt != null && resumeAt > now) continue;
+
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), httpCfg.imageFetchTimeoutMs);
         const res = await fetch(`${httpCfg.backendUrl}/api/image/${encodeURIComponent(showID)}`, { signal: controller.signal });
         clearTimeout(timeout);
+        if (res.status === 404) {
+          imageNotFoundUntil.set(showID, now + IMAGE_404_RETRY_AFTER_MS);
+          continue;
+        }
         if (!res.ok) continue;
+        imageNotFoundUntil.delete(showID);
         const json = await res.json() as Record<string, unknown>;
         const result = json.result as Record<string, unknown> | undefined;
         const raw = result?.data as Record<string, unknown> | undefined;
@@ -1107,6 +1421,9 @@ function startUnifiedWs() {
   if (ws.running) return;
   ws.running = true;
   ws.readyNotified = false;
+  if (WS_DISABLE_TRACK_INGEST) {
+    useTrackStore.getState().clearAllTracks();
+  }
   notify("正在连接 WebSocket", "", "info");
   openConnection();
   startTrackStalePrune();
@@ -1141,6 +1458,24 @@ export function useUnifiedWsFeed() {
     return () => {
       cancelled = true;
       stopUnifiedWs();
+    };
+  }, []);
+}
+
+/**
+ * 仅保证统一 WS 已启动（如光电页需要 DDS/资产态前拉配置）。
+ * 不在卸载时调用 `stopUnifiedWs`，避免关闭光电弹窗或子页卸载时断开全站 WS（由 `AppShell` 里 `useUnifiedWsFeed` 独占 teardown）。
+ */
+export function useEnsureUnifiedWsConnection(): void {
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await reloadAppConfigAssetBase();
+      if (cancelled) return;
+      startUnifiedWs();
+    })();
+    return () => {
+      cancelled = true;
     };
   }, []);
 }

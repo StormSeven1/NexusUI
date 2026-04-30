@@ -8,6 +8,10 @@ import Image from "next/image";
 interface MilSymbolProps {
   type: "air" | "sea" | "underwater";
   disposition: ForceDisposition;
+  /** 虚兵外框，与地图一致 */
+  virtual?: boolean;
+  /** 中立融合航迹填色（见 `getFusionTrackMarkerFill`），仅 disposition=neutral 时传入 */
+  neutralFusionFill?: string | null;
   size?: "sm" | "md" | "lg";
   className?: string;
 }
@@ -16,14 +20,21 @@ interface MilSymbolProps {
  * 统一的目标符号组件：与地图标绘使用同一 SVG 资产，保证“列表/详情/地图”视觉一致 *
  * Unified marker symbol used across panels and maps (same SVG generator as MapLibre/Cesium).
  */
-export function MilSymbol({ type, disposition, size = "md", className }: MilSymbolProps) {
+export function MilSymbol({
+  type,
+  disposition,
+  virtual = false,
+  neutralFusionFill,
+  size = "md",
+  className,
+}: MilSymbolProps) {
   const sizeClasses = {
     sm: "h-6 w-6",
     md: "h-8 w-8",
     lg: "h-10 w-10",
   };
   const px = { sm: 24, md: 32, lg: 40 }[size];
-  const src = buildMarkerSymbolDataUrl(type, disposition);
+  const src = buildMarkerSymbolDataUrl(type, disposition, undefined, virtual, undefined, neutralFusionFill);
 
   return (
     <Image

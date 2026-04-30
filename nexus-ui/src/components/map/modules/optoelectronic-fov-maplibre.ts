@@ -32,6 +32,7 @@
 import type maplibregl from "maplibre-gl";
 import { parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
 import type { AssetData } from "@/stores/asset-store";
+import { canonicalEntityId } from "@/lib/camera-entity-id";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent, AssetStatus } from "@/lib/map-icons";
@@ -76,7 +77,8 @@ function mapCameraDeviceRow(
   rootAssetFriendlyColor?: string | null,
   rootLabelFontColor?: string | null,
 ): AssetData | null {
-  const id = String(r.deviceId ?? "");
+  const rawId = String(r.deviceId ?? "").trim();
+  const id = rawId ? canonicalEntityId(rawId) : "";
   const c = r.center;
   if (!id || !Array.isArray(c) || c.length < 2) return null;
   const lng = Number(c[0]);
@@ -311,6 +313,8 @@ export class OptoelectronicFovModule {
   private beforeId?: string;
   private coverageVis: OptoelectronicFovVisibility = { ...fovVisDefault };
   private assetDispositionAccent: AssetDispositionIconAccent | null = null;
+  /** `applyCamerasBundle` 最后一次配置；style 重建后 `install()` 需再套用，避免虚线/颜色回退 */
+  private camerasBundle: AppConfigSectorBundle | null = null;
   private lastFovAssets: Asset[] | null = null;
   private lastFovDataSig = "";
   private lastIconDataSig = "";
@@ -513,6 +517,7 @@ export class OptoelectronicFovModule {
   }
 
   applyCamerasBundle(bundle: AppConfigSectorBundle | null) {
+    this.camerasBundle = bundle;
     const m = this.map;
     const border = laserSectorBorderFromBundle(bundle);
     const vis = bundle?.visibility;
@@ -566,12 +571,27 @@ export class OptoelectronicFovModule {
   setFromAssets(assets: Asset[]) {
     this.lastFovAssets = assets;
     const m = this.map;
-    const f = m.getSource(FOV_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    let f = m.getSource(FOV_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    /* `setStyle`/底图切换会移除自定义 source：须补装。勿强依赖 `isStyleLoaded()`——PMTiles 等场景下长时间 false 会拖到 idle 才装上。 */
+    if (!f) {
+      try {
+        this.install();
+        this.applyCamerasBundle(this.camerasBundle);
+        f = m.getSource(FOV_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      } catch {
+        /* style 未就绪或 transition 中 addSource/addLayer 失败，下帧再试 */
+      }
+    }
     const nextFovSig = this.buildFovDataSig(assets);
     if (f) {
       f.setData(
         buildFovGeoJSON(assets, this.assetDispositionAccent) as GeoJSON.FeatureCollection,
       );
+    }
+    try {
+      m.triggerRepaint();
+    } catch {
+      /* ignore */
     }
     this.lastFovDataSig = nextFovSig;
     this.refreshOptoIcons();

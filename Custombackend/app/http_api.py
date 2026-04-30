@@ -226,16 +226,16 @@ async def get_areas():
 
 @router.get('/status')
 async def get_status():
-    """获取服务状态"""
-    from receiver_manager import receiver_manager
-    
+    """获取服务状态（含各 DDS/MQTT 接收器计数，`dds_camera_status` 见 stats）"""
+    from receivers.receiver_manager import receiver_manager
+
     status = {
         "udp_receivers": len(receiver_manager.udp_receivers),
         "tcp_clients": len(receiver_manager.tcp_clients),
-        "mqtt_connected": receiver_manager.mqtt_receiver is not None and receiver_manager.mqtt_receiver.running,
-        "dds_connected": receiver_manager.dds_receiver is not None and receiver_manager.dds_receiver.running,
+        "mqtt_receivers": list(receiver_manager.mqtt_receivers.keys()),
+        "dds_receivers": list(receiver_manager.dds_receivers.keys()),
         "http_pollers": len(receiver_manager.http_pollers),
-        "stats": receiver_manager.get_stats()
+        "stats": receiver_manager.get_stats(),
     }
     
     return JSONResponse(

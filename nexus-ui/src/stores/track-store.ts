@@ -19,7 +19,7 @@
  * - 影子层就地更新（不被 React 订阅，无需 immutable）
  * - 渲染缓存用模块级 Map（避免每次 new Map 从数组重建）
  * - historyTrail 累积直接基于 _renderCache，省掉外部 getState().tracks + new Map
- * - 仅在渲染层变化时创建新 tracks 数组触发 React 渲染
+ * - 对外 `tracks` = 渲染层 + 影子层合并（地图/列表显示全部航迹）；仅影子变化也会 set 触发订阅
  *
  * 【模式配置】
  * - trackIdMode.distinguishSeaAir 从 app-config.json 读
@@ -29,6 +29,7 @@
 
 import { create } from "zustand";
 import type { Track } from "@/lib/map-entity-model";
+import type { ForceDisposition } from "@/lib/theme-colors";
 import { maxStoredTrailPointsPerTrack } from "@/lib/ws-track-normalize";
 import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
 import { useDisposedStore } from "@/stores/disposed-store";
@@ -41,8 +42,28 @@ export function getRenderCache(): ReadonlyMap<string, Track> {
   return _renderCache;
 }
 
+/**
+ * 是否与当前有效告警关联并在渲染层（`_renderCache`）。
+ * 与影子层互斥：在本层表示当前告警集合匹配，业务上与「告警目标」一致。
+ */
+export function isTrackAlarmLinked(track: Track): boolean {
+  return _renderCache.has(track.showID);
+}
+
+/**
+ * 地图 / 列表 / 标牌用敌我：仅告警关联（渲染层）显示为敌方；其余显示为中立（不采用报文缺省 hostile）。
+ */
+export function getEffectiveTrackDisposition(track: Track): ForceDisposition {
+  return isTrackAlarmLinked(track) ? "hostile" : "neutral";
+}
+
+/** 地图/订阅用：告警匹配航迹（含 historyTrail）+ 影子层单点，互斥无重复 */
+function buildDisplayTracks(shadow: Map<string, Track>): Track[] {
+  return [..._renderCache.values(), ...shadow.values()];
+}
+
 interface TrackState {
-  /** 渲染层：只存匹配告警的航迹（含 historyTrail） */
+  /** 全部航迹（渲染层 ∪ 影子层），供地图与 UI 订阅 */
   tracks: Track[];
   connected: boolean;
   lastUpdate: string | null;
@@ -53,8 +74,9 @@ interface TrackState {
   /**
    * 接收 WS 归一化后的航迹列表，就地更新两层缓存。
    * **`historyTrail` 仅在渲染层由本方法按位移追加**（不经 `ws-track-normalize` 预合并）。
+   * @param options.lastUpdate 若给出，与 tracks 同一 `set`，避免 `setTracks`+`setLastUpdate` 触发两次订阅。
    */
-  setTracks: (incoming: Track[]) => void;
+  setTracks: (incoming: Track[], options?: { lastUpdate?: string | null }) => void;
   setConnected: (v: boolean) => void;
   setLastUpdate: (ts: string) => void;
   /**
@@ -83,13 +105,14 @@ export const useTrackStore = create<TrackState>((set, get) => ({
   lastUpdate: null,
   shadowTracks: new Map<string, Track>(),
 
-  setTracks: (incoming) => {
+  setTracks: (incoming, options) => {
     const alarmTrackIds = getCurrentAlarmTrackIds();
     const disposedStore = useDisposedStore.getState();
     // 影子不被 React 订阅，就地更新即可
     const shadow = get().shadowTracks;
     const trailCap = maxStoredTrailPointsPerTrack();
     let needsRenderUpdate = false;
+    let shadowMutated = false;
 
     for (const t of incoming) {
       // 已处置航迹跳过
@@ -109,16 +132,21 @@ export const useTrackStore = create<TrackState>((set, get) => ({
       } else if (isTrackMatchedByAlarm(t, alarmTrackIds)) {
         // 不在渲染层但匹配告警 → 提升到渲染层，从影子移除
         _renderCache.set(t.showID, { ...t, historyTrail: undefined });
-        shadow.delete(t.showID);
+        if (shadow.delete(t.showID)) shadowMutated = true;
         needsRenderUpdate = true;
       } else {
         // 不匹配 → 只存影子
         shadow.set(t.showID, { ...t, historyTrail: undefined });
+        shadowMutated = true;
       }
     }
 
-    if (needsRenderUpdate) {
-      set({ tracks: [..._renderCache.values()] });
+    if (needsRenderUpdate || shadowMutated) {
+      const partial: Partial<TrackState> = { tracks: buildDisplayTracks(shadow) };
+      if (options?.lastUpdate !== undefined) partial.lastUpdate = options.lastUpdate;
+      set(partial);
+    } else if (options?.lastUpdate !== undefined) {
+      set({ lastUpdate: options.lastUpdate });
     }
   },
 
@@ -152,7 +180,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     }
 
     if (changed) {
-      set({ tracks: [..._renderCache.values()] });
+      set({ tracks: buildDisplayTracks(shadow) });
     }
     return changed;
   },
@@ -191,7 +219,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     }
 
     if (changed) {
-      set({ tracks: [..._renderCache.values()] });
+      set({ tracks: buildDisplayTracks(get().shadowTracks) });
     }
     return changed;
   },
@@ -202,7 +230,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     if (!track) return false;
     if (track.verificationImage === imageUrl) return false;
     _renderCache.set(showID, { ...track, verificationImage: imageUrl ?? undefined });
-    set({ tracks: [..._renderCache.values()] });
+    set({ tracks: buildDisplayTracks(get().shadowTracks) });
     return true;
   },
 

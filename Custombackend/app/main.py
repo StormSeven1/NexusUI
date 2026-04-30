@@ -11,6 +11,7 @@ import signal
 import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,7 +30,42 @@ from database import DatabaseManager
 from websocket_manager import ws_manager
 from receivers.receiver_manager import receiver_manager
 from http_api import router as api_router, set_db_manager
+from camera_task_routes import router as camera_tasks_router, router_singular_alias as camera_task_singular_router
+
+import os
+
+# DDS 接收器周期性打印间隔（秒）；设为 0 则不打印与启动统计任务
+_RECEIVER_STATS_LOG_INTERVAL_SEC = int(os.environ.get("RECEIVER_STATS_LOG_INTERVAL_SEC", "30"))
+
+
+async def _receiver_stats_log_loop():
+    """定时输出 receiver_manager.get_stats()"""
+    while True:
+        try:
+            stats = receiver_manager.get_stats()
+            cam = stats.get("dds_camera_status")
+            if cam:
+                logger.info(
+                    "[receiver_stats] dds_camera_status received={} parsed={} failed={}",
+                    cam.get("received", 0),
+                    cam.get("parsed", 0),
+                    cam.get("failed", 0),
+                )
+            elif _RECEIVER_STATS_LOG_INTERVAL_SEC > 0:
+                logger.info(
+                    "[receiver_stats] 尚无 dds_camera_status | 当前计数键: {}",
+                    sorted(stats.keys()),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("[receiver_stats] 读取统计失败: {}", e)
+        await asyncio.sleep(max(5, _RECEIVER_STATS_LOG_INTERVAL_SEC))
+
 # MCP服务独立运行，不需要导入
+
+# 接收器 stats 后台任务（lifespan 内 cancel）
+_receiver_stats_task: Optional[asyncio.Task] = None
 
 # 配置日志
 log_dir = Path("logs")
@@ -59,7 +95,7 @@ db_manager: DatabaseManager = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    global db_manager
+    global db_manager, _receiver_stats_task
     
     logger.info("=" * 60)
     logger.info("启动航迹数据中继服务")
@@ -126,6 +162,9 @@ async def lifespan(app: FastAPI):
     # 启动HTTP轮询器
     logger.info("正在启动HTTP轮询器...")
     await receiver_manager.start_http_pollers(HTTP_POLLERS)
+
+    if _RECEIVER_STATS_LOG_INTERVAL_SEC > 0:
+        _receiver_stats_task = asyncio.create_task(_receiver_stats_log_loop())
     
     logger.info("=" * 60)
     logger.info(f"服务已启动: http://{settings.HOST}:{settings.PORT}")
@@ -136,6 +175,15 @@ async def lifespan(app: FastAPI):
     
     # 关闭服务
     logger.info("正在关闭服务...")
+
+    if _receiver_stats_task is not None:
+        _receiver_stats_task.cancel()
+        try:
+            await _receiver_stats_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _receiver_stats_task = None
     
     # 停止接收器
     receiver_manager.stop_all()
@@ -170,6 +218,8 @@ app.add_middleware(
 
 # 注册API路由
 app.include_router(api_router, prefix="/api")
+app.include_router(camera_tasks_router, prefix="/api")
+app.include_router(camera_task_singular_router, prefix="/api")
 
 
 # WebSocket端点

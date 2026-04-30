@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
-import { useTrackStore } from "@/stores/track-store";
+import { useTrackStore, getEffectiveTrackDisposition } from "@/stores/track-store";
 import type { Asset, RestrictedZone, Track } from "@/lib/map-entity-model";
 import { mergeZoneFillColor } from "@/components/map/modules/polygon-draw-maplibre";
 import { useZoneStore } from "@/stores/zone-store";
@@ -25,6 +25,8 @@ import {
   geoSectorCoords,
   geoRadarSweepCoords,
   resolveTrackMarkerFill,
+  resolveTrackPointFill,
+  getFusionTrackMarkerFill,
 } from "@/lib/map-icons";
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { AlertTriangle } from "lucide-react";
@@ -160,6 +162,57 @@ function syncCesiumZones(
   }
 }
 
+/**
+ * 光电/机场/无人机等**非雷达**覆盖扇区：与 Map2D `OptoelectronicFovModule.setFromAssets` 一样需随 asset-store 刷新。
+ * 初始化只跑一次会在长时间 `await` 后仍停留在首帧朝向；故 init 末尾与 `useAssetStore.subscribe` 都要调用。
+ */
+function syncCesiumNonRadarCoverageFov(
+  viewer: CesiumViewer,
+  C: CesiumModule,
+  groups: { optoFov: CesiumEntity[]; airportFov: CesiumEntity[]; droneFov: CesiumEntity[] },
+  assets: Asset[],
+) {
+  const rgba = (c: RGBA) => new C.Color(c[0], c[1], c[2], c[3]);
+  for (const ent of groups.optoFov) viewer.entities.remove(ent);
+  for (const ent of groups.airportFov) viewer.entities.remove(ent);
+  for (const ent of groups.droneFov) viewer.entities.remove(ent);
+  groups.optoFov.length = 0;
+  groups.airportFov.length = 0;
+  groups.droneFov.length = 0;
+
+  for (const asset of assets) {
+    if (asset.type === "radar") continue;
+    if (!asset.range || asset.range <= 0) continue;
+    const covStyle = COVERAGE_STYLES[asset.type] ?? COVERAGE_STYLES["tower"];
+    const isSector = asset.fovAngle !== undefined && asset.fovAngle < 360 && asset.heading !== undefined;
+    const coords = isSector
+      ? geoSectorCoords(asset.lng, asset.lat, asset.range, asset.heading!, asset.fovAngle!)
+      : geoCircleCoords(asset.lng, asset.lat, asset.range);
+    const positions = coords.map(([lng, lat]) => C.Cartesian3.fromDegrees(lng, lat));
+    const ent = viewer.entities.add({
+      polygon: {
+        hierarchy: new C.PolygonHierarchy(positions),
+        material: rgba(covStyle.fill),
+        outline: false,
+        heightReference: C.HeightReference.CLAMP_TO_GROUND,
+      },
+      properties: { assetId: asset.id, _coverage: true },
+    });
+    if (asset.type === "airport") groups.airportFov.push(ent);
+    else if (asset.type === "drone") groups.droneFov.push(ent);
+    else groups.optoFov.push(ent);
+  }
+}
+
+function applyNonRadarFovLayerVisibility(
+  groups: { optoFov: CesiumEntity[]; airportFov: CesiumEntity[]; droneFov: CesiumEntity[] },
+  layerOn: (k: string) => boolean,
+) {
+  for (const ent of groups.optoFov) ent.show = layerOn("lyr-opto-fov");
+  for (const ent of groups.airportFov) ent.show = layerOn("lyr-airport");
+  for (const ent of groups.droneFov) ent.show = layerOn("lyr-drones");
+}
+
 /** 与 Map2D 一致：store 全量画航迹 billboard（最新位置）；折线仅在 `trackMapDrawHistoryTrails` 为真时画；超预算整批不画尾迹线，仅保留最新点实体（不删 store） */
 async function syncCesiumTrackBillboards(
   viewer: CesiumViewer,
@@ -195,13 +248,15 @@ async function syncCesiumTrackBillboards(
   for (const track of allTracks) {
     if (existing.has(track.id)) continue;
     const ts = trCfg.trackTypeStyles[track.type] ?? trCfg.trackTypeStyles.sea;
-    const friendlyFill = track.disposition === "friendly" ? ts.idColor : undefined;
+    const eff = getEffectiveTrackDisposition(track);
+    const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
     const image = await buildMarkerSymbolDataUrl(
       track.type,
-      track.disposition,
+      eff,
       accent,
       track.isVirtual === true,
       friendlyFill,
+      eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
     );
     const ent = viewer.entities.add({
       position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
@@ -217,7 +272,7 @@ async function syncCesiumTrackBillboards(
         text: track.name,
         font: '11px Roboto, "Noto Sans SC", sans-serif',
         fillColor: Cesium.Color.fromCssColorString(
-          resolveTrackMarkerFill(track.disposition, accent, friendlyFill),
+          resolveTrackPointFill(track, eff, accent, friendlyFill),
         ),
         outlineColor: Cesium.Color.fromCssColorString("#09090b"),
         outlineWidth: 2,
@@ -241,7 +296,24 @@ async function syncCesiumTrackBillboards(
       Cesium.Cartesian3.fromDegrees(t.lng, t.lat, t.altitude || 0),
     );
     if (ent.billboard) {
+      const ts = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
+      const eff = getEffectiveTrackDisposition(t);
+      const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
+      const image = await buildMarkerSymbolDataUrl(
+        t.type,
+        eff,
+        accent,
+        t.isVirtual === true,
+        friendlyFill,
+        eff === "neutral" ? getFusionTrackMarkerFill(t) : undefined,
+      );
+      ent.billboard.image = image;
       ent.billboard.rotation = new Cesium.ConstantProperty(-Cesium.Math.toRadians(t.heading ?? 0));
+      if (ent.label) {
+        ent.label.fillColor = new Cesium.ConstantProperty(
+          Cesium.Color.fromCssColorString(resolveTrackPointFill(t, eff, accent, friendlyFill)),
+        );
+      }
     }
   }
 
@@ -251,7 +323,8 @@ async function syncCesiumTrackBillboards(
     const trail = t.historyTrail;
     if (!trail || trail.length < 1) continue;
     const ts2 = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
-    const friendlyFill2 = t.disposition === "friendly" ? ts2.idColor : undefined;
+    const eff = getEffectiveTrackDisposition(t);
+    const friendlyFill2 = eff === "friendly" ? ts2.idColor : undefined;
     const positions = [...trail, [t.lng, t.lat] as [number, number]].map(([lng, lat]) =>
       Cesium.Cartesian3.fromDegrees(lng, lat, alt(t.altitude)),
     );
@@ -259,7 +332,7 @@ async function syncCesiumTrackBillboards(
       polyline: {
         positions,
         width: 2,
-        material: Cesium.Color.fromCssColorString(resolveTrackMarkerFill(t.disposition, accent, friendlyFill2)).withAlpha(0.48),
+        material: Cesium.Color.fromCssColorString(resolveTrackPointFill(t, eff, accent, friendlyFill2)).withAlpha(0.48),
         clampToGround: true,
       },
       properties: { trackTrailFor: t.id },
@@ -351,6 +424,8 @@ export function Map3D() {
             duration: 0,
           },
         );
+
+        viewer.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
         const v = viewer;
         const groups = entityGroupsRef.current;
@@ -516,6 +591,9 @@ export function Map3D() {
           }
         }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
+        /* init 内有 await：用最新 asset-store 再刷一遍扇区，避免仍停在配置/首帧朝向 */
+        syncCesiumNonRadarCoverageFov(v, Cesium, groups, adaptAssetsForMap(useAssetStore.getState().assets));
+
         viewerRef.current = v;
 
         /* 按 layerVisibility 设置各组 entity 显隐（资产 billboard 按 `assetType` 分键，与 Map2D 一致） */
@@ -524,9 +602,7 @@ export function Map3D() {
         for (const ent of groups.tracks) ent.show = layerOn("lyr-tracks");
         for (const ent of groups.trackTrails) ent.show = layerOn("lyr-tracks");
         for (const ent of groups.radarCoverage) ent.show = layerOn("lyr-radar-coverage");
-        for (const ent of groups.optoFov) ent.show = layerOn("lyr-opto-fov");
-        for (const ent of groups.airportFov) ent.show = layerOn("lyr-airport");
-        for (const ent of groups.droneFov) ent.show = layerOn("lyr-drones");
+        applyNonRadarFovLayerVisibility(groups, layerOn);
         for (const ent of groups.zones) ent.show = layerOn("lyr-zones");
         for (const ent of groups.assets) {
           const at = ent.properties?.assetType?.getValue() as string | undefined;

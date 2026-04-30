@@ -1,0 +1,86 @@
+{
+  "syncedAt": "2026-04-30T01:10:16.264Z",
+  "sourceUrl": "http://192.168.18.141:8090/api/v1/entities?page=1&size=100",
+  "cameras": [
+    {
+      "entityId": "camera_000",
+      "label": "紫东-可见光"
+    },
+    {
+      "entityId": "camera_001",
+      "label": "靖子头-可见光"
+    },
+    {
+      "entityId": "camera_002",
+      "label": "靖子头-红外"
+    },
+    {
+      "entityId": "camera_003",
+      "label": "紫东-广角"
+    },
+    {
+      "entityId": "camera_004",
+      "label": "远遥码头-可见光"
+    },
+    {
+      "entityId": "camera_005",
+      "label": "远遥码头-红外"
+    },
+    {
+      "entityId": "camera_006",
+      "label": "天测-可见光"
+    },
+    {
+      "entityId": "camera_007",
+      "label": "天测-红外"
+    },
+    {
+      "entityId": "camera_008",
+      "label": "天测-广角"
+    },
+    {
+      "entityId": "camera_009",
+      "label": "紫东-红外"
+    },
+    {
+      "entityId": "camera_010",
+      "label": "靖子头广角-正北"
+    },
+    {
+      "entityId": "camera_011",
+      "label": "靖子头广角-西北"
+    },
+    {
+      "entityId": "camera_012",
+      "label": "远遥灯塔-ptz"
+    },
+    {
+      "entityId": "camera_013",
+      "label": "远遥灯塔-全景"
+    },
+    {
+      "entityId": "camera_014",
+      "label": "远遥灯塔-枪机1"
+    },
+    {
+      "entityId": "camera_015",
+      "label": "远遥灯塔-枪机2"
+    },
+    {
+      "entityId": "camera_016",
+      "label": "码头广角东北"
+    },
+    {
+      "entityId": "camera_017",
+      "label": "码头广角东南"
+    },
+    {
+      "entityId": "camera_018",
+      "label": "码头广角西北"
+    },
+    {
+      "entityId": "camera_019",
+      "label": "码头广角西南"
+    }
+  ]
+}

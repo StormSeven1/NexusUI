@@ -65,6 +65,14 @@ export function friendlyTintSuffix(tint: string | null | undefined): string {
   return safe ? `-mf${safe}` : "";
 }
 
+/** 中立融合航迹符号 id 后缀（与友方 `-mf` 区分） */
+export function neutralFusionFillSuffix(tint: string | null | undefined): string {
+  const s = String(tint ?? "").trim();
+  if (!s) return "";
+  const safe = s.replace(/[^#a-zA-Z0-9]/g, "").slice(0, 28);
+  return safe ? `-nf${safe}` : "";
+}
+
 /** 资产图标、激光/TDOA 扇区中心图标共用的敌我维度 */
 export const MAP_FORCE_DISPOSITIONS: ForceDisposition[] = ["friendly", "hostile", "neutral"];
 
@@ -100,11 +108,42 @@ export function getMarkerSymbolId(
   disposition: ForceDisposition,
   virtual = false,
   friendlyTint?: string | null,
+  neutralFusionFill?: string | null,
 ): string {
   const base = `track-${type}-${disposition}-${virtual ? "v" : "r"}`;
-  if (disposition !== "friendly") return base;
-  const suf = friendlyTintSuffix(friendlyTint);
-  return suf ? `${base}${suf}` : base;
+  if (disposition === "friendly") {
+    const suf = friendlyTintSuffix(friendlyTint);
+    return suf ? `${base}${suf}` : base;
+  }
+  if (disposition === "neutral") {
+    const suf = neutralFusionFillSuffix(neutralFusionFill);
+    return suf ? `${base}${suf}` : base;
+  }
+  return base;
+}
+
+/** 融合航迹中立态配色：对海/水下白、对空浅紫、对空无人机黄 */
+export const FUSION_TRACK_NEUTRAL_SEA = "#ffffff";
+export const FUSION_TRACK_NEUTRAL_AIR = "#d8b4fe";
+export const FUSION_TRACK_NEUTRAL_UAV = "#facc15";
+
+export function getFusionTrackMarkerFill(track: Pick<Track, "type" | "isUav">): string {
+  if (track.type === "sea" || track.type === "underwater") return FUSION_TRACK_NEUTRAL_SEA;
+  if (track.type === "air") {
+    return track.isUav === true ? FUSION_TRACK_NEUTRAL_UAV : FUSION_TRACK_NEUTRAL_AIR;
+  }
+  return FORCE_COLORS.neutral;
+}
+
+/** 航迹点/线/标签颜色：中立用融合配色；其余同 `resolveTrackMarkerFill` */
+export function resolveTrackPointFill(
+  track: Pick<Track, "type" | "isUav">,
+  disposition: ForceDisposition,
+  accent?: AssetDispositionIconAccent | null,
+  friendlyFill?: string | null,
+): string {
+  if (disposition === "neutral") return getFusionTrackMarkerFill(track);
+  return resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
 }
 
 /** 航迹点/线填色：敌/中读 `factory.assetIcons`；我方读 `trackRendering.trackTypeStyles.*.idColor`（由调用方传入） */
@@ -132,8 +171,12 @@ export function buildMarkerSymbolSvg(
   accent?: AssetDispositionIconAccent | null,
   virtual = false,
   friendlyFill?: string | null,
+  neutralFusionFill?: string | null,
 ): string {
-  const color = resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
+  const color =
+    disposition === "neutral" && neutralFusionFill?.trim()
+      ? neutralFusionFill.trim()
+      : resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
   const icon = TRACK_SVG_ICONS[type];
   const virtualFrame =
     virtual
@@ -167,8 +210,9 @@ export function buildMarkerSymbolDataUrl(
   accent?: AssetDispositionIconAccent | null,
   virtual = false,
   friendlyFill?: string | null,
+  neutralFusionFill?: string | null,
 ): string {
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(buildMarkerSymbolSvg(type, disposition, accent ?? null, virtual, friendlyFill))}`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(buildMarkerSymbolSvg(type, disposition, accent ?? null, virtual, friendlyFill, neutralFusionFill))}`;
 }
 
 /**
@@ -200,6 +244,7 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
   disposition: ForceDisposition;
   virtual: boolean;
   friendlyFill?: string;
+  neutralFusionFill?: string;
 }> {
   const types: TrackType[] = ["air", "sea", "underwater"];
   const dispositions: ForceDisposition[] = ["hostile", "friendly", "neutral"];
@@ -219,17 +264,34 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
     disposition: ForceDisposition;
     virtual: boolean;
     friendlyFill?: string;
+    neutralFusionFill?: string;
   }> = [];
   for (const type of types) {
     for (const disposition of dispositions) {
       for (const virtual of [false, true]) {
         if (disposition !== "friendly") {
-          out.push({
-            id: getMarkerSymbolId(type, disposition, virtual),
-            type,
-            disposition,
-            virtual,
-          });
+          if (disposition === "neutral") {
+            const fills =
+              type === "air"
+                ? [FUSION_TRACK_NEUTRAL_AIR, FUSION_TRACK_NEUTRAL_UAV]
+                : [FUSION_TRACK_NEUTRAL_SEA];
+            for (const fill of fills) {
+              out.push({
+                id: getMarkerSymbolId(type, disposition, virtual, undefined, fill),
+                type,
+                disposition,
+                virtual,
+                neutralFusionFill: fill,
+              });
+            }
+          } else {
+            out.push({
+              id: getMarkerSymbolId(type, disposition, virtual),
+              type,
+              disposition,
+              virtual,
+            });
+          }
           continue;
         }
         for (const tint of tintList) {
