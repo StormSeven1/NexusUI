@@ -4,6 +4,8 @@ import {
   Camera,
   ChevronDown,
   Crosshair,
+  Maximize2,
+  Minimize2,
   Gamepad2,
   PictureInPicture2,
   SunMedium,
@@ -29,8 +31,17 @@ export interface EoVideoFloatingToolsProps {
   isRecording: boolean;
   onSnapshot: () => void;
   onToggleRecord: () => void;
+  /** 形态切换：默认态<->放大态 */
+  onToggleExpand?: () => void;
+  expandedMode?: boolean;
   /** 占位快捷指令日志（云台回中等） */
   onUavClientLog?: (line: string) => void;
+  /** 云台回中（对齐 Qt `m_pBtnUavCamCenter`，`reset_mode`=0） */
+  onUavGimbalCenter?: () => void | Promise<void>;
+  /** 云台向下（对齐 Qt `m_pBtnUavCamDown`，`reset_mode`=1） */
+  onUavGimbalDown?: () => void | Promise<void>;
+  /** 无机场 SN 等无法发私有云指令时禁用 */
+  uavGimbalDisabled?: boolean;
 }
 
 const uavOverlayToolClass =
@@ -53,7 +64,12 @@ export function EoVideoFloatingTools({
   isRecording,
   onSnapshot,
   onToggleRecord,
+  onToggleExpand,
+  expandedMode = false,
   onUavClientLog,
+  onUavGimbalCenter,
+  onUavGimbalDown,
+  uavGimbalDisabled = false,
 }: EoVideoFloatingToolsProps) {
   const log = (s: string) => onUavClientLog?.(`${new Date().toLocaleTimeString()} ${s}`);
 
@@ -64,6 +80,20 @@ export function EoVideoFloatingTools({
         className,
       )}
     >
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        className={cn(
+          "border border-white/25 bg-transparent text-white/90 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+          expandedMode && "border-sky-400/45 bg-sky-950/50 text-sky-300",
+        )}
+        title={expandedMode ? "恢复默认窗口" : "放大窗口"}
+        aria-label={expandedMode ? "恢复默认窗口" : "放大窗口"}
+        onClick={() => onToggleExpand?.()}
+      >
+        {expandedMode ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+      </Button>
       <Button
         type="button"
         variant="ghost"
@@ -92,7 +122,7 @@ export function EoVideoFloatingTools({
         <Camera className="size-3.5" />
       </Button>
 
-      {variant === "camera" ? (
+      {!expandedMode ? null : variant === "camera" ? (
         <>
           <Button
             type="button"
@@ -176,8 +206,10 @@ export function EoVideoFloatingTools({
             variant="ghost"
             size="icon-xs"
             className={uavOverlayToolClass}
-            title="云台回中（占位）"
-            onClick={() => log("无人机工具：云台回中（占位）")}
+            title="云台回中（gimbal_reset · reset_mode=0）"
+            aria-label="云台回中"
+            disabled={uavGimbalDisabled || !onUavGimbalCenter}
+            onClick={() => void onUavGimbalCenter?.()}
           >
             <Crosshair className="size-3.5" />
           </Button>
@@ -186,8 +218,10 @@ export function EoVideoFloatingTools({
             variant="ghost"
             size="icon-xs"
             className={uavOverlayToolClass}
-            title="云台向下（占位）"
-            onClick={() => log("无人机工具：云台向下（占位）")}
+            title="云台向下（gimbal_reset · reset_mode=1）"
+            aria-label="云台向下"
+            disabled={uavGimbalDisabled || !onUavGimbalDown}
+            onClick={() => void onUavGimbalDown?.()}
           >
             <ChevronDown className="size-3.5" />
           </Button>

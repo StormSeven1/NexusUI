@@ -251,12 +251,12 @@ export function EoUavConsoleDock({
               "lg:translate-x-[calc(-50%+1.5rem)]",
             )}
           >
-            <div className="flex w-full min-w-0 items-stretch gap-x-1 sm:gap-x-2 lg:w-max lg:justify-center">
+            <div className="font-uav-hud flex w-full min-w-0 items-stretch gap-x-1 sm:gap-x-2 lg:w-max lg:justify-center">
               {/* 大屏：整块 OSD+罗盘相对视频区水平居中；左/右侧栏仍贴边留 pr-14 给浮动工具 */}
               <div className="flex min-w-0 flex-1 flex-col items-end justify-center gap-1 pr-1 text-[12px] text-nexus-text-muted">
                 <span className="inline-flex items-center gap-0.5">
                   <Wind className={cn("size-2.5 rotate-45", STATUS_ICON)} aria-hidden />
-                  <span className="font-mono tabular-nums">{airWindMps === null ? "—" : fmtNum(airWindMps)}</span>
+                  <span>{airWindMps === null ? "—" : fmtNum(airWindMps)}</span>
                   <span>m/s</span>
                 </span>
                 <span className="inline-flex items-center gap-1">
@@ -265,13 +265,13 @@ export function EoUavConsoleDock({
                     <br />
                     {"m/s"}
                   </span>
-                  <span className="font-mono text-[19px] font-bold leading-none text-emerald-400 tabular-nums">
+                  <span className="text-[19px] font-bold leading-none text-emerald-400">
                     {fmtNum(hSpeedMps, "00.0")}
                   </span>
                 </span>
               </div>
               <div className="flex shrink-0 flex-col items-center gap-0">
-                <span className="font-mono text-[16px] font-bold leading-none text-emerald-400 tabular-nums">
+                <span className="text-[16px] font-bold leading-none text-emerald-400 tracking-wide">
                   {formatEoUavHeading3(attitudeHeadDeg ?? 0)}
                 </span>
                 <div className="-mb-px h-1.5 w-0.5 shrink-0 bg-emerald-500" aria-hidden />
@@ -288,13 +288,11 @@ export function EoUavConsoleDock({
               {/* 右侧：VS（小）→ ALT大绿 → ASL（小），对齐 uavcompass.ui verticalLayout_2 */}
               <div className="flex min-w-0 flex-1 flex-col items-start justify-center gap-0.5 pl-1 text-[12px] text-nexus-text-muted">
                 <span className="inline-flex items-baseline gap-0.5">
-                  <span className="font-mono tabular-nums">{fmtNum(vSpeedMps, "00.0")}</span>
+                  <span>{fmtNum(vSpeedMps, "00.0")}</span>
                   <span>VS</span>
                 </span>
                 <span className="inline-flex items-center gap-0.5">
-                  <span className="font-mono text-[19px] font-bold leading-none text-emerald-400 tabular-nums">
-                    {fmtNum(elevM, "00.0")}
-                  </span>
+                  <span className="text-[19px] font-bold leading-none text-emerald-400">{fmtNum(elevM, "00.0")}</span>
                   <span className="text-left text-[12px] leading-tight text-emerald-400/80">
                     {"ALT"}
                     <br />
@@ -302,7 +300,7 @@ export function EoUavConsoleDock({
                   </span>
                 </span>
                 <span className="inline-flex items-baseline gap-0.5">
-                  <span className="font-mono tabular-nums">{fmtNum(heightM, "00.0")}</span>
+                  <span>{fmtNum(heightM, "00.0")}</span>
                   <span>ASL</span>
                 </span>
               </div>
@@ -439,14 +437,12 @@ export function EoUavConsoleDock({
           </section>
 
           <section className="flex min-w-0 shrink-0 flex-col items-center justify-center gap-1">
-            <div className="flex w-full min-w-0 max-w-[min(92vw,36rem)] items-stretch gap-x-2">
+            <div className="font-uav-hud flex w-full min-w-0 max-w-[min(92vw,36rem)] items-stretch gap-x-2">
               {/* 上风速，下 SPD：与罗盘之间均分两侧空间 */}
               <div className="flex min-w-0 flex-1 flex-col items-end gap-1.5 text-[12px] text-nexus-text-muted">
                 <span className="inline-flex items-center gap-0.5">
                   <Wind className={cn("size-3 rotate-45", STATUS_ICON)} aria-hidden />
-                  <span className="font-mono tabular-nums">
-                    {airWindMps === null ? "— m/s" : `${fmtNum(airWindMps)} m/s`}
-                  </span>
+                  <span>{airWindMps === null ? "— m/s" : `${fmtNum(airWindMps)} m/s`}</span>
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <span className="text-left text-[12px] leading-tight text-emerald-400/80">
@@ -454,9 +450,7 @@ export function EoUavConsoleDock({
                     <br />
                     {"m/s"}
                   </span>
-                  <span className="font-mono text-xl font-bold leading-none text-emerald-400 tabular-nums">
-                    {fmtNum(hSpeedMps, "00.0")}
-                  </span>
+                  <span className="text-xl font-bold leading-none text-emerald-400">{fmtNum(hSpeedMps, "00.0")}</span>
                 </span>
               </div>
               <div className="relative aspect-square w-[min(32vmin,13rem)] shrink-0">
@@ -469,13 +463,11 @@ export function EoUavConsoleDock({
               {/* 右侧：VS / ALT / ASL */}
               <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-[12px] text-nexus-text-muted">
                 <span className="inline-flex items-baseline gap-1">
-                  <span className="font-mono tabular-nums">{fmtNum(vSpeedMps, "00.0")}</span>
+                  <span>{fmtNum(vSpeedMps, "00.0")}</span>
                   <span>VS</span>
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <span className="font-mono text-xl font-bold leading-none text-emerald-400 tabular-nums">
-                    {fmtNum(elevM, "00.0")}
-                  </span>
+                  <span className="text-xl font-bold leading-none text-emerald-400">{fmtNum(elevM, "00.0")}</span>
                   <span className="text-left text-[12px] leading-tight text-emerald-400/80">
                     {"ALT"}
                     <br />
@@ -483,7 +475,7 @@ export function EoUavConsoleDock({
                   </span>
                 </span>
                 <span className="inline-flex items-baseline gap-1">
-                  <span className="font-mono tabular-nums">{fmtNum(heightM, "00.0")}</span>
+                  <span>{fmtNum(heightM, "00.0")}</span>
                   <span>ASL</span>
                 </span>
               </div>

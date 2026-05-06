@@ -76,4 +76,6 @@ export interface EoDetectionBox {
    * 缺省为普通多目标检测框。
    */
   variant?: "default" | "singleTrack";
+  /** 单目标：圆标内一字（仅海/空），对齐 Qt DrawCircleTag 圆内 `text` */
+  singleTagShort?: string;
 }

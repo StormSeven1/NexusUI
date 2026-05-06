@@ -1,7 +1,47 @@
-import type { BufferedDetectionEntry, EoCameraWsPayload } from "@/lib/eo-video/eoDetectionTypes";
+import type { BufferedDetectionEntry, EoCameraWsPayload, EoRectLayerPayload } from "@/lib/eo-video/eoDetectionTypes";
 import { parseDetectionHeader } from "@/lib/eo-video/detectionSyncUtils";
 
 export const ENTITY_DETECTION_BUFFER_CAP = 200;
+
+function pickStrFromRecord(r: Record<string, unknown>, keys: string[]): string {
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+/** 仅海/空二分类（与 Qt 船矶浮 ↔ 海、鸟机 ↔ 空 一致）；无法识别时默认「海」（海面光电常见） */
+function inferTypeShortFromRecord(r: Record<string, unknown>): string {
+  const rt = r.rectType ?? r.type ?? r.targetType ?? r.classId ?? r.category ?? r.targetClass;
+  const s = String(rt ?? "").toLowerCase();
+  if (/plane|air|bird|uav|drone|空|机|鸟|aircraft/.test(s)) return "空";
+  if (/ship|boat|vessel|buoy|海|船|浮|surface/.test(s)) return "海";
+  if (typeof rt === "number" && Number.isFinite(rt)) return "海";
+  return "海";
+}
+
+/** 从 singleRect.videoRect 首条对象解析目标名与类型字（纯数组几何时返回 undefined） */
+function parseSingleRectDisplayMetaFromPayload(layer: EoRectLayerPayload | null | undefined): { trackName?: string; typeShort?: string } | undefined {
+  if (!layer?.videoRect) return undefined;
+  const vr = layer.videoRect as unknown;
+  if (!Array.isArray(vr) || vr.length === 0) return undefined;
+  const first = vr[0];
+  if (!first || typeof first !== "object" || Array.isArray(first)) return undefined;
+  const rec = first as Record<string, unknown>;
+  const trackName = pickStrFromRecord(rec, [
+    "trackAlias",
+    "track_alias",
+    "trackName",
+    "targetName",
+    "name",
+    "shipName",
+    "target_name",
+    "track_name",
+  ]);
+  const typeShort = inferTypeShortFromRecord(rec);
+  return { trackName: trackName || undefined, typeShort };
+}
 
 /**
  * 发送端常见：`{ x, y, width, height, rectID }`（rectID 可为字符串），转成与旧格式一致的 [x,y,w,h] 或 [x,y,w,h,trackId]。
@@ -229,6 +269,7 @@ export function ingestEntityDetectionPayload(
         captureTs: toFiniteNumber(data.singleRect.captureTs) ?? topCaptureTs,
         encodeTs: toFiniteNumber(data.singleRect.encodeTs) ?? topEncodeTs,
         receivedAt: Date.now(),
+        singleDisplayMeta: rects.length > 0 ? parseSingleRectDisplayMetaFromPayload(data.singleRect) : undefined,
       });
     }
   }

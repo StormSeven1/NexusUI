@@ -45,7 +45,7 @@ class EoDetectionWebSocketManager {
   private isDestroyed = false;
   private lastHeartbeatTime = 0;
   private subscriberCount = 0;
-  private readonly listeners = new Map<string, Listener>();
+  private readonly listeners = new Map<string, Set<Listener>>();
   /** 最近一条入站业务帧（不含 pong）摘要，便于现场对照后端 JSON */
   private lastWsInboundSummary = "";
   private lastWsInboundRaw = "";
@@ -54,18 +54,26 @@ class EoDetectionWebSocketManager {
   subscribe(entityId: string, listener: Listener): () => void {
     const id = canonicalEntityId(entityId);
     if (!id) return () => undefined;
-    const existed = this.listeners.has(id);
-    this.listeners.set(id, listener);
-    if (!existed) {
+    const set = this.listeners.get(id) ?? new Set<Listener>();
+    const wasEmpty = set.size === 0;
+    set.add(listener);
+    this.listeners.set(id, set);
+    if (wasEmpty) {
       this.subscriberCount++;
       if (this.subscriberCount === 1 && !this.isDestroyed) {
         void this.connectWithFallback();
       }
     }
     return () => {
-      if (this.listeners.get(id) !== listener) return;
-      this.listeners.delete(id);
-      this.subscriberCount = Math.max(0, this.subscriberCount - 1);
+      const bucket = this.listeners.get(id);
+      if (!bucket || !bucket.has(listener)) return;
+      bucket.delete(listener);
+      if (bucket.size === 0) {
+        this.listeners.delete(id);
+        this.subscriberCount = Math.max(0, this.subscriberCount - 1);
+      } else {
+        this.listeners.set(id, bucket);
+      }
       if (this.subscriberCount === 0) {
         this.teardownConnection();
       }
@@ -218,8 +226,15 @@ class EoDetectionWebSocketManager {
   private processCameraData(cameraData: EoCameraWsPayload) {
     if (cameraData?.entityId == null) return;
     const key = canonicalEntityId(cameraData.entityId);
-    const fn = this.listeners.get(key);
-    if (fn) fn(cameraData);
+    const bucket = this.listeners.get(key);
+    if (!bucket || bucket.size === 0) return;
+    for (const fn of bucket) {
+      try {
+        fn(cameraData);
+      } catch {
+        /* 单个监听器异常不应影响其它窗口 */
+      }
+    }
   }
 
   private handleClose() {

@@ -38,14 +38,88 @@ function clamp01(v: number): number {
   return v;
 }
 
-/** 与 base-vue `drawSingleTargetRect` 一致：主框 + 四角 L 形角标，区别于多目标半透明填充框 */
+/**
+ * 与 Qt `OpenGLWidget::DrawCircleTag` 相仿：圆内类型字仅「海」「空」+ 右侧标题条。
+ * 圆竖直中轴线过检测框左上角 `(boxTLX, boxTLY)`（与 Qt `tagPosition(show_rect.x()-15, show_rect.y()-30)` + tagSize=30 时圆心 x=框左 一致）。
+ */
+function drawSingleTrackTagCluster(
+  ctx: CanvasRenderingContext2D,
+  boxTLX: number,
+  boxTLY: number,
+  typeChar: string,
+  titleText: string,
+  isSelected: boolean,
+) {
+  const tagSize = 24;
+  /** 圆外接正方形左上角：使圆心 x = 框左上角 x（Qt 30px 圆时等价于框左 −15 为圆左） */
+  const circleLeft = boxTLX - tagSize / 2;
+  const circleTop = boxTLY - tagSize;
+  const cx = boxTLX;
+  const cy = circleTop + tagSize / 2;
+  const r = tagSize / 2;
+
+  const chRaw = typeChar.trim().slice(0, 1) || "海";
+  const ch = chRaw === "空" ? "空" : "海";
+  const sea = ch === "海";
+  const circleBg = sea ? "#2A3140" : "#FAF0E6";
+  const borderMain = isSelected ? "rgba(250,204,21,0.98)" : sea ? "rgba(177,250,255,0.95)" : "rgba(147,253,255,0.95)";
+  const circleFg = sea ? "rgba(177,250,255,0.98)" : "rgba(37,99,235,0.95)";
+
+  ctx.save();
+  ctx.lineJoin = "miter";
+  ctx.lineCap = "round";
+
+  const barH = Math.max(18, Math.floor((tagSize * 2) / 3));
+  /** 标题条整体在圆外接正方形右侧，留出间隙，避免矩形盖住圆 */
+  const barGap = 3;
+  const barX = circleLeft + tagSize + barGap;
+  const barY = cy - barH / 2;
+  ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const maxBarW = 240;
+  let text = titleText.trim() || "—";
+  let tw = ctx.measureText(text).width + 10;
+  while (tw > maxBarW && text.length > 2) {
+    text = `${text.slice(0, -2)}…`;
+    tw = ctx.measureText(text).width + 10;
+  }
+  const barW = Math.max(72, Math.min(maxBarW, tw));
+
+  ctx.fillStyle = isSelected ? "rgba(250,204,21,0.42)" : sea ? "rgba(177,250,255,0.88)" : "rgba(147,253,255,0.78)";
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.strokeStyle = borderMain;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX, barY, barW, barH);
+  ctx.fillStyle = sea ? "#0f172a" : "#1e293b";
+  ctx.fillText(text, barX + 5, barY + barH / 2);
+
+  /** 圆与字后画，保证叠在标题条之上（抗锯齿边缘也不挡圆） */
+  ctx.beginPath();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = borderMain;
+  ctx.fillStyle = circleBg;
+  ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.font = "bold 13px ui-sans-serif, system-ui, sans-serif";
+  ctx.fillStyle = circleFg;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(ch, cx, cy + 0.5);
+
+  ctx.restore();
+}
+
+/** 与 base-vue `drawSingleTargetRect` 一致：主框 + 四角 L 形角标，左上角 DrawCircleTag 式标签 */
 function drawSingleTrackOverlay(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   bw: number,
   bh: number,
-  label: string | undefined,
+  box: EoDetectionBox,
   isSelected: boolean,
 ) {
   const cornerBase = Math.min(bw, bh) * 0.18;
@@ -68,40 +142,32 @@ function drawSingleTrackOverlay(
 
   ctx.strokeStyle = cornerStroke;
   ctx.lineWidth = cornerLw;
-  // 左上
   ctx.beginPath();
   ctx.moveTo(x, y + corner);
   ctx.lineTo(x, y);
   ctx.lineTo(x + corner, y);
   ctx.stroke();
-  // 右上
   ctx.beginPath();
   ctx.moveTo(x + bw - corner, y);
   ctx.lineTo(x + bw, y);
   ctx.lineTo(x + bw, y + corner);
   ctx.stroke();
-  // 左下
   ctx.beginPath();
   ctx.moveTo(x, y + bh - corner);
   ctx.lineTo(x, y + bh);
   ctx.lineTo(x + corner, y + bh);
   ctx.stroke();
-  // 右下
   ctx.beginPath();
   ctx.moveTo(x + bw - corner, y + bh);
   ctx.lineTo(x + bw, y + bh);
   ctx.lineTo(x + bw, y + bh - corner);
   ctx.stroke();
 
-  if (label) {
-    ctx.fillStyle = "rgba(0,0,0,0.62)";
-    const pad = 3;
-    ctx.font = "10px ui-monospace, monospace";
-    const metrics = ctx.measureText(label);
-    ctx.fillRect(x, y - 14, metrics.width + pad * 2, 14);
-    ctx.fillStyle = mainStroke;
-    ctx.fillText(label, x + pad, y - 4);
-  }
+  const typeChar = (box.singleTagShort ?? "海").slice(0, 1);
+  const tid = box.trackId;
+  const title =
+    (box.label ?? "").trim() || (tid != null && Number.isFinite(tid) ? `T${tid}` : "目标");
+  drawSingleTrackTagCluster(ctx, x, y, typeChar, title, isSelected);
   ctx.restore();
 }
 
@@ -154,7 +220,7 @@ export function EoDetectionOverlay({
       const bh = b.h * content.h;
 
       if (b.variant === "singleTrack") {
-        drawSingleTrackOverlay(ctx, x, y, bw, bh, b.label, isSelected);
+        drawSingleTrackOverlay(ctx, x, y, bw, bh, b, isSelected);
         continue;
       }
 

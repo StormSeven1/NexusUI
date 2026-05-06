@@ -1,10 +1,11 @@
 /* 字体 / Fonts
  * - 中文优先：思源黑体（Web 场景用 Noto Sans SC 作为等价字体）
  * - 英文与数字优先：Roboto
+ * - 无人机罗盘 / 视频 OSD 数英：`--font-uav-hud`（IBM Plex Sans）
  *
  * 注意：`@import url(...)` 必须尽可能放在文件最前，避免构建期 CSS 优化器报 “@import rules must precede...” 警告。
  */
-@import url("https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@500;600;700&family=Roboto:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap");
 
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -97,6 +98,8 @@
   --font-inter: "Roboto", "Noto Sans SC", "Source Han Sans SC", "Source Han Sans", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-jetbrains: "JetBrains Mono", "SFMono-Regular", "Cascadia Code", "Fira Code", monospace;
+  /** 无人机罗盘 / OSD：数英更清晰，对齐仪表读数观感 */
+  --font-uav-hud: "IBM Plex Sans", "Roboto", "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
   --background: #151519;
   --foreground: #f9fafb;
   --card: #2F2F3A;
@@ -189,6 +192,12 @@
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  .font-uav-hud {
+    font-family: var(--font-uav-hud);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
   }
 }
 
@@ -379,6 +388,17 @@
   padding: 0.6em 0.8em;
   margin: 0.5em 0;
   overflow-x: auto;
+}
+/* 助手侧查证/研判：避免整段出现横向滚动条，长行换行 */
+.nexus-markdown-wrap pre {
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.nexus-markdown-wrap table {
+  width: 100%;
+  table-layout: fixed;
+  word-break: break-word;
 }
 .nexus-markdown pre code {
   background: transparent;

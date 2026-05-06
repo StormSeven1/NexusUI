@@ -15,6 +15,9 @@ const R_GRAD = R - 20;
 const DIAG_CENTERS = [45, 135, 225, 315];
 const PIE_HALF = 7.5;
 
+/** 与 globals.css `--font-uav-hud` 一致（SVG `<text>` 需显式 font-family） */
+const HUD_FONT = 'var(--font-uav-hud), sans-serif';
+
 function norm360(deg: number): number {
   let x = deg % 360;
   if (x < 0) x += 360;
@@ -203,8 +206,8 @@ export function EoUavCompassRose({
               y={p.y}
               fill="#fff"
               fontSize={11}
-              fontWeight={700}
-              fontFamily="ui-sans-serif, system-ui, sans-serif"
+              fontWeight={600}
+              fontFamily={HUD_FONT}
               textAnchor="middle"
               dominantBaseline="middle"
               filter={`url(#${glowId})`}
@@ -233,7 +236,7 @@ export function EoUavCompassRose({
               fill="#fff"
               fontSize={15}
               fontWeight={700}
-              fontFamily="ui-sans-serif, system-ui, sans-serif"
+              fontFamily={HUD_FONT}
               textAnchor="middle"
               dominantBaseline="middle"
               filter={`url(#${glowId})`}
@@ -251,7 +254,8 @@ export function EoUavCompassRose({
           fill="rgba(96,186,123,1)"
           fontSize={17}
           fontWeight={700}
-          fontFamily="ui-monospace, monospace"
+          fontFamily={HUD_FONT}
+          letterSpacing="0.06em"
           textAnchor="middle"
           dominantBaseline="middle"
           filter={`url(#${glowId})`}

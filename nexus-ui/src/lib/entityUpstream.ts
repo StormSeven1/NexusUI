@@ -6,7 +6,11 @@
 export const DEFAULT_CAMERA_ENTITY_BASE = "http://192.168.18.141:8088";
 
 export function getCameraEntityBaseUrl(): string {
-  return (process.env.CAMERA_ENTITY_BASE_URL ?? DEFAULT_CAMERA_ENTITY_BASE).replace(/\/$/, "");
+  return (
+    process.env.NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL ??
+    process.env.CAMERA_ENTITY_BASE_URL ??
+    DEFAULT_CAMERA_ENTITY_BASE
+  ).replace(/\/$/, "");
 }
 
 export function buildEntityV1UpstreamUrl(entityId: string): string {

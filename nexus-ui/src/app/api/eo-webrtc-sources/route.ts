@@ -53,7 +53,11 @@ export async function GET() {
     const text = await readFile(cfgPath, "utf-8");
     const raw = JSON.parse(text) as ZOthersConfig;
     const list = Array.isArray(raw.uavCameras) ? raw.uavCameras : [];
-    const entityBase = (process.env.CAMERA_ENTITY_BASE_URL ?? DEFAULT_ENTITY_BASE).replace(/\/$/, "");
+    const entityBase = (
+      process.env.NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL ??
+      process.env.CAMERA_ENTITY_BASE_URL ??
+      DEFAULT_ENTITY_BASE
+    ).replace(/\/$/, "");
     const entityRows = await Promise.all(list.map((_, i) => fetchEntityStream(entityBase, cameraIdByIndex(i))));
     const streams = list
       .map((item, i) => {

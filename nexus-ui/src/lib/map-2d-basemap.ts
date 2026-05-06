@@ -11,7 +11,7 @@
  */
 
 import maplibregl from "maplibre-gl";
-import type { TransformStyleFunction } from "maplibre-gl";
+import type { SourceSpecification, TransformStyleFunction } from "maplibre-gl";
 import { Protocol } from "pmtiles";
 
 /**
@@ -121,7 +121,10 @@ export function createMaplibreTransformStyle(styleJsonUrl: string): TransformSty
       for (const key of Object.keys(o.sources)) {
         const src = o.sources[key] as { url?: string } | undefined;
         if (src && typeof src === "object" && typeof src.url === "string") {
-          o.sources[key] = { ...src, url: rewritePmtilesUrlForPageOrigin(src.url) };
+          o.sources[key] = {
+            ...src,
+            url: rewritePmtilesUrlForPageOrigin(src.url),
+          } as SourceSpecification;
         }
       }
     }

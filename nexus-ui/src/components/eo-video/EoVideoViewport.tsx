@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { isEoVideoDebugUiEnabled } from "@/lib/eo-video/eoVideoDebugUi";
 import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import type { EoVideoIceServer } from "@/lib/eo-video/types";
 import { useWebRtcPlayer } from "@/hooks/useWebRtcPlayer";
@@ -34,6 +35,7 @@ export function EoVideoViewport({
   videoObjectFit = "cover",
   webCodecsHandle,
 }: EoVideoViewportProps) {
+  const showDebugOverlay = isEoVideoDebugUiEnabled();
   const { connectionState, iceConnectionState, error } = useWebRtcPlayer({
     signalingUrl,
     iceServers,
@@ -81,14 +83,16 @@ export function EoVideoViewport({
         />
       ) : null}
 
-      <div className="pointer-events-none absolute left-2 top-2 z-20 flex max-w-[min(90%,280px)] flex-col gap-0.5 rounded border border-white/10 bg-black/70 px-2 py-1 font-mono text-[9px] text-nexus-text-secondary">
-        {streamLabel ? <span className="text-nexus-text-primary">{streamLabel}</span> : null}
-        <span>
-          PC {connectionState} · ICE {iceConnectionState}
-          {useCanvas ? " · WebCodecs" : ""}
-        </span>
-        {error ? <span className="text-nexus-error">ERR {error}</span> : null}
-      </div>
+      {showDebugOverlay ? (
+        <div className="pointer-events-none absolute left-2 top-2 z-20 flex max-w-[min(90%,280px)] flex-col gap-0.5 rounded border border-white/10 bg-black/70 px-2 py-1 font-mono text-[9px] text-nexus-text-secondary">
+          {streamLabel ? <span className="text-nexus-text-primary">{streamLabel}</span> : null}
+          <span>
+            PC {connectionState} · ICE {iceConnectionState}
+            {useCanvas ? " · WebCodecs" : ""}
+          </span>
+          {error ? <span className="text-nexus-error">ERR {error}</span> : null}
+        </div>
+      ) : null}
     </>
   );
 }

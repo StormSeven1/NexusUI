@@ -307,7 +307,7 @@ async function syncCesiumTrackBillboards(
         friendlyFill,
         eff === "neutral" ? getFusionTrackMarkerFill(t) : undefined,
       );
-      ent.billboard.image = image;
+      ent.billboard.image = new Cesium.ConstantProperty(image);
       ent.billboard.rotation = new Cesium.ConstantProperty(-Cesium.Math.toRadians(t.heading ?? 0));
       if (ent.label) {
         ent.label.fillColor = new Cesium.ConstantProperty(

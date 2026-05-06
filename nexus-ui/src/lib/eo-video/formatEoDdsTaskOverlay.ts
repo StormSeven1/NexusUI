@@ -1,27 +1,80 @@
 import type { EoCameraDdsStatusRow } from "@/stores/eo-camera-dds-status-store";
 import type { DroneTelemetry } from "@/stores/drone-store";
 
-/** 右下角一行：相机 DDS（taskType / executionState / 航迹 等） */
+/**
+ * 与 WatchSys `CMainWindow::slot_dealCameraStatus` 中 TargetCollectionIMChildTask 分支一致：
+ * DDS `ExecutionState` 枚举首项为 EXECUTING（值为 0）；非 0 或 COMPLETED/FAILED 等视为已结束 → 空闲中。
+ */
+function isCameraExecutionActive(executionState: unknown): boolean {
+  if (executionState === null || executionState === undefined) return false;
+  if (typeof executionState === "number" && Number.isFinite(executionState)) {
+    return Math.trunc(executionState) === 0;
+  }
+  if (typeof executionState === "bigint") {
+    return executionState === BigInt(0);
+  }
+  const s = String(executionState).trim();
+  if (s === "0") return true;
+  const u = s.toUpperCase();
+  if (u.includes("EXECUTING") && !u.includes("NOT_") && !u.includes("NON")) return true;
+  return false;
+}
+
+/** 与 BaseDeviceStatus.idl 顺序一致：1..4 为已完成/取消/暂存/失败 */
+function isCameraExecutionCompleted(executionState: unknown): boolean {
+  if (executionState === null || executionState === undefined) return false;
+  if (typeof executionState === "number" && Number.isFinite(executionState)) {
+    const t = Math.trunc(executionState);
+    return t >= 1 && t <= 4;
+  }
+  if (typeof executionState === "bigint") {
+    const t = Number(executionState.valueOf());
+    return Number.isFinite(t) && t >= 1 && t <= 4;
+  }
+  const u = String(executionState).trim().toUpperCase();
+  if (
+    u.includes("COMPLETED") ||
+    u.includes("ALREADY_CLEARED") ||
+    u.includes("CLEARED") ||
+    u.includes("SAVED") ||
+    u.includes("FAILED")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function parsePositiveTrackId(trackID: unknown): number | null {
+  if (trackID === null || trackID === undefined) return null;
+  if (typeof trackID === "number" && Number.isFinite(trackID)) {
+    const n = Math.trunc(trackID);
+    return n > 0 ? n : null;
+  }
+  if (typeof trackID === "bigint") {
+    const n = Number(trackID.valueOf());
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+  }
+  const s = String(trackID).trim();
+  if (!s) return null;
+  const n = Number.parseFloat(s);
+  if (!Number.isFinite(n)) return null;
+  const t = Math.trunc(n);
+  return t > 0 ? t : null;
+}
+
+/** 右下角一行：相机仅「正在跟踪{n}号目标」/「空闲中」，与 Qt 光电条一致（不再堆 taskType/ms/在线等） */
 export function formatEoDdsCameraLine(row: EoCameraDdsStatusRow | undefined): string {
   if (!row) return "空闲中";
-  const parts: string[] = [];
-  if (row.taskType != null && String(row.taskType) !== "") {
-    parts.push(`任务 ${String(row.taskType)}`);
+  const tid = parsePositiveTrackId(row.trackID);
+  const ex = row.executionState;
+  if (tid == null) return "空闲中";
+  if (isCameraExecutionCompleted(ex)) return "空闲中";
+  if (isCameraExecutionActive(ex)) return `正在跟踪${tid}号目标`;
+  // 部分网关只推 trackID、暂不推 executionState：有有效航迹且非明确已结束时仍视为跟踪中
+  if (ex === undefined || ex === null || String(ex).trim() === "") {
+    return `正在跟踪${tid}号目标`;
   }
-  if (row.executionState != null && String(row.executionState) !== "") {
-    parts.push(`状态 ${String(row.executionState)}`);
-  }
-  if (row.trackID != null && String(row.trackID) !== "") {
-    parts.push(`航迹 ${String(row.trackID)}`);
-  }
-  const et = row.executionTimeMs;
-  if (et != null && Number.isFinite(Number(et))) {
-    parts.push(`${Math.round(Number(et))}ms`);
-  }
-  if (row.online !== undefined) {
-    parts.push(row.online ? "在线" : "离线");
-  }
-  return parts.length ? parts.join(" · ") : "空闲中";
+  return "空闲中";
 }
 
 /** 右下角一行：无人机侧「视频/航线」相关 DDS 字段（flightPath / status） */

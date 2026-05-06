@@ -10,10 +10,25 @@ type VlmJsonConfig = {
   userPrompt?: string;
 };
 
-async function loadVlmConfig(): Promise<VlmJsonConfig> {
+async function loadVlmConfig(): Promise<VlmJsonConfig | null> {
   const cfgPath = path.join(process.cwd(), "public", "config", "vlm-image-analysis.json");
-  const raw = await readFile(cfgPath, "utf8");
-  return JSON.parse(raw) as VlmJsonConfig;
+  try {
+    const raw = await readFile(cfgPath, "utf8");
+    return JSON.parse(raw) as VlmJsonConfig;
+  } catch (e) {
+    const code = (e as { code?: string } | null)?.code;
+    if (code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+async function readPromptIni(fileName: string): Promise<string> {
+  const p = path.join(process.cwd(), "public", "config", fileName);
+  try {
+    return (await readFile(p, "utf8")).trim();
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -32,7 +47,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "缺少 imageBase64" }, { status: 400 });
   }
 
-  let fileCfg: VlmJsonConfig;
+  let fileCfg: VlmJsonConfig | null;
   try {
     fileCfg = await loadVlmConfig();
   } catch (e) {
@@ -40,17 +55,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "VLM 配置文件不可用" }, { status: 500 });
   }
 
-  const baseUrl = (process.env.VLM_IMAGE_ANALYSIS_BASE_URL ?? fileCfg.baseUrl ?? "").replace(/\/$/, "");
-  const model = process.env.VLM_IMAGE_ANALYSIS_MODEL ?? fileCfg.model;
-  const bearer = process.env.VLM_IMAGE_ANALYSIS_BEARER ?? fileCfg.bearerToken ?? "EMPTY";
-  const systemPrompt = fileCfg.systemPrompt ?? "";
-  const userPrompt = fileCfg.userPrompt ?? "";
+  const baseUrl = (process.env.VLM_IMAGE_ANALYSIS_BASE_URL ?? fileCfg?.baseUrl ?? "").replace(/\/$/, "");
+  const model = process.env.VLM_IMAGE_ANALYSIS_MODEL ?? fileCfg?.model;
+  const bearer = (process.env.VLM_IMAGE_ANALYSIS_BEARER ?? fileCfg?.bearerToken ?? "").trim();
+  // 约定：Config_Prompt.ini 为 system 提示词；Config_Quest.ini 为 user 提示词。
+  const [systemPromptIni, userPromptIni] = await Promise.all([
+    readPromptIni("Config_Prompt.ini"),
+    readPromptIni("Config_Quest.ini"),
+  ]);
+  const systemPrompt = systemPromptIni || fileCfg?.systemPrompt || "";
+  const userPrompt = userPromptIni || fileCfg?.userPrompt || "";
 
   if (!baseUrl || !model) {
     return NextResponse.json({ error: "VLM baseUrl/model 未配置" }, { status: 500 });
   }
 
-  const url = `${baseUrl}/chat/completions`;
+  const candidateUrls = [`${baseUrl}/chat/completions`, `${baseUrl}/v1/chat/completions`];
   const dataUrl = `data:image/png;base64,${imageBase64}`;
 
   const payload = {
@@ -67,31 +87,37 @@ export async function POST(req: Request) {
     ],
   };
 
-  let vlmRes: Response;
-  try {
-    vlmRes = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        Authorization: `Bearer ${bearer}`,
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch (e) {
-    console.error("[vlm/image-analyze] fetch", e);
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "无法连接 VLM 服务" },
-      { status: 502 },
-    );
-  }
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json; charset=utf-8",
+  };
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
 
-  const rawText = await vlmRes.text();
-  if (!vlmRes.ok) {
-    console.error("[vlm/image-analyze] VLM HTTP", vlmRes.status, rawText.slice(0, 500));
-    return NextResponse.json(
-      { error: rawText || `VLM HTTP ${vlmRes.status}` },
-      { status: 502 },
-    );
+  let vlmRes: Response | null = null;
+  let rawText = "";
+  let lastErr = "";
+  for (const url of candidateUrls) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const text = await res.text();
+      if (res.ok) {
+        vlmRes = res;
+        rawText = text;
+        break;
+      }
+      lastErr = `URL=${url} HTTP ${res.status} ${text.slice(0, 300)}`;
+      if (res.status === 404) continue;
+      return NextResponse.json({ error: text || `VLM HTTP ${res.status}` }, { status: 502 });
+    } catch (e) {
+      lastErr = `URL=${url} ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+  if (!vlmRes) {
+    console.error("[vlm/image-analyze] fetch failed", lastErr);
+    return NextResponse.json({ error: `无法连接 VLM 服务: ${lastErr}` }, { status: 502 });
   }
 
   let content = "";

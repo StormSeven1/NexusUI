@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type EoSnapshotPreviewPayload = {
+  kind: "snapshot" | "record";
   objectUrl: string;
   blob: Blob;
   fileName: string;
@@ -14,17 +15,20 @@ export type EoSnapshotPreviewPayload = {
 type Props = {
   preview: EoSnapshotPreviewPayload;
   onDismiss: () => void;
-  /** 采集：业务预留（截图文件已在点击截图时写入本地/下载） */
+  /** 打开文件路径（目录选择器定位到当前保存目录） */
+  onOpen: () => void | Promise<void>;
+  /** 采集：业务预留（录屏） */
   onCollect: () => void | Promise<void>;
+  /** 分析：截图专用 */
   onAnalyze: () => void | Promise<void>;
 };
 
 /**
  * 贴在右侧截图工具列左侧的无边框小预览：从左侧滑入，下图「采集」「分析」。
  */
-export function EoSnapshotPreviewPopout({ preview, onDismiss, onCollect, onAnalyze }: Props) {
+export function EoSnapshotPreviewPopout({ preview, onDismiss, onOpen, onCollect, onAnalyze }: Props) {
   const [entered, setEntered] = useState(false);
-  const [busy, setBusy] = useState<"collect" | "analyze" | null>(null);
+  const [busy, setBusy] = useState<"open" | "collect" | "analyze" | null>(null);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setEntered(true));
@@ -32,17 +36,18 @@ export function EoSnapshotPreviewPopout({ preview, onDismiss, onCollect, onAnaly
   }, []);
 
   const run = useCallback(
-    async (kind: "collect" | "analyze") => {
+    async (kind: "open" | "collect" | "analyze") => {
       if (busy) return;
       setBusy(kind);
       try {
-        if (kind === "collect") await onCollect();
+        if (kind === "open") await onOpen();
+        else if (kind === "collect") await onCollect();
         else await onAnalyze();
       } finally {
         setBusy(null);
       }
     },
-    [busy, onAnalyze, onCollect],
+    [busy, onAnalyze, onCollect, onOpen],
   );
 
   return (
@@ -65,12 +70,22 @@ export function EoSnapshotPreviewPopout({ preview, onDismiss, onCollect, onAnaly
         >
           <X size={12} strokeWidth={2.5} />
         </button>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={preview.objectUrl}
-          alt=""
-          className="max-h-[min(22vh,140px)] w-full object-contain object-left"
-        />
+        {preview.kind === "snapshot" ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={preview.objectUrl}
+            alt=""
+            className="max-h-[min(22vh,140px)] w-full object-contain object-left"
+          />
+        ) : (
+          <video
+            src={preview.objectUrl}
+            className="max-h-[min(22vh,140px)] w-full object-contain object-left"
+            muted
+            playsInline
+            controls
+          />
+        )}
       </div>
       <div className="flex items-center gap-1.5 pt-0.5">
         <Button
@@ -79,18 +94,18 @@ export function EoSnapshotPreviewPopout({ preview, onDismiss, onCollect, onAnaly
           size="xs"
           className="h-7 flex-1 rounded-none border-0 bg-white/15 text-[10px] text-white hover:bg-white/25"
           disabled={busy !== null}
-          onClick={() => void run("collect")}
+          onClick={() => void run("open")}
         >
-          {busy === "collect" ? "…" : "采集"}
+          {busy === "open" ? "…" : "打开"}
         </Button>
         <Button
           type="button"
           size="xs"
           className="h-7 flex-1 rounded-none border-0 bg-sky-600/80 text-[10px] text-white hover:bg-sky-500/90"
           disabled={busy !== null}
-          onClick={() => void run("analyze")}
+          onClick={() => void run(preview.kind === "snapshot" ? "analyze" : "collect")}
         >
-          {busy === "analyze" ? "…" : "分析"}
+          {busy === "collect" ? "…" : busy === "analyze" ? "…" : preview.kind === "snapshot" ? "分析" : "采集"}
         </Button>
       </div>
     </div>

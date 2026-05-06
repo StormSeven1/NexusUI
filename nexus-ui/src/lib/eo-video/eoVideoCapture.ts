@@ -153,6 +153,37 @@ export async function saveCaptureBlob(
   return "download";
 }
 
+/**
+ * 强制服务端落盘（Next 进程所在机器本地文件系统）。
+ * 用于需要固定目录（如 C:\\watch_data\\...）的场景。
+ */
+export async function saveCaptureBlobToServerLocal(
+  blob: Blob,
+  args: { kind: "snapshot" | "record"; streamLabel?: string; fileName: string },
+): Promise<string> {
+  const u = new URL("/api/eo-capture/save", window.location.origin);
+  u.searchParams.set("kind", args.kind);
+  u.searchParams.set("streamLabel", args.streamLabel ?? "");
+  u.searchParams.set("fileName", args.fileName);
+  const res = await fetch(u.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: blob,
+  });
+  const text = await res.text().catch(() => "");
+  let json: { ok?: boolean; path?: string; error?: string; detail?: string } | null = null;
+  try {
+    json = text ? (JSON.parse(text) as { ok?: boolean; path?: string; error?: string; detail?: string }) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok || !json?.ok || !json.path) {
+    const msg = json?.detail || json?.error || text.slice(0, 240) || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return json.path;
+}
+
 export type EoVideoRecordController = {
   start: () => void;
   stop: () => void;

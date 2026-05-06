@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { cn } from "@/lib/utils";
 import {
   Bot, User, MapPin, Target, Map, PanelRight, Search,
@@ -277,6 +276,7 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
                   key={key}
                   className={cn(
                     "nexus-markdown text-[11px] leading-relaxed text-nexus-text-primary",
+                    !isUser && "nexus-markdown-wrap max-w-full break-words [overflow-wrap:anywhere]",
                     isUser && "inline-block rounded-md bg-white/[0.06] px-2.5 py-1.5 text-left"
                   )}
                 >
@@ -294,14 +294,13 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
               const isImage = part.mediaType?.startsWith("image/");
               if (isImage) {
                 return (
-                  <div key={key} className={cn("mt-1", isUser && "flex justify-end")}>
-                    <Image
+                  <div key={key} className={cn("mt-1 max-w-full", isUser && "flex justify-end")}>
+                    {/* 外链 MinIO/S3 预签名、data:/blob: 均走原生 img，避免 next/image (remotePatterns) 限制 */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
                       src={part.url}
                       alt={part.filename ?? "附件"}
-                      width={320}
-                      height={160}
-                      unoptimized
-                      className="max-h-40 rounded-md border border-white/[0.06]"
+                      className="max-h-40 max-w-full rounded-md border border-white/[0.06] object-contain"
                     />
                   </div>
                 );

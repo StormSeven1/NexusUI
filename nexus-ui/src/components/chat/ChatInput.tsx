@@ -44,7 +44,7 @@
 import Image from "next/image";
 // Next 的图片组件；下面附件预览用 data URL 时加了 unoptimized。
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, type ReactNode } from "react";
 // useState：组件内会变的局部状态。
 // useRef：跨渲染保存同一个对象（常用：DOM 引用、定时器 id）。
 // useCallback：返回「记忆化」的函数，避免每次渲染都新建函数（见 handleSend 注释）。
@@ -67,9 +67,13 @@ interface ChatInputProps {
   onStop: () => void;
   /** 来自 ChatPanel：status 为 submitted/streaming 时为 true，用来切换「停止」按钮与禁用 Enter 发送 */
   isLoading: boolean;
+  /**
+   * 若提供，则替代左侧「上传文件」按钮及隐藏 file input（用于自定义左侧工具区的场景，如智能助手面板）。
+   */
+  leadingToolbar?: ReactNode;
 }
 
-export function ChatInput({ onSend, onStop, isLoading }: ChatInputProps) {
+export function ChatInput({ onSend, onStop, isLoading, leadingToolbar }: ChatInputProps) {
   // —— 下面两个是「受控输入」状态：UI 显示的值完全由 state 决定，类似 Vue v-model 拆开写 ——
 
   /** 文本框里的字；初始 ""；用户每敲一个字就会 setInput 更新这里 */
@@ -193,24 +197,27 @@ export function ChatInput({ onSend, onStop, isLoading }: ChatInputProps) {
         </div>
       )}
 
-      {/* ---------- 主输入行：回形针 | 隐藏 file | textarea | 发送或停止 ---------- */}
+      {/* ---------- 主输入行：上传 / 自定义左侧区 | textarea | 发送或停止 ---------- */}
       <div className="flex items-end gap-1.5">
-        {/* 点击后 programmatically 触发隐藏 file input 的点击 */}
-        <NxIconButton
-          size="sm"
-          onClick={() => fileInputRef.current?.click()}
-          title="上传文件"
-        >
-          <Paperclip size={14} />
-        </NxIconButton>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*,.pdf,.txt,.json,.csv"
-          multiple
-          onChange={handleFileChange}
-          className="hidden"
-        />
+        {leadingToolbar ?? (
+          <>
+            <NxIconButton
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              title="上传文件"
+            >
+              <Paperclip size={14} />
+            </NxIconButton>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,.pdf,.txt,.json,.csv"
+              multiple
+              onChange={handleFileChange}
+              className="hidden"
+            />
+          </>
+        )}
 
         <textarea
           ref={textareaRef}

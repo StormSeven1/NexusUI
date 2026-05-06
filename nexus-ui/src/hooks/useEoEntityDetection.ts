@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
 import type { BufferedDetectionEntry } from "@/lib/eo-video/eoDetectionTypes";
 import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
@@ -8,10 +8,12 @@ import { headersMatch, detectionRectsToEoBoxes } from "@/lib/eo-video/detectionS
 import { getEoDetectionWebSocketManager } from "@/lib/eo-video/eoDetectionWebSocket";
 import { ingestEntityDetectionPayload } from "@/lib/eo-video/entityDetectionIngest";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
+import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 
 const RENDER_MS = 40;
 const DETECTION_ENTRY_STALE_MS = 2000;
 const MAX_HEADER_MISS = 20;
+const DIAG_EMIT_INTERVAL_MS = 260;
 
 /**
  * syncHeader 精确匹配（与 base-vue headersMatch 一致）。
@@ -85,15 +87,20 @@ export interface UseEoEntityDetectionOptions {
   videoReceiverRef?: React.MutableRefObject<RTCRtpReceiver | null>;
   enabled: boolean;
   onDiagnostic?: (line: string, hoverDetail?: string) => void;
+  /** 与 Qt 放大画面类似：为 true 时标签主文案改为航迹信息；圆内类型字不变 */
+  expandedMode?: boolean;
+  /** 读 DDS `trackAlias` 的相机实体 id（与底部任务条 `cameraDdsEntityId` 一致；缺省用 detection entityId） */
+  ddsCameraEntityId?: string;
 }
 
 export function useEoEntityDetection({
   entityId,
   videoRef,
   encodedSyncHub,
-  videoReceiverRef,
   enabled,
   onDiagnostic,
+  expandedMode = false,
+  ddsCameraEntityId,
 }: UseEoEntityDetectionOptions): { boxes: EoDetectionBox[]; diag: string } {
   const [boxes, setBoxes] = useState<EoDetectionBox[]>([]);
   const [diag, setDiag] = useState("");
@@ -126,8 +133,24 @@ export function useEoEntityDetection({
    */
   const detectionDelayMsRef = useRef(0);
   const detectionDelaySamplesRef = useRef(0);
+  const lastDiagEmitMsRef = useRef(0);
+  const lastDiagLineRef = useRef("");
 
   const id = entityId?.trim() ? canonicalEntityId(entityId.trim()) : "";
+
+  const ddsLookupId = useMemo(() => {
+    const raw = (ddsCameraEntityId ?? entityId)?.trim();
+    if (!raw) return "";
+    return canonicalEntityId(raw);
+  }, [ddsCameraEntityId, entityId]);
+
+  const ddsTrackAliasStr = useEoCameraDdsStatusStore((s) => {
+    if (!ddsLookupId) return "";
+    const v = s.byEntityId[ddsLookupId]?.trackAlias;
+    if (typeof v === "string") return v.trim();
+    if (v != null && String(v).trim()) return String(v).trim();
+    return "";
+  });
 
   useEffect(() => {
     boatBuf.current = [];
@@ -143,6 +166,8 @@ export function useEoEntityDetection({
     headerEverMatchedRef.current = false;
     syncDiagRef.current = { headerOk: 0, headerFail: 0, wallMs: 0, freshest: 0 };
     headerDiagRef.current = "";
+    lastDiagEmitMsRef.current = 0;
+    lastDiagLineRef.current = "";
     setBoxes([]);
     setDiag("");
   }, [id]);
@@ -196,8 +221,32 @@ export function useEoEntityDetection({
           picker: (arr: BufferedDetectionEntry[]) => BufferedDetectionEntry | null,
         ) => {
           const singleEntry = picker(singleBuf.current);
-          const singleBoxesRaw = boxesFromEntry(singleEntry, "single", "跟踪", "accent");
-          const singleBoxes = singleBoxesRaw.map((b) => ({ ...b, variant: "singleTrack" as const }));
+          const singleBoxesRaw = boxesFromEntry(singleEntry, "single", "", "accent");
+          const ex = expandedMode;
+          const singleBoxes =
+            singleBoxesRaw.length > 0
+              ? singleBoxesRaw.map((b) => {
+                  const meta = singleEntry?.singleDisplayMeta;
+                  const rawT = ((meta?.typeShort ?? "海").trim().slice(0, 1) || "海").slice(0, 1);
+                  const ts = rawT === "空" ? "空" : "海";
+                  const nmWs = (meta?.trackName ?? "").trim();
+                  const alias = ddsTrackAliasStr.trim();
+                  const displayName = alias || nmWs;
+                  const tid = b.trackId;
+                  const targetName = displayName || (tid != null ? `T${tid}` : "目标");
+                  const titleText = ex
+                    ? tid != null
+                      ? `航迹 ${tid} 号${displayName ? ` · ${displayName}` : ""}`
+                      : displayName || "航迹"
+                    : targetName;
+                  return {
+                    ...b,
+                    variant: "singleTrack" as const,
+                    singleTagShort: ts,
+                    label: titleText,
+                  };
+                })
+              : [];
           if (singleBoxes.length > 0) {
             next.push(...singleBoxes);
           } else {
@@ -322,10 +371,16 @@ export function useEoEntityDetection({
         const line = `检测 WS ${wsName} · buf ${boatBuf.current.length}/${planeBuf.current.length}/${singleBuf.current.length} · 框 ${out.length} · ${jitterMs}${syncInfo}${hdrDiag}${noTs}${
           wsDbg.summary ? ` | ${wsDbg.summary}` : ""
         }`;
-        setDiag(line);
+        const nowEmit = Date.now();
+        const changed = line !== lastDiagLineRef.current;
+        if (changed && nowEmit - lastDiagEmitMsRef.current >= DIAG_EMIT_INTERVAL_MS) {
+          setDiag(line);
+          const hover = [line, wsDbg.rawForTitle].filter(Boolean).join("\n\n");
+          onDiagnostic?.(line, hover || undefined);
+          lastDiagLineRef.current = line;
+          lastDiagEmitMsRef.current = nowEmit;
+        }
         setBoxes(out);
-        const hover = [line, wsDbg.rawForTitle].filter(Boolean).join("\n\n");
-        onDiagnostic?.(line, hover || undefined);
         tickingRef.current = false;
       }
     };
@@ -349,19 +404,7 @@ export function useEoEntityDetection({
         if (Number.isFinite(sample) && sample > 0 && sample < 8000) {
           captureToDisplayOffsetMsRef.current = captureToDisplayOffsetMsRef.current * 0.7 + sample * 0.3;
 
-          if (videoReceiverRef) {
-            const receiver = videoReceiverRef.current as (RTCRtpReceiver & { jitterBufferTarget?: number | null }) | null;
-            if (receiver && typeof receiver.jitterBufferTarget !== "undefined") {
-              const targetMs = Math.min(Math.max(0, Math.round(captureToDisplayOffsetMsRef.current) - 100), 3000);
-              const changed = Math.abs(targetMs - lastJitterTargetMsRef.current) > 100;
-              const cooldown = wallClockMs - lastJitterUpdateMsRef.current > 8000;
-              if (changed && cooldown) {
-                receiver.jitterBufferTarget = targetMs / 1000;
-                lastJitterTargetMsRef.current = targetMs;
-                lastJitterUpdateMsRef.current = wallClockMs;
-              }
-            }
-          }
+          /* 试验：禁用 jitterBufferTarget 动态调整，减少播放链路干预。 */
         }
       }
 
@@ -385,7 +428,7 @@ export function useEoEntityDetection({
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- encodedSyncHub 稳定引用，不影响逻辑
-  }, [enabled, id, onDiagnostic, videoReceiverRef, videoRef]);
+  }, [enabled, id, onDiagnostic, videoRef, expandedMode, ddsTrackAliasStr, ddsLookupId]);
 
   return {
     boxes: enabled && id ? boxes : [],

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
+import { useDockStore } from "@/stores/dock-store";
 
 interface FloatingPosition {
   x: number;
@@ -61,7 +62,8 @@ export function AgentMessageFloat() {
     setRightPanelTab
   } = useAppStore();
   const statusBarHeight = 32;
-  const rightSidebarWidth = rightSidebarOpen ? 440 : 48;
+  const dockRightSidebarWidth = useDockStore((s) => s.rightSidebarWidth);
+  const rightSidebarWidth = rightSidebarOpen ? dockRightSidebarWidth : 48;
 
   // 将 store 的消息转换为适合展示的格式
   const displayMessages = agentMessages.map(msg => ({
@@ -274,7 +276,19 @@ export function AgentMessageFloat() {
                   if (originalMessage) {
                     setSelectedAgentMessage(originalMessage);
                     // 如果右侧面板未打开或未在AI助手页面，就切换到AI助手面板
-                    if (!rightSidebarOpen || rightPanelTab !== "chat") {
+                    const panelInRight0 =
+                      useDockStore
+                        .getState()
+                        .rightPartitions.find((p) => p.id === "right-0")
+                        ?.currentPanelId;
+                    if (
+                      !rightSidebarOpen ||
+                      panelInRight0 !== "chat" ||
+                      rightPanelTab !== "chat"
+                    ) {
+                      useDockStore
+                        .getState()
+                        .assignPanelToPartition("chat", "right-0");
                       setRightPanelTab("chat");
                     }
                   }

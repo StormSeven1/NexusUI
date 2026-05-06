@@ -26,6 +26,10 @@ export interface EoVideoDetectionLayerProps {
   videoObjectFit?: "contain" | "cover";
   videoIntrinsicWidth?: number;
   videoIntrinsicHeight?: number;
+  /** 与父级放大窗口一致：影响单目标跟踪框标签文案（航迹信息） */
+  expandedMode?: boolean;
+  /** 与 DDS `trackAlias` 对应的相机 entityId（可与 detection entityId 不同） */
+  ddsCameraEntityId?: string;
 }
 
 /**
@@ -47,6 +51,8 @@ export function EoVideoDetectionLayer({
   videoObjectFit,
   videoIntrinsicWidth,
   videoIntrinsicHeight,
+  expandedMode = false,
+  ddsCameraEntityId,
 }: EoVideoDetectionLayerProps) {
   const { boxes } = useEoEntityDetection({
     entityId,
@@ -55,6 +61,8 @@ export function EoVideoDetectionLayer({
     videoReceiverRef,
     enabled,
     onDiagnostic,
+    expandedMode,
+    ddsCameraEntityId,
   });
 
   useEffect(() => {

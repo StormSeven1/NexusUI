@@ -1,10 +1,8 @@
 "use client";
 
-import { Settings2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import { useWebCodecsCanvas } from "@/hooks/useWebCodecsCanvas";
-import { Button } from "@/components/ui/button";
 import { postEoPtzMove, postEoPtzStop, type EoPtzDirection } from "@/lib/eo-video/eoPtzTaskClient";
 import { postUavCameraAim } from "@/lib/eo-video/postUavCameraAim";
 import type { EoDetectionBox, EoVideoIceServer } from "@/lib/eo-video/types";
@@ -110,6 +108,10 @@ export interface EoVideoPlayStageProps {
    * 无人机主画面：按住拖动、松开发 `camera_aim`（对齐 `PtzMainWidget::UavAimAt5`，与光电实体 PTZ 拖动互斥）。
    */
   uavCameraAim?: UavCameraAimUiContext | null;
+  /** 放大态：单目标检测标签显示航迹信息（与 Qt DrawCircleTag 标题栏扩展语义对齐） */
+  expandedMode?: boolean;
+  /** 订阅 DDS `trackAlias` 用的相机实体 id（见 EoVideoPanel `cameraDdsEntityId`） */
+  ddsCameraEntityId?: string;
 }
 
 /**
@@ -129,14 +131,6 @@ export function EoVideoPlayStage({
   selectedBoxId,
   onSelectBox,
   taskBackendBaseUrl,
-  onSaveTaskBackendBaseUrl,
-  snapshotSavePath,
-  recordSavePath,
-  onSaveCapturePaths,
-  captureLocalFolderLabel,
-  captureLocalFolderSupported,
-  onPickCaptureLocalFolder,
-  onClearCaptureLocalFolder,
   onSingleTrackTask,
   onTaskClientLog,
   detectionBoxes = [],
@@ -148,11 +142,9 @@ export function EoVideoPlayStage({
   onCaptureReadyChange,
   snapshotCanvasRef,
   uavCameraAim = null,
+  expandedMode = false,
+  ddsCameraEntityId,
 }: EoVideoPlayStageProps) {
-  const [showConfig, setShowConfig] = useState(false);
-  const [editingBaseUrl, setEditingBaseUrl] = useState(taskBackendBaseUrl);
-  const [editingSnapshotPath, setEditingSnapshotPath] = useState(snapshotSavePath);
-  const [editingRecordPath, setEditingRecordPath] = useState(recordSavePath);
   const [taskBusy, setTaskBusy] = useState(false);
   const [taskHint, setTaskHint] = useState("");
   const [ptzDragArrow, setPtzDragArrow] = useState<EoPtzDragArrowBox | null>(null);
@@ -403,7 +395,7 @@ export function EoVideoPlayStage({
 
     const cancelPtzArrowFrame = () => {
       if (ptzArrowRafRef.current != null) {
-        cancelAnimationFrame(ptzArrowRaf.current);
+        cancelAnimationFrame(ptzArrowRafRef.current);
         ptzArrowRafRef.current = null;
       }
     };
@@ -802,109 +794,14 @@ export function EoVideoPlayStage({
         webCodecsHandle={showDetection ? webCodecsHandle : undefined}
       />
       {ptzDragArrow ? <EoPtzDragArrowOverlay box={ptzDragArrow} /> : null}
-      <div
-        className={cn(
-          "absolute top-2 z-30 flex items-center gap-1",
-          sideToolbarReserved ? "right-[4.25rem]" : "right-2",
-        )}
-      >
-        {!onOverlayTaskLine && !onBottomCenterToast && taskHint ? (
-          <span className="max-w-[280px] truncate rounded border border-white/10 bg-black/65 px-2 py-0.5 text-[10px] text-nexus-text-secondary">
-            {taskHint}
-          </span>
-        ) : null}
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="outline"
-          className="border-white/20 bg-black/60 text-nexus-text-secondary hover:text-nexus-text-primary"
-          onClick={() => {
-            setEditingBaseUrl(taskBackendBaseUrl);
-            setEditingSnapshotPath(snapshotSavePath);
-            setEditingRecordPath(recordSavePath);
-            setShowConfig((v) => !v);
-          }}
-          title="相机任务与截图/录屏保存路径"
-          aria-label="相机任务与截图录屏配置"
-        >
-          <Settings2 className="size-3.5" />
-        </Button>
-      </div>
-      {showConfig ? (
+      {!onOverlayTaskLine && !onBottomCenterToast && taskHint ? (
         <div
           className={cn(
-            "absolute top-10 z-30 w-[320px] rounded border border-white/15 bg-black/85 p-2 text-[11px] text-nexus-text-secondary backdrop-blur-sm",
+            "pointer-events-none absolute top-2 z-30 max-w-[280px] truncate rounded border border-white/10 bg-black/65 px-2 py-0.5 text-[10px] text-nexus-text-secondary",
             sideToolbarReserved ? "right-[4.25rem]" : "right-2",
           )}
         >
-          <p className="mb-1 text-[11px] text-nexus-text-primary">相机任务后端（发送 /api/v1/tasks）</p>
-          <input
-            value={editingBaseUrl}
-            onChange={(e) => setEditingBaseUrl(e.target.value)}
-            placeholder="http://192.168.18.141:8088"
-            className="w-full rounded border border-white/15 bg-black/40 px-2 py-1 text-[11px] outline-none focus:border-nexus-accent"
-          />
-          <p className="mb-1 mt-2 text-[11px] text-nexus-text-primary">本机保存文件夹</p>
-          {captureLocalFolderSupported ? (
-            <>
-              <p className="mb-1 text-[10px] leading-snug text-nexus-text-muted">
-                {captureLocalFolderLabel
-                  ? `已绑定：${captureLocalFolderLabel}（截图/录屏直接写入该文件夹）。需在 https 或 localhost 下使用。`
-                  : "未绑定：截图/录屏走浏览器下载；绑定后可保存到您选的目录。需在 https 或 localhost 下使用。"}
-              </p>
-              <div className="flex gap-1">
-                <Button type="button" size="xs" variant="outline" className="flex-1" onClick={() => void onPickCaptureLocalFolder()}>
-                  选择文件夹
-                </Button>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  className="shrink-0 text-[10px]"
-                  disabled={!captureLocalFolderLabel}
-                  onClick={() => void onClearCaptureLocalFolder()}
-                >
-                  清除
-                </Button>
-              </div>
-            </>
-          ) : (
-            <p className="mb-1 text-[10px] leading-snug text-nexus-text-muted">
-              当前环境不支持选择本机文件夹，请使用 Chrome / Edge 等；将仅能通过下载保存文件。
-            </p>
-          )}
-          <p className="mb-1 mt-2 text-[11px] text-nexus-text-primary">截图文件名前缀（可选）</p>
-          <input
-            value={editingSnapshotPath}
-            onChange={(e) => setEditingSnapshotPath(e.target.value)}
-            placeholder="例如 EO_IR_班组A（拼进 PNG 文件名）"
-            className="w-full rounded border border-white/15 bg-black/40 px-2 py-1 text-[11px] outline-none focus:border-nexus-accent"
-          />
-          <p className="mb-1 mt-2 text-[11px] text-nexus-text-primary">录屏文件名前缀（可选）</p>
-          <input
-            value={editingRecordPath}
-            onChange={(e) => setEditingRecordPath(e.target.value)}
-            placeholder="例如 EO_录像（拼进 MP4/WebM 文件名）"
-            className="w-full rounded border border-white/15 bg-black/40 px-2 py-1 text-[11px] outline-none focus:border-nexus-accent"
-          />
-          <p className="mt-1 text-[10px] leading-snug text-nexus-text-muted">
-            前缀会出现在每个文件名里便于归档；未绑文件夹时由浏览器下载，默认目录由浏览器决定。
-          </p>
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-[10px] text-nexus-text-muted">双击画面发送目标跟踪任务</span>
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              onClick={() => {
-                onSaveTaskBackendBaseUrl(editingBaseUrl);
-                onSaveCapturePaths(editingSnapshotPath, editingRecordPath);
-                setShowConfig(false);
-              }}
-            >
-              保存
-            </Button>
-          </div>
+          {taskHint}
         </div>
       ) : null}
       {showDetection ? (
@@ -923,6 +820,8 @@ export function EoVideoPlayStage({
           videoObjectFit="cover"
           videoIntrinsicWidth={webCodecsHandle.videoWidth}
           videoIntrinsicHeight={webCodecsHandle.videoHeight}
+          expandedMode={expandedMode}
+          ddsCameraEntityId={ddsCameraEntityId}
         />
       ) : showTrackHitLayer ? (
         <EoDetectionOverlay

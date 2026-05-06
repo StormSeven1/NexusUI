@@ -7,7 +7,10 @@ import { create } from "zustand";
  */
 export type VlmChatInjectPayload = {
   userText: string;
+  /** 可用 `blob:` 或 `data:image/...;base64,...`（后者不受预览自动 revoke 影响） */
   imageUrl: string;
+  /** 与 imageUrl 内容一致；缺省按 PNG */
+  imageMediaType?: string;
   filename: string;
   assistantText: string;
 };

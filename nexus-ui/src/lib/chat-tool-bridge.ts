@@ -1,4 +1,6 @@
 import { useAppStore } from "@/stores/app-store";
+import { useDockStore } from "@/stores/dock-store";
+import type { PanelId } from "@/stores/dock-store";
 import type { LeftPanelTab, RightPanelTab } from "@/stores/app-store";
 
 /**
@@ -108,13 +110,20 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
     const { panel, side } = output as { panel: string; side: "left" | "right" };
     const store = useAppStore.getState();
     if (side === "right") {
-      // 右侧仅保留 AI 助手：任何 open_panel 请求都统一落到 chat
+      // 右侧仅保留 AI 助手：任何 open_panel 请求都统一落到 chat（与分区 right-0 同步）
       void panel;
+      useDockStore.getState().assignPanelToPartition("chat", "right-0");
       store.setRightPanelTab("chat" as RightPanelTab);
-      if (!store.rightSidebarOpen) store.toggleRightSidebar();
     } else {
-      store.setLeftPanelTab(panel as LeftPanelTab);
-      if (!store.leftSidebarOpen) store.toggleLeftSidebar();
+      const tab = panel as LeftPanelTab;
+      if (["tracks", "assets", "layers", "alerts"].includes(tab)) {
+        useDockStore.getState().assignPanelToPartition(tab as PanelId, "left-0");
+        if (!useDockStore.getState().leftSidebarOpen) {
+          useDockStore.setState({ leftSidebarOpen: true });
+        }
+      }
+      store.setLeftPanelTab(tab);
+      useAppStore.setState({ leftSidebarOpen: true });
     }
   },
 

@@ -30,7 +30,7 @@ export function ChatPanelGptPlaceholder() {
           {
             type: "file",
             url: p.imageUrl,
-            mediaType: "image/png",
+            mediaType: p.imageMediaType ?? "image/png",
             filename: p.filename || "eo-snapshot.png",
           },
         ],

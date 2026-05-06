@@ -40,6 +40,11 @@ export interface BufferedDetectionEntry {
   captureTs?: number;
   encodeTs?: number;
   receivedAt: number;
+  /**
+   * singleRect 首框展示元数据（与 Qt `rectTrackName` / `rectType` 及 DrawCircleTag 圆内「海|空」对齐）。
+   * 由 WS `videoRect` 首条对象字段解析；纯数组框时为空。
+   */
+  singleDisplayMeta?: { trackName?: string; typeShort?: string };
 }
 
 export interface MatchState {
