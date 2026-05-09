@@ -488,18 +488,17 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
   const droneCount = Object.keys(drones).length;
   let renderedCount = 0;
   for (const [sn, tele] of Object.entries(drones)) {
-    const pose = mergedDronePose(tele);
-    if (!pose) continue;
-    renderedCount++;
-
+    /* 航线不依赖无人机自身坐标，先于 pose 检查渲染，避免 drone_status 未到时航线迟迟不画 */
     if (cfg.showPlannedRoute) {
       const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
       if (route) {
         features.push(route);
-      } else if (tele.flightPath) {
-        console.warn("[DronesMaplibre] flightPath 存在但 waypointsLineString 返回 null, sn=", sn, "flightPath keys=", Object.keys(tele.flightPath));
       }
     }
+
+    const pose = mergedDronePose(tele);
+    if (!pose) continue;
+    renderedCount++;
     const trail = trailLineString(tele);
     if (trail) features.push(trail);
 
@@ -926,7 +925,6 @@ export class DronesMaplibre {
   private scheduleRender() {
     if (this.renderScheduled) return;
     this.renderScheduled = true;
-    const scheduleTs = Date.now();
     this.renderRafId = requestAnimationFrame(() => {
       this.renderScheduled = false;
       this.renderRafId = null;
@@ -934,8 +932,6 @@ export class DronesMaplibre {
       if (!m.getSource(DRONES_SOURCE)) return;
       const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource;
       const drones = useDroneStore.getState().drones;
-      const hasFlightPath = Object.values(drones).some(d => !!d?.flightPath);
-      if (hasFlightPath) console.log("[DronesMaplibre] scheduleRender RAF fired, delay=", Date.now() - scheduleTs, "ms, hasFlightPath=true");
       src.setData(buildDroneGeoJSON(drones));
     });
   }

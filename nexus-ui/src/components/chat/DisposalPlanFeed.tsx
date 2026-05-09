@@ -11,7 +11,7 @@ import { Crosshair, Loader2, Radio, CheckCircle2, Zap } from "lucide-react";
  * 单个方案卡片行：展示方案名称 + P0/P1/P2 优先级徽章 + 描述 + 任务列表 + 执行按钮。
  * priority 由 rankSchemesByRecommendationScore 按 recommendationScore 降序排名赋值。
  */
-function SchemeRow({
+export function SchemeRow({
   scheme,
   disabled,
   executed,
@@ -52,9 +52,9 @@ function SchemeRow({
               P{scheme.priority}
             </span>
           </div>
-          {scheme.description && (
+          {/* {scheme.description && (
             <p className="mt-0.5 line-clamp-2 text-[10px] text-nexus-text-muted">{scheme.description}</p>
-          )}
+          )} */}
           <div className="mt-1 space-y-0.5">{taskLines}</div>
         </div>
         <div className="shrink-0">
@@ -88,16 +88,16 @@ function DisposalCardBlock({ block, onExecute }: { block: DisposalPlanBlock; onE
   return (
     <NxCard padding="sm" className="mb-2 border-sky-500/10">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <div className="flex h-5 w-5 items-center justify-center rounded bg-amber-500/10">
+        {/* <div className="flex h-5 w-5 items-center justify-center rounded bg-amber-500/10">
           <Crosshair size={11} className="text-amber-400" />
         </div>
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-nexus-text-secondary">处置方案</span>
-        <NxBadge variant="default" className="text-[9px]">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-nexus-text-secondary">处置方案</span> */}
+        {/* <NxBadge variant="default" className="text-[9px]">
           {block.source === "ws" ? "实时" : "一键"}
         </NxBadge>
-        <span className="ml-auto font-mono text-[9px] text-nexus-text-muted">{block.taskId}</span>
+        <span className="ml-auto font-mono text-[9px] text-nexus-text-muted">{block.taskId}</span> */}
       </div>
-      <p className="mb-2 text-[10px] text-nexus-text-muted">{block.summary}</p>
+      {/* <p className="mb-2 text-[10px] text-nexus-text-muted">{block.summary}</p> */}
 
       {block.items.map((row) => (
         <div key={row.cardInstanceId} className="mb-2 last:mb-0">
