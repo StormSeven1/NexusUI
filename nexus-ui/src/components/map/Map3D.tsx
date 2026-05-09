@@ -4,23 +4,19 @@ import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { useTrackStore } from "@/stores/track-store";
-import type { Asset, RestrictedZone, Track } from "@/lib/map-entity-model";
+import type { RestrictedZone, Track } from "@/lib/map-entity-model";
 import { mergeZoneFillColor } from "@/components/map/modules/polygon-draw-maplibre";
 import { useZoneStore } from "@/stores/zone-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import type { ZoneData } from "@/stores/zone-store";
-import {
-  getTrackRenderingConfig,
-  laserLabelStyleFromBundle,
-} from "@/lib/map-app-config";
+import { getTrackRenderingConfig } from "@/lib/map-app-config";
+import { installDronesCesium } from "@/components/map/modules/drones-cesium";
+import { installTracksCesium } from "@/components/map/modules/tracks-cesium";
+import { installAssetsCesium } from "@/components/map/modules/assets-cesium";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import { trackMapDrawHistoryTrails } from "@/components/map/modules/tracks-maplibre";
 import {
-  assetMapLabelTextColor,
-  buildMarkerSymbolDataUrl,
-  buildAssetSymbolDataUrl,
-  preloadPublicMapAssetFragments,
   geoCircleCoords,
   geoSectorCoords,
   geoRadarSweepCoords,
@@ -73,21 +69,6 @@ type GroupKey =
   | "airportFov"
   | "droneFov"
   | "zones";
-
-type DroneLabelStyleResolved = ReturnType<typeof laserLabelStyleFromBundle>;
-
-function cesiumFontFromDroneLabelBundle(L: DroneLabelStyleResolved): string {
-  const parts = L.textFont.map((f) => (/\s/.test(f) ? `"${f}"` : f));
-  return `${L.fontSize}px ${parts.join(", ")}, "Noto Sans SC", sans-serif`;
-}
-
-/** 与 2D `text-offset`（em）大致对齐：`verticalOrigin: BOTTOM` 时 y 为负表示整体上移 */
-function cesiumDroneLabelPixelOffset(Cesium: CesiumModule, L: DroneLabelStyleResolved) {
-  const [ox, oy] = L.textOffset;
-  const x = Math.round(L.fontSize * Number(ox) * 0.95);
-  const y = -Math.round(4 + L.fontSize * Math.max(0.25, Number(oy)) * 1.45);
-  return new Cesium.Cartesian2(x, y);
-}
 
 function adaptZones(zones: ZoneData[]): RestrictedZone[] {
   return zones.map((z) => ({
@@ -160,7 +141,18 @@ function syncCesiumZones(
   }
 }
 
-/** 与 Map2D 一致：store 全量画航迹 billboard（最新位置）；折线仅在 `trackMapDrawHistoryTrails` 为真时画；超预算整批不画尾迹线，仅保留最新点实体（不删 store） */
+/** UAV/无人机 track 由 `drones-cesium.ts` 用 GLB 模型 + 视棱锥独立渲染 */
+function isUavTrack(t: Track): boolean {
+  return t.isUav === true;
+}
+
+/**
+ * 三维航迹同步：
+ * - **不画 billboard / label 二维图标**（所有 track 的本体最终都将由独立 3D 模型模块渲染，
+ *   目前仅 UAV 在 drones-cesium 实现，其余 type 暂无模型）
+ * - 仅维护历史轨迹折线（polyline，地理几何不算图标），由 `trackMapDrawHistoryTrails` 控制
+ * - 旧的 billboard entity（如有遗留）会被清理
+ */
 async function syncCesiumTrackBillboards(
   viewer: CesiumViewer,
   Cesium: CesiumModule,
@@ -168,86 +160,21 @@ async function syncCesiumTrackBillboards(
   allTracks: Track[],
   accent: AssetDispositionIconAccent,
 ) {
-  const drawTrails = trackMapDrawHistoryTrails(allTracks);
-  const visibleIds = new Set(allTracks.map((t) => t.id));
-  const fullMap = new Map(allTracks.map((t) => [t.id, t]));
+  /* 清理可能遗留的旧 billboard entity */
+  for (const ent of groups.tracks) viewer.entities.remove(ent);
+  groups.tracks = [];
 
-  for (const ent of groups.trackTrails) {
-    viewer.entities.remove(ent);
-  }
+  /* trail 始终全清重建 */
+  for (const ent of groups.trackTrails) viewer.entities.remove(ent);
   groups.trackTrails = [];
 
-  const kept: CesiumEntity[] = [];
-  for (const ent of groups.tracks) {
-    const tid = ent.properties?.trackId?.getValue() as string | undefined;
-    if (tid && visibleIds.has(tid)) kept.push(ent);
-    else viewer.entities.remove(ent);
-  }
-  groups.tracks = kept;
-
-  const existing = new Set(
-    kept
-      .map((e) => e.properties?.trackId?.getValue() as string | undefined)
-      .filter((x): x is string => typeof x === "string" && x.length > 0),
-  );
+  const drawableTracks = allTracks.filter((t) => !isUavTrack(t));
+  const drawTrails = trackMapDrawHistoryTrails(drawableTracks);
+  if (!drawTrails) return;
 
   const trCfg = getTrackRenderingConfig();
-  for (const track of allTracks) {
-    if (existing.has(track.id)) continue;
-    const ts = trCfg.trackTypeStyles[track.type] ?? trCfg.trackTypeStyles.sea;
-    const friendlyFill = track.disposition === "friendly" ? ts.idColor : undefined;
-    const image = await buildMarkerSymbolDataUrl(
-      track.type,
-      track.disposition,
-      accent,
-      track.isVirtual === true,
-      friendlyFill,
-    );
-    const ent = viewer.entities.add({
-      position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
-      billboard: {
-        image,
-        scale: 0.90,
-        verticalOrigin: Cesium.VerticalOrigin.CENTER,
-        heightReference: Cesium.HeightReference.NONE,
-        rotation: -Cesium.Math.toRadians(track.heading ?? 0),
-        color: Cesium.Color.WHITE,
-      },
-      label: {
-        text: track.name,
-        font: '11px Roboto, "Noto Sans SC", sans-serif',
-        fillColor: Cesium.Color.fromCssColorString(
-          resolveTrackMarkerFill(track.disposition, accent, friendlyFill),
-        ),
-        outlineColor: Cesium.Color.fromCssColorString("#09090b"),
-        outlineWidth: 2,
-        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-        pixelOffset: new Cesium.Cartesian2(0, -26),
-        scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.4),
-        translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 8e5, 0.2),
-      },
-      properties: { trackId: track.id },
-    });
-    groups.tracks.push(ent);
-    existing.add(track.id);
-  }
-
-  for (const ent of groups.tracks) {
-    const tid = ent.properties?.trackId?.getValue() as string;
-    const t = fullMap.get(tid);
-    if (!t) continue;
-    ent.position = new Cesium.ConstantPositionProperty(
-      Cesium.Cartesian3.fromDegrees(t.lng, t.lat, t.altitude || 0),
-    );
-    if (ent.billboard) {
-      ent.billboard.rotation = new Cesium.ConstantProperty(-Cesium.Math.toRadians(t.heading ?? 0));
-    }
-  }
-
   const alt = (z: number | undefined) => (Number.isFinite(z) ? (z as number) : 0);
-  if (!drawTrails) return;
-  for (const t of allTracks) {
+  for (const t of drawableTracks) {
     const trail = t.historyTrail;
     if (!trail || trail.length < 1) continue;
     const ts2 = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
@@ -259,7 +186,9 @@ async function syncCesiumTrackBillboards(
       polyline: {
         positions,
         width: 2,
-        material: Cesium.Color.fromCssColorString(resolveTrackMarkerFill(t.disposition, accent, friendlyFill2)).withAlpha(0.48),
+        material: Cesium.Color.fromCssColorString(
+          resolveTrackMarkerFill(t.disposition, accent, friendlyFill2),
+        ).withAlpha(0.48),
         clampToGround: true,
       },
       properties: { trackTrailFor: t.id },
@@ -319,9 +248,7 @@ export function Map3D() {
         if (destroyed || !containerRef.current) return;
 
         const appCfg = await useAppConfigStore.getState().ensureLoaded();
-        const droneLabelStyle = laserLabelStyleFromBundle(appCfg.drones);
         const assetIconAccent: AssetDispositionIconAccent = appCfg.assetDispositionIconAccent ?? {};
-        await preloadPublicMapAssetFragments();
 
         const baseImagery = createCesiumBaseImageryProvider(Cesium);
 
@@ -424,54 +351,9 @@ export function Map3D() {
         cesiumTrackAccentRef.current = assetIconAccent;
         await syncCesiumTrackBillboards(v, Cesium, groups, useTrackStore.getState().tracks, assetIconAccent);
 
-        /* 4) 资产 billboard（无人机名称样式与 2D 一致：`drones.label` → `laserLabelStyleFromBundle`） */
-        const defaultAssetLabelFont = '10px Roboto, "Noto Sans SC", sans-serif';
-        for (const asset of _assets) {
-          const disp = asset.disposition ?? "friendly";
-          const isDrone = asset.type === "drone";
-          const labelHex = assetMapLabelTextColor(
-            disp,
-            asset.status,
-            assetIconAccent,
-            disp === "friendly" ? asset.labelFontColor : undefined,
-          );
-          const assetImage = await buildAssetSymbolDataUrl(
-            asset.type,
-            asset.status,
-            asset.isVirtual ?? false,
-            disp,
-            assetIconAccent,
-            disp === "friendly" ? asset.friendlyMapColor : undefined,
-          );
-          const ent = v.entities.add({
-            position: Cesium.Cartesian3.fromDegrees(asset.lng, asset.lat, 0),
-            billboard: {
-              image: assetImage,
-              scale: 0.82,
-              verticalOrigin: Cesium.VerticalOrigin.CENTER,
-              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            },
-            label: {
-              text: asset.name,
-              show: asset.nameLabelVisible !== false,
-              font: isDrone ? cesiumFontFromDroneLabelBundle(droneLabelStyle) : defaultAssetLabelFont,
-              fillColor: Cesium.Color.fromCssColorString(labelHex),
-              outlineColor: isDrone
-                ? Cesium.Color.fromCssColorString(droneLabelStyle.haloColor)
-                : Cesium.Color.fromCssColorString("#09090b"),
-              outlineWidth: isDrone ? droneLabelStyle.haloWidth : 2,
-              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-              verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              pixelOffset: isDrone
-                ? cesiumDroneLabelPixelOffset(Cesium, droneLabelStyle)
-                : new Cesium.Cartesian2(0, -22),
-              scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.35),
-              translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 8e5, 0.2),
-            },
-            properties: { assetId: asset.id, assetType: asset.type },
-          });
-          groups.assets.push(ent);
-        }
+        /* 4) 资产 billboard 已彻底取消：
+         *    所有资产最终都由独立 3D 模型模块渲染（drone → drones-cesium；其余 type 待补充）。
+         *    雷达圆/光电扇形等 coverage 几何在第 2 步已绘制，不属于"二维图标"故保留。 */
 
         /* 点击拾取航迹/资产；未命中则关标牌并清空 store 选中与高亮 */
         const handler = new Cesium.ScreenSpaceEventHandler(v.scene.canvas);
@@ -825,6 +707,36 @@ export function Map3D() {
       unsub();
     };
   }, []);
+
+  /** 实时机队（与 2D `drones-maplibre.ts` 同源）：模型 + 视棱锥，封装在 `drones-cesium.ts` */
+  useEffect(
+    () =>
+      installDronesCesium({
+        getViewer: () => viewerRef.current,
+        getCesium: () => cesiumRef.current,
+      }),
+    [],
+  );
+
+  /** 航迹 3D 模型：air→warningPlane.glb, sea→noManBoat.glb，封装在 `tracks-cesium.ts` */
+  useEffect(
+    () =>
+      installTracksCesium({
+        getViewer: () => viewerRef.current,
+        getCesium: () => cesiumRef.current,
+      }),
+    [],
+  );
+
+  /** 资产 3D 模型：radar/camera/tower/tdoa/airport，封装在 `assets-cesium.ts` */
+  useEffect(
+    () =>
+      installAssetsCesium({
+        getViewer: () => viewerRef.current,
+        getCesium: () => cesiumRef.current,
+      }),
+    [],
+  );
 
   /* 同步 drawnAreas */
   useEffect(() => {

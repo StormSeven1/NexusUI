@@ -27,12 +27,13 @@ import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, assetFriendlyColorFromProperties } from "@/lib/map-icons";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
-import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
+import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType } from "@/lib/map-app-config";
 import { useAlertStore } from "@/stores/alert-store";
+import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore, isTrackMatchedByAlarm } from "@/stores/track-store";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 
 export type PlacardKind = "track" | "asset";
@@ -81,7 +82,7 @@ function SectionTitle({ children }: { children: string }) {
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[78px_1fr] gap-x-3 gap-y-1 text-[11px]">
+    <div className="grid grid-cols-[40px_1fr] gap-x-1.5 text-[11px]">
       <div className="text-nexus-text-muted">{k}</div>
       <div className="min-w-0 text-nexus-text-primary">{v}</div>
     </div>
@@ -102,6 +103,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
   const appendDisposalFromHttp = useDisposalPlanStore((s) => s.appendFromNormalized);
   const [oneClickLoading, setOneClickLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   /* 目标丢失时自动关闭属性框 */
   useEffect(() => {
@@ -121,17 +123,6 @@ export function TargetPlacard(props: TargetPlacardProps) {
       .slice(0, 5);
   }, [alerts, track, kind]);
 
-  /** 机场/无人机的 name 在入资产时已解析好，直接用 */
-  const mapDisplayName = useMemo(() => {
-    if (kind === "track") return track?.name ?? id;
-    if (!asset) return id;
-    const t = normalizeAssetType(asset.asset_type);
-    if (t === "camera") return formatCameraTowerMapLabel(asset.id);
-    if (t === "tower") return formatTowerMapLabel(asset.id);
-    return asset.name;
-  }, [kind, track, asset, id]);
-
-  const title = mapDisplayName;
   const subtitle = kind === "track" ? "航迹" : "资产";
 
   const trackSymbolUrl = useMemo(() => {
@@ -213,36 +204,41 @@ export function TargetPlacard(props: TargetPlacardProps) {
   return (
     <div
       className={cn(
-        "pointer-events-auto w-[300px] rounded-xl border border-white/10 bg-[#0c0c0e]/95 p-3 shadow-[0_14px_36px_rgba(0,0,0,0.72)] backdrop-blur-md",
+        "pointer-events-auto w-[200px] rounded-xl border border-white/10 bg-[#0c0c0e]/95 p-2.5 shadow-[0_14px_36px_rgba(0,0,0,0.72)] backdrop-blur-md",
         className,
       )}
       role="dialog"
       aria-label="目标信息"
     >
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2.5">
+      <div className="mb-1.5 flex items-start justify-between gap-1">
+        <div className="flex min-w-0 items-center gap-1.5">
           <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5"
-            style={{ boxShadow: `0 0 0 3px rgba(255,255,255,0.04), 0 0 0 1px ${headerColor}40 inset` }}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/5"
+            style={{ boxShadow: `0 0 0 1px ${headerColor}40 inset` }}
           >
             {symbolUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={symbolUrl} alt="symbol" className="h-7 w-7" />
+              <img src={symbolUrl} alt="symbol" className="h-4 w-4" />
             ) : (
-              <div className="h-7 w-7 rounded-md bg-white/5" />
+              <div className="h-4 w-4 rounded bg-white/5" />
             )}
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="truncate text-xs font-semibold text-nexus-text-primary">
-                {title}
+            {kind === "track" && (
+              <div className="truncate text-[11px] font-bold text-nexus-text-primary">
+                {(() => { const k = track ? resolveAliasKey(track) : null; return k ? useTrackAliasStore.getState().getOrCreate(k) : (track?.showID ?? id); })()}
               </div>
+            )}
+            {kind === "asset" && (
+              <div className="truncate font-mono text-[11px] font-bold text-nexus-text-primary">{id}</div>
+            )}
+            <div className="flex items-center gap-1">
               {kind === "track" && track?.disposition && (
                 <DispositionBadge d={track.disposition} />
               )}
               {kind === "track" && track && (
                 <span className={cn(
-                  "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                  "rounded-full border px-1.5 py-0.5 text-[8px] font-semibold",
                   track.type === "air"
                     ? "border-sky-500/30 bg-sky-500/10 text-sky-400"
                     : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
@@ -251,27 +247,17 @@ export function TargetPlacard(props: TargetPlacardProps) {
                 </span>
               )}
               {kind === "asset" && (
-                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-nexus-text-muted">
+                <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[8px] font-semibold text-nexus-text-muted">
                   {subtitle}
                 </span>
               )}
-            </div>
-            <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
-              {kind === "track" ? (
-                <span>
-                  <span className="text-nexus-text-secondary">showID:</span> {track?.showID ?? id}
-                  {track?.trackId && track.trackId !== track.showID && (
-                    <span className="ml-2"><span className="text-nexus-text-secondary">trackId:</span> {track.trackId}</span>
-                  )}
-                </span>
-              ) : id}
             </div>
           </div>
         </div>
 
         <button
           onClick={onClose}
-          className="shrink-0 rounded-md px-2 py-1 text-xs text-nexus-text-secondary hover:bg-white/5 hover:text-nexus-text-primary"
+          className="shrink-0 rounded px-1 py-0.5 text-[10px] text-nexus-text-secondary hover:bg-white/5 hover:text-nexus-text-primary"
           aria-label="关闭"
           title="关闭"
         >
@@ -281,111 +267,112 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
       {kind === "track" ? (
         <>
-          <SectionTitle>概况</SectionTitle>
-          <div className="mt-1 flex flex-col gap-y-1.5">
-            <Row k="来源" v={track?.sensor ?? "-"} />
-            <Row k="最后更新" v={track?.lastUpdate ?? "-"} />
+          {/* 默认显示：位置、速度、航向 */}
+          <div className="mt-1 flex flex-col gap-y-1">
             <Row k="坐标" v={formatLatLng(track?.lat, track?.lng)} />
-          </div>
-
-          <SectionTitle>运动</SectionTitle>
-          <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1.5">
             <Row k="航速" v={track ? `${track.speed.toFixed(1)} kn` : "-"} />
             <Row k="航向" v={track ? `${track.heading.toFixed(1)}°` : "-"} />
-            <Row k="高度" v={track?.altitude != null ? `${track.altitude.toFixed(1)}` : "-"} />
           </div>
 
-          <SectionTitle>处置</SectionTitle>
-          <div className="mt-1">
+          {/* 一键处置（默认显示） */}
+          <div className="mt-2">
             <button
               type="button"
               disabled={oneClickLoading}
               onClick={() => void handleOneClickDisposal()}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 py-2 text-[11px] font-semibold text-sky-300 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 py-1.5 text-[10px] font-semibold text-sky-300 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {oneClickLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+              {oneClickLoading ? <Loader2 size={11} className="animate-spin" /> : null}
               一键处置
             </button>
-            <p className="mt-1 text-[9px] text-nexus-text-muted">拉取方案并显示在右侧「AI 助手」面板</p>
           </div>
 
-          <SectionTitle>关联告警</SectionTitle>
-          <div className="mt-1 space-y-1.5">
-            {relatedAlerts.length ? (
-              relatedAlerts.map((a) => {
-                const sevColor =
-                  a.severity === "critical"
-                    ? "text-red-400"
-                    : a.severity === "warning"
-                      ? "text-amber-400"
-                      : "text-zinc-400";
-                const sevLabel =
-                  a.severity === "critical"
-                    ? "严重"
-                    : a.severity === "warning"
-                      ? "警告"
-                      : "信息";
-                const sevBorder =
-                  a.severity === "critical"
-                    ? "border-l-2 border-l-red-500/60"
-                    : a.severity === "warning"
-                      ? "border-l-2 border-l-amber-500/60"
-                      : "border-l-2 border-l-zinc-500/40";
-                return (
-                  <div
-                    key={a.id}
-                    className={cn("rounded-lg border border-white/10 bg-white/5 px-2.5 py-2", sevBorder)}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("text-[10px] font-bold", sevColor)}>{sevLabel}</span>
+          {/* 展开/收起 按钮 */}
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 py-0.5 text-[9px] text-nexus-text-secondary hover:bg-white/10 hover:text-nexus-text-primary transition-colors"
+          >
+            {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+            {expanded ? "收起详情" : "展开详情"}
+          </button>
+
+          {expanded && (
+            <>
+              <div className="mt-1 flex flex-col gap-y-1">
+                {track?.showID && <Row k="uniqueID" v={track.showID} />}
+                {track?.trackId && <Row k="trackID" v={track.trackId} />}
+                <Row k="来源" v={track?.sensor ?? "-"} />
+                <Row k="最后更新" v={track?.lastUpdate ?? "-"} />
+                <Row k="高度" v={track?.altitude != null ? `${track.altitude.toFixed(1)}` : "-"} />
+              </div>
+
+              <div className="mt-1 space-y-2">
+                {relatedAlerts.length ? (
+                  relatedAlerts.map((a) => {
+                    const sevColor =
+                      a.severity === "critical"
+                        ? "text-red-400"
+                        : a.severity === "warning"
+                          ? "text-amber-400"
+                          : "text-zinc-400";
+                    const sevLabel =
+                      a.severity === "critical"
+                        ? "严重"
+                        : a.severity === "warning"
+                          ? "警告"
+                          : "";
+                    return (
+                      <div
+                        key={a.id}
+                        className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-1.5 py-1 text-[9px]"
+                      >
+                        {sevLabel && <span className={cn("font-bold", sevColor)}>{sevLabel}</span>}
                         {a.alarmType && (
-                          <span className="rounded bg-white/5 px-1 text-[9px] text-nexus-text-muted">
+                          <span className="text-nexus-text-muted">
                             {a.alarmType === "threat" ? "威胁" : "告警"}
                           </span>
                         )}
                         {a.alarmLevel != null && (
-                          <span className="text-[10px] text-nexus-text-muted">Lv.{a.alarmLevel}</span>
+                          <span className="text-nexus-text-muted">Lv.{a.alarmLevel}</span>
                         )}
+                        {a.areaName && <span className="text-nexus-text-muted truncate">{a.areaName}</span>}
                       </div>
-                      <div className="text-[10px] text-nexus-text-muted">{a.timestamp}</div>
-                    </div>
-                    {/* {a.title && (
-                      <div className="mt-1 text-[11px] font-medium text-nexus-text-primary">{a.title}</div>
-                    )} */}
-                    {/* <div className={cn("text-[11px] text-nexus-text-primary", a.title ? "mt-0.5" : "mt-1")}>
-                      {a.message}
-                    </div> */}
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-nexus-text-muted">
-                      {a.source && <span>来源：{a.source}</span>}
-                      {a.areaName && <span>区域：{a.areaName}</span>}
-                      {a.lat != null && a.lng != null && Number.isFinite(a.lat) && Number.isFinite(a.lng) && (
-                        <span>坐标：{a.lng.toFixed(4)}, {a.lat.toFixed(4)}</span>
-                      )}
-                      {a.type && <span>类型：{a.type}</span>}
-                    </div>
-                    {a.detail && (
-                      <div className="mt-1 text-[10px] leading-relaxed text-nexus-text-muted">{a.detail}</div>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <div className="text-[11px] text-nexus-text-muted">暂无关联告警</div>
-            )}
-          </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-[9px] text-nexus-text-muted">暂无</div>
+                )}
+              </div>
+            </>
+          )}
         </>
       ) : (
         <>
-          <SectionTitle>概况</SectionTitle>
-          <div className="mt-1 space-y-1.5">
-            <Row k="状态" v={asset?.status ?? "-"} />
-            <Row k="类型" v={asset?.asset_type ?? "-"} />
+          {/* 资产默认显示：坐标、状态 */}
+          <div className="mt-1 space-y-1">
             <Row k="坐标" v={formatLatLng(asset?.lat, asset?.lng)} />
-            <Row k="射程" v={asset?.range_km ? `${asset.range_km} km` : "-"} />
-            <Row k="任务状态" v={asset?.mission_status ?? "-"} />
-            <Row k="更新时间" v={asset?.updated_at ?? "-"} />
+            <Row k="状态" v={asset?.status ?? "-"} />
           </div>
+
+          {/* 展开/收起 按钮 */}
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 py-0.5 text-[9px] text-nexus-text-secondary hover:bg-white/10 hover:text-nexus-text-primary transition-colors"
+          >
+            {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+            {expanded ? "收起详情" : "展开详情"}
+          </button>
+
+          {expanded && (
+            <div className="mt-1 space-y-1">
+              <Row k="类型" v={asset?.asset_type ?? "-"} />
+              <Row k="射程" v={asset?.range_km ? `${asset.range_km} km` : "-"} />
+              <Row k="任务状态" v={asset?.mission_status ?? "-"} />
+              <Row k="更新时间" v={asset?.updated_at ?? "-"} />
+            </div>
+          )}
         </>
       )}
     </div>

@@ -134,6 +134,10 @@ interface AppState {
   basemapGroupVisible: boolean;
   /** 各底图矢量子图层显隐，键为 `basemapVectorLayers[].id` */
   basemapVectorVisibility: Record<string, boolean>;
+  /** 瓦片图层显隐，键为 tileLayers[].id */
+  tileLayerVisibility: Record<string, boolean>;
+  /** 地图图层渲染顺序：'vector'|'tile'，靠后 = 地图上层 */
+  mapLayerOrder: ("vector" | "tile")[];
 
   /** 智能体 / 助手消息列表（右侧等消费） */
   agentMessages: AgentMessage[];
@@ -179,6 +183,12 @@ interface AppState {
   toggleBasemapGroupVisible: () => void;
   /** 切换单条底图矢量子图层 */
   toggleBasemapVectorLayer: (layerId: string) => void;
+  /** 切换瓦片图层显隐 */
+  toggleTileLayerVisible: (layerId: string) => void;
+  /** 初始化瓦片图层显隐 */
+  setTileLayerVisibility: (vis: Record<string, boolean>) => void;
+  /** 设置地图图层渲染顺序 */
+  setMapLayerOrder: (order: ("vector" | "tile")[]) => void;
 
   /** 追加一条智能体消息（自动生成 id、时间，最多保留 50 条） */
   addAgentMessage: (message: Omit<AgentMessage, "id" | "timestamp">) => void;
@@ -214,6 +224,8 @@ export const useAppStore = create<AppState>((set) => ({
   basemapVectorLayers: [],
   basemapGroupVisible: true,
   basemapVectorVisibility: {},
+  tileLayerVisibility: {},
+  mapLayerOrder: ["vector", "tile"],
 
   agentMessages: [],
   selectedAgentMessage: null,
@@ -266,6 +278,13 @@ export const useAppStore = create<AppState>((set) => ({
         basemapVectorVisibility: { ...s.basemapVectorVisibility, [layerId]: next },
       };
     }),
+
+  toggleTileLayerVisible: (layerId) =>
+    set((s) => ({
+      tileLayerVisibility: { ...s.tileLayerVisibility, [layerId]: !(s.tileLayerVisibility[layerId] ?? false) },
+    })),
+  setTileLayerVisibility: (vis) => set({ tileLayerVisibility: vis }),
+  setMapLayerOrder: (order) => set({ mapLayerOrder: order }),
 
   addAgentMessage: (message) =>
     set((s) => ({

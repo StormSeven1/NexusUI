@@ -11,11 +11,12 @@ import { useAlertStore, type AlertData } from "@/stores/alert-store";
 import { useTrackStore, getRenderCache } from "@/stores/track-store";
 import { useDisposedStore } from "@/stores/disposed-store";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
+import { useTrackAliasStore } from "@/stores/track-alias-store";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { cn } from "@/lib/utils";
 import { sendDisposalEndRequest } from "@/lib/disposal/disposal-api";
-import { AlertTriangle, AlertCircle, Info, X } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { AlertTriangle, AlertCircle, Info, X, ArrowUpDown } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 const SEVERITY_STYLES = {
@@ -46,6 +47,14 @@ const SEVERITY_STYLES = {
 };
 
 type SeverityKey = keyof typeof SEVERITY_STYLES;
+const SEVERITY_SCORE: Record<SeverityKey, number> = { critical: 3, warning: 2, info: 1 };
+
+type SortMode = "time" | "level" | "severity";
+const SORT_OPTIONS: { id: SortMode; label: string }[] = [
+  { id: "time", label: "时间" },
+  { id: "level", label: "等级" },
+  { id: "severity", label: "严重度" },
+];
 
 /**
  * 告警面板 — 消费 alert-store 的实时数据。
@@ -67,6 +76,7 @@ export function AlertPanel() {
   const shadowTracks = useTrackStore((s) => s.shadowTracks);
   const addDisposedTrack = useDisposedStore((s) => s.addDisposedTrack);
   const cleanupEffectsForMissingTargets = useDisposalPlanStore((s) => s.cleanupEffectsForMissingTargets);
+  const [sortMode, setSortMode] = useState<SortMode>("time");
 
   /** 告警 trackId → 航迹 showID（用于 selectTrack） */
   const resolveShowIdFromAlarmTrackId = useCallback(
@@ -108,17 +118,25 @@ export function AlertPanel() {
     return map;
   }, [alerts, shadowTracks]); // alerts/shadowTracks 变化时重算
 
-  const allAlerts = alerts.map((a: AlertData) => ({
-    ...a,
-    severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
-    imageUrl: a.trackId ? alertImageMap.get(a.trackId) : undefined,
-  }));
+  const allAlerts = useMemo(() => {
+    const mapped = alerts.map((a: AlertData) => ({
+      ...a,
+      severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
+      imageUrl: a.trackId ? alertImageMap.get(a.trackId) : undefined,
+    }));
+    if (sortMode === "level") {
+      mapped.sort((a, b) => (b.alarmLevel ?? 0) - (a.alarmLevel ?? 0));
+    } else if (sortMode === "severity") {
+      mapped.sort((a, b) => SEVERITY_SCORE[b.severity] - SEVERITY_SCORE[a.severity]);
+    }
+    return mapped;
+  }, [alerts, alertImageMap, sortMode]);
 
   const criticalCount = allAlerts.filter((a) => a.severity === "critical").length;
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-white/[0.06] p-3">
+      <div className="space-y-1.5 border-b border-white/[0.06] p-3">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">
             告警中心
@@ -126,6 +144,23 @@ export function AlertPanel() {
           <span className="text-[10px] font-medium text-red-400">
             {criticalCount} 条严重
           </span>
+        </div>
+        <div className="flex items-center gap-1">
+          <ArrowUpDown size={10} className="shrink-0 text-nexus-text-muted" />
+          {SORT_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              onClick={() => setSortMode(opt.id)}
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors",
+                sortMode === opt.id
+                  ? "bg-white/[0.08] text-nexus-text-primary"
+                  : "text-nexus-text-muted hover:text-nexus-text-secondary",
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -149,7 +184,7 @@ export function AlertPanel() {
                 selectTrack(showId);
                 /* 从渲染缓存获取航迹坐标，飞过去 */
                 const t = getRenderCache().get(showId);
-                if (t) requestFlyTo(t.lat, t.lng, 11);
+                if (t) requestFlyTo(t.lat, t.lng, 14);
               }}
             >
               <div className="flex items-start gap-2">
@@ -169,6 +204,11 @@ export function AlertPanel() {
                   {/* <p className="mt-0.5 text-xs leading-relaxed text-nexus-text-primary">
                     {alert.message}
                   </p> */}
+                  {alert.trackId && (
+                    <p className="mt-0.5 text-[12px] font-bold text-nexus-text-primary">
+                      {useTrackAliasStore.getState().getOrCreate(alert.trackId)}
+                    </p>
+                  )}
                   <div className="mt-1 space-y-0.5 text-[10px] text-nexus-text-muted">
                     {alert.trackId && (
                       <div>

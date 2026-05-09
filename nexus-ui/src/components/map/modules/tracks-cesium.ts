@@ -1,0 +1,161 @@
+/**
+ * 三维航迹模型渲染模块。
+ *
+ * 模型映射：
+ *   - air        → warningPlane.glb
+ *   - sea        → noManBoat.glb
+ *   - underwater → noManBoat.glb
+ *
+ * 更新策略：diff，仅对新增 / 移除 / 位置变化的航迹执行 entity 操作
+ */
+
+import { useTrackStore } from "@/stores/track-store";
+import type { Track } from "@/lib/map-entity-model";
+
+type CesiumModule = typeof import("cesium");
+type CesiumViewer = import("cesium").Viewer;
+type CesiumEntity = import("cesium").Entity;
+
+/* ── 模型路径 ── */
+const TRACK_MODEL_URIS: Record<Track["type"], string> = {
+  air: "/3dmodules/warningPlane.glb",
+  sea: "/3dmodules/noManBoat.glb",
+  underwater: "/3dmodules/noManBoat.glb",
+};
+
+const MODEL_SCALE = 50;
+const MODEL_MIN_PIXEL_SIZE = 56;
+const MODEL_MAX_SCALE = 50000;
+
+/** 单条航迹 entity（model + label） */
+interface TrackEntitySet {
+  entity: CesiumEntity;
+}
+
+/** UAV 航迹由 drones-cesium 独立管理，此处跳过 */
+function isUavTrack(t: Track): boolean {
+  return t.isUav === true;
+}
+
+/* ── 创建 / 更新 / 移除 ── */
+
+function createTrackEntity(
+  viewer: CesiumViewer,
+  C: CesiumModule,
+  track: Track,
+): TrackEntitySet {
+  const uri = TRACK_MODEL_URIS[track.type] ?? TRACK_MODEL_URIS.sea;
+  const alt = Number.isFinite(track.altitude) ? (track.altitude as number) : 0;
+  const pos = C.Cartesian3.fromDegrees(track.lng, track.lat, alt);
+  const headingDeg = track.type === "air" ? (track.heading ?? 0) - 90 : (track.heading ?? 0);
+  const hpr = new C.HeadingPitchRoll(C.Math.toRadians(headingDeg), 0, 0);
+  const orientation = C.Transforms.headingPitchRollQuaternion(pos, hpr);
+
+  const entity = viewer.entities.add({
+    position: new C.ConstantPositionProperty(pos),
+    orientation: new C.ConstantProperty(orientation),
+    model: {
+      uri,
+      scale: MODEL_SCALE,
+      minimumPixelSize: MODEL_MIN_PIXEL_SIZE,
+      maximumScale: MODEL_MAX_SCALE,
+      heightReference: C.HeightReference.NONE,
+    },
+    label: {
+      text: track.name || track.showID || "",
+      font: "12px sans-serif",
+      style: C.LabelStyle.FILL_AND_OUTLINE,
+      outlineWidth: 2,
+      verticalOrigin: C.VerticalOrigin.BOTTOM,
+      pixelOffset: new C.Cartesian2(0, -20),
+      scaleByDistance: new C.NearFarScalar(1e4, 1, 5e5, 0.4),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+    properties: { trackId: track.id, kind: "track" },
+  });
+  return { entity };
+}
+
+function updateTrackEntity(C: CesiumModule, set: TrackEntitySet, track: Track): void {
+  const alt = Number.isFinite(track.altitude) ? (track.altitude as number) : 0;
+  const pos = C.Cartesian3.fromDegrees(track.lng, track.lat, alt);
+  const headingDeg = track.type === "air" ? (track.heading ?? 0) - 90 : (track.heading ?? 0);
+  const hpr = new C.HeadingPitchRoll(C.Math.toRadians(headingDeg), 0, 0);
+  const orientation = C.Transforms.headingPitchRollQuaternion(pos, hpr);
+  set.entity.position = new C.ConstantPositionProperty(pos);
+  set.entity.orientation = new C.ConstantProperty(orientation);
+  if (set.entity.label) {
+    set.entity.label.text = new C.ConstantProperty(track.name || track.showID || "");
+  }
+}
+
+function removeTrackEntity(viewer: CesiumViewer, set: TrackEntitySet): void {
+  viewer.entities.remove(set.entity);
+}
+
+/* ── 渲染器类 ── */
+
+export class TracksCesium {
+  private map = new Map<string, TrackEntitySet>();
+  private opts: { getViewer: () => CesiumViewer | null; getCesium: () => CesiumModule | null };
+  private raf: number | null = null;
+  private unsub: (() => void) | null = null;
+
+  constructor(opts: { getViewer: () => CesiumViewer | null; getCesium: () => CesiumModule | null }) {
+    this.opts = opts;
+  }
+
+  install(): void {
+    this.unsub = useTrackStore.subscribe(() => this.scheduleFlush());
+    this.scheduleFlush();
+  }
+
+  uninstall(): void {
+    if (this.raf != null) cancelAnimationFrame(this.raf);
+    this.raf = null;
+    this.unsub?.(); this.unsub = null;
+    const v = this.opts.getViewer();
+    if (v && !v.isDestroyed()) {
+      for (const s of this.map.values()) removeTrackEntity(v, s);
+    }
+    this.map.clear();
+  }
+
+  private scheduleFlush(): void {
+    if (this.raf != null) return;
+    this.raf = requestAnimationFrame(() => this.flush());
+  }
+
+  private flush(): void {
+    this.raf = null;
+    const v = this.opts.getViewer();
+    const C = this.opts.getCesium();
+    if (!v || !C || v.isDestroyed()) return;
+
+    const tracks = useTrackStore.getState().tracks.filter((t) => !isUavTrack(t));
+    const seen = new Set<string>();
+    for (const t of tracks) {
+      seen.add(t.id);
+      const existing = this.map.get(t.id);
+      if (existing) {
+        updateTrackEntity(C, existing, t);
+      } else {
+        this.map.set(t.id, createTrackEntity(v, C, t));
+      }
+    }
+    for (const [id, s] of [...this.map]) {
+      if (seen.has(id)) continue;
+      removeTrackEntity(v, s);
+      this.map.delete(id);
+    }
+  }
+}
+
+export function installTracksCesium(opts: {
+  getViewer: () => CesiumViewer | null;
+  getCesium: () => CesiumModule | null;
+}): () => void {
+  const tracks = new TracksCesium(opts);
+  tracks.install();
+  return () => tracks.uninstall();
+}

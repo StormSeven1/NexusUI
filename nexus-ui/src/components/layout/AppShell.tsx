@@ -7,10 +7,8 @@
 import { TopNav } from "./TopNav";
 import { LeftSidebar } from "./LeftSidebar";
 import { RightSidebar } from "./RightSidebar";
-import { StatusBar } from "./StatusBar";
 import { MapContainer } from "@/components/map/MapContainer";
 import { AgentMessageFloat } from "@/components/AgentMessageFloat";
-import { WorkspaceDetails } from "./WorkspaceDetails";
 import { useUnifiedWsFeed } from "@/hooks/useUnifiedWsFeed";
 
 export function AppShell() {
@@ -26,11 +24,6 @@ export function AppShell() {
 
         {/* 主内容区域 */}
         <div className="relative flex-1 flex flex-col overflow-hidden">
-          {/* 工作区详情 */}
-          <div className="flex-shrink-0">
-            <WorkspaceDetails />
-          </div>
-
           {/* 地图区域 - 默认显示态势地图 */}
           <main className="relative flex-1 overflow-hidden">
             <MapContainer />
@@ -40,7 +33,6 @@ export function AppShell() {
         <RightSidebar />
       </div>
 
-      <StatusBar />
       <AgentMessageFloat />
     </div>
   );

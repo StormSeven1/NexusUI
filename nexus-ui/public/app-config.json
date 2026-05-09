@@ -469,7 +469,6 @@
     ]
   },
 
-
   "airports": {
     "assetFriendlyColor": "#34d399",
     "centerIconVisible": true,
@@ -537,7 +536,7 @@
   },
 
   "tdoa": {
-    "activationEnabled": false,
+    "activationEnabled": true,
     "assetFriendlyColor": "#34d399",
     "defaultSectorRange": 15000,
     "sectorFillDefaultColor": "#fb923c",
@@ -579,7 +578,7 @@
         "virtualTroop": false,
         "disposition": "friendly",
         "centerNameVisible": true,
-        "activationEnabled": false,
+        "activationEnabled": true,
         "scan": {
           "cycleMs": 2000,
           "tickMs": 100,
@@ -715,5 +714,18 @@
 
   "trackIdMode": {
     "distinguishSeaAir": false
-  }
+  },
+
+  "tileLayers": [
+    {
+      "id": "local-raster-tiles",
+      "name": "本地瓦片地图",
+      "url": "https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}",
+      "enabled": false,
+      "minZoom": 0,
+      "maxZoom": 18,
+      "tileSize": 256,
+      "type": "xyz"
+    }
+  ]
 }

@@ -154,6 +154,8 @@ export interface RestrictedZone {
 export type DataLayerPanelRow = { id: string; name: string };
 
 export const LYR_TRACKS = "lyr-tracks";
+export const LYR_TRACKS_AIR = "lyr-tracks-air";
+export const LYR_TRACKS_SEA = "lyr-tracks-sea";
 /** 实时无人机位置与任务航线（`useDroneStore` + `drones-maplibre`） */
 export const LYR_DRONES = "lyr-drones";
 export const LYR_RADAR_COVERAGE = "lyr-radar-coverage";
@@ -170,7 +172,8 @@ export const LYR_MEASURE = "lyr-measure";
 
 /** `useAppStore.layerVisibility` 初始键（图层面板「数据图层」）；缺省在 Map2D 按 `?? true` */
 export const ALL_DATA_LAYER_IDS = [
-  LYR_TRACKS,
+  LYR_TRACKS_AIR,
+  LYR_TRACKS_SEA,
   LYR_DRONES,
   LYR_RADAR_COVERAGE,
   LYR_OPTO_FOV,

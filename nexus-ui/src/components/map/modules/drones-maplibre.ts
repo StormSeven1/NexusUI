@@ -308,7 +308,7 @@ function calculateCameraRange(
   return Math.min(Math.max(distance, 100), maxRangeM);
 }
 
-function latestPayloadForFov(tele: DroneTelemetry): Record<string, unknown> | null {
+export function latestPayloadForFov(tele: DroneTelemetry): Record<string, unknown> | null {
   const cfg = getDroneMapRenderingConfig();
   const now = Date.now();
   if (
@@ -494,7 +494,11 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
 
     if (cfg.showPlannedRoute) {
       const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
-      if (route) features.push(route);
+      if (route) {
+        features.push(route);
+      } else if (tele.flightPath) {
+        console.warn("[DronesMaplibre] flightPath 存在但 waypointsLineString 返回 null, sn=", sn, "flightPath keys=", Object.keys(tele.flightPath));
+      }
     }
     const trail = trailLineString(tele);
     if (trail) features.push(trail);
@@ -922,6 +926,7 @@ export class DronesMaplibre {
   private scheduleRender() {
     if (this.renderScheduled) return;
     this.renderScheduled = true;
+    const scheduleTs = Date.now();
     this.renderRafId = requestAnimationFrame(() => {
       this.renderScheduled = false;
       this.renderRafId = null;
@@ -929,6 +934,8 @@ export class DronesMaplibre {
       if (!m.getSource(DRONES_SOURCE)) return;
       const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource;
       const drones = useDroneStore.getState().drones;
+      const hasFlightPath = Object.values(drones).some(d => !!d?.flightPath);
+      if (hasFlightPath) console.log("[DronesMaplibre] scheduleRender RAF fired, delay=", Date.now() - scheduleTs, "ms, hasFlightPath=true");
       src.setData(buildDroneGeoJSON(drones));
     });
   }

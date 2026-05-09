@@ -5,19 +5,28 @@
  * 【数据流】WS(useUnifiedWsFeed) setTracks `useTrackStore(s => s.tracks)` 列表渲染 */
 
 import { useState, useMemo } from "react";
-import { Search, Star, Filter } from "lucide-react";
+import { Search, Star, Plane, Ship } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
+import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
 import type { ForceDisposition } from "@/lib/theme-colors";
+import type { Track } from "@/lib/map-entity-model";
 
 const DISPOSITION_ORDER: ForceDisposition[] = [
   "hostile",
   "friendly",
   "neutral",
+];
+
+type DomainTab = "all" | "air" | "sea";
+const DOMAIN_TABS: { id: DomainTab; label: string; icon: React.ReactNode }[] = [
+  { id: "all", label: "全部", icon: null },
+  { id: "air", label: "对空", icon: <Plane size={11} /> },
+  { id: "sea", label: "对海", icon: <Ship size={11} /> },
 ];
 
 /** 根据航迹 ID 模式返回列表显示的标识：18.141 显示 trackId，28.9 对空显示 showID，对海显示 trackId */
@@ -29,14 +38,14 @@ function trackDisplayId(track: { showID: string; trackId?: string; type: string 
 
 /**
  * 航向格式化（保留 2 位小数）
- * Heading formatter (keep 2 decimals)
- *
- * @param heading 航向角度（度） heading in degrees
- * @returns 格式化后的字符串；无效值返回 "--" / formatted string; "--" if invalid
  */
 function formatHeading2(heading: unknown): string {
   const n = typeof heading === "number" ? heading : Number(heading);
   return Number.isFinite(n) ? n.toFixed(2) : "--";
+}
+
+function isAirDomain(t: Track): boolean {
+  return t.isAirTrack === true || t.type === "air";
 }
 
 export function TrackListPanel() {
@@ -44,11 +53,10 @@ export function TrackListPanel() {
   const liveTracks = useTrackStore((s) => s.tracks);
   const [search, setSearch] = useState("");
   const [filterStarred, setFilterStarred] = useState(false);
-
-  const allTracks = liveTracks;
+  const [domainTab, setDomainTab] = useState<DomainTab>("all");
 
   const filtered = useMemo(() => {
-    let tracks = allTracks;
+    let tracks = liveTracks;
     if (search) {
       const q = search.toLowerCase();
       tracks = tracks.filter(
@@ -60,8 +68,16 @@ export function TrackListPanel() {
     if (filterStarred) {
       tracks = tracks.filter((t) => t.starred);
     }
+    if (domainTab === "air") {
+      tracks = tracks.filter(isAirDomain);
+    } else if (domainTab === "sea") {
+      tracks = tracks.filter((t) => !isAirDomain(t));
+    }
     return tracks;
-  }, [search, filterStarred, allTracks]);
+  }, [search, filterStarred, liveTracks, domainTab]);
+
+  const airCount = useMemo(() => liveTracks.filter(isAirDomain).length, [liveTracks]);
+  const seaCount = liveTracks.length - airCount;
 
   const grouped = useMemo(() => {
     const groups: Record<string, typeof filtered> = {};
@@ -91,10 +107,29 @@ export function TrackListPanel() {
             >
               <Star size={12} fill={filterStarred ? "currentColor" : "none"} />
             </button>
-            <button className="flex h-6 w-6 items-center justify-center rounded text-nexus-text-muted hover:bg-white/5 hover:text-nexus-text-secondary">
-              <Filter size={12} />
-            </button>
           </div>
+        </div>
+
+        {/* 对空/对海/全部 tab */}
+        <div className="flex items-center gap-1 rounded-md border border-white/[0.06] bg-white/[0.02] p-0.5">
+          {DOMAIN_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setDomainTab(tab.id)}
+              className={cn(
+                "flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors",
+                domainTab === tab.id
+                  ? "bg-white/[0.08] text-nexus-text-primary"
+                  : "text-nexus-text-muted hover:text-nexus-text-secondary"
+              )}
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+              <span className="text-[9px] opacity-60">
+                {tab.id === "all" ? liveTracks.length : tab.id === "air" ? airCount : seaCount}
+              </span>
+            </button>
+          ))}
         </div>
 
         <div className="relative">
@@ -111,7 +146,8 @@ export function TrackListPanel() {
         </div>
 
         <div className="text-[10px] text-nexus-text-muted">
-          {filtered.length} 个目标        </div>
+          {filtered.length} 个目标
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -129,7 +165,7 @@ export function TrackListPanel() {
                 key={track.id}
                 onClick={() => {
                   selectTrack(track.id);
-                  requestFlyTo(track.lat, track.lng, 11);
+                  requestFlyTo(track.lat, track.lng, 14);
                 }}
                 className={cn(
                   "flex w-full items-start gap-2.5 border-b border-nexus-border px-3 py-2.5 text-left transition-colors",
@@ -146,8 +182,8 @@ export function TrackListPanel() {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-1">
-                    <span className="truncate text-xs font-medium text-nexus-text-primary">
-                      {track.name}
+                    <span className="truncate text-xs font-bold text-nexus-text-primary">
+                      {(() => { const k = resolveAliasKey(track); return k ? useTrackAliasStore.getState().getOrCreate(k) : track.name; })()}
                     </span>
                     {track.starred && (
                       <Star

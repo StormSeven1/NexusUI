@@ -46,7 +46,6 @@ export function AgentMessageFloat() {
   const [isHidden, setIsHidden] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const { rightSidebarOpen } = useAppStore();
   const [manualPosition, setManualPosition] = useState<FloatingPosition | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -57,11 +56,10 @@ export function AgentMessageFloat() {
     markAgentMessageAsRead,
     addAgentMessage,
     setSelectedAgentMessage,
+    rightSidebarOpen,
     rightPanelTab,
     setRightPanelTab
   } = useAppStore();
-  const statusBarHeight = 32;
-  const rightSidebarWidth = rightSidebarOpen ? 440 : 48;
 
   // 将 store 的消息转换为适合展示的格式
   const displayMessages = agentMessages.map(msg => ({
@@ -83,10 +81,11 @@ export function AgentMessageFloat() {
     });
   };
 
-  // 拖动功能
+  // 拖动功能（修复拖拽时选中文字问题）
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
       if (headerRef.current && headerRef.current.contains(e.target as Node) && containerRef.current) {
+        e.preventDefault(); // 阻止文字选中
         const { left, top } = containerRef.current.getBoundingClientRect();
         setIsDragging(true);
         setDragOffset({
@@ -98,6 +97,7 @@ export function AgentMessageFloat() {
 
     const handleMouseMove = (e: MouseEvent) => {
       if (isDragging) {
+        e.preventDefault(); // 阻止拖拽时选中文字
         setManualPosition({
           x: e.clientX - dragOffset.x,
           y: e.clientY - dragOffset.y
@@ -176,7 +176,7 @@ export function AgentMessageFloat() {
         style={
           manualPosition
             ? { left: `${manualPosition.x}px`, top: `${manualPosition.y + 252}px` }
-            : { right: `${rightSidebarWidth}px`, bottom: `${statusBarHeight + 252}px` }
+            : { left: '50%', bottom: '252px', transform: 'translateX(-50%)' }
         }
       >
         打开智能体行为
@@ -189,7 +189,7 @@ export function AgentMessageFloat() {
       ref={containerRef}
       className={cn(
         "fixed z-50 flex flex-col transition-all duration-200",
-        isDragging ? "shadow-2xl" : ""
+        isDragging ? "shadow-2xl select-none" : ""
       )}
       style={
         manualPosition
@@ -199,9 +199,9 @@ export function AgentMessageFloat() {
               transform: isDragging ? 'scale(1.02)' : 'none'
             }
           : {
-              right: `${rightSidebarWidth}px`,
-              bottom: `${statusBarHeight}px`,
-              transform: isDragging ? 'scale(1.02)' : 'none'
+              left: '50%',
+              bottom: '12px',
+              transform: isDragging ? 'translateX(-50%) scale(1.02)' : 'translateX(-50%)'
             }
       }
     >

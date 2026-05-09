@@ -8,6 +8,7 @@ import {
   Radio,
   Layers,
   AlertTriangle,
+  PanelLeftClose,
 } from "lucide-react";
 import { TrackListPanel } from "@/components/panels/TrackListPanel";
 import { AssetPanel } from "@/components/panels/AssetPanel";
@@ -37,7 +38,7 @@ export function LeftSidebar() {
   return (
     <aside
       className={cn(
-        "flex h-full shrink-0 border-r border-nexus-border transition-all duration-300",
+        "relative flex h-full shrink-0 overflow-visible border-r border-nexus-border transition-all duration-300",
         leftSidebarOpen ? "w-[300px]" : "w-12"
       )}
       style={{ backgroundColor: leftSidebarOpen ? '#19191D' : '#19191D' }}
@@ -79,6 +80,17 @@ export function LeftSidebar() {
           {leftPanelTab === "layers" && <LayerPanel />}
           {leftPanelTab === "alerts" && <AlertPanel />}
         </div>
+      )}
+
+      {/* 收起按钮：跨在面板右边界上 */}
+      {leftSidebarOpen && (
+        <button
+          onClick={toggleLeftSidebar}
+          className="absolute -right-3 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-[#19191D] text-nexus-text-muted hover:bg-white/10 hover:text-nexus-text-primary transition-colors shadow-md"
+          title="收起面板"
+        >
+          <PanelLeftClose size={13} />
+        </button>
       )}
     </aside>
   );

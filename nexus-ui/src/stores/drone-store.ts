@@ -162,6 +162,15 @@ export interface DroneTelemetry {
   lastHighFreqAcceptedAt: number | null;
 }
 
+/** DockModeCode 枚举（对应 IDL DockModeCode） */
+export const DOCK_MODE_LABELS: Record<number, string> = {
+  0: "空闲中",
+  1: "现场调试",
+  2: "远程调试",
+  3: "固件升级中",
+  4: "作业中",
+};
+
 export interface DockTelemetry {
   /** 机场 SN */
   dockSn: string;
@@ -171,6 +180,10 @@ export interface DockTelemetry {
   updatedAt: string;
   /** 地图显示名（来自 entity_status relationships） */
   displayName: string;
+  /** DockModeCode 枚举值（0-4），null 表示未收到 */
+  modeCode: number | null;
+  /** 无人机电池百分比（0-100），取 batteries[0].capacity_percent */
+  batteryPercent: number | null;
 }
 
 function isoNow() {
@@ -187,6 +200,27 @@ function readLatLng(d: Record<string, unknown>): { lat: number; lng: number } | 
 function readHeading(d: Record<string, unknown>): number | null {
   const h = Number(d.heading ?? d.attitude_head ?? d.course ?? d.yaw);
   return Number.isFinite(h) ? h : null;
+}
+
+/**
+ * 把 status 中的 gimbal_pitch / gimbal_roll / gimbal_yaw 覆盖到 highFreq 对象上：
+ * - status 通常更全（携带云台姿态），highFreq 字段同名但常为 None；
+ * - 三维视棱锥从 latestPayloadForFov（优先 highFreq）取这三个值，故合并后 3D 才能拿到云台姿态；
+ * - status 的相应字段为 null/undefined 时不覆盖（保留 highFreq 原值）。
+ */
+function mergeGimbalIntoHighFreq(
+  highFreq: Record<string, unknown> | null,
+  status: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (!highFreq) return highFreq;
+  const merged: Record<string, unknown> = { ...highFreq };
+  for (const key of ["gimbal_pitch", "gimbal_roll", "gimbal_yaw"]) {
+    const v = status[key];
+    if (v !== null && v !== undefined && Number.isFinite(Number(v))) {
+      merged[key] = v;
+    }
+  }
+  return merged;
 }
 
 export function readVirtualTroop(d: Record<string, unknown>): boolean {
@@ -524,6 +558,8 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
             payload: {},
             updatedAt: isoNow(),
             displayName: name,
+            modeCode: null,
+            batteryPercent: null,
           };
         }
       }
@@ -566,6 +602,10 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
       const base = {
         ...prev,
         status: discardStatus ? prev.status : { ...data },
+        /* status 通常携带 gimbal_pitch / gimbal_roll / gimbal_yaw（云台姿态），
+         * 而 highFreq 同名字段常为 None。把这三个字段从 status 覆盖进 highFreq，
+         * 三维视棱锥（latestPayloadForFov 优先 highFreq）即可拿到最新云台姿态。 */
+        highFreq: mergeGimbalIntoHighFreq(prev.highFreq, data),
         updatedAt: isoNow(),
         statusReceivedAt: ts,
         lastPacketAtMs: ts,
@@ -704,6 +744,10 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
     const s = get();
     if (!(dockSn in s.docks)) return;
     const tss = isoNow();
+    const mc = data.mode_code;
+    const modeCode = typeof mc === "number" && Number.isFinite(mc) ? mc : null;
+    const cp = data.battery_capacity_percent;
+    const batteryPercent = typeof cp === "number" && Number.isFinite(cp) ? cp : null;
     set((s) => {
       const prev = s.docks[dockSn];
       return {
@@ -714,6 +758,8 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
             payload: { ...data },
             updatedAt: tss,
             displayName: prev?.displayName ?? "",
+            modeCode,
+            batteryPercent,
           },
         },
       };

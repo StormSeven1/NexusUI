@@ -17,7 +17,8 @@ import {
   LYR_RADAR_COVERAGE,
   LYR_TDOA,
   LYR_TOWER,
-  LYR_TRACKS,
+  LYR_TRACKS_AIR,
+  LYR_TRACKS_SEA,
   LYR_ZONES,
   type Track,
 } from "@/lib/map-entity-model";
@@ -41,6 +42,7 @@ import {
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { getMaplibreBaseMapOptions } from "@/lib/map-2d-basemap";
 import { parseVectorLayersForPanel } from "@/lib/map-2d-basemap-layer-panel";
+import { getTileLayerConfigs } from "@/lib/map-app-config";
 import {
   mergeLaserDeviceWithAssetWsWhileDisposalFollow,
   mergeTdoaDeviceWithAssetWsWhileDisposalFollow,
@@ -101,6 +103,8 @@ import {
   useMapMeasureUi,
   type Map2DMeasureHandlers,
 } from "@/stores/map-measure-bridge";
+/** 底图天花板：不可见标记图层，所有底图（矢量+瓦片）在其下方，所有数据/资产图层在其上方 */
+const BASEMAP_CEILING = "basemap-ceiling";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 
 /* 2D 地图：航迹 / 资产 / 限制区 + 测量与扇区工具 */
@@ -147,7 +151,6 @@ const ASSET_POINT_PICK_LAYERS = [
  * 新建 3) 时 MapLibre 默认 layer 多为 visible；若当前 `lyr-zones` 为关，需在 `addLayer` 之后补一次 apply，见该 subscribe 末尾。
  */
 const LAYER_MAPPING: Record<string, string[]> = {
-  [LYR_TRACKS]: [TRACK_TRAIL, TRACK_SYMBOL, TRACK_LABEL, HIGHLIGHT_LAYER, LOCK_ON],
   [LYR_DRONES]: [
     DRONES_ROUTE_SOLID,
     DRONES_ROUTE_DASH,
@@ -180,7 +183,11 @@ function layerPanelVisibilitySignature(s: ReturnType<typeof useAppStore.getState
     .map((k) => `${k}:${s.basemapVectorVisibility[k] === false ? "0" : "1"}`)
     .join(",");
   const bl = s.basemapVectorLayers.map((l) => l.id).join(",");
-  return `${s.basemapGroupVisible ? "1" : "0"}|${bl}|${bv}|${lv}`;
+  const tv = Object.keys(s.tileLayerVisibility)
+    .sort()
+    .map((k) => `${k}:${s.tileLayerVisibility[k] ? "1" : "0"}`)
+    .join(",");
+  return `${s.basemapGroupVisible ? "1" : "0"}|${bl}|${bv}|${lv}|${tv}`;
 }
 
 /**
@@ -203,6 +210,43 @@ function applyLayerPanelVisibilityFromStore(
       map.setLayoutProperty(l.id, "visibility", master && per[l.id] !== false ? "visible" : "none");
     } catch { /* 图层尚未就绪，跳过 */ }
   }
+  /* 航迹图层：对空/对海独立显隐，通过 MapLibre filter 实现 */
+  const airVis = s.layerVisibility[LYR_TRACKS_AIR] ?? true;
+  const seaVis = s.layerVisibility[LYR_TRACKS_SEA] ?? true;
+  const trackLayers = [TRACK_TRAIL, TRACK_SYMBOL, TRACK_LABEL, HIGHLIGHT_LAYER, LOCK_ON];
+  if (!airVis && !seaVis) {
+    for (const ml of trackLayers) {
+      try { if (map.getLayer(ml)) map.setLayoutProperty(ml, "visibility", "none"); } catch { /* skip */ }
+    }
+  } else {
+    for (const ml of trackLayers) {
+      try { if (map.getLayer(ml)) map.setLayoutProperty(ml, "visibility", "visible"); } catch { /* skip */ }
+    }
+    /* 只对点类型图层设置 isAirTrack filter，线类型图层(TRACK_TRAIL)不含此属性，但其与航迹点一一对应所以也应用 filter */
+    if (airVis && seaVis) {
+      /* 两者都开——移除额外 filter，显示全部 */
+      for (const ml of [TRACK_SYMBOL, TRACK_LABEL]) {
+        try {
+          if (!map.getLayer(ml)) continue;
+          map.setFilter(ml, ["==", "$type", "Point"]);
+        } catch { /* skip */ }
+      }
+      try { if (map.getLayer(TRACK_TRAIL)) map.setFilter(TRACK_TRAIL, ["==", "$type", "LineString"]); } catch { /* skip */ }
+    } else {
+      const showAir = airVis; // true = 只对空，false = 只对海
+      for (const ml of [TRACK_SYMBOL, TRACK_LABEL]) {
+        try {
+          if (!map.getLayer(ml)) continue;
+          map.setFilter(ml, ["all", ["==", "$type", "Point"], ["==", "isAirTrack", showAir]]);
+        } catch { /* skip */ }
+      }
+      try {
+        if (map.getLayer(TRACK_TRAIL)) {
+          map.setFilter(TRACK_TRAIL, ["all", ["==", "$type", "LineString"], ["==", "isAirTrack", showAir]]);
+        }
+      } catch { /* skip */ }
+    }
+  }
   for (const [lid, mlIds] of Object.entries(LAYER_MAPPING)) {
     const v = s.layerVisibility[lid] ?? true;
     for (const ml of mlIds) {
@@ -211,6 +255,14 @@ function applyLayerPanelVisibilityFromStore(
         map.setLayoutProperty(ml, "visibility", v ? "visible" : "none");
       } catch { /* 图层尚未就绪，跳过 */ }
     }
+  }
+  /* 瓦片图层显隐 */
+  for (const [tid, vis] of Object.entries(s.tileLayerVisibility)) {
+    const lyrId = `tile-lyr-${tid}`;
+    try {
+      if (!map.getLayer(lyrId)) continue;
+      map.setLayoutProperty(lyrId, "visibility", vis ? "visible" : "none");
+    } catch { /* 图层尚未就绪，跳过 */ }
   }
   /* 与 `LAYER_MAPPING["lyr-zones"]` 同值：业务限制区 + 本 store 手绘区一起显隐 */
   const zoneVis = s.layerVisibility[LYR_ZONES] ?? true;
@@ -433,6 +485,44 @@ export function Map2D() {
         });
       } catch (e) {
         console.warn("basemap style parse:", e);
+      }
+
+      /* 加载瓦片图层（XYZ raster），置于矢量底图之上、数据图层之下 */
+      try {
+        const tileCfgs = getTileLayerConfigs();
+        const tileVis: Record<string, boolean> = {};
+        for (const tc of tileCfgs) {
+          if (!tc.url) { tileVis[tc.id] = false; continue; }
+          const srcId = `tile-src-${tc.id}`;
+          const lyrId = `tile-lyr-${tc.id}`;
+          map.addSource(srcId, {
+            type: "raster",
+            tiles: [tc.url],
+            tileSize: tc.tileSize,
+            minzoom: tc.minZoom,
+            maxzoom: tc.maxZoom,
+          });
+          map.addLayer({
+            id: lyrId,
+            type: "raster",
+            source: srcId,
+            layout: { visibility: tc.enabled ? "visible" : "none" },
+            paint: { "raster-opacity": 1 },
+          });
+          tileVis[tc.id] = tc.enabled;
+        }
+        useAppStore.getState().setTileLayerVisibility(tileVis);
+      } catch (e) {
+        console.warn("tile layer init:", e);
+      }
+
+      /* 底图天花板：不可见 background 图层作为分界线，确保瓦片/矢量永远不会覆盖数据图层 */
+      if (!map.getLayer(BASEMAP_CEILING)) {
+        map.addLayer({
+          id: BASEMAP_CEILING,
+          type: "background",
+          paint: { "background-opacity": 0 },
+        });
       }
 
       /* 首帧 idle 后再应用 `layerVisibility` / `basemapVectorVisibility`，减轻 symbol 首帧闪烁 */
@@ -802,6 +892,48 @@ export function Map2D() {
     };
 
     flush();
+    return useAppStore.subscribe(sync);
+  }, []);
+
+  /**
+   * 地图图层顺序：监听 `mapLayerOrder` 变化，调整瓦片 raster 与矢量底图上下关系。
+   * 重要：地图图层（矢量+瓦片）始终低于数据/资产图层，用 HIGHLIGHT_LAYER 作上界。
+   * `mapLayerOrder[0]` = 面板顶部 = 地图上层。
+   */
+  useEffect(() => {
+    let lastOrder = "";
+    const sync = () => {
+      const map = mapRef.current;
+      if (!map) return;
+      const s = useAppStore.getState();
+      const orderSig = s.mapLayerOrder.join(",");
+      if (orderSig === lastOrder) return;
+      lastOrder = orderSig;
+      const tileOnTop = s.mapLayerOrder[0] === "tile";
+      const tileIds = Object.keys(s.tileLayerVisibility).map((id) => `tile-lyr-${id}`);
+      if (tileOnTop) {
+        /* 瓦片在上：移到 BASEMAP_CEILING 之下（矢量之上，数据图层之下） */
+        const anchor = map.getLayer(BASEMAP_CEILING) ? BASEMAP_CEILING : undefined;
+        for (const tid of tileIds) {
+          try {
+            if (!map.getLayer(tid)) continue;
+            map.moveLayer(tid, anchor);
+          } catch { /* skip */ }
+        }
+      } else {
+        /* 矢量在上：将瓦片移到矢量底图最底层之下 */
+        const firstVec = s.basemapVectorLayers.find((l) => map.getLayer(l.id));
+        for (const tid of tileIds) {
+          try {
+            if (!map.getLayer(tid)) continue;
+            if (firstVec) {
+              map.moveLayer(tid, firstVec.id);
+            }
+          } catch { /* skip */ }
+        }
+      }
+    };
+    sync();
     return useAppStore.subscribe(sync);
   }, []);
 

@@ -9,6 +9,7 @@ import {
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
 import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
+import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 
 /** GeoJSON source id：航迹点、折线、高亮环、锁定圈共用 */
 export const TRACK_SOURCE = "tracks-source";
@@ -77,6 +78,7 @@ export function buildTrackGeoJSON(
           geometry: { type: "LineString", coordinates: coords },
           properties: {
             trackId: t.id,
+            isAirTrack: t.isAirTrack ?? false,
             lineColor: resolveTrackMarkerFill(
               t.disposition,
               accent ?? null,
@@ -104,10 +106,11 @@ export function buildTrackGeoJSON(
         isAirTrack: t.isAirTrack ?? false,
         targetType: t.targetType ?? null,
         name: t.name,
-        /** 地图标牌：18.141 模式(distinguishSeaAir=false)显示 trackId；28.9 模式对空显示 showID，对海显示 trackId */
-        mapLabelText: getTrackIdModeConfig().distinguishSeaAir
-          ? (t.type === "air" ? t.showID : (t.trackId ?? t.showID))
-          : (t.trackId ?? t.showID),
+        /** 地图标牌：优先显示别名，无别名时回退到原始模式逻辑 地图标牌：18.141 模式(distinguishSeaAir=false)显示 trackId；28.9 模式对空显示 showID，对海显示 trackId */
+        mapLabelText: (() => { const k = resolveAliasKey(t); return k ? useTrackAliasStore.getState().getAlias(k) : null; })()
+          ?? (getTrackIdModeConfig().distinguishSeaAir
+            ? (t.type === "air" ? t.showID : (t.trackId ?? t.showID))
+            : (t.trackId ?? t.showID)),
         type: t.type,
         disposition: t.disposition,
         speed: t.speed,

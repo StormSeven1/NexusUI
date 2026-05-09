@@ -309,8 +309,6 @@ export function mapRadarRowToAssetData(
     textOffset: [0, 0],
     textFont: ["Open Sans Semibold", "Arial Unicode MS Bold"],
   });
-  const crosshair = parseCrosshair(r.crosshair);
-
   const now = isoNow();
   const props: Record<string, unknown> = {
     config_kind: "radar",
@@ -343,7 +341,7 @@ export function mapRadarRowToAssetData(
     label_block: label,
     distance_label_block: distanceLabel,
     angle_label_block: angleLabel,
-    crosshair_block: crosshair,
+    crosshair_block_raw: r.crosshair ?? null,
     ...(typeof r.assetFriendlyColor === "string" && r.assetFriendlyColor.trim()
       ? { [MAP_FRIENDLY_COLOR_PROP]: r.assetFriendlyColor.trim() }
       : {}),
@@ -550,9 +548,11 @@ export function buildRadarCoverageGeoJSON(
     }
 
     if (crossVis) {
-      const ch = asRecord(p.crosshair_block) ?? {};
-      const chColor = String(ch.color ?? "#FFFFFF");
-      const chOp = Number.isFinite(Number(ch.lineOpacity)) ? Number(ch.lineOpacity) : 0.6;
+      const rootCrosshairRaw = asRecord(defaults.crosshair) ?? {};
+      const deviceCrosshairRaw = asRecord(p.crosshair_block_raw) ?? {};
+      const ch = parseCrosshair({ ...rootCrosshairRaw, ...deviceCrosshairRaw });
+      const chColor = ch.color;
+      const chOp = ch.lineOpacity;
       const north = pointAtBearingMeters(lng, lat, actualMaxM, 0);
       const south = pointAtBearingMeters(lng, lat, actualMaxM, 180);
       const east = pointAtBearingMeters(lng, lat, actualMaxM, 90);
@@ -945,10 +945,10 @@ export class RadarCoverageModule {
       }
     }
 
-    const ch = p0?.crosshair_block as Record<string, unknown> | undefined;
-    const chDash = ch && Array.isArray(ch.lineDash)
-      ? (ch.lineDash as unknown[]).map((x) => Number(x)).filter((n) => Number.isFinite(n))
-      : [4, 4];
+    const rootCh = asRecord(getRadarDefaults().crosshair) ?? {};
+    const deviceCh = asRecord(p0?.crosshair_block_raw) ?? {};
+    const mergedCh = parseCrosshair({ ...rootCh, ...deviceCh });
+    const chDash = mergedCh.lineDash.length >= 2 ? mergedCh.lineDash : [4, 4];
     if (m.getLayer(RADAR_CROSSHAIR) && chDash.length >= 2) {
       m.setPaintProperty(RADAR_CROSSHAIR, "line-dasharray", chDash as [number, number]);
     }

@@ -107,7 +107,7 @@ function wsEntityTypeRaw(r: Record<string, unknown>): string {
   if (stu === "RADAR" || stu === "雷达" || stu.startsWith("RADAR-") || stu.includes("RADAR") || stu.includes("雷达")) return "radar";
   // 相机（光电）：specificType 精确等于 "CAMERA"（注意：不含 TOWER，电侦是独立类型）
   if (
-    stu === "CAMERA" || stu === "OPTOELECTRONIC" || stu === "OPTICAL" ||
+    stu === "CAMERA" || stu === "OPTOELECTRONIC" || stu === "OPTICAL" || stu === "THIRDPARTYCAMERA" ||
     stu === "光电" || stu === "摄像头"
   ) return "camera";
   // 电侦（电子侦察）：与光电（camera）为不同类型，图标使用 电侦.svg
@@ -846,6 +846,49 @@ export function getRadarConfigDefaults(): Record<string, unknown> {
   return resolvedRadarDefaults;
 }
 
+/** 瓦片图层配置（app-config.json → `tileLayers[]`） */
+export interface TileLayerConfig {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  minZoom: number;
+  maxZoom: number;
+  tileSize: number;
+  /** 瓦片类型，默认 xyz */
+  type: "xyz";
+}
+
+let resolvedTileLayers: TileLayerConfig[] = [];
+
+function parseTileLayers(root: Record<string, unknown>): TileLayerConfig[] {
+  const raw = root.tileLayers;
+  if (!Array.isArray(raw)) return [];
+  const out: TileLayerConfig[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const id = String(o.id ?? "").trim();
+    const url = String(o.url ?? "").trim();
+    if (!id) continue;
+    out.push({
+      id,
+      name: String(o.name ?? id),
+      url,
+      enabled: o.enabled === true && url.length > 0,
+      minZoom: Number(o.minZoom ?? 0),
+      maxZoom: Number(o.maxZoom ?? 18),
+      tileSize: Number(o.tileSize ?? 256),
+      type: "xyz",
+    });
+  }
+  return out;
+}
+
+export function getTileLayerConfigs(): TileLayerConfig[] {
+  return resolvedTileLayers;
+}
+
 // ── 新增配置类型与 getter ──
 
 export interface AppConfigWebSocket {
@@ -1375,6 +1418,7 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   applyLabelColorsFromAssetSections(root);
   // 提取 radar 根级默认配置（WS 雷达实体兜底用）
   applyRadarDefaults(root);
+  resolvedTileLayers = parseTileLayers(root);
 
   const laserActivationEnabled = laserWeapons?.activationEnabled === true;
   const tdoaActivationEnabled = tdoaBundle?.activationEnabled === true;
