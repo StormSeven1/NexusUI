@@ -57,6 +57,7 @@ import { findDisposalFollowDevicesToRelease } from "@/lib/disposal/disposal-weap
 import { setLaserActivationEnabled, setTdoaActivationEnabled } from "@/lib/map-app-config";
 import { useAssetStore } from "@/stores/asset-store";
 import { useDroneStore } from "@/stores/drone-store";
+import { useTaskProgressStore } from "@/stores/task-progress-store";
 import { toast } from "sonner";
 
 export type DisposalWsStatus = "idle" | "connecting" | "open" | "error";
@@ -272,6 +273,19 @@ function reconcileDisposalMapEffectsForIncomingPayload(n: NormalizedDisposalPlan
     releaseDisposalAssetBindings(assetId);
   }
 
+  // 方案更新淘汰：被移除的设备对应的任务进展 → 终止
+  if (removedFromLines.length > 0) {
+    const removedSet = new Set(removedFromLines.map((id) => id.toLowerCase()));
+    const progressEntries = useTaskProgressStore.getState().entries;
+    const toTerminate: { blockId: string; schemeId: string }[] = [];
+    for (const e of progressEntries) {
+      if (e.targetId === tid && e.status === "executing" && removedSet.has(e.deviceId.toLowerCase())) {
+        toTerminate.push({ blockId: e.blockId, schemeId: e.schemeId });
+      }
+    }
+    if (toTerminate.length > 0) useTaskProgressStore.getState().terminateEntries(toTerminate);
+  }
+
   const keepLasers = new Set<string>();
   const keepTdoa = new Set<string>();
   for (const item of n.items || []) {
@@ -483,6 +497,19 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
       const tid = String(row?.inputParams?.targetId ?? blockPrimaryTargetId(block) ?? "").trim();
       const execKey = getExecutionTrackingKey(tid, scheme);
       if (execKey) globalExecutedDisposalKeys.add(execKey);
+      // 写入任务进展
+      if (tid) {
+        const progressItems = scheme.tasks
+          .filter((t) => String(t.deviceId ?? "").trim())
+          .map((t) => ({
+            targetId: tid,
+            deviceId: String(t.deviceId).trim(),
+            deviceName: String(t.deviceName || t.deviceId).trim(),
+            schemeId: scheme.schemeId,
+            blockId,
+          }));
+        if (progressItems.length > 0) useTaskProgressStore.getState().addEntries(progressItems);
+      }
     } else {
       toast.error("方案执行失败", { description: result.message ?? "执行失败" });
     }

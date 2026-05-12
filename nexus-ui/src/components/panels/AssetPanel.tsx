@@ -134,12 +134,17 @@ function AirportCard({
   selectedAssetId: string | null;
   onSelectDrone: (d: AssetData) => void;
 }) {
+  const hasDockTelemetry = dock != null && Object.keys(dock.payload).length > 0;
   const modeLabel = dock?.modeCode != null
     ? (DOCK_MODE_LABELS[dock.modeCode] ?? `状态${dock.modeCode}`)
-    : (asset.status === "online" ? "已连接" : "未连接");
+    : hasDockTelemetry
+      ? "已连接"
+      : (asset.status === "online" ? "等待状态" : "未连接");
   const modeColor = dock?.modeCode === 4
     ? "text-amber-400"
-    : asset.status === "online" ? "text-emerald-400" : "text-red-400";
+    : hasDockTelemetry || asset.status === "online"
+      ? (dock?.modeCode != null ? "text-emerald-400" : "text-nexus-text-muted")
+      : "text-red-400";
 
   return (
     <div className={cn(

@@ -203,6 +203,7 @@ export function Map3D() {
   const cesiumRef = useRef<CesiumModule | null>(null);
   const placardEntityRef = useRef<CesiumEntity | null>(null);
   const placardPostRenderCleanupRef = useRef<(() => void) | null>(null);
+  const selectedGlowEntityRef = useRef<CesiumEntity | null>(null);
   const lastFlySeqRef = useRef<number>(-1);
   const highlightEntitiesRef = useRef<CesiumEntity[]>([]);
   const routeEntitiesRef = useRef<Map<string, CesiumEntity>>(new Map());
@@ -327,6 +328,10 @@ export function Map3D() {
               radarSweepRef.current.push(sweepEnt);
             }
           } else {
+            /* camera 的 3D 视场由 assets-cesium 统一绘制（视锥体）；
+             * 这里跳过旧的贴地扇区，避免同一相机出现两套视场。
+             * laser/tdoa 同样只保留 assets-cesium 的 3D 视锥渲染。 */
+            if (asset.type === "camera" || asset.type === "laser" || asset.type === "tdoa") continue;
             const isSector = asset.fovAngle !== undefined && asset.fovAngle < 360 && asset.heading !== undefined;
             const coords = isSector
               ? geoSectorCoords(asset.lng, asset.lat, asset.range, asset.heading!, asset.fovAngle!)
@@ -367,8 +372,19 @@ export function Map3D() {
         handler.setInputAction((movement: PositionedEvent) => {
           const picked = v.scene.pick(movement.position);
           if (Cesium.defined(picked) && picked.id?.properties) {
-            const trackId = picked.id.properties.trackId?.getValue();
-            const assetId = picked.id.properties.assetId?.getValue();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const props = picked.id.properties as any;
+            const trackId = props.trackId?.getValue?.() ?? null;
+            const assetId = props.assetId?.getValue?.() ?? null;
+            const droneSn = props.droneSn?.getValue?.() ?? null;
+            const isCoverage = !!(props._coverage?.getValue?.() || props._radarSweep?.getValue?.());
+
+            // 只允许点“目标本体”：航迹模型 / 资产模型 / 无人机模型。
+            // 覆盖面（雷达圈、FOV、扫描扇）不触发属性卡。
+            if (isCoverage) {
+              clearMapSelection();
+              return;
+            }
             if (trackId) {
               selectAsset(null);
               selectTrack(trackId);
@@ -379,6 +395,24 @@ export function Map3D() {
               selectAsset(assetId);
               placardEntityRef.current = picked.id as CesiumEntity;
               setPlacard((prev) => (prev && prev.kind === "asset" && prev.id === assetId ? prev : { kind: "asset", id: assetId, x: movement.position.x, y: movement.position.y }));
+            } else if (droneSn) {
+              // 无人机模型来自 drones-cesium（properties.droneSn）：
+              // 优先走 asset 卡片；若无同 id 资产，则回退到 track 卡片。
+              const hasAsset = useAssetStore.getState().assets.some((a) => a.id === droneSn);
+              const hasTrack = useTrackStore.getState().tracks.some((t) => t.id === droneSn);
+              if (hasAsset) {
+                selectTrack(null);
+                selectAsset(droneSn);
+                placardEntityRef.current = picked.id as CesiumEntity;
+                setPlacard((prev) => (prev && prev.kind === "asset" && prev.id === droneSn ? prev : { kind: "asset", id: droneSn, x: movement.position.x, y: movement.position.y }));
+              } else if (hasTrack) {
+                selectAsset(null);
+                selectTrack(droneSn);
+                placardEntityRef.current = picked.id as CesiumEntity;
+                setPlacard((prev) => (prev && prev.kind === "track" && prev.id === droneSn ? prev : { kind: "track", id: droneSn, x: movement.position.x, y: movement.position.y }));
+              } else {
+                clearMapSelection();
+              }
             } else {
               clearMapSelection();
             }
@@ -465,6 +499,10 @@ export function Map3D() {
       destroyed = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       if (placardPostRenderCleanupRef.current) placardPostRenderCleanupRef.current();
+      if (selectedGlowEntityRef.current && viewer && !viewer.isDestroyed()) {
+        viewer.entities.remove(selectedGlowEntityRef.current);
+      }
+      selectedGlowEntityRef.current = null;
       if (viewer && !viewer.isDestroyed()) viewer.destroy();
       viewerRef.current = null;
       cesiumRef.current = null;
@@ -501,20 +539,87 @@ export function Map3D() {
       const time = v.clock.currentTime;
       const pos = ent.position?.getValue(time);
       if (!pos) return;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const win = (C.SceneTransforms as any).wgs84ToWindowCoordinates(v.scene, pos);
+      let win: { x: number; y: number } | undefined;
+      try {
+        // 兼容不同 Cesium 版本：优先尝试 SceneTransforms，再回退 scene API。
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const st = (C as any).SceneTransforms;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const sceneAny = v.scene as any;
+        if (st && typeof st.wgs84ToWindowCoordinates === "function") {
+          win = st.wgs84ToWindowCoordinates(v.scene, pos) ?? undefined;
+        } else if (st && typeof st.worldToWindowCoordinates === "function") {
+          win = st.worldToWindowCoordinates(v.scene, pos) ?? undefined;
+        } else if (sceneAny && typeof sceneAny.cartesianToCanvasCoordinates === "function") {
+          win = sceneAny.cartesianToCanvasCoordinates(pos) ?? undefined;
+        } else {
+          return;
+        }
+      } catch {
+        // 投影失败时仅跳过本帧，避免抛错导致 Cesium 停止渲染。
+        return;
+      }
       if (!win) return;
       setPlacard((p) => (p ? { ...p, x: win.x, y: win.y } : p));
     };
 
+    if (!v.scene) return;
     v.scene.postRender.addEventListener(onPostRender);
     placardPostRenderCleanupRef.current = () => {
+      if (!v || v.isDestroyed() || !v.scene) return;
       v.scene.postRender.removeEventListener(onPostRender);
     };
 
     return () => {
       if (placardPostRenderCleanupRef.current) placardPostRenderCleanupRef.current();
       placardPostRenderCleanupRef.current = null;
+    };
+  }, [placard]);
+
+  /**
+   * 选中目标高亮：用发光球包裹目标（随实体位置实时跟随）。
+   */
+  useEffect(() => {
+    const v = viewerRef.current;
+    const C = cesiumRef.current;
+    if (!v || !C || v.isDestroyed()) return;
+
+    if (selectedGlowEntityRef.current) {
+      v.entities.remove(selectedGlowEntityRef.current);
+      selectedGlowEntityRef.current = null;
+    }
+    if (!placard || !placardEntityRef.current) return;
+
+    const targetEntity = placardEntityRef.current;
+    const fillColor = placard.kind === "track"
+      ? C.Color.fromCssColorString("#ffd43b").withAlpha(0.18)
+      : C.Color.fromCssColorString("#67e8f9").withAlpha(0.18);
+    const edgeColor = placard.kind === "track"
+      ? C.Color.fromCssColorString("#ffe66d").withAlpha(0.9)
+      : C.Color.fromCssColorString("#a5f3fc").withAlpha(0.9);
+
+    selectedGlowEntityRef.current = v.entities.add({
+      position: new C.CallbackProperty(() => {
+        const p = targetEntity.position;
+        if (!p) return undefined;
+        return p.getValue(v.clock.currentTime);
+      }, false),
+      ellipsoid: {
+        radii: new C.ConstantProperty(new C.Cartesian3(20, 20, 20)),
+        material: fillColor,
+        outline: true,
+        outlineColor: edgeColor,
+        outlineWidth: 2,
+      },
+      properties: { _selectedGlow: true },
+    });
+
+    return () => {
+      if (!v || v.isDestroyed()) return;
+      if (selectedGlowEntityRef.current) {
+        v.entities.remove(selectedGlowEntityRef.current);
+        selectedGlowEntityRef.current = null;
+      }
     };
   }, [placard]);
 
@@ -553,6 +658,9 @@ export function Map3D() {
 
       const ids = new Set(state.highlightedTrackIds);
       if (ids.size === 0) return;
+      // 点击选中单目标时，app-store 会把 highlightedTrackIds 设为 [selectedTrackId]。
+      // 这里不再为“仅选中”画范围圆，避免用户误以为是目标附加覆盖范围。
+      if (state.selectedTrackId && ids.size === 1 && ids.has(state.selectedTrackId)) return;
 
       const trackList = useTrackStore.getState().tracks;
       for (const track of trackList) {

@@ -96,6 +96,7 @@ import {
   DRONES_TRAIL_DASH,
   DRONES_SYMBOL_LAYER,
   DRONES_LABEL_LAYER,
+  DRONES_BATTERY_LAYER,
 } from "@/components/map/modules/drones-maplibre";
 import type { PolygonDrawCompletePayload } from "@/components/map/modules/polygon-draw-maplibre";
 import {
@@ -159,6 +160,7 @@ const LAYER_MAPPING: Record<string, string[]> = {
     DRONES_FOV_LAYER,
     DRONES_SYMBOL_LAYER,
     DRONES_LABEL_LAYER,
+    DRONES_BATTERY_LAYER,
     DRONES_STATIC_SYMBOL_LAYER,
     DRONES_STATIC_LABEL_LAYER,
   ],

@@ -1,5 +1,27 @@
 /**
  * 右侧 AI 对话：DefaultChatTransport 走 `api` → `src/app/api/chat/route.ts`
+ * 
+ * ① 用户在输入框打字、按回车
+   ↓
+② ChatInput.tsx        →  调用 onSend(text) 回调
+   ↓
+③ ChatPanel.tsx        →  handleSend → sendMessage (ai-sdk 的 useChat hook)
+   ↓                      useChat 内部自动 POST 到 transport 指定的地址
+④ route.ts             →  /api/chat/route.ts（Next.js 服务端）
+   ↓                      收到请求后，转发给 Python 后端
+⑤ FastAPI 后端          →  http://localhost:8001/api/chat
+   ↓                      大模型推理 + 工具调用，通过 SSE 逐条推事件回来
+④ route.ts             ←  读 SSE 流，逐条翻译成 AI SDK 格式（UIMessageStream）
+   ↓                      翻译后的流返回给浏览器
+③ ChatPanel.tsx        ←  useChat hook 自动把流拼成 messages 数组
+   ↓
+⑥ ChatMessageList.tsx  →  拿 messages 渲染气泡（文本、思考过程、工具卡片）
+   ↓
+⑦ ChatPanel.tsx        →  useEffect 检测 messages 里有没有已完成的工具
+   ↓                      extractCompletedTools → 提取 output.action
+⑧ chat-tool-bridge.ts  →  applyToolSideEffect(action, output)
+   ↓                      查表执行：飞地图 / 选航迹 / 画线 / 高亮...
+⑨ app-store.ts         →  实际改地图状态（requestFlyTo 等）
  */
 
 "use client";
@@ -46,8 +68,17 @@ function extractCompletedTools(messages: UIMessage[]) {
   return results;
 }
 
+/** 生成唯一 thread_id，格式：session_YYYYMMDD_随机串 */
+function generateThreadId(): string {
+  const d = new Date();
+  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `session_${date}_${rand}`;
+}
+
 export function ChatPanel() {
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [threadId, setThreadId] = useState(generateThreadId);
   const [refreshKey, setRefreshKey] = useState(0);
   const processedToolIds = useRef(new Set<string>());
   const { selectedAgentMessage, setSelectedAgentMessage } = useAppStore();
@@ -99,6 +130,7 @@ export function ChatPanel() {
             ...request.body,
             messages: request.messages,
             conversationId: conversationId,
+            threadId: threadId,
             situationalContext: {
               selectedTrackId: state.selectedTrackId,
               mapCenter: state.mapCenter ?? null,
@@ -115,13 +147,47 @@ export function ChatPanel() {
         };
       },
     }),
-    [conversationId]
+    [conversationId, threadId]
   );
+
+  /** 确保 conversationId 存在，不存在则自动创建 */
+  const ensureConversation = useCallback(async (firstMsg?: string) => {
+    if (conversationId) return conversationId;
+    try {
+      const res = await fetch("/api/backend/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: firstMsg?.slice(0, 40) || "新对话" }),
+      });
+      if (res.ok) {
+        const conv = await res.json();
+        setConversationId(conv.id);
+        return conv.id as string;
+      }
+    } catch { /* 后端未启动 */ }
+    return null;
+  }, [conversationId]);
+
+  /** 将消息保存到后端会话存储（fire-and-forget） */
+  const persistMessage = useCallback((cid: string | null, role: string, content: string) => {
+    if (!cid || !content) return;
+    fetch(`/api/backend/conversations/${cid}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role, content }),
+    }).catch(() => {});
+  }, []);
 
   const { messages, setMessages, sendMessage, stop, status, error } = useChat({
     transport,
     onError: (err) => console.error("[NexusChat]", err),
-    onFinish: () => {
+    onFinish: ({ message: finishedMsg }) => {
+      // 保存助手回复到会话存储
+      const text = (finishedMsg.parts ?? [])
+        .filter((p) => p.type === "text")
+        .map((p) => (p as { type: "text"; text: string }).text)
+        .join("");
+      persistMessage(conversationId, "assistant", text);
       setRefreshKey((k) => k + 1);
     },
   });
@@ -138,7 +204,11 @@ export function ChatPanel() {
   }, [messages]);
 
   const handleSend = useCallback(
-    (text: string, files?: FileUIPart[]) => {
+    async (text: string, files?: FileUIPart[]) => {
+      // 自动创建会话 + 保存用户消息
+      const cid = await ensureConversation(text);
+      persistMessage(cid, "user", text);
+
       const parts: UIMessage["parts"] = [];
       if (files) {
         for (const f of files) parts.push(f);
@@ -146,21 +216,25 @@ export function ChatPanel() {
       parts.push({ type: "text", text });
       sendMessage({ role: "user", parts });
     },
-    [sendMessage]
+    [sendMessage, ensureConversation, persistMessage]
   );
 
   const handleSendHint = useCallback(
-    (text: string) => {
+    async (text: string) => {
+      const cid = await ensureConversation(text);
+      persistMessage(cid, "user", text);
       sendMessage({ role: "user", parts: [{ type: "text", text }] });
     },
-    [sendMessage]
+    [sendMessage, ensureConversation, persistMessage]
   );
 
   // 新会话
   const handleNewChat = useCallback(() => {
     setConversationId(null);
+    setThreadId(generateThreadId());
     setMessages([]);
     processedToolIds.current.clear();
+    useDisposalPlanStore.getState().clearBlocks();
   }, [setMessages]);
 
   const handleSelectConversation = useCallback(

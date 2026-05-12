@@ -241,7 +241,7 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
       </div>
 
       {/* 消息体 */}
-      <div className={cn("min-w-0 flex-1 space-y-1", isUser && "text-right")}>
+      <div className={cn("min-w-0 max-w-[80%] space-y-1", isUser && "text-right")}>
         <span className="text-[10px] font-medium text-nexus-text-muted">
           {isUser ? "操作员" : "Nexus AI"}
         </span>

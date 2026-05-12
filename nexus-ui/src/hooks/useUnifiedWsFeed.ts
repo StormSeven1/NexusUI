@@ -194,6 +194,20 @@ function rebuildAndCommitAssetSnapshot() {
   useAssetStore.getState().setAssets(filterAssetsForDisplay(mergedAll));
 }
 
+/** 把 `position.altitude` 规范写入 properties.altitude（供 3D 模型基座高度使用） */
+function withNormalizedAltitude(
+  props: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null | undefined {
+  if (!props || typeof props !== "object") return props;
+  const next = { ...props } as Record<string, unknown>;
+  const pos = next.position as Record<string, unknown> | undefined;
+  if (next.altitude == null || !Number.isFinite(Number(next.altitude))) {
+    const posAlt = Number(pos?.altitude ?? pos?.alt);
+    if (Number.isFinite(posAlt)) next.altitude = posAlt;
+  }
+  return next;
+}
+
 /** WS 列表级合并：新帧字段缺失/无效时，保留上一帧同 id 的数值字段，避免被 null 覆盖 */
 function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows: AssetData[]): AssetData[] {
   if (prevRows.length === 0) return incomingRows;
@@ -201,8 +215,21 @@ function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows:
   return incomingRows.map((row) => {
     const prev = prevById.get(row.id);
     if (!prev) return row;
+    const prevProps =
+      prev.properties && typeof prev.properties === "object"
+        ? (prev.properties as Record<string, unknown>)
+        : null;
+    const rowProps =
+      row.properties && typeof row.properties === "object"
+        ? (row.properties as Record<string, unknown>)
+        : null;
+    const mergedProps = withNormalizedAltitude({
+      ...(prevProps ?? {}),
+      ...(rowProps ?? {}),
+    });
     return {
       ...row,
+      ...(mergedProps ? { properties: mergedProps } : {}),
       heading:
         row.heading != null && Number.isFinite(Number(row.heading))
           ? Number(row.heading)
@@ -775,6 +802,7 @@ function dispatchWsMessage(raw: string) {
         if (d) {
           const entityId = String(d.entityId ?? "");
           if (entityId) {
+            // console.log("camera:",d)
             const atType = normalizeAssetType(String(d.asset_type ?? d.type ?? "camera"));
             if (!shouldDisplayAssetId(atType, entityId)) break;
             const originPtz = d.originPtz as Record<string, unknown> | undefined;
@@ -797,6 +825,13 @@ function dispatchWsMessage(raw: string) {
               config_kind: "camera",
               ...(typeof d.properties === "object" && d.properties ? (d.properties as Record<string, unknown>) : {}),
             };
+            if (d.ptz && typeof d.ptz === "object") baseProps.ptz = d.ptz as Record<string, unknown>;
+            if (d.originPtz && typeof d.originPtz === "object") baseProps.originPtz = d.originPtz as Record<string, unknown>;
+            if (d.fov && typeof d.fov === "object") baseProps.fov = d.fov as Record<string, unknown>;
+            if (d.position && typeof d.position === "object") baseProps.position = d.position as Record<string, unknown>;
+            const posObj = d.position as Record<string, unknown> | undefined;
+            const posAlt = Number(posObj?.altitude ?? posObj?.alt ?? d.altitude ?? d.alt);
+            if (Number.isFinite(posAlt)) baseProps.altitude = posAlt;
             if (d.taskType != null) baseProps.taskType = d.taskType;
             if (d.executionState != null) baseProps.executionState = d.executionState;
             if (d.online !== undefined) baseProps.online = d.online;
@@ -869,6 +904,7 @@ function dispatchWsMessage(raw: string) {
       case "dockstatus":
       case "dock_status": {
         const d = msg.data as Record<string, unknown> | undefined;
+        // console.log("dockstatus:",d)
         if (!d || d.latitude == null || d.longitude == null) break;
         const dockSn = String(d.dock_sn ?? d.sn ?? "").trim();
         if (!dockSn) break;

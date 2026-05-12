@@ -2,7 +2,7 @@
  * 三维航迹模型渲染模块。
  *
  * 模型映射：
- *   - air        → warningPlane.glb
+ *   - air        → MQ-9.glb
  *   - sea        → noManBoat.glb
  *   - underwater → noManBoat.glb
  *
@@ -10,6 +10,7 @@
  */
 
 import { useTrackStore } from "@/stores/track-store";
+import { resolveAliasKey, useTrackAliasStore } from "@/stores/track-alias-store";
 import type { Track } from "@/lib/map-entity-model";
 
 type CesiumModule = typeof import("cesium");
@@ -18,14 +19,14 @@ type CesiumEntity = import("cesium").Entity;
 
 /* ── 模型路径 ── */
 const TRACK_MODEL_URIS: Record<Track["type"], string> = {
-  air: "/3dmodules/warningPlane.glb",
+  air: "/3dmodules/MQ-9.glb",
   sea: "/3dmodules/noManBoat.glb",
   underwater: "/3dmodules/noManBoat.glb",
 };
 
-const MODEL_SCALE = 50;
-const MODEL_MIN_PIXEL_SIZE = 56;
-const MODEL_MAX_SCALE = 50000;
+const MODEL_SCALE = 8;
+const MODEL_MIN_PIXEL_SIZE = 32;
+const MODEL_MAX_SCALE = 8000;
 
 /** 单条航迹 entity（model + label） */
 interface TrackEntitySet {
@@ -35,6 +36,16 @@ interface TrackEntitySet {
 /** UAV 航迹由 drones-cesium 独立管理，此处跳过 */
 function isUavTrack(t: Track): boolean {
   return t.isUav === true;
+}
+
+/** 三维标签文本：优先别名，无别名时回退原名称/ID。 */
+function getTrackLabelText(track: Track): string {
+  const aliasKey = resolveAliasKey(track);
+  if (aliasKey) {
+    const alias = useTrackAliasStore.getState().getOrCreate(aliasKey);
+    if (alias) return alias;
+  }
+  return track.name || track.showID || "";
 }
 
 /* ── 创建 / 更新 / 移除 ── */
@@ -62,7 +73,7 @@ function createTrackEntity(
       heightReference: C.HeightReference.NONE,
     },
     label: {
-      text: track.name || track.showID || "",
+      text: getTrackLabelText(track),
       font: "12px sans-serif",
       style: C.LabelStyle.FILL_AND_OUTLINE,
       outlineWidth: 2,
@@ -85,7 +96,7 @@ function updateTrackEntity(C: CesiumModule, set: TrackEntitySet, track: Track): 
   set.entity.position = new C.ConstantPositionProperty(pos);
   set.entity.orientation = new C.ConstantProperty(orientation);
   if (set.entity.label) {
-    set.entity.label.text = new C.ConstantProperty(track.name || track.showID || "");
+    set.entity.label.text = new C.ConstantProperty(getTrackLabelText(track));
   }
 }
 
@@ -99,21 +110,24 @@ export class TracksCesium {
   private map = new Map<string, TrackEntitySet>();
   private opts: { getViewer: () => CesiumViewer | null; getCesium: () => CesiumModule | null };
   private raf: number | null = null;
-  private unsub: (() => void) | null = null;
+  private unsubTrack: (() => void) | null = null;
+  private unsubAlias: (() => void) | null = null;
 
   constructor(opts: { getViewer: () => CesiumViewer | null; getCesium: () => CesiumModule | null }) {
     this.opts = opts;
   }
 
   install(): void {
-    this.unsub = useTrackStore.subscribe(() => this.scheduleFlush());
+    this.unsubTrack = useTrackStore.subscribe(() => this.scheduleFlush());
+    this.unsubAlias = useTrackAliasStore.subscribe(() => this.scheduleFlush());
     this.scheduleFlush();
   }
 
   uninstall(): void {
     if (this.raf != null) cancelAnimationFrame(this.raf);
     this.raf = null;
-    this.unsub?.(); this.unsub = null;
+    this.unsubTrack?.(); this.unsubTrack = null;
+    this.unsubAlias?.(); this.unsubAlias = null;
     const v = this.opts.getViewer();
     if (v && !v.isDestroyed()) {
       for (const s of this.map.values()) removeTrackEntity(v, s);
@@ -132,7 +146,7 @@ export class TracksCesium {
     const C = this.opts.getCesium();
     if (!v || !C || v.isDestroyed()) return;
 
-    const tracks = useTrackStore.getState().tracks.filter((t) => !isUavTrack(t));
+    const tracks: Track[] = useTrackStore.getState().tracks.filter((t: Track) => !isUavTrack(t));
     const seen = new Set<string>();
     for (const t of tracks) {
       seen.add(t.id);

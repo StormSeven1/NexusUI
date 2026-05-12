@@ -60,6 +60,7 @@ import {
   laserLabelStyleFromBundle,
   type AppConfigSectorBundle,
 } from "@/lib/map-app-config";
+import { HIDE_RENDER_DRONE_SNS } from "@/lib/map-display-filters";
 import type { DroneTelemetry } from "@/stores/drone-store";
 import { useDroneStore } from "@/stores/drone-store";
 import { useAssetStore } from "@/stores/asset-store";
@@ -172,6 +173,7 @@ export const DRONES_LABEL_LAYER = "nexus-drones-label";
 export const DRONES_ROUTE_END_SOURCE = "nexus-drones-route-end-src";
 export const DRONES_ROUTE_END_INNER = "nexus-drones-route-end-inner";
 export const DRONES_ROUTE_END_OUTER = "nexus-drones-route-end-outer";
+export const DRONES_BATTERY_LAYER = "nexus-drones-battery";
 /** 配置 / 资产 store 中的静态 `asset_type: drone` 站址（图标 + 名称），与实时机队 `DRONES_SOURCE` 分离 */
 export const DRONES_STATIC_SOURCE = "nexus-drones-static-sites";
 export const DRONES_STATIC_SYMBOL_LAYER = "nexus-drones-static-symbol";
@@ -233,6 +235,7 @@ export function buildStaticDroneSitesGeoJSON(
   const features: GeoJSON.Feature[] = [];
   for (const a of assetList) {
     if (a.type !== "drone") continue;
+    if (HIDE_RENDER_DRONE_SNS.has(a.id)) continue;
     if (a.centerIconVisible === false) continue;
     // 有实时遥测数据的无人机由实时层渲染，跳过静态图标
     const live = liveDrones[a.id];
@@ -256,6 +259,7 @@ export function buildStaticDroneSitesGeoJSON(
   }
   for (const a of assetList) {
     if (a.type !== "drone") continue;
+    if (HIDE_RENDER_DRONE_SNS.has(a.id)) continue;
     if (a.nameLabelVisible === false || !String(a.name ?? "").trim()) continue;
     // 有实时遥测数据的无人机由实时层渲染标签，跳过静态标签
     const liveLbl = liveDrones[a.id];
@@ -482,12 +486,50 @@ export function mergedDronePose(t: DroneTelemetry): {
   return null;
 }
 
+/** 生成电量进度条图片数据。percent: 0-100，返回 { width, height, data } 供 addImage */
+function generateBatteryBarImage(percent: number): { width: number; height: number; data: Uint8Array } {
+  const w = 40, h = 6;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  // 背景
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(0, 0, w, h);
+  // 边框
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(0.25, 0.25, w - 0.5, h - 0.5);
+  // 填充
+  const fillW = Math.round((Math.max(0, Math.min(100, percent)) / 100) * (w - 2));
+  if (fillW > 0) {
+    ctx.fillStyle = percent > 50 ? "#22c55e" : percent > 20 ? "#eab308" : "#ef4444";
+    ctx.fillRect(1, 1, fillW, h - 2);
+  }
+  const imgData = ctx.getImageData(0, 0, w, h);
+  return { width: w, height: h, data: new Uint8Array(imgData.data.buffer) };
+}
+
+/** 是否已注册过电量条图片 */
+let _batteryImagesRegistered = false;
+
+function registerBatteryBarImages(map: maplibregl.Map) {
+  if (_batteryImagesRegistered) return;
+  _batteryImagesRegistered = true;
+  for (let p = 0; p <= 100; p += 5) {
+    const id = `battery-bar-${p}`;
+    if (!map.hasImage(id)) {
+      map.addImage(id, generateBatteryBarImage(p));
+    }
+  }
+}
+
 function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.FeatureCollection {
   const cfg = getDroneMapRenderingConfig();
   const features: GeoJSON.Feature[] = [];
-  const droneCount = Object.keys(drones).length;
-  let renderedCount = 0;
-  for (const [sn, tele] of Object.entries(drones)) {
+  const storeState = useDroneStore.getState();
+  for (const [, tele] of Object.entries(drones)) {
+    if (HIDE_RENDER_DRONE_SNS.has(tele.sn)) continue;
     /* 航线不依赖无人机自身坐标，先于 pose 检查渲染，避免 drone_status 未到时航线迟迟不画 */
     if (cfg.showPlannedRoute) {
       const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
@@ -498,7 +540,6 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
 
     const pose = mergedDronePose(tele);
     if (!pose) continue;
-    renderedCount++;
     const trail = trailLineString(tele);
     if (trail) features.push(trail);
 
@@ -532,9 +573,19 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
         geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
       });
     }
-  }
-  if (droneCount > 0) {
-    // drone rendering summary
+
+    // 电量进度条
+    const dockSn = storeState.droneToAirport[tele.sn];
+    const dock = dockSn ? storeState.docks[dockSn] : null;
+    const bp = dock?.batteryPercent;
+    if (typeof bp === "number" && Number.isFinite(bp)) {
+      const step = Math.round(Math.max(0, Math.min(100, bp)) / 5) * 5;
+      features.push({
+        type: "Feature",
+        properties: { kind: "battery", batteryStep: step },
+        geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
+      });
+    }
   }
   return { type: "FeatureCollection", features };
 }
@@ -811,6 +862,28 @@ export class DronesMaplibre {
       );
     }
 
+    // 电量进度条
+    registerBatteryBarImages(m);
+    if (!m.getLayer(DRONES_BATTERY_LAYER)) {
+      m.addLayer(
+        {
+          id: DRONES_BATTERY_LAYER,
+          type: "symbol",
+          source: DRONES_SOURCE,
+          filter: ["==", ["get", "kind"], "battery"],
+          layout: {
+            "icon-image": ["concat", "battery-bar-", ["to-string", ["get", "batteryStep"]]],
+            "icon-offset": [0, -22],
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+            "icon-pitch-alignment": "viewport",
+            "icon-rotation-alignment": "viewport",
+          },
+        },
+        b,
+      );
+    }
+
     this.applyPaintFromConfig();
     this.refreshFromStore();
     this.unsub = useDroneStore.subscribe(() => {
@@ -872,6 +945,7 @@ export class DronesMaplibre {
       const cfg = getDroneMapRenderingConfig();
       const features: GeoJSON.Feature[] = [];
       for (const sn of Object.keys(drones)) {
+        if (HIDE_RENDER_DRONE_SNS.has(sn)) continue;
         const tele = drones[sn];
         if (!tele?.flightPath) continue;
         const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
@@ -998,6 +1072,7 @@ export class DronesMaplibre {
     this.unsub = null;
     const m = this.map;
     for (const id of [
+      DRONES_BATTERY_LAYER,
       DRONES_LABEL_LAYER,
       DRONES_SYMBOL_LAYER,
       DRONES_ROUTE_END_OUTER,

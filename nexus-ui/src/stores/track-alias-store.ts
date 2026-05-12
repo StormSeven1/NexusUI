@@ -28,10 +28,15 @@ export const useTrackAliasStore = create<TrackAliasState>((set, get) => ({
   getOrCreate: (trackId) => {
     const s = get();
     if (s.aliases[trackId]) return s.aliases[trackId];
-    const next = s._counter + 1;
-    const alias = `目标-${next}`;
-    set({ aliases: { ...s.aliases, [trackId]: alias }, _counter: next });
-    return alias;
+    // 延迟写入，避免在 React 渲染期间触发 setState
+    queueMicrotask(() => {
+      const cur = get();
+      if (cur.aliases[trackId]) return;
+      const next = cur._counter + 1;
+      const alias = `目标-${next}`;
+      set({ aliases: { ...cur.aliases, [trackId]: alias }, _counter: next });
+    });
+    return `目标-${s._counter + 1}`;
   },
 
   getAlias: (trackId) => get().aliases[trackId],

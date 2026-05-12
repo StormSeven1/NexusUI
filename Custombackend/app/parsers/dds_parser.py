@@ -63,6 +63,8 @@ def parse_dds_data(dds_object, structure_type: str) -> Optional[Dict[str, Any]]:
             return _parse_drone_task(dds_object)
         elif structure_type == 'high_freq':
             return _parse_high_freq(dds_object)
+        elif structure_type == 'new_track_struct':
+            return _parse_new_track_struct(dds_object)
         else:
             logger.warning(f"未知的DDS结构类型: {structure_type}，使用通用解析")
             return _parse_generic(dds_object, structure_type)
@@ -482,12 +484,17 @@ def _parse_dock_status(dds_object) -> Optional[Dict]:
             'drone_in_dock': dds_object.drone_in_dock() if hasattr(dds_object, 'drone_in_dock') else None,
             'temperature': dds_object.temperature() if hasattr(dds_object, 'temperature') else None,
             'humidity': dds_object.humidity() if hasattr(dds_object, 'humidity') else None,
+            'mode_code': dds_object.mode_code() if hasattr(dds_object, 'mode_code') else None,
             'source': 'DDS',
             'data_type': 'dock_status'
         }
-        # print("*"*50)
-        # print("解析机场实时状态:",result)
-        # print("*"*50)
+        # 解析无人机充电状态（电量百分比）
+        if hasattr(dds_object, 'drone_charge_state'):
+            charge = dds_object.drone_charge_state()
+            result['battery_capacity_percent'] = charge.capacity_percent() if hasattr(charge, 'capacity_percent') else None
+        print("*"*50)
+        print("解析机场实时状态:",result)
+        print("*"*50)
         return result
     except Exception as e:
         logger.error(f"解析机场状态失败: {e}")
@@ -727,4 +734,243 @@ def _parse_generic(dds_object, structure_type: str) -> Optional[Dict]:
         
     except Exception as e:
         logger.error(f"通用解析失败 [{structure_type}]: {e}")
+        return None
+
+
+def _parse_new_track_struct(dds_object) -> Optional[Dict]:
+    """
+    解析 NewTrackStruct Track DDS 对象。
+    输出字典格式与 _parse_fusion_track 完全一致（含 fusionSources），
+    确保下游 WebSocket 推送和前端无需任何改动。
+    """
+    try:
+        # ---- 基础标识 ----
+        track_id = dds_object.trackID() if hasattr(dds_object, 'trackID') else None
+        unique_id = dds_object.uniqueID() if hasattr(dds_object, 'uniqueID') else None
+
+        # ---- 位置（嵌套 GeoPosition）----
+        longitude = None
+        latitude = None
+        height = None
+        if hasattr(dds_object, 'position'):
+            pos = dds_object.position()
+            longitude = pos.longitude() if hasattr(pos, 'longitude') else None
+            latitude = pos.latitude() if hasattr(pos, 'latitude') else None
+            height = pos.altitude() if hasattr(pos, 'altitude') else None
+
+        # ---- 运动学 ----
+        course = dds_object.heading() if hasattr(dds_object, 'heading') else None
+        speed = dds_object.speed() if hasattr(dds_object, 'speed') else None
+
+        # ---- 时间：lastUpdateTime 是微秒，转为秒给下游 ----
+        timestamp_us = dds_object.lastUpdateTime() if hasattr(dds_object, 'lastUpdateTime') else None
+        timestamp = int(timestamp_us / 1_000_000) if timestamp_us and timestamp_us > 0 else None
+
+        # ---- 威胁 / 分类 / 质量 ----
+        threat_level = dds_object.threatLevel() if hasattr(dds_object, 'threatLevel') else 0
+        track_category_name = dds_object.trackCategoryName() if hasattr(dds_object, 'trackCategoryName') else None
+        track_quality = dds_object.trackQuality() if hasattr(dds_object, 'trackQuality') else 0
+
+        # ---- CPA / TCPA ----
+        cpa = dds_object.cpaMetres() if hasattr(dds_object, 'cpaMetres') else 0
+        tcpa = dds_object.tcpaSecs() if hasattr(dds_object, 'tcpaSecs') else 0
+
+        # ---- trackType 从 domain 推导（兼容旧版前端）----
+        domain_val = dds_object.domain() if hasattr(dds_object, 'domain') else 0
+        # IDL TrackDomain: 0=Unknown, 1=Air, 2=Surface, 3=SubSurface, 4=Land, 5=Space
+        _DOMAIN_TO_TRACK_TYPE = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
+        track_type = _DOMAIN_TO_TRACK_TYPE.get(domain_val, 0)
+
+        # ---- 速度分量 ----
+        speed_e = None
+        speed_n = None
+        speed_v = None
+        if hasattr(dds_object, 'velocity'):
+            vel = dds_object.velocity()
+            speed_e = vel.x() if hasattr(vel, 'x') else None
+            speed_n = vel.y() if hasattr(vel, 'y') else None
+            speed_v = vel.z() if hasattr(vel, 'z') else None
+
+        # ---- 别名 / reID ----
+        re_id = dds_object.reID() if hasattr(dds_object, 'reID') else None
+
+        # ================================================================
+        # 融合来源提取：遍历 TrackFusionInfo 各 FusionGroup
+        # 输出格式与旧版一致: [{ sourceName, dataSourceId, trackId }, ...]
+        # ================================================================
+        fusion_sources = []
+        if hasattr(dds_object, 'fusion'):
+            fusion = dds_object.fusion()
+
+            # --- 雷达来源 RadarFusionGroup ---
+            if hasattr(fusion, 'radarFusion'):
+                rg = fusion.radarFusion()
+                r_count = rg.measurementCount() if hasattr(rg, 'measurementCount') else 0
+                if r_count > 0:
+                    meas = rg.measurements()
+                    for i in range(r_count):
+                        try:
+                            rm = meas[i]
+                            entity_id = rm.source().entityId() if hasattr(rm, 'source') else ''
+                            meas_id = rm.measurementId() if hasattr(rm, 'measurementId') else 0
+                            fusion_sources.append({
+                                'sourceName': entity_id,
+                                'dataSourceId': entity_id,
+                                'trackId': meas_id,
+                            })
+                        except Exception:
+                            pass
+
+            # --- AIS来源 AISFusionGroup ---
+            if hasattr(fusion, 'aisFusion'):
+                ag = fusion.aisFusion()
+                a_count = ag.measurementCount() if hasattr(ag, 'measurementCount') else 0
+                if a_count > 0:
+                    meas = ag.measurements()
+                    for i in range(a_count):
+                        try:
+                            am = meas[i]
+                            mmsi = am.mmsi() if hasattr(am, 'mmsi') else 0
+                            vessel_name = am.vesselName() if hasattr(am, 'vesselName') else ''
+                            fusion_sources.append({
+                                'sourceName': 'AIS',
+                                'dataSourceId': 'ais',
+                                'trackId': mmsi,
+                            })
+                        except Exception:
+                            pass
+
+            # --- 光电来源 EOFusionGroup ---
+            if hasattr(fusion, 'eoFusion'):
+                eg = fusion.eoFusion()
+                e_count = eg.measurementCount() if hasattr(eg, 'measurementCount') else 0
+                if e_count > 0:
+                    meas = eg.measurements()
+                    for i in range(e_count):
+                        try:
+                            em = meas[i]
+                            entity_id = em.source().entityId() if hasattr(em, 'source') else ''
+                            meas_id = em.measurementId() if hasattr(em, 'measurementId') else 0
+                            fusion_sources.append({
+                                'sourceName': entity_id,
+                                'dataSourceId': entity_id,
+                                'trackId': meas_id,
+                            })
+                        except Exception:
+                            pass
+
+            # --- 无人机/自报位来源 UAVFusionGroup ---
+            if hasattr(fusion, 'uavFusion'):
+                ug = fusion.uavFusion()
+                u_count = ug.measurementCount() if hasattr(ug, 'measurementCount') else 0
+                if u_count > 0:
+                    meas = ug.measurements()
+                    for i in range(u_count):
+                        try:
+                            um = meas[i]
+                            entity_id = um.source().entityId() if hasattr(um, 'source') else ''
+                            meas_id = um.measurementId() if hasattr(um, 'measurementId') else 0
+                            fusion_sources.append({
+                                'sourceName': entity_id or 'UAV',
+                                'dataSourceId': entity_id,
+                                'trackId': meas_id,
+                            })
+                        except Exception:
+                            pass
+
+            # --- ESM来源 ESMFusionGroup ---
+            if hasattr(fusion, 'esmFusion'):
+                esg = fusion.esmFusion()
+                es_count = esg.measurementCount() if hasattr(esg, 'measurementCount') else 0
+                if es_count > 0:
+                    meas = esg.measurements()
+                    for i in range(es_count):
+                        try:
+                            esm = meas[i]
+                            entity_id = esm.source().entityId() if hasattr(esm, 'source') else ''
+                            meas_id = esm.measurementId() if hasattr(esm, 'measurementId') else 0
+                            fusion_sources.append({
+                                'sourceName': entity_id or 'ESM',
+                                'dataSourceId': entity_id,
+                                'trackId': meas_id,
+                            })
+                        except Exception:
+                            pass
+
+            # --- ADS-B来源 ADSBFusionGroup ---
+            if hasattr(fusion, 'adsbFusion'):
+                abg = fusion.adsbFusion()
+                ab_count = abg.measurementCount() if hasattr(abg, 'measurementCount') else 0
+                if ab_count > 0:
+                    meas = abg.measurements()
+                    for i in range(ab_count):
+                        try:
+                            abm = meas[i]
+                            entity_id = abm.source().entityId() if hasattr(abm, 'source') else ''
+                            callsign = abm.callsign() if hasattr(abm, 'callsign') else ''
+                            fusion_sources.append({
+                                'sourceName': entity_id or 'ADS-B',
+                                'dataSourceId': entity_id,
+                                'trackId': callsign,
+                            })
+                        except Exception:
+                            pass
+
+            # --- TDOA来源 TDOAFusionGroup ---
+            if hasattr(fusion, 'tdoaFusion'):
+                tg = fusion.tdoaFusion()
+                t_count = tg.measurementCount() if hasattr(tg, 'measurementCount') else 0
+                if t_count > 0:
+                    meas = tg.measurements()
+                    for i in range(t_count):
+                        try:
+                            tm = meas[i]
+                            entity_id = tm.source().entityId() if hasattr(tm, 'source') else ''
+                            meas_id = tm.measurementId() if hasattr(tm, 'measurementId') else 0
+                            fusion_sources.append({
+                                'sourceName': entity_id or 'TDOA',
+                                'dataSourceId': entity_id,
+                                'trackId': meas_id,
+                            })
+                        except Exception:
+                            pass
+
+        # ---- 组装结果字典（与 _parse_fusion_track 输出 key 一致）----
+        result = {
+            'trackId': track_id,
+            'mmsi': None,
+            'uniqueId': unique_id,
+            'longitude': longitude,
+            'latitude': latitude,
+            'height': height,
+            'course': course,
+            'speed': speed,
+            'azimuth': None,
+            'range': None,
+            'altitude': height,
+            'timestamp': timestamp,
+            'trackType': track_type,
+            'trackAlias': '',
+            'cpa': cpa,
+            'tcpa': tcpa,
+            'source': 'DDS',
+            'data_type': 'fusion_track',
+            'trackCategoryName': track_category_name,
+            'trackQuality': track_quality,
+            'threatScore': threat_level,
+            'reID': re_id,
+        }
+
+        # AIS mmsi 回填（从融合来源中找）
+        for fs in fusion_sources:
+            if fs.get('dataSourceId') == 'ais' and fs.get('trackId'):
+                result['mmsi'] = fs['trackId']
+                break
+
+        if fusion_sources:
+            result['fusionSources'] = fusion_sources
+
+        return result
+    except Exception as e:
+        logger.error(f"解析NewTrackStruct航迹失败: {e}")
         return None

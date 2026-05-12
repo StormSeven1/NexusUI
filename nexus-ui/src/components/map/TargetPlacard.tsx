@@ -31,6 +31,7 @@ import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColo
 import { useAlertStore } from "@/stores/alert-store";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 import { useAssetStore } from "@/stores/asset-store";
+import { useDroneStore } from "@/stores/drone-store";
 import { useTrackStore, isTrackMatchedByAlarm } from "@/stores/track-store";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react";
@@ -96,6 +97,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const track = useTrackStore((s) => s.tracks.find((t) => t.id === id)) as Track | undefined;
 
   const asset = allAssets.find((a) => a.id === id);
+  const droneDisplayName = useDroneStore((s) => s.drones[id]?.displayName ?? "");
+  const dockDisplayName = useDroneStore((s) => s.docks[id]?.displayName ?? "");
   // console.log("[TargetPlacard] id=", id, "kind=", kind, "asset=", asset ? { id: asset.id, asset_type: asset.asset_type, name: asset.name } : null, "allAssetIds=", allAssets.map(a => `${a.id}(${a.asset_type})`));
   const alerts = useAlertStore((s) => s.alerts);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
@@ -124,6 +127,14 @@ export function TargetPlacard(props: TargetPlacardProps) {
   }, [alerts, track, kind]);
 
   const subtitle = kind === "track" ? "航迹" : "资产";
+  const titleText = useMemo(() => {
+    if (kind === "track") {
+      const k = track ? resolveAliasKey(track) : null;
+      const alias = k ? useTrackAliasStore.getState().getOrCreate(k) : "";
+      return alias || track?.name || track?.showID || id;
+    }
+    return droneDisplayName || dockDisplayName || asset?.name || id;
+  }, [kind, track, id, droneDisplayName, dockDisplayName, asset?.name]);
 
   const trackSymbolUrl = useMemo(() => {
     if (kind !== "track" || !track) return null;
@@ -226,11 +237,11 @@ export function TargetPlacard(props: TargetPlacardProps) {
           <div className="min-w-0">
             {kind === "track" && (
               <div className="truncate text-[11px] font-bold text-nexus-text-primary">
-                {(() => { const k = track ? resolveAliasKey(track) : null; return k ? useTrackAliasStore.getState().getOrCreate(k) : (track?.showID ?? id); })()}
+                {titleText}
               </div>
             )}
             {kind === "asset" && (
-              <div className="truncate font-mono text-[11px] font-bold text-nexus-text-primary">{id}</div>
+              <div className="truncate text-[11px] font-bold text-nexus-text-primary">{titleText}</div>
             )}
             <div className="flex items-center gap-1">
               {kind === "track" && track?.disposition && (

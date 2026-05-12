@@ -11,6 +11,7 @@ import { useAlertStore, type AlertData } from "@/stores/alert-store";
 import { useTrackStore, getRenderCache } from "@/stores/track-store";
 import { useDisposedStore } from "@/stores/disposed-store";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
+import { useTaskProgressStore } from "@/stores/task-progress-store";
 import { useTrackAliasStore } from "@/stores/track-alias-store";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { cn } from "@/lib/utils";
@@ -298,6 +299,9 @@ export function AlertPanel() {
 
                             // 5. 清除处置方案连接线与激光/TDOA 激活状态
                             cleanupEffectsForMissingTargets();
+
+                            // 6. 任务进展：该目标所有执行中条目 → 处置结束
+                            useTaskProgressStore.getState().endByTarget(trackId);
 
                             const hint = httpOk ? "已通知后端" : "后端通知可能未送达";
                             toast.success(`已消灭目标 ${trackId}（${hint}）`);

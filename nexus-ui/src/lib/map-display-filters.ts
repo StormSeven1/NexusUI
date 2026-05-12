@@ -39,6 +39,9 @@ export const EXCLUDE_DRONE_IDS = new Set<string>(["uav_jo-001"]);
  */
 export const EXCLUDE_DRONE_NAMES = new Set<string>(["远遥码头"]);
 
+/** 无人机：仅隐藏地图渲染（数据/资产列表/内部逻辑保留），按 deviceSn 匹配 */
+export const HIDE_RENDER_DRONE_SNS = new Set<string>(["1581F6Q8D244300C47RP"]);
+
 /**
  * 区域：**id** 白名单；空数组表示不按 id 过滤。
  * 若与非空 `ZONE_NAME_SUBSTRING_ALLOWLIST` 联用，需**同时**满足。

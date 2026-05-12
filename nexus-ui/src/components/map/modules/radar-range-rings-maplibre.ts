@@ -527,7 +527,8 @@ export function buildRadarCoverageGeoJSON(
 
       if (distVis) {
         const pt = pointAtBearingMeters(lng, lat, radiusM, 0);
-        const labelText = radiusM >= 1000 ? `${(radiusM / 1000).toFixed(0)}km` : `${Math.round(radiusM)}m`;
+        const km = radiusM / 1000;
+        const labelText = radiusM >= 1000 ? `${parseFloat(km.toFixed(1))}km` : `${Math.round(radiusM)}m`;
         features.push({
           type: "Feature",
           properties: {

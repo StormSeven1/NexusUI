@@ -1424,6 +1424,9 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   const tdoaActivationEnabled = tdoaBundle?.activationEnabled === true;
   applyLaserActivation(laserActivationEnabled);
   applyTdoaActivation(tdoaActivationEnabled);
+  resolvedCamerasSectorBundle = camerasBundle;
+  resolvedLaserSectorBundle = laserWeapons;
+  resolvedTdoaSectorBundle = tdoaBundle;
   return {
     configAssetBase,
     cameras: camerasBundle,
@@ -1660,11 +1663,35 @@ function buildLaserScanParams(
 
 let resolvedLaserActivation = false;
 let resolvedTdoaActivation = false;
+/** 供三维渲染器同步读取扇区颜色配置 */
+let resolvedCamerasSectorBundle: AppConfigSectorBundle | null = null;
+let resolvedLaserSectorBundle: AppConfigSectorBundle | null = null;
+let resolvedTdoaSectorBundle: AppConfigSectorBundle | null = null;
 function applyLaserActivation(v: boolean) {
   resolvedLaserActivation = v;
 }
 function applyTdoaActivation(v: boolean) {
   resolvedTdoaActivation = v;
+}
+/**
+ * 三维 FOV 填充色（直接复用二维同名解析函数，与二维色调完全一致）。
+ * 返回 { color: CSS 色值, opacity: 不透明度 }
+ */
+export function getAssetFovFillStyle(type: "camera" | "laser" | "tdoa"): { color: string; opacity: number } {
+  switch (type) {
+    case "camera": {
+      const s = resolveOptoFovStyle(resolvedCamerasSectorBundle);
+      return { color: s.fillColor, opacity: s.fillOpacity };
+    }
+    case "laser": {
+      const d = resolveLaserDefaults(resolvedLaserSectorBundle);
+      return { color: d.sectorFillDefaultColor, opacity: d.sectorFillDefaultOpacity };
+    }
+    case "tdoa": {
+      const d = resolveTdoaDefaults(resolvedTdoaSectorBundle);
+      return { color: d.sectorFillDefaultColor, opacity: d.sectorFillDefaultOpacity };
+    }
+  }
 }
 /** 激光激活开关：`activationEnabled` 为 true 时才显示扇区+扫描+脉冲 */
 export function getLaserActivationEnabled(): boolean {

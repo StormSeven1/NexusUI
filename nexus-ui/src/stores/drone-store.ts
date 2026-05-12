@@ -528,19 +528,28 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
 
     const built = buildRelationshipCachesFromAirportsRaw(airportsRaw);
     const { droneNames, dockNames } = built;
+    const nowTs = Date.now();
 
     set((s) => {
       // 创建/更新无人机：遍历 droneNames，对每个 SN 确保 drones 中存在
       const newDrones = { ...s.drones };
       for (const [sn, name] of Object.entries(droneNames)) {
         if (newDrones[sn]) {
-          // 已存在 -> 更新 displayName
-          if (newDrones[sn].displayName !== name) {
-            newDrones[sn] = { ...newDrones[sn], displayName: name };
-          }
+          /* entity_status 也是无人机“在线心跳”来源：刷新最后收包时间，避免被超时误判删除/降落。 */
+          newDrones[sn] = {
+            ...newDrones[sn],
+            ...(newDrones[sn].displayName !== name ? { displayName: name } : {}),
+            lastPacketAtMs: nowTs,
+            updatedAt: isoNow(),
+          };
         } else {
           // 不存在 -> 创建（entity_status 是唯一创建入口）
-          newDrones[sn] = { ...baseTelemetry(sn), displayName: name };
+          newDrones[sn] = {
+            ...baseTelemetry(sn),
+            displayName: name,
+            lastPacketAtMs: nowTs,
+            updatedAt: isoNow(),
+          };
         }
       }
       // 创建/更新机场：遍历 dockNames，对每个 dockSn 确保 docks 中存在
