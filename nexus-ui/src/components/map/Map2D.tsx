@@ -397,6 +397,7 @@ export function Map2D() {
   const dronesRef = useRef<DronesMaplibre | null>(null);
   /** 资产刷新：保存最新快照，订阅触发时立即下发到各专题模块 */
   const assetsPendingRef = useRef<AssetData[]>([]);
+  const displayOverridesRef = useRef<Record<string, Record<string, unknown>>>({});
   /** 供静态无人机站址图层与资产更新时 `assetMapLabelTextColor` 等一致 */
   const assetDispositionAccentRef = useRef<AssetDispositionIconAccent>({});
   const polygonDrawRef = useRef<PolygonDrawMaplibre | null>(null);
@@ -1114,14 +1115,23 @@ export function Map2D() {
       /* style 未就绪：记录 pending，等 idle 后补刷一次，避免丢实时更新且不做高频自旋 */
       if (!m.isStyleLoaded()) {
         pendingAssetFlush = true;
-        console.log("flushAssets style not loaded, retry");
+        // console.log("flushAssets style not loaded, retry");
         armStyleReadyFlush();
         return;
       }
       const assetSnap = assetsPendingRef.current;
-      const adapted = adaptAssetsForMap(assetSnap);
+      /* 将 displayOverrides 合并进各资产的 properties，渲染模块直接读 properties */
+      const overrides = displayOverridesRef.current;
+      const rawWithOverrides =
+        Object.keys(overrides).length === 0
+          ? assetSnap
+          : assetSnap.map((a) => {
+              const ov = overrides[a.id];
+              return ov ? { ...a, properties: { ...(a.properties ?? {}), ...ov } } : a;
+            });
+      const adapted = adaptAssetsForMap(rawWithOverrides);
       /* 雷达/光电/电侦/机场/无人机：由各专题模块 setFromAssets 驱动 */
-      radarCovRef.current?.setFromAssets(adapted, assetSnap);
+      radarCovRef.current?.setFromAssets(adapted, rawWithOverrides);
       optoFovRef.current?.setFromAssets(adapted);
       towerModRef.current?.setFromAssets(adapted);
       airportStaticRef.current?.setFromAssets(adapted);
@@ -1153,6 +1163,7 @@ export function Map2D() {
     });
     const unsubA = useAssetStore.subscribe((s) => {
       assetsPendingRef.current = s.assets;
+      displayOverridesRef.current = s.displayOverrides;
       flushAssets();
       useDisposalPlanStore.getState().cleanupEffectsForMissingTargets();
     });

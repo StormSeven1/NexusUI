@@ -155,6 +155,7 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const disposition = readDisposition(rec);
 
   const speed = Number(rec.speed ?? rec.speed_ms ?? 0);
+  // console.log("speed",speed)
   const altRaw = rec.altitude ?? rec.alt ?? rec.height;
   const altitude = altRaw != null && Number.isFinite(Number(altRaw)) ? Number(altRaw) : undefined;
 

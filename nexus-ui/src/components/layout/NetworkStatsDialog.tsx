@@ -3,42 +3,35 @@
 /**
  * NetworkStatsDialog — 网络数据接收统计弹窗
  *
- * 【触发】WorkspaceDetails 分析工作区「查询」按钮
+ * 【触发】TopNav「更多」→「网络统计」，或分析工作区「查询」按钮
  *
- * 【展示内容】
- *   按分类以卡片形式展示各数据源的接收间隔：
- *   - 航迹（对空 / 对海）
- *   - 无人机（按 SN）
- *   - 实体（按 entity ID + specificType）
- *   - 告警 / 区域 / 光电 / 机场 / 航线
+ * 【展示内容】按分类卡片展示各数据源接收间隔：
+ *   航迹 / 无人机 / 实体 / 告警 / 区域 / 光电 / 机场 / 航线
  *
- * 【颜色规则】
- *   - 间隔 ≤ 8s：绿色
- *   - 间隔 > 8s：红色
- *   - 超过 60s 未收到：显示 "-"
+ * 【颜色规则】间隔 ≤ 8s 绿色；> 8s 红色；超 60s 未收到显示 "-"
  */
 
-import { X } from "lucide-react";
 import { useNetworkStats, type NetworkStatDisplay } from "@/stores/network-stats-store";
+import { DraggableModal } from "@/components/ui/DraggableModal";
+import { Network } from "lucide-react";
+import { MODAL_STYLES } from "@/lib/modal-styles";
 
 interface Props {
   open: boolean;
   onClose: () => void;
 }
 
-/** 分类显示名映射 */
 const CATEGORY_LABELS: Record<string, string> = {
-  "航迹": "航迹",
-  "无人机": "无人机",
-  "实体": "实体",
-  "告警": "告警",
-  "区域": "区域",
-  "光电": "光电",
-  "机场": "机场",
-  "航线": "航线",
+  航迹: "航迹",
+  无人机: "无人机",
+  实体: "实体",
+  告警: "告警",
+  区域: "区域",
+  光电: "光电",
+  机场: "机场",
+  航线: "航线",
 };
 
-/** 分类排序顺序 */
 const CATEGORY_ORDER = ["航迹", "无人机", "实体", "告警", "区域", "光电", "机场", "航线"];
 
 function groupByCategory(stats: NetworkStatDisplay[]): [string, NetworkStatDisplay[]][] {
@@ -56,86 +49,85 @@ function groupByCategory(stats: NetworkStatDisplay[]): [string, NetworkStatDispl
   return result;
 }
 
+const LEGEND = (
+  <div className="flex items-center gap-4 text-xs text-nexus-text-muted">
+    <span className="flex items-center gap-1.5">
+      <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400" />
+      正常 (&le;8s)
+    </span>
+    <span className="flex items-center gap-1.5">
+      <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-400" />
+      超时 (&gt;8s)
+    </span>
+    <span className="flex items-center gap-1.5">
+      <span className="font-mono">-</span>
+      超过60s未收到
+    </span>
+  </div>
+);
+
 export function NetworkStatsDialog({ open, onClose }: Props) {
   const stats = useNetworkStats();
-  if (!open) return null;
-
   const groups = groupByCategory(stats);
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-[880px] max-h-[620px] overflow-hidden rounded-xl border border-white/[0.08] bg-[#1a1a2e]/95 shadow-2xl flex flex-col">
-        {/* 标题栏 */}
-        <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-2.5">
-          <div>
-            <h2 className="text-sm font-semibold text-nexus-text-primary">网络数据接收统计</h2>
-            <p className="text-[10px] text-nexus-text-muted">实时监控各数据源接收间隔（超时阈值 8s）</p>
-          </div>
-          <button onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-md text-nexus-text-muted hover:bg-white/10">
-            <X size={20} />
-          </button>
+    <DraggableModal
+      open={open}
+      onClose={onClose}
+      title="网络数据接收统计"
+      icon={Network}
+      size="auto"
+      minWidth={600}
+      minHeight={400}
+      footer={LEGEND}
+    >
+      <div className={MODAL_STYLES.spacing.main}>
+        <div className={MODAL_STYLES.text.body}>
+          实时监控各数据源接收间隔（超时阈值 8s）
         </div>
 
-        {/* 卡片网格 */}
-        <div className="flex-1 overflow-y-auto p-3">
-          {groups.length === 0 && (
-            <div className="flex items-center justify-center h-40 text-sm text-nexus-text-muted">
-              暂无数据，等待 WebSocket 连接...
-            </div>
-          )}
-          <div className="grid grid-cols-5 gap-2">
-            {groups.map(([category, items]) => (
-              <div
-                key={category}
-                className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-2"
-              >
-                {/* 卡片标题 */}
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-nexus-text-primary">
-                    {CATEGORY_LABELS[category] ?? category}
-                  </span>
-                  <span className="text-[10px] text-nexus-text-muted">{items.length} 项</span>
-                </div>
-                {/* 卡片内容 */}
-                <div className="space-y-0">
-                  {items.map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-2 rounded px-1.5 py-0.5 hover:bg-white/[0.04]">
-                      <span className="text-[11px] text-nexus-text-secondary flex-1 truncate" title={item.label}>
-                        {item.label}
-                      </span>
-                      <span className="text-[9px] text-nexus-text-muted tabular-nums">
-                        {item.count}条
-                      </span>
-                      <span className={`text-[11px] font-mono font-semibold tabular-nums ${
-                        item.isTimeout ? "text-red-400" : "text-emerald-400"
-                      }`}>
-                        {item.displayText}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+        {groups.length === 0 && (
+          <div className="flex items-center justify-center h-40 text-sm text-nexus-text-muted">
+            暂无数据，等待 WebSocket 连接...
+          </div>
+        )}
+
+        <div className={MODAL_STYLES.grid.autoFit}>
+          {groups.map(([category, items]) => (
+            <div
+              key={category}
+              className={MODAL_STYLES.card.container}
+              style={MODAL_STYLES.card.containerStyle}
+            >
+              <div className={MODAL_STYLES.card.header}>
+                <span className={MODAL_STYLES.card.title}>
+                  {CATEGORY_LABELS[category] ?? category}
+                </span>
+                <span className={MODAL_STYLES.card.count}>{items.length} 项</span>
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* 底部说明 */}
-        <div className="border-t border-white/[0.06] px-4 py-2 flex items-center gap-4 text-[10px] text-nexus-text-muted">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400" />
-            正常 (&le;8s)
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-400" />
-            超时 (&gt;8s)
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="font-mono">-</span>
-            超过60s未收到
-          </span>
+              <div className={MODAL_STYLES.card.content}>
+                {items.map((item, idx) => (
+                  <div key={idx} className={MODAL_STYLES.card.item}>
+                    <span className={MODAL_STYLES.card.itemLabel} title={item.label}>
+                      {item.label}
+                    </span>
+                    <span className={MODAL_STYLES.card.itemValue}>{item.count}条</span>
+                    <span
+                      className={
+                        item.isTimeout
+                          ? MODAL_STYLES.card.itemTimeTimeout
+                          : MODAL_STYLES.card.itemTimeNormal
+                      }
+                    >
+                      {item.displayText}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
-    </div>
+    </DraggableModal>
   );
 }

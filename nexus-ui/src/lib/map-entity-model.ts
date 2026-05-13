@@ -127,6 +127,10 @@ export interface Asset {
   friendlyMapColor?: string;
   /** 友方名称字色：由配置 `*.label.fontColor` 解析进 `AssetData.properties.map_label_font_color` 再经 `adaptAssets` 传入 */
   labelFontColor?: string;
+  /** 光电 FOV 填充色（per-asset 覆盖，来自 displayOverrides）*/
+  fovFillColor?: string;
+  /** 光电 FOV 填充透明度（0-1，per-asset 覆盖）*/
+  fovFillOpacity?: number;
 }
 
 export interface Alert {

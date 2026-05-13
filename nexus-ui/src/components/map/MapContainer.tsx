@@ -6,11 +6,13 @@ import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { getMapMeasureHandlers, useMapMeasureUi } from "@/stores/map-measure-bridge";
-import { Map as MapIcon, Globe, Pentagon, Ruler, DraftingCompass, BarChart3, Zap, Plane, Ship } from "lucide-react";
+import { Map as MapIcon, Globe, Pentagon, Ruler, DraftingCompass, BarChart3, Zap, Plane, Ship, Radio, Camera } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WorkflowStatusOverlay } from "@/components/layout/WorkflowStatusOverlay";
 import { QuickWorkflowModal } from "@/components/layout/QuickWorkflowModal";
 import { NetworkStatsDialog } from "@/components/layout/NetworkStatsDialog";
+import { RadarDisplaySettingsDialog } from "@/components/layout/RadarDisplaySettingsDialog";
+import { CameraDisplaySettingsDialog } from "@/components/layout/CameraDisplaySettingsDialog";
 // import { MiniMap } from "./MiniMap"; // 小地图暂隐藏，恢复时取消注释
 
 const Map2D = dynamic(() => import("./Map2D").then((m) => m.Map2D), {
@@ -47,6 +49,8 @@ export function MapContainer() {
   const h = () => getMapMeasureHandlers();
   const [quickWorkflowOpen, setQuickWorkflowOpen] = useState(false);
   const [networkStatsOpen, setNetworkStatsOpen] = useState(false);
+  const [radarSettingsOpen, setRadarSettingsOpen] = useState(false);
+  const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
 
   return (
     <div className="relative h-full w-full">
@@ -129,10 +133,29 @@ export function MapContainer() {
           <Zap size={14} />
         </button>
 
+        {/* 雷达显示设置 */}
+        <button
+          type="button"
+          title="雷达显示设置"
+          className={cn(mapToolBtn, "nexus-glass text-nexus-text-muted hover:bg-white/10 hover:text-nexus-text-secondary")}
+          onClick={() => setRadarSettingsOpen(true)}
+        >
+          <Radio size={14} />
+        </button>
+        {/* 光电显示设置 */}
+        <button
+          type="button"
+          title="光电显示设置"
+          className={cn(mapToolBtn, "nexus-glass text-nexus-text-muted hover:bg-white/10 hover:text-nexus-text-secondary")}
+          onClick={() => setCameraSettingsOpen(true)}
+        >
+          <Camera size={14} />
+        </button>
+
         <div className="h-5 w-px bg-white/10" />
 
         {/* 2D/3D 切换 */}
-        <div className="flex overflow-hidden rounded-md border border-nexus-border nexus-glass">
+        {/* <div className="flex overflow-hidden rounded-md border border-nexus-border nexus-glass">
           <button
             onClick={() => setMapViewMode("2d")}
             title="2D"
@@ -158,7 +181,7 @@ export function MapContainer() {
           >
             <Globe size={14} />
           </button>
-        </div>
+        </div> */}
       </div>
 
       {/* 左上角：目标统计（对空 / 对海） */}
@@ -216,6 +239,8 @@ export function MapContainer() {
       {/* 弹窗 */}
       <QuickWorkflowModal open={quickWorkflowOpen} onClose={() => setQuickWorkflowOpen(false)} />
       <NetworkStatsDialog open={networkStatsOpen} onClose={() => setNetworkStatsOpen(false)} />
+      <RadarDisplaySettingsDialog open={radarSettingsOpen} onClose={() => setRadarSettingsOpen(false)} />
+      <CameraDisplaySettingsDialog open={cameraSettingsOpen} onClose={() => setCameraSettingsOpen(false)} />
     </div>
   );
 }

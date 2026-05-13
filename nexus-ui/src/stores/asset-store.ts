@@ -30,10 +30,20 @@ interface AssetState {
   mergeAssetFields: (id: string, patch: Partial<AssetData>) => void;
   /** 新增或覆盖整条实体（如 `DockStatus` / `DroneStatus` 单条）*/
   upsertAsset: (asset: AssetData) => void;
+  /**
+   * 每个资产的显示参数覆盖（不会被 WS 刷新覆盖）。
+   * key = assetId, value = 要合并到 asset.properties 的字段（如 showRings, ring_color 等）
+   */
+  displayOverrides: Record<string, Record<string, unknown>>;
+  /** 设置（或合并）某资产的显示覆盖 */
+  setDisplayOverride: (id: string, patch: Record<string, unknown>) => void;
+  /** 清除某资产的所有显示覆盖（重置为默认）*/
+  clearDisplayOverride: (id: string) => void;
 }
 
 export const useAssetStore = create<AssetState>((set) => ({
   assets: [],
+  displayOverrides: {},
 
   setAssets: (assets) => set({ assets }),
 
@@ -63,5 +73,20 @@ export const useAssetStore = create<AssetState>((set) => ({
           },
         ],
       };
+    }),
+
+  setDisplayOverride: (id, patch) =>
+    set((s) => ({
+      displayOverrides: {
+        ...s.displayOverrides,
+        [id]: { ...(s.displayOverrides[id] ?? {}), ...patch },
+      },
+    })),
+
+  clearDisplayOverride: (id) =>
+    set((s) => {
+      const next = { ...s.displayOverrides };
+      delete next[id];
+      return { displayOverrides: next };
     }),
 }));

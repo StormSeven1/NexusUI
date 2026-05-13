@@ -51,6 +51,8 @@ export function adaptAssetsForMap(assets: AssetData[]): Asset[] {
       let nameLabelVisible: boolean | undefined;
       if (!isRadar && p?.center_name_visible === false) nameLabelVisible = false;
       const showFov = p?.fov_sector_visible === false ? false : undefined;
+      const fovFillColor = typeof p?.fov_fill_color === "string" && p.fov_fill_color ? p.fov_fill_color : undefined;
+      const fovFillOpacity = typeof p?.fov_fill_opacity === "number" ? p.fov_fill_opacity : undefined;
       const t = normalizeAssetType(a.asset_type);
       const disp = dispositionFromAssetData(a);
       let friendlyMapColor: string | undefined;
@@ -83,6 +85,8 @@ export function adaptAssetsForMap(assets: AssetData[]): Asset[] {
         ...(centerIconVisible === false ? { centerIconVisible: false } : {}),
         ...(nameLabelVisible === false ? { nameLabelVisible: false } : {}),
         ...(showFov === false ? { showFov: false } : {}),
+        ...(fovFillColor !== undefined ? { fovFillColor } : {}),
+        ...(fovFillOpacity !== undefined ? { fovFillOpacity } : {}),
         ...(friendlyMapColor ? { friendlyMapColor } : {}),
         ...(labelFontColor ? { labelFontColor } : {}),
       };

@@ -18,6 +18,7 @@ import {
   type WorkflowStatusEntry,
   type WorkflowStatus,
 } from "@/stores/workflow-status-store";
+import { MODAL_TEXT } from "@/lib/modal-styles";
 
 const STATUS_STYLES: Record<WorkflowStatus, { icon: React.ElementType; color: string; label: string }> = {
   starting: { icon: Loader2, color: "text-sky-400", label: "启动中" },
@@ -82,7 +83,7 @@ function StatusRow({ entry, onRemove }: { entry: WorkflowStatusEntry; onRemove: 
   return (
     <div
       className={cn(
-        "flex items-center gap-3 rounded-lg border px-4 py-3 transition-all duration-500",
+        "flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-all duration-500",
         failurePulse
           ? "scale-110 border-red-500/80 bg-red-500/10 shadow-[0_0_20px_rgba(239,68,68,0.3)] animate-[pulse-red_0.6s_ease-in-out_infinite]"
           : isFailed
@@ -91,19 +92,19 @@ function StatusRow({ entry, onRemove }: { entry: WorkflowStatusEntry; onRemove: 
               ? "border-amber-500/40 bg-amber-500/5"
               : isCompleted
                 ? "border-emerald-500/30 bg-emerald-500/5"
-                : "border-white/[0.08] bg-white/[0.03]",
+                : "border-nexus-border bg-nexus-bg-base/80",
       )}
     >
-      <Icon size={18} className={cn(style.color, isStarting && "animate-spin")} />
+      <Icon size={16} className={cn(style.color, isStarting && "animate-spin")} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-nexus-text-primary">{entry.name}</span>
+          <span className="text-xs font-semibold text-nexus-text-primary">{entry.name}</span>
           <span className={cn("text-[10px] font-semibold", style.color)}>{style.label}</span>
         </div>
-        <div className="mt-0.5 text-[11px] text-nexus-text-muted truncate">{entry.message}</div>
+        <div className={cn("mt-0.5 truncate", MODAL_TEXT.body)}>{entry.message}</div>
       </div>
-      <button onClick={() => onRemove(entry.threadId)} className="shrink-0 rounded p-1 text-nexus-text-muted hover:bg-white/10 hover:text-nexus-text-primary">
-        <X size={14} />
+      <button onClick={() => onRemove(entry.threadId)} className="shrink-0 rounded p-1 text-nexus-text-muted hover:bg-nexus-bg-hover hover:text-nexus-text-primary">
+        <X size={13} />
       </button>
     </div>
   );
@@ -166,12 +167,12 @@ export function WorkflowStatusOverlay() {
     <div
       ref={containerRef}
       style={{ display: "none" }}
-      className="absolute top-4 left-1/2 z-30 -translate-x-1/2 w-[340px] space-y-2 rounded-xl border border-white/[0.08] bg-[#1a1a2e]/95 px-4 py-3 shadow-2xl backdrop-blur-md transition-all duration-500 ease-out opacity-0 scale-75"
+      className="absolute top-4 left-1/2 z-30 -translate-x-1/2 w-[320px] space-y-1.5 rounded-lg border border-nexus-border bg-[#212126]/95 px-3 py-2.5 shadow-2xl backdrop-blur-sm transition-all duration-500 ease-out opacity-0 scale-75"
     >
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">工作流状态</span>
-        <button onClick={handleClose} className="rounded p-0.5 text-nexus-text-muted hover:bg-white/10 hover:text-nexus-text-primary" title="关闭并断开连接">
-          <X size={14} />
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[11px] font-semibold tracking-wider text-nexus-text-secondary">工作流状态</span>
+        <button onClick={handleClose} className="rounded p-0.5 text-nexus-text-muted hover:bg-nexus-bg-hover hover:text-nexus-text-primary" title="关闭并断开连接">
+          <X size={13} />
         </button>
       </div>
       {entries.map((entry) => (

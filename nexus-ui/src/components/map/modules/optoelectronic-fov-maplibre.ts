@@ -206,6 +206,8 @@ export function buildFovGeoJSON(assetList: Asset[], accent?: AssetDispositionIco
           status: a.status,
           assetType: a.type,
           isVirtual: a.isVirtual === true ? 1 : 0,
+          ...(a.fovFillColor !== undefined ? { fillColor: a.fovFillColor } : {}),
+          ...(a.fovFillOpacity !== undefined ? { fillOpacity: a.fovFillOpacity } : {}),
         },
       };
     });
@@ -335,9 +337,9 @@ export class OptoelectronicFovModule {
           source: FOV_SOURCE,
           filter: ["==", ["get", "geomKind"], "poly"],
           paint: {
-            /* 光电 FOV 填充色（仅 camera） */
-            "fill-color": "rgba(147,51,234,0.10)",
-            "fill-opacity": 0.10,
+            /* per-feature 填充色/透明度；feature 无值时回退到模块级默认（由 applyFovStyleFromBundle 设置） */
+            "fill-color": ["coalesce", ["get", "fillColor"], "#9333ea"] as maplibregl.ExpressionSpecification,
+            "fill-opacity": ["coalesce", ["get", "fillOpacity"], 0.10] as maplibregl.ExpressionSpecification,
           },
         },
         b,
@@ -439,10 +441,14 @@ export class OptoelectronicFovModule {
     _fovLineDashVirtual = style.lineDashVirtual;
     _fovLineDashReal = style.lineDashReal;
 
-    /* 应用填充色 + 透明度 */
+    /* 应用填充色 + 透明度（保持 per-feature 表达式，fallback 到 bundle 颜色） */
     if (m.getLayer(FOV_FILL)) {
-      m.setPaintProperty(FOV_FILL, "fill-color", style.fillColor);
-      m.setPaintProperty(FOV_FILL, "fill-opacity", style.fillOpacity);
+      m.setPaintProperty(FOV_FILL, "fill-color",
+        ["coalesce", ["get", "fillColor"], style.fillColor] as maplibregl.ExpressionSpecification,
+      );
+      m.setPaintProperty(FOV_FILL, "fill-opacity",
+        ["coalesce", ["get", "fillOpacity"], style.fillOpacity] as maplibregl.ExpressionSpecification,
+      );
     }
 
     /* 应用线色 / 线宽 / 透明度 / 虚线 */
