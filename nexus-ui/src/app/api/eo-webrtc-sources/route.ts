@@ -79,6 +79,10 @@ export async function GET() {
 
     return NextResponse.json({ streams }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
+    const code = typeof e === "object" && e !== null && "code" in e ? String((e as NodeJS.ErrnoException).code) : "";
+    if (code === "ENOENT") {
+      return NextResponse.json({ streams: [] }, { headers: { "Cache-Control": "no-store" } });
+    }
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: `eo-webrtc-sources: ${msg}`, streams: [] }, { status: 500 });
   }

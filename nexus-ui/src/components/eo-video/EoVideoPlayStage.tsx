@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
-import { useWebCodecsCanvas } from "@/hooks/useWebCodecsCanvas";
 import { postEoPtzMove, postEoPtzStop, type EoPtzDirection } from "@/lib/eo-video/eoPtzTaskClient";
 import { postUavCameraAim } from "@/lib/eo-video/postUavCameraAim";
 import type { EoDetectionBox, EoVideoIceServer } from "@/lib/eo-video/types";
@@ -154,23 +153,15 @@ export function EoVideoPlayStage({
   const showTrackHitLayer = Boolean(trimmedEntityId && /^camera_[0-9]{3}$/i.test(trimmedEntityId));
   const canSendSingleTrack = /^camera_[0-9]{3}$/i.test(trimmedEntityId);
   const encodedSyncHub = useMemo(() => createEoEncodedSyncHub(), []);
-  const webCodecsHandle = useWebCodecsCanvas();
   const videoReceiverRef = useRef<RTCRtpReceiver | null>(null);
 
   useEffect(() => {
     const syncReady = () => {
       const v = videoRef.current;
       const videoOk = Boolean(v && v.videoWidth > 0 && v.videoHeight > 0);
-      const canvasOk = Boolean(
-        showDetection &&
-          webCodecsHandle.webCodecsActive &&
-          webCodecsHandle.videoWidth > 0 &&
-          webCodecsHandle.videoHeight > 0,
-      );
-      onCaptureReadyChange?.(videoOk || canvasOk);
+      onCaptureReadyChange?.(videoOk);
       if (snapshotCanvasRef) {
-        snapshotCanvasRef.current =
-          showDetection && webCodecsHandle.webCodecsActive ? webCodecsHandle.canvasRef.current : null;
+        snapshotCanvasRef.current = null;
       }
     };
     syncReady();
@@ -193,15 +184,7 @@ export function EoVideoPlayStage({
       }
       window.clearInterval(id);
     };
-  }, [
-    showDetection,
-    onCaptureReadyChange,
-    snapshotCanvasRef,
-    webCodecsHandle.webCodecsActive,
-    webCodecsHandle.videoWidth,
-    webCodecsHandle.videoHeight,
-    videoRef,
-  ]);
+  }, [onCaptureReadyChange, snapshotCanvasRef, videoRef]);
 
   const dragStateRef = useRef<{
     active: boolean;
@@ -791,7 +774,6 @@ export function EoVideoPlayStage({
         encodedSyncHub={showDetection ? encodedSyncHub : undefined}
         videoReceiverRef={showDetection ? videoReceiverRef : undefined}
         streamLabel={streamLabel}
-        webCodecsHandle={showDetection ? webCodecsHandle : undefined}
       />
       {ptzDragArrow ? <EoPtzDragArrowOverlay box={ptzDragArrow} /> : null}
       {!onOverlayTaskLine && !onBottomCenterToast && taskHint ? (
@@ -818,8 +800,6 @@ export function EoVideoPlayStage({
           onDiagnostic={onDetectionDiagnostic}
           onBoxesChange={onDetectionBoxesChange}
           videoObjectFit="cover"
-          videoIntrinsicWidth={webCodecsHandle.videoWidth}
-          videoIntrinsicHeight={webCodecsHandle.videoHeight}
           expandedMode={expandedMode}
           ddsCameraEntityId={ddsCameraEntityId}
         />
@@ -828,12 +808,13 @@ export function EoVideoPlayStage({
           containerRef={stageRef as React.RefObject<HTMLElement | null>}
           videoRef={videoRef}
           boxes={[]}
+          detectionEntityId={entityId?.trim()}
+          ddsCameraEntityId={ddsCameraEntityId}
+          expandedMode={expandedMode}
           selectedBoxId={selectedBoxId}
           onSelectBox={onSelectBox}
           onDoubleClickPoint={handleDoubleClickPoint}
           videoObjectFit="cover"
-          videoIntrinsicWidth={webCodecsHandle.videoWidth}
-          videoIntrinsicHeight={webCodecsHandle.videoHeight}
         />
       ) : null}
       {taskBusy ? <div className="pointer-events-none absolute inset-0 z-20" /> : null}

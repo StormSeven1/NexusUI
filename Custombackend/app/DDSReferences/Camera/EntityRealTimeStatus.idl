@@ -1,0 +1,1501 @@
+// 权威定义请以 /mnt/localdata/zhu_heng/EntityRealTimeStatus.idl 为准；同步时从该文件复制并去掉首行 #pragma once（IDL 工具链不识别）。
+module casia {
+module device {
+module status {
+module BaseStatus {
+	/**
+	 * 执行状态枚举
+	 */
+	enum ExecutionState {
+		EXECUTING,           // 执行中
+		COMPLETED,          // 已完成
+		ALREADY_CLEARED,    // 已取消
+		SAVED,              // 暂存中
+		FAILED              // 已失败
+	};
+
+
+	/**
+	 * 地理位置结构
+	 */
+	struct GeoPosition {
+		double longitude;        // 经度
+		double latitude;         // 纬度
+		double altitude;         // 高度（米）
+	};
+	
+	/**
+	 * 实体类型枚举
+	 */
+	enum EntityType {
+		CAMERA,		//相机
+		UAV,		//无人机
+		DOCK,		//机场
+		USV,		//无人船
+		RADAR,		//雷达
+		TRACK,		//航迹
+		MODEL,		//模型
+		JAMMER,		//干扰设备
+		LASER,		//激光武器
+		MUNITION,	//巡飞弹
+		WEAPON		//其他武器
+	};
+	
+	/**
+	 * 实体敌我属性
+	 */
+	enum DispositionType {
+		DISPOSITION_FRIENDLY,	//友方
+		DISPOSITION_HOSTILE,	//敌方
+		DISPOSITION_NEUTRAL,	//中立
+		DISPOSITION_UNKNOWN
+	};
+	
+	
+	/**
+	 * 基础设备状态
+	 */
+	struct BaseDeviceStatus {
+		EntityType entityType;					//实体类型
+		string entityId;    					//实体唯一标识符
+		boolean isVirtualWeapon;				//是否虚兵
+		DispositionType dispositionType;		//敌我属性
+		unsigned long targetID;					//目标ID,攻击实体目标时，此参数必须正确填写
+		string targetName;						//目标名称,攻击实体目标时，此参数必须正确填写
+		EntityType targetType;					//目标类型,攻击实体目标时，此参数必须正确填写
+		
+		string taskType;         				// 当前执行的任务类型
+		ExecutionState executionState;    // 执行状态
+		unsigned long executionTimeMs;    // 执行时间（毫秒）
+		boolean online;                   // 在线状态
+		GeoPosition position;             // 地理位置
+		double elec;                      // 电量百分比
+		string timestamp;                 // 数据采集时间戳
+	};
+};
+
+module CameraStatus {
+	/**
+	 * 云台状态
+	 */
+	struct PTZStatus {
+		double pan;             // 水平角度
+		double tilt;            // 垂直角度
+		double zoom;            // 变焦倍数
+	};
+
+	/**
+	 * 视场角状态
+	 */
+	struct FOVStatus {
+		double hs;              // 水平视场角
+		double vs;              // 垂直视场角
+	};
+
+	/**
+	 * 相机实时状态
+	 */
+	struct CameraRealTimeStatus: BaseStatus::BaseDeviceStatus {
+		PTZStatus ptz;          // 云台状态
+		PTZStatus originPtz;    //添加偏移值的ptz
+		double focus;           // 聚焦值
+		FOVStatus fov;          // 视场角状态
+		double panoOffset;      // 相机偏移角
+		long trackID;			//航迹ID
+		double visibility;	 	//能见度
+		double speedParam;     //速度
+		double rootPos;           //权限
+	};
+};
+
+module ModelStatus {
+	/**
+	 * 模型工作状态枚举
+	 */
+	enum ModelWorkingState {
+		IDLE,               // 空闲状态
+		INITIALIZING,       // 初始化中
+		RUNNING,            // 运行中
+		PAUSED,            // 已暂停
+		ERROR              // 错误状态
+	};
+
+	/**
+	 * 资源使用状态
+	 */
+	struct ResourceUsage {
+		double cpuUsagePercent;         // CPU使用率（%）
+		double gpuUsagePercent;         // GPU使用率（%）
+		unsigned long memoryUsageMB;    // 内存使用量（MB）
+		unsigned long gpuMemoryUsageMB; // GPU显存使用量（MB）
+		unsigned long diskUsageMB;      // 磁盘使用量（MB）
+		double networkBandwidthMBps;    // 网络带宽使用（MB/s）
+	};
+
+	/**
+	 * 模型实时状态
+	 */
+	struct ModelRealTimeStatus: BaseStatus::BaseDeviceStatus {
+		ModelWorkingState workingState;  // 工作状态
+		string errorMessage;             // 错误信息
+		ResourceUsage modelResourceUsage;     // 资源使用状态
+	};
+};
+
+module RadarStatus {
+	/**
+	 * 雷达实时状态
+	 */
+	struct RadarRealTimeStatus: BaseStatus::BaseDeviceStatus
+	{
+		unsigned long radarID;//雷达id，远遥-0，靖子头-1，探鸟-2，ku-3
+		unsigned long radarType;//雷达类型，0-对海，1-对空
+		string radarName;//雷达名称
+		double longitude;//雷达位置
+		double latitude;
+		unsigned long transmit;//发射参数 0-待机，1-发射
+		unsigned long range;//量程
+		unsigned long pluseWidth;//脉宽
+		unsigned long aziOffset;//方位偏移 单位0.1度
+		unsigned long rangeOffset;//距离偏移
+		unsigned long sampleRate;//采样率
+		unsigned long gain;//增益
+		unsigned long seaClutter;//海浪抑制
+		unsigned long rainClutter;//雨雪抑制
+		unsigned long inhibit1;//禁射区1使能
+		unsigned long inhibit1StartAzi;//禁射区1起始角度
+		unsigned long inhibit1EndAzi;//禁射区2终止角度
+		unsigned long inhibit2;//禁射区2使能
+		unsigned long inhibit2StartAzi;//禁射区2起始角度
+		unsigned long inhibit2EndAzi;//禁射区2终止角度
+	};
+};
+
+
+module Dock2Status {
+	//Home 点有效性
+	enum HomePositionValidity {
+		INVALID,
+		VALID
+	};
+	
+	//设备类型
+	enum RTCMDeviceType {
+		DOCK
+	};
+
+	//标定类型
+	enum CalibrationType {
+		NOT_CALIBRATED,//未标定
+		SELF_CONVERGENCE,//自收敛标定
+		MANUAL_CALIBRATION,//手动标定
+		NETWORK_RTK_CALIBRATION//网络RTK标定
+	};
+
+	//机场空调工作状态信息
+	enum AirConditionerState {
+		IDLE_MODE,//空闲模式
+		COOLING_MODE,//制冷模式
+		HEATING_MODE,//制热模式
+		DEHUMIDIFICATION_MODE,//除湿模式
+		COOLING_EXIT_MODE,//制冷退出模式
+		HEATING_EXIT_MODE,//制热退出模式
+		DEHUMIDIFICATION_EXIT_MODE,//除湿退出模式
+		COOLING_READY_MODE,//制冷准备模式
+		HEATING_READY_MODE,//制热准备模式
+		DEHUMIDIFICATION_READY_MODE//除湿准备模式
+	};
+	
+	//机场静音模式
+	enum SilentMode {
+		NOT_SILENT,
+		SILENT
+	};
+
+	//用户体验改善计划
+	enum UserExperienceImprovement {
+		INITIAL_STATE,//初始状态
+		REFUSE,//拒绝加入用户体验改善计划
+		AGREE//同意加入用户体验改善计划
+	};
+
+	//Dongle类型
+	enum DongleTypeInDock {
+		OLD_DONGLE,//旧 Dongle
+		NEW_DONGLE_WITH_ESIM//支持 eSIM 的新Dongle
+	};
+
+	//eSIM 激活状态
+	enum ESIMActivationState {
+		NOT_ACTIVATED,
+		ACTIVATED
+	};
+
+	//SIM 卡状态
+	enum SIMCardState {
+		NOT_INSERTED,
+		INSERTED
+	};
+
+	//SIM 卡槽使能状态
+	enum SIMSlot {
+		UNKNOWN_SIM,//未知
+		PHYSICAL_SIM,//实体 SIM 卡
+		ESIM//eSIM
+	};
+
+	//支持的运营商
+	enum TelecomOperator {
+		UNKNOWN_OPERATOR,//未知
+		MOBILE,//移动
+		CHINA_UNICOM,//联通
+		TELECOMMUNICATIONS//电信
+	};
+
+	//SIM 卡类型
+	enum SIMType {
+		UNKNOWN_TYPE,//未知
+		REGULAR_SIM,//其他普通 SIM 卡
+		TRI_NETWORK_SIM//三网卡
+	};
+
+	//保养状态
+	enum MaintenanceState {
+		NO_MAINTENANCE,//无需保养
+		WAITING_FOR_MAINTENANCE,//待保养
+		IN_MAINTENANCE//正在保养
+	};
+
+	//电池加热保温状态
+	enum HeatState {
+		NOT_HEATING,//电池未开启加热或保温
+		HEATING,//电池在加热中
+		HEAT_PRESERVATION//电池在保温中
+	};
+
+	//搜星档位
+	enum SatelliteQuality {
+		GEAR_1,//1档
+		GEAR_2,//2档
+		GEAR_3,//3档
+		GEAR_4,//4档
+		GEAR_5,//5档
+		RTK_FIXED
+	};
+
+	//紧急停止按钮状态
+	enum EmergencyStopState {
+		DISABLE_STOP,
+		ENABLE_STOP
+	};
+
+	//充电状态
+	enum ChargingState {
+		IDLE_CHARGING,
+		CHARGING
+	};
+
+	//电池运行模式
+	enum BatteryStoreMode {
+		SCHEDULE_MODE,//计划模式
+		STANDBY_MODE//待命模式
+	};
+
+	//固件一致性
+	enum FirmwareConsistency {
+		NO_UPGRADE_REQUIRED,//不需要一致性升级
+		CONSISTENCY_UPGRADE_REQUIRED//需要一致性升级
+	};
+
+	//降雨量
+	enum Rainfall {
+		NO_RAIN,//无雨
+		LIGHT_RAIN,//小雨
+		MODERATE_RAIN,//中雨
+		HEAVY_RAIN//大雨
+	};
+
+	//直播码流的质量
+	enum VideoQuality {
+		ADAPTIVE,//自适应
+		SMOOTH,//流畅
+		STANDARD_DEFINITION,//标清
+		HIGH_DEFINITION,//高清
+		ULTRA_HIGH_DEFINITION//超清
+	};
+
+	//直播状态
+	enum LiveStreamingState {
+		NOT_LIVE_STREAMING,//未直播
+		IN_LIVE_STREAMING//在直播
+	};
+
+	//链路连接状态
+	enum LinkState {
+		DISCONNECTED,
+		CONNECTED
+	};
+
+	//机场的图传链路模式
+	enum LinkWorkMode {
+		SDR_MODE,//SDR 模式
+		FOUR_G_FUSION_MODE//4G 融合模式
+	};
+
+	//网络类型
+	enum NetworkType {
+		FOUR_G,//4g
+		ETHERNET//以太网
+	};
+
+	//网络质量
+	enum NetworkQuality {
+		NO_SIGNAL,//无信号
+		POOR,//差
+		MODERATE,//一般
+		BETTER,//较好
+		GOOD//好
+	};
+
+	//补光灯状态
+	enum SupplementaryLightState {
+		DISABLE_LIGHT,//关闭
+		ON_LIGHT//打开
+	};
+
+	//舱盖状态
+	enum CoverState {
+		DISABLE_COVER,//关闭
+		ON_COVER,//打开
+		HALF_OPEN,//半开
+		ABNORMAL//舱盖状态异常
+	};
+
+	//机场停机坪上的飞行器开机状态
+	enum DeviceOnlineStatus {
+		POWER_OFF,//关机
+		POWER_ON//开机
+	};
+
+	//机场停机坪上的飞行器是否与机场对频
+	enum DevicePairedStatus {
+		NOT_PAIRED,//未对频
+		PAIRED//已对频
+	};
+
+	//机场任务状态
+	enum FlightTaskStepCode {
+		OPERATION_PREPARATION,//作业准备中
+		IN_FLIGHT_OPERATION,//飞行作业中
+		POST_OPERATION_RECOVERY,//作业后状态恢复
+		CUSTOM_FLIGHT_AREA_UPDATING,//自定义飞行区更新中
+		TERRAIN_OBSTACLE_UPDATING,//地形障碍物更新中
+		MISSION_IDLE,//任务空闲
+		AIRCRAFT_EXCEPTION,//飞行器异常
+		UNKNOWN_STATE//未知状态
+	};
+
+	//机场状态
+	enum DockModeCode {
+		IDLE_DOCK,//空闲中
+		ON_SITE_DEBUGGING,//现场调试
+		REMOTE_DEBUGGING,//远程调试
+		FIRMWARE_UPGRADE_IN_PROGRESS,//固件升级中
+		IN_OPERATION//作业中
+	};
+
+	//固件升级状态
+	enum FirmwareUpgradeStatus {
+		NOT_UPGRADED,
+		UPGRADING
+	};
+
+	//机场 RTK 标定源
+	struct RTCMInfo {
+		string mount_point;//网络 RTK 挂载点信息
+		string port;
+		string host;
+		RTCMDeviceType rtcm_device_type;//设备类型
+		CalibrationType source_type;//标定类型
+	};
+
+	//飞行器对频信息
+	struct CenterNode {
+		unsigned long sdr_id;//扰码信息
+		string sn;//设备sn
+	};
+
+	//机场或遥控器对频信息
+	struct LeafNode {
+		unsigned long sdr_id;//扰码信息
+		string sn;//设备sn
+		unsigned long control_source_index;//控制源序号
+	};
+
+	//图传连接拓扑
+	struct WirelessLinkTopoInDock {
+		sequence<unsigned long, 28> secret_code;//加密编码
+		CenterNode center_node;//飞行器对频信息
+		sequence<LeafNode> leaf_nodes;//机场或遥控器对频信息
+	};
+
+	//机场空调工作状态信息
+	struct AirConditioner {
+		AirConditionerState air_conditioner_state;//机场空调状态
+		unsigned long switch_time;//剩余等待可切换时间
+	};
+
+	//eSIM 信息
+	struct ESIMInfo {
+		TelecomOperator telecom_operator;//支持的运营商
+		boolean enabled;//eSIM 使能状态
+		string iccid;//sim iccid
+	};
+
+	//SIM 卡信息
+	struct SIMInfo {
+		TelecomOperator telecom_operator;//支持的运营商
+		SIMType sim_type;//SIM 卡类型
+		string iccid;//sim iccid
+	};
+
+	//4G Dongle信息
+	struct DongleInfoInDock {
+		string imei;//dongle imei
+		DongleTypeInDock dongle_type;//Dongle 类型
+		string eid;//dongle eid
+		ESIMActivationState esim_activate_state;//eSIM 激活状态
+		SIMCardState sim_card_state;//SIM 卡状态
+		SIMSlot sim_slot;//SIM 卡槽使能状态
+		sequence<ESIMInfo> esim_infos;//eSIM 信息
+		SIMInfo sim_info;//SIM 卡信息
+	};
+
+	//电池详细信息
+	struct Battery {
+		unsigned long capacity_percent;//电池剩余电量	
+		unsigned long index;//电池序号
+		unsigned long voltage;//电压
+		double temperature;//温度
+	};
+
+	//飞行器电池保养信息
+	struct DroneBatteryMaintenanceInfo {
+		MaintenanceState maintenance_state;//保养状态
+		unsigned long maintenance_time_left;//电池保养剩余时间
+		HeatState heat_state;//电池加热保温状态
+		sequence<Battery> batteries;//电池详细信息
+	};
+
+	//保养状态
+	enum IsWithMaintenance {
+		WITHOUT_MAINTENANCE,
+		WITH_MAINTENANCE
+	};
+
+	//保养类型
+	enum AircraftMaintenanceLevel {
+		NONE_MAINTENANCE,//无保养
+		REGULAR_MAINTENANCE,//机场常规保养
+		DEEP_MAINTENANCE//机场深度保养
+	};
+
+	//保养信息子项
+	struct MaintainStatusItemInDock {
+		IsWithMaintenance state;//保养状态
+		AircraftMaintenanceLevel last_maintain_type;//上一次保养类型
+		int64 last_maintain_time;//上一次保养时间
+		unsigned long last_maintain_work_sorties;//上一次保养时作业架次
+	};
+
+	//保养信息
+	struct MaintainStatusInDock {
+		sequence<MaintainStatusItemInDock> maintain_status_array;//保养信息数组
+	};
+
+	//搜星状态
+	struct PositionStateInDock {
+		unsigned long is_calibration;//是否标定
+		unsigned long is_fixed;//是否收敛
+		SatelliteQuality quality;//搜星档位
+		unsigned long gps_number;//GPS 搜星数量
+		unsigned long rtk_number;//RTK 搜星数量
+	};
+
+	//飞行器充电状态
+	struct DroneChargeState {
+		unsigned long capacity_percent;//电量百分比
+		ChargingState state;//充电状态
+	};
+
+	//机场备用电池信息
+	struct BackupBattery {
+		unsigned long switch_state;//备用电池开关
+		unsigned long voltage;//备用电池电压
+		double temperature;//备用电池温度
+	};
+
+	//备降点
+	struct AlternateLandPoint {
+		double longitude;//经度
+		double latitude;//纬度
+		double safe_land_height;//安全高度
+		unsigned long is_configured;//是否设置备降点
+		double height;//椭球高度
+	};
+
+	//存储容量
+	struct StorageCapacity {
+		unsigned long total;//总容量
+		unsigned long used;//已使用容量
+	};
+	
+	//该相机级别的视频源可以选择的码流列表
+	struct VideoList {
+		string video_index;//该相机级别的视频源可以选择的码流索引
+		string video_type;//该相机级别的视频源可以选择的码流类型
+		sequence<string> switchable_video_types;//该视频流支持切换的视频镜头类型
+	};
+
+	//该序列号设备上的相机列表
+	struct CameraList {
+		string camera_index;//相机索引
+		unsigned long available_video_number;//该相机级别的视频源可以被选择推流的码流数
+		unsigned long coexist_video_number_max;//该相机级别的视频源可以同时被推流的码流数
+		sequence<VideoList> video_list;//该相机级别的视频源可以选择的码流列表
+	};
+
+	//可选择的视频设备源
+	struct DeviceList {
+		string sn;//飞行器等视频源设备序列号（SN）
+		unsigned long available_video_number;//该序列号设备可以被选择推流的码流数
+		unsigned long coexist_video_number_max;//该序列号设备可以同时被推流的码流数
+		sequence<CameraList> camera_list;//该序列号设备上的相机列表
+	};
+
+	//网关设备直播能力
+	struct LiveCapacity {
+		unsigned long available_video_number;//可选择推流的码流数量
+		unsigned long coexist_video_number_max;//可同时推流的最大码流数量
+		sequence<DeviceList> device_list;//可选择的视频设备源
+	};
+
+	struct LiveStatusItem {
+		string video_id;//直播码流标识符
+		string video_type;//视频类型
+		VideoQuality video_quality;//直播码流的质量
+		LiveStreamingState status;//直播状态
+		unsigned long error_status;//错误码
+	};
+	
+	//网关当前整体直播状态推送
+	struct LiveStatus {
+		sequence<LiveStatusItem> live_status;
+	};
+
+	//图传链路
+	struct WirelessLink {
+		unsigned long dongle_number;//飞行器上 Dongle 数量
+		LinkState four_g_link_state;//4G 链路连接状态
+		LinkState sdr_link_state;//SDR 链路连接状态
+		LinkWorkMode link_workmode;//机场的图传链路模式
+		unsigned long sdr_quality;//SDR 信号质量
+		unsigned long four_g_quality;//总体 4G 信号质量
+		unsigned long four_g_uav_quality;//天端 4G 信号质量
+		unsigned long four_g_gnd_quality;//地端 4G 信号质量
+		double sdr_freq_band;//SDR 频段
+		double four_g_freq_band;//4G 频段
+	};
+
+	//媒体文件上传细节
+	struct MediaFileDetail {
+		unsigned long remain_upload;//待上传数量
+	};
+
+	//网络状态
+	struct NetworkState {
+		NetworkType type;//网络类型
+		NetworkQuality quality;//网络质量
+		double rate;//网络速率
+	};
+
+	//子设备状态
+	struct SubDevice {
+		string device_sn;//子设备序列号（SN）
+		string device_model_key;//子设备枚举值
+		DeviceOnlineStatus device_online_status;//机场停机坪上的飞行器开机状态
+		DevicePairedStatus device_paired;//机场停机坪上的飞行器是否与机场对频
+	};
+
+	/**
+	* 机场实时状态
+	*/
+	struct Dock2RealTimeStatus: BaseStatus::BaseDeviceStatus{
+		HomePositionValidity home_position_is_valid;			//Home点有效性
+		double heading;											//机场朝向角
+		RTCMInfo rtcm_info;										//机场 RTK 标定源
+		WirelessLinkTopoInDock wireless_link_topo;					//图传连接拓扑
+		AirConditioner air_conditioner;							//机场空调工作状态信息
+		boolean air_transfer_enable;							//空中回传
+		SilentMode silent_mode;									//机场静音模式
+		UserExperienceImprovement user_experience_improvement;	//用户体验改善计划
+		sequence<DongleInfoInDock> dongle_infos;						//4G Dongle信息
+		DroneBatteryMaintenanceInfo drone_battery_maintenance_info;//飞行器电池保养信息
+		MaintainStatusInDock maintain_status;							//保养信息
+		PositionStateInDock position_state;							//搜星状态
+		EmergencyStopState emergency_stop_state;				//紧急停止按钮状态
+		DroneChargeState drone_charge_state;					//飞行器充电状态
+		BackupBattery backup_battery;							//机场备用电池信息
+		unsigned long alarm_state;								//机场声光报警状态
+		BatteryStoreMode battery_store_mode;					//电池运行模式
+		int64 activation_time;									//机场激活时间(unix 时间戳)
+		double height;											//椭球高度
+		AlternateLandPoint alternate_land_point;				//备降点
+		FirmwareConsistency compatible_status;					//固件一致性
+		int64 acc_time;											//机场累计运行时长
+		int64 first_power_on;									//首次上电时间
+		StorageCapacity storage;								//存储容量
+		double working_current;									//工作电流
+		unsigned long working_voltage;							//工作电压
+		double humidity;										//舱内湿度
+		double temperature;										//舱内温度
+		double environment_temperature;							//环境温度
+		double wind_speed;										//风速
+		Rainfall rainfall;										//降雨量
+		LiveCapacity live_capacity;								//网关设备直播能力
+		LiveStatus live_status;									//网关当前整体直播状态推送
+		WirelessLink wireless_link;								//图传链路
+		MediaFileDetail media_file_detail;						//媒体文件上传细节
+		unsigned long job_number;								//机场累计作业次数
+		boolean drone_in_dock;									//飞行器是否在舱
+		NetworkState network_state;								//网络状态
+		SupplementaryLightState supplement_light_state;			//补光灯状态
+		CoverState cover_state;									//舱盖状态
+		SubDevice sub_device;									//子设备状态
+		FlightTaskStepCode flighttask_step_code;				//机场任务状态
+		DockModeCode mode_code;									//机场状态
+		FirmwareUpgradeStatus firmware_upgrade_status;			//固件升级状态
+		string firmware_version;								//固件版本
+		double latitude;										//纬度
+		double longitude;										//经度
+		string dock_sn;											//机场SN码
+	};
+};
+
+module DroneGeneralStatus {
+	module DroneTaskStatus{
+		enum TemplateType {
+			WAYPOINT,      // 航点飞行
+			MAPPING_2D,    // 建图航拍
+			MAPPING_3D,    // 倾斜摄影
+			MAPPING_STRIP  // 航带飞行
+		};
+
+		enum DroneType {
+			M3D_M3TD
+		};
+
+
+		enum PayloadPosition {
+			POSITION_0
+		};
+
+
+		enum FinishAction {
+			GO_HOME,             // 返航
+			NO_ACTION,           // 无动作
+			AUTO_LAND,           // 原地降落
+			GOTO_FIRST_WAYPOINT  // 飞向起始点
+		};
+		
+
+		enum RCLostAction {
+			GO_BACK, // 返航
+			LANDING, // 降落
+			HOVER    // 悬停
+		};
+		
+
+		enum WaypointHeadingMode {
+			FOLLOW_WAYLINE,     // 沿航线方向
+			MANUALLY,           // 手动控制
+			FIXED_YAW,              // 锁定当前偏航角
+			SMOOTH_TRANSITION,  // 自定义平滑过渡
+			TOWARD_POI          // 朝向兴趣点
+		};
+
+
+		enum WaypointTurnMode {
+			COORDINATE_TURN,                              // 协调转弯，不过点
+			TO_POINT_AND_STOP_WITH_DISCONTINUITY_CURVATURE, // 直线到点停
+			TO_POINT_AND_STOP_WITH_CONTINUITY_CURVATURE,    // 曲线到点停
+			TO_POINT_AND_PASS_WITH_CONTINUITY_CURVATURE     // 曲线过点不停
+		};
+
+
+		enum GimbalPitchMode {
+			MANUAL,
+			USE_POINT_SETTING
+		};
+
+
+		enum ActionTriggerType {
+			REACH_POINT,              // 到达航点时
+			BETWEEN_ADJACENT_POINTS,  // 航段触发
+			MULTIPLE_TIMING,          // 等时触发
+			MULTIPLE_DISTANCE         // 等距触发
+		};
+
+
+		struct WaypointHeadingParam {
+			WaypointHeadingMode waypoint_heading_mode;
+	   
+			double waypoint_heading_angle;
+	   
+			string waypoint_poi_point;
+		};
+
+	 
+		struct WaypointTurnParam {
+			WaypointTurnMode waypoint_turn_mode;
+			double waypoint_turn_damping_dist;
+
+			long use_straight_line;
+		};
+
+	 
+		struct Action {
+			long action_index;
+			long hover_time; 
+			double aircraft_heading;
+		  
+			long use_global_image_format;
+	  
+			string image_format;
+			double gimbal_yaw_rotate_angle;
+			double gimbal_pitch_rotate_angle;
+			double zoom;
+		};
+
+	  
+		struct ActionTriggerParam {
+			ActionTriggerType action_trigger_type;
+			double action_trigger_param; 
+		};
+
+	  
+		struct Waypoint {
+			long index;
+			double latitude;  
+			double longitude; 
+			double height;   
+		 
+			double speed;
+			WaypointHeadingParam heading_param;
+			WaypointTurnParam turn_param;
+			double gimbal_pitch_angle;
+			
+			sequence<Action> actions;
+			ActionTriggerParam action_trigger_param;
+		};
+		struct SearchArea
+		{
+			string area_name;
+			sequence<Waypoint>	area_points;	
+		};  
+		struct GenerateArea
+		{
+			string area_name;
+			sequence<Waypoint>	area_points;
+		};
+		struct Wayline {
+		 
+			string wayline_id;
+			
+	  
+			string wayline_name;
+			TemplateType template_type;
+			DroneType drone_type;
+			long sub_drone_type;
+			string payload_type; 
+			PayloadPosition payload_position;
+			string image_format; 
+			FinishAction finish_action;
+			RCLostAction execute_rc_lost_action;
+			double global_height;
+			double auto_flight_speed;
+			GimbalPitchMode gimbal_pitch_mode;
+			string take_off_ref_point; 
+
+		  
+			WaypointHeadingParam global_waypoint_heading_param;
+			WaypointTurnParam global_waypoint_turn_param;
+
+		 
+			sequence<Waypoint> way_point_list;
+		};
+
+		/**
+		* 无人机任务实时状态
+		*/
+		struct DroneTaskRealTimeStatus: BaseStatus::BaseDeviceStatus {
+			Wayline current_wayline; 
+			SearchArea current_SearchArea;
+			GenerateArea current_GenerateArea;
+			string drone_state;
+            string drone_task_action;
+			string drone_task_targetID;
+			
+			
+		};
+	};
+	
+	module DroneStatus {
+		// 基本类型定义
+		typedef sequence<octet, 28> secret_code_type;
+		typedef sequence<string> string_array;
+		typedef sequence<int32> int_array;
+		typedef sequence<float> float_array;
+		typedef sequence<double> double_array;
+
+		//相机模式
+		enum CameraMode {
+			PHOTO_MODE,//拍照
+			VIDEO_MODE,//录像
+			SMART_LOW_LIGHT_MODE,//智能低光
+			PANORAMA_MODE//全景拍照
+		};
+
+		//拍照状态
+		enum PhotoState {
+			PHOTO_IDLE,//空闲
+			PHOTO_IN_PROGRESS//拍照中
+		};
+		
+		//录像状态
+		enum RecordingState {
+			RECORDING_IDLE,//空闲
+			RECORDING_IN_PROGRESS//录像中
+		};
+
+		//广角镜头曝光模式
+		enum WideExposureMode {
+			AUTO_EXPOSURE,//自动
+			SHUTTER_PRIORITY,//快门优先曝光
+			APERTURE_PRIORITY,//光圈优先曝光
+			MANUAL_EXPOSURE//手动曝光
+		};
+
+		//变焦镜头对焦模式
+		enum ZoomFocusMode {
+			MF_MODE,
+			AFS_MODE,
+			AFC_MODE
+		};
+
+		//变焦镜头对焦状态
+		enum ZoomFocusState {
+			FOCUS_IDLE,//空闲
+			FOCUS_IN_PROGRESS,//对焦中
+			FOCUS_SUCCESS,//对焦成功
+			FOCUS_FAILED//对焦失败
+		};
+
+		//红外测温模式
+		enum IrMeteringMode {
+			IR_OFF,//关闭测温
+			IR_POINT,//点测温
+			IR_AREA//区域测温
+		};
+
+		//Dongle 类型
+		enum DongleTypeInDrone {
+			DONGLE0,
+			DONGLE1,
+			DONGLE2,
+			DONGLE3,
+			DONGLE4,
+			DONGLE5,
+			OLD_DONGLE,
+			DONGLE7,
+			DONGLE8,
+			DONGLE9,
+			NEW_DONGLE_WITH_ESIM 
+		};
+
+		//eSIM 激活状态
+		enum EsimActivateState {
+			ESIM_INACTIVE,
+			ESIM_ACTIVE
+		};
+
+		//SIM 卡状态
+		enum SimCardState {
+			SIM_NOT_INSERTED,
+			SIM_INSERTED
+		};
+
+		//SIM 卡槽使能状态
+		enum SimSlot {
+			SIM_SLOT_UNKNOWN,
+			SIM_SLOT_PHYSICAL,//实体 SIM 卡
+			SIM_SLOT_ESIM//eSIM
+		};
+
+		//支持的运营商
+		enum TelecomOperator {
+			OPERATOR_UNKNOWN,
+			OPERATOR_CHINA_MOBILE,//移动
+			OPERATOR_CHINA_UNICOM,//联通
+			OPERATOR_CHINA_TELECOM//电信
+		};
+
+		//SIM 卡类型
+		enum SimType {
+			SIM_TYPE_UNKNOWN,
+			SIM_TYPE_NORMAL,//其他普通 SIM 卡
+			SIM_TYPE_TRIPLE_NETWORK//三网卡
+		};
+
+		//返航高度模式设置值
+		enum RthMode {
+			SMART_HEIGHT_MODE,//智能高度
+			SET_HEIGHT_MODE//设定高度
+		};
+
+		//飞行器避障状态
+		enum ObstacleAvoidanceState {
+			AVOIDANCE_OFF,
+			AVOIDANCE_ON
+		};
+
+		//搜星是否收敛
+		enum PositionFixedStatus {
+			POSITION_NOT_STARTED,//未开始
+			POSITION_CONVERGING,//收敛中
+			POSITION_SUCCESS,//收敛成功
+			POSITION_FAILED//收敛失败
+		};
+
+		//搜星档位
+		enum PositionQuality {
+			QUALITY_0,
+			QUALITY_1,
+			QUALITY_2,
+			QUALITY_3,
+			QUALITY_4,
+			QUALITY_5,
+			QUALITY_6,
+			QUALITY_7,
+			QUALITY_8,
+			QUALITY_9,
+			QUALITY_RTK_FIXED 
+		};
+
+		//档位
+		enum GearMode {
+			GEAR_A,
+			GEAR_P,
+			GEAR_NAV,
+			GEAR_FPV,
+			GEAR_FARM,
+			GEAR_S,
+			GEAR_F,
+			GEAR_M,
+			GEAR_G,
+			GEAR_T
+		};
+
+		//飞行器进入当前状态的原因
+		enum ModeCodeReason {
+			REASON_NONE,//无意义
+			REASON_LOW_BATTERY,//电池电量不足（返航、降落）
+			REASON_LOW_VOLTAGE,//电池电压不足（返航、降落）
+			REASON_CRITICAL_LOW_VOLTAGE,//电压严重过低（返航、降落）
+			REASON_REMOTE_CONTROL,//遥控器按键请求（起飞、返航、降落）
+			REASON_APP_REQUEST,//App 请求（起飞、返航、降落）
+			REASON_RC_LOST,//遥控信号丢失（返航、降落、悬停）
+			REASON_EXTERNAL_DEVICE,//导航、SDK 等外部设备触发（起飞、返航、降落）
+			REASON_AIRPORT_GEOZONE,//进入机场限飞区（降落）
+			REASON_TOO_CLOSE_TO_HOME,//虽然触发了返航但是因为距离 Home 点距离太近（降落）
+			REASON_TOO_FAR_FROM_HOME,//虽然触发了返航但是因为距离 Home 点距离太远（降落）
+			REASON_WAYPOINT_MISSION,//执行航点任务时请求（起飞）
+			REASON_OVER_HOME_POINT,//返航阶段到达 Home 点上方后请求（降落）
+			REASON_ALTITUDE_LIMIT,//飞行器高度下降，距地面 0.7m（二段降落限低）时，继续下降导致（降落）
+			REASON_FORCE_LANDING,//App、SDK 等设备强制突破限低保护进行（降落）
+			REASON_AIRCRAFT_AVOIDANCE,//因为周围有航班经过而请求（返航、降落）
+			REASON_ALTITUDE_CONTROL_FAILURE,//因为高度控制失败请求（返航、降落）
+			REASON_SMART_LOW_BATTERY,//智能低电量返航后进入（降落）
+			REASON_AP_CONTROL,//AP控制飞行模式（手动飞行）
+			REASON_HARDWARE_ERROR,//硬件异常（返航、降落）
+			REASON_GROUND_PROTECTION,//防触地保护结束（降落）
+			REASON_RTH_CANCELED,//返航取消 (悬停)
+			REASON_OBSTACLE_AVOIDANCE,//返航时遇到障碍物（降落）
+			REASON_STRONG_WIND//机场场景下大风触发（返航）
+		};
+
+		//飞行器状态
+		enum ModeCode {
+			STANDBY,//待机
+			TAKEOFF_PREPARING,//起飞准备
+			TAKEOFF_READY,//起飞准备完毕
+			MANUAL_FLIGHT,//手动飞行
+			AUTO_TAKEOFF,//自动起飞
+			WAYPOINT_FLIGHT,//航线飞行
+			PANORAMA_PHOTO,//全景拍照
+			SMART_FOLLOW,//智能跟随
+			ADS_B_AVOIDANCE,//ADS-B 躲避
+			AUTO_RETURN,//自动返航
+			AUTO_LANDING,//自动降落
+			FORCE_LANDING,//强制降落
+			THREE_BLADE_LANDING,//三桨叶降落
+			UPGRADING,//升级中
+			DISCONNECTED,//未连接
+			APAS,//APAS
+			VIRTUAL_JOYSTICK,//虚拟摇杆状态
+			COMMAND_FLIGHT,//指令飞行
+			RTK_CONVERGENCE,//空中 RTK 收敛模式
+			AIRPORT_SITE_SELECTION//机场选址中
+		};
+
+		//风向
+		enum WindDirection {
+			NORTH,
+			NORTHEAST,
+			EAST,
+			SOUTHEAST,
+			SOUTH,
+			SOUTHWEST,
+			WEST,
+			NORTHWEST
+		};
+
+		//水印在画面中位置
+		enum WatermarkLayout {
+			TOP_LEFT,
+			BOTTOM_LEFT,
+			TOP_RIGHT,
+			BOTTOM_RIGHT
+		};
+
+		//飞行器对频信息
+		struct SdrNode {
+			int32 sdr_id;//扰码信息
+			string sn;//设备sn
+		};
+
+		//当前连接的机场或遥控器对频信息
+		struct ControlSourceNode {
+			int32 sdr_id;//扰码信息
+			string sn;//设备sn
+			int32 control_source_index;//控制源序号	
+		};
+
+		//图传连接拓扑
+		struct WirelessLinkTopoInDrone {
+			secret_code_type secret_code;//加密编码	
+			SdrNode center_node;//飞行器对频信息
+			sequence<ControlSourceNode> leaf_nodes;//当前连接的机场或遥控器对频信息
+		};
+
+		//视场角（FOV）在 liveview 中的区域
+		struct LiveviewWorldRegion {
+			float left;
+			float top;
+			float right;
+			float bottom;
+		};
+
+		//测温区域温度点
+		struct TemperaturePoint {
+			double x;//温度点坐标 x
+			double y;//温度点坐标 y
+			double temperature;//温度点的温度
+		};
+
+		//红外测温区域
+		struct IrMeteringArea {
+			double x;//测温区域左上角点坐标 x
+			double y;//测温区域左上角点坐标 y
+			double width;//测温区域宽度
+			double height;//测温区域高度
+			double aver_temperature;//测温区域平均温度
+			TemperaturePoint min_temperature_point;//测温区域最低温度点
+			TemperaturePoint max_temperature_point;//测温区域最高温度点
+		};
+
+		//eSIM 信息
+		struct EsimInfo {
+			TelecomOperator telecom_operator;//支持的运营商
+			boolean enabled;//eSIM 使能状态
+			string iccid;//sim iccid
+		};
+
+		//SIM 卡信息
+		struct SimInfo {
+			TelecomOperator telecom_operator;//支持的运营商
+			SimType sim_type;//SIM 卡类型
+			string iccid;//sim iccid
+		};
+
+		//
+		struct DongleInfoInDrone {
+			string imei;//dongle imei
+			DongleTypeInDrone dongle_type;//Dongle 类型
+			string eid;//dongle eid
+			EsimActivateState esim_activate_state;//eSIM 激活状态
+			SimCardState sim_card_state;//SIM 卡状态
+			SimSlot sim_slot;//SIM 卡槽使能状态
+			sequence<EsimInfo> esim_infos;//eSIM 信息
+			SimInfo sim_info;//SIM 卡信息
+		};
+
+		//保养信息子项
+		struct MaintainStatusItemInDrone {
+			int32 state;//保养状态
+			int32 last_maintain_type;//上一次保养类型
+			int64 last_maintain_time;//上一次保养时间
+			int32 last_maintain_flight_time;//上一次保养时飞行航时
+			int32 last_maintain_flight_sorties;//上一次保养时飞行架次
+		};
+
+		//保养信息
+		struct MaintainStatusInDrone {
+			sequence<MaintainStatusItemInDrone> maintain_status_array;//保养信息数组
+		};
+
+		//负载编号
+		struct TypeSubtypeGimbalIndex {
+			double gimbal_pitch;//云台俯仰轴角度
+			double gimbal_roll;//云台横滚轴角度
+			double gimbal_yaw;//云台偏航轴角度
+			string payload_index;//负载索引，格式为 {type-subtype-gimbalindex}
+			double zoom_factor;//变焦倍数
+		};
+
+		//搜星状态
+		struct PositionStateInDrone {
+			PositionFixedStatus is_fixed;//是否收敛
+			PositionQuality quality;//搜星档位	
+			int32 gps_number;//GPS 搜星数量
+			int32 rtk_number;//RTK 搜星数量
+		};
+
+		//存储容量
+		struct StorageInfo {
+			int32 total;//总容量
+			int32 used;//已使用容量
+		};
+
+		//电池详细信息
+		struct BatteryInfo {
+			int32 capacity_percent;//电池剩余电量
+			int32 index;//电池序号
+			string sn;//电池序列号（SN）
+			int32 type;//电池类型
+			int32 sub_type;//电池子类型
+			string firmware_version;//固件版本
+			int32 loop_times;//电池循环次数
+			int32 voltage;//电压
+			float temperature;//温度
+			int32 high_voltage_storage_days;//高电压存储天数
+		};
+
+		//电池信息
+		struct BatteryStatus {
+			int32 capacity_percent;//电池的总剩余电量
+			int32 remain_flight_time;//剩余飞行时间
+			int32 return_home_power;//返航所需电量百分比
+			int32 landing_power;//强制降落电量百分比
+			sequence<BatteryInfo> batteries;//电池详细信息
+		};
+
+		//飞行器避障状态
+		struct ObstacleAvoidance {
+			ObstacleAvoidanceState horizon;//水平避障状态
+			ObstacleAvoidanceState upside;//上视避障状态
+			ObstacleAvoidanceState downside;//下视避障状态
+		};
+
+		//相机水印设置
+		struct CameraWatermarkSettings {
+			int32 global_enable;//水印显示全局开关
+			int32 drone_type_enable;//机型显示开关
+			int32 drone_sn_enable;//飞行器序列号显示开关
+			int32 datetime_enable;//日期时间显示开关
+			int32 gps_enable;//经纬度&海拔高显示开关
+			int32 user_custom_string_enable;//自定义文案显示开关
+			string user_custom_string;//自定义文案内容
+			int32 layout;//水印在画面中位置
+		};
+		
+		//飞行器相机信息
+		struct DroneCameraStatus {
+			int32 remain_photo_num;//剩余拍照张数
+			int32 remain_record_duration;//剩余录像时间
+			int32 record_time;//视频录制时长
+			string payload_index;//负载编号
+			CameraMode camera_mode;//相机模式
+			PhotoState photo_state;//拍照状态
+			boolean screen_split_enable;//分屏是否使能
+			RecordingState recording_state;//录像状态
+			float zoom_factor;//变焦倍数
+			float ir_zoom_factor;//红外变焦倍数
+			LiveviewWorldRegion liveview_world_region;//视场角（FOV）在 liveview 中的区域
+			string_array photo_storage_settings;//照片存储设置集合
+			string_array video_storage_settings;//视频存储设置集合
+			WideExposureMode wide_exposure_mode;//广角镜头曝光模式
+			int32 wide_iso;//广角镜头感光度
+			int32 wide_shutter_speed;//广角镜头快门速度
+			int32 wide_exposure_value;//广角镜头曝光值
+			WideExposureMode zoom_exposure_mode;//变焦镜头曝光模式
+			int32 zoom_iso;//变焦镜头感光度
+			int32 zoom_shutter_speed;//变焦镜头快门速度
+			int32 zoom_exposure_value;//变焦镜头曝光值
+			ZoomFocusMode zoom_focus_mode;//变焦镜头对焦模式
+			int32 zoom_focus_value;//变焦镜头对焦值
+			int32 zoom_max_focus_value;//变焦镜头最大对焦值
+			int32 zoom_min_focus_value;//变焦镜头最小对焦值
+			int32 zoom_calibrate_farthest_focus_value;//变焦镜头标定的最远对焦值
+			int32 zoom_calibrate_nearest_focus_value;//变焦镜头标定的最近对焦值
+			ZoomFocusState zoom_focus_state;//变焦镜头对焦状态
+			IrMeteringMode ir_metering_mode;//红外测温模式
+			TemperaturePoint ir_metering_point;//红外测温点
+			IrMeteringArea ir_metering_area;//红外测温区域
+		};
+
+		/**
+		* 无人机实时状态
+		*/
+		struct DroneRealTimeStatus: BaseStatus::BaseDeviceStatus{			
+			// 图传连接信息
+			string best_link_gateway;//飞行器图传连接质量最好的网关SN
+			WirelessLinkTopoInDrone wireless_link_topo;//图传连接拓扑
+			
+			// 相机信息
+			sequence<DroneCameraStatus> cameras;
+			
+			// 飞行安全信息
+			string flysafe_database_version;//飞行安全数据库版本
+			boolean offline_map_enable;//离线地图开关
+			
+			// 4G Dongle信息
+			sequence<DongleInfoInDrone> dongle_infos;//4G Dongle信息
+			
+			// 返航设置
+			RthMode current_rth_mode;//返航高度模式当前值
+			RthMode rth_mode;//返航高度模式设置值
+			
+			// 避障设置
+			ObstacleAvoidance obstacle_avoidance;//飞行器避障状态
+			
+			// 飞行限制状态
+			int32 is_near_area_limit;//是否接近限飞区
+			int32 is_near_height_limit;//是否接近设定的限制高度
+			int32 height_limit;//飞行器限高
+			
+			// 设备状态
+			int32 night_lights_state;//飞行器夜航灯状态
+			int64 activation_time;//飞行器激活时间(unix 时间戳)
+			MaintainStatusInDrone maintain_status;//保养信息
+			int32 total_flight_sorties;//飞行器累计飞行总架次
+			TypeSubtypeGimbalIndex type_subtype_gimbalindex;//负载编号
+			string track_id;//航迹ID
+			
+			// 定位信息
+			PositionStateInDrone position_state;//搜星状态
+			StorageInfo storage;//存储容量
+			
+			// 电池信息
+			BatteryStatus battery;//飞行器电池信息
+			float total_flight_distance;//飞行器累计飞行总里程
+			int32 total_flight_time;//飞行器累计飞行航时
+			int32 serious_low_battery_warning_threshold;//严重低电量告警
+			int32 low_battery_warning_threshold;//低电量告警
+			
+			// 控制源
+			string control_source;//当前控制源
+			
+			// 环境信息
+			WindDirection wind_direction;//当前风向
+			float wind_speed;//风速
+			float home_distance;//距离 Home 点的距离
+			float home_latitude;//Home 点纬度
+			float home_longitude;//Home 点经度
+			
+			// 姿态信息
+			int32 attitude_head;//偏航轴角度
+			float attitude_roll;//横滚轴角度
+			float attitude_pitch;//俯仰轴角度
+			float elevation;//相对起飞点高度
+			float height;//绝对高度
+			float latitude;//当前位置纬度
+			float longitude;//当前位置经度
+			float vertical_speed;//垂直速度
+			float horizontal_speed;//水平速度	
+			
+			// 固件信息
+			int32 firmware_upgrade_status;//固件升级状态
+			int32 compatible_status;//固件一致性
+			string firmware_version;//固件版本
+			
+			// 飞行模式
+			GearMode gear;//档位
+			ModeCodeReason mode_code_reason;//飞行器进入当前状态的原因
+			float commander_flight_height;//指点飞行高度
+			int32 commander_flight_mode;//指点飞行模式设置值
+			int32 commander_mode_lost_action;//指点飞行失控动作
+			
+			// 水印设置
+			CameraWatermarkSettings camera_watermark_settings;//相机水印设置
+			
+			// 飞行状态
+			ModeCode mode_code;//飞行器状态
+			string drone_sn;//无人机SN码
+		};
+		
+		/**
+		* 无人机高频状态
+		*/
+		struct highFreqRealTimeStatus: BaseStatus::BaseDeviceStatus {
+			double attitude_head;//飞行器姿态 head 角
+			double latitude;
+			double longitude;
+			double height;
+			double speed_x;
+			double speed_y;
+			double speed_z;
+			double gimbal_pitch;//云台 pitch 角
+			double gimbal_roll;//云台 roll 角
+			double gimbal_yaw;//云台 yaw 角
+			string drone_sn;
+			string dock_sn;
+		};
+	};
+	
+};
+
+module USVStatus {
+	/**
+	 * 打击设备工作状态枚举
+	 */
+	enum StrikeWorkingState {
+		IDLE,               // 空闲状态
+		INITIALIZING,       // 初始化中
+		RUNNING,            // 运行中
+		PAUSED,            // 已暂停
+		STRIKE_ERROR              // 错误状态
+	};
+	/**
+	 * 云台状态
+	 */
+	struct USVPTZStatus {
+		double pan;             // 水平角度
+		double tilt;            // 垂直角度
+		double zoom;            // 变焦倍数
+		double focus;           // 聚焦值
+		double hs;              // 水平视场角
+		double vs;              // 垂直视场角
+	};
+
+	struct USVInfo{
+		double HDG;           //相对于正北航向
+		double COG;            //相对于地面方向
+		double SOG;           //相对于地面航行速度
+		double lon;
+		double lat;
+	};
+	
+	/**
+	 * 无人船实时状态
+	 */
+	struct USVRealTimeStatus: BaseStatus::BaseDeviceStatus {
+		USVPTZStatus ptz;          // 云台状态
+		USVPTZStatus ptz1;          // 云台状态
+		USVPTZStatus ptz2;          // 云台状态
+		USVPTZStatus ptz3;          // 云台状态
+		USVPTZStatus ptz4;          // 云台状态
+		USVPTZStatus ptz5;          // 云台状态
+
+		USVInfo usv_info;     // 无人船状态信息
+		StrikeWorkingState strikeState;//打击设备状态
+	};
+};
+
+module JammerStatus {
+	/**
+	 * 干扰器类型枚举
+	 */
+	enum JammerType {
+		RadarJammer,			//雷达干扰器(有源干扰,噪声压制、距离门拖引、假目标生成等)
+		CommunicationsJammer,	//通信干扰器
+		ChaffJammer,			//箔条干扰器(无源干扰,仅产生大量虚假回波)
+		InfraredJammer,			//红外干扰器
+		EOPTJammer,				//广电干扰器
+		AcousticJammer,			//声学干扰器
+		AcousticRepeater		//声学转发(欺骗式干扰)
+	};
+	
+	/**
+	 * 干扰器能力分类
+	 */
+	enum JammerAbility {
+		ECM,
+		ESM_ECM,
+		OECM,
+		DECM,
+		OECM_DECM,
+		Repeater,
+		IRCM
+	};
+
+	/**
+	 * 干扰设备实时状态
+	 */
+	struct JammerRealTimeStatus: BaseStatus::BaseDeviceStatus {
+		int32 jammerState;		//0-良好，1-未准备好或繁忙，2-故障，3-损毁，4-被干扰
+		double hitPoint;		//点数(默认为100,若<=0表示损毁)
+		JammerType jammerType; 	//干扰器主类别
+		sequence<JammerAbility> jammerAbility;	//干扰器能力分类
+	};
+};
+
+module LaserStatus {
+	/**
+	 * 激光武器实时状态
+	 */
+	struct LaserRealTimeStatus: BaseStatus::BaseDeviceStatus {
+		int32 laserState;		//0-良好，1-未准备好或繁忙，2-故障，3-损毁
+		double hitPoint;		//点数(默认为100,若<=0表示损毁)
+	};
+};
+
+module MunitionStatus {
+	/**
+	 * 巡飞弹实时状态
+	 */
+	struct MunitionRealTimeStatus: BaseStatus::BaseDeviceStatus {
+		int32 munitionState;	//0-良好，1-未准备好或繁忙，2-故障，3-损毁
+		double hitPoint;		//点数(默认为100,若<=0表示损毁)
+	};
+};
+
+module WeaponStatus {
+	/**
+	 * 其他武器实时状态
+	 */
+	struct WeaponRealTimeStatus: BaseStatus::BaseDeviceStatus {
+		int32 weaponState;		//0-良好，1-未准备好或繁忙，2-故障，3-损毁
+		double hitPoint;		//点数(默认为100,若<=0表示损毁)
+		
+		unsigned long launchPlatformID;	//发射平台ID
+		string launchPlatformName;		//发射平台名称
+		double attackAngle;				//攻击角（对面弹）
+		double missDistance;			//脱靶量(空间距离), 单位是米,默认值10000, 此参数必须实时更新，正确填写
+		int32 moveStep;					//当前运动阶段(0-初始段、1-巡航段、2-指令制导段、3-半主动制导段、4-TVM制导段、5-主动制导段、6-攻击段、7-交汇段、8-自毁段)
+	};
+};
+
+}; // module status
+}; // module device
+}; // module casia

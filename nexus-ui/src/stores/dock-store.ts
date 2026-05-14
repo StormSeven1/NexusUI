@@ -123,6 +123,16 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     displayOrder: 4,
   },
   {
+    id: "track-display",
+    location: "left-0",
+    mode: "docked",
+    position: { x: 310, y: 210 },
+    size: { width: 360, height: 400 },
+    zIndex: DEFAULT_Z_INDEX,
+    lastPopupPosition: null,
+    displayOrder: 5,
+  },
+  {
     id: "electro-optical",
     location: null,
     mode: "hidden",
@@ -130,7 +140,7 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     size: { width: 360, height: 400 },
     zIndex: DEFAULT_Z_INDEX,
     lastPopupPosition: null,
-    displayOrder: 5,
+    displayOrder: 6,
   },
   {
     id: "electro-optical-1",
@@ -173,8 +183,18 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     displayOrder: 13,
   },
   {
-    id: "chat",
+    id: "target-profile",
     location: "right-0",
+    mode: "docked",
+    position: { x: 520, y: 80 },
+    size: { width: 440, height: 360 },
+    zIndex: DEFAULT_Z_INDEX,
+    lastPopupPosition: null,
+    displayOrder: 5,
+  },
+  {
+    id: "chat",
+    location: "right-1",
     mode: "docked",
     position: { x: 500, y: 100 },
     size: { width: 440, height: 400 },
@@ -184,8 +204,8 @@ const DEFAULT_PANELS: PanelWindowState[] = [
   },
   {
     id: "overview",
-    location: "right-0",
-    mode: "docked",
+    location: null,
+    mode: "hidden",
     position: { x: 600, y: 200 },
     size: { width: 440, height: 400 },
     zIndex: DEFAULT_Z_INDEX,
@@ -194,8 +214,8 @@ const DEFAULT_PANELS: PanelWindowState[] = [
   },
   {
     id: "eventlog",
-    location: "right-1",
-    mode: "docked",
+    location: null,
+    mode: "hidden",
     position: { x: 650, y: 250 },
     size: { width: 440, height: 400 },
     zIndex: DEFAULT_Z_INDEX,
@@ -204,8 +224,8 @@ const DEFAULT_PANELS: PanelWindowState[] = [
   },
   {
     id: "comm",
-    location: "right-1",
-    mode: "docked",
+    location: null,
+    mode: "hidden",
     position: { x: 700, y: 300 },
     size: { width: 440, height: 400 },
     zIndex: DEFAULT_Z_INDEX,
@@ -239,10 +259,10 @@ export const useDockStore = create<DockStoreWithSidebar>()(
   leftLowerPanelTab: "electro-optical",
 
   /** 右上区域当前显示的面板 */
-  rightUpperPanelTab: "chat",
+  rightUpperPanelTab: "target-profile",
 
   /** 右下区域当前显示的面板 */
-  rightLowerPanelTab: "eventlog",
+  rightLowerPanelTab: "chat",
 
   // ============ 动态分区系统状态 ============
 
@@ -257,21 +277,21 @@ export const useDockStore = create<DockStoreWithSidebar>()(
     },
   ],
 
-  /** 右侧边栏：与侧栏未全量 dock 前保持双分区初始值 */
+  /** 右侧边栏：上目标档案、下智能助手 */
   rightPartitions: [
     {
       id: "right-0",
       side: "right",
       index: 0,
-      heightRatio: 0.5,
-      currentPanelId: "chat",
+      heightRatio: 1 / 3,
+      currentPanelId: "target-profile",
     },
     {
       id: "right-1",
       side: "right",
       index: 1,
-      heightRatio: 0.5,
-      currentPanelId: "eventlog",
+      heightRatio: 2 / 3,
+      currentPanelId: "chat",
     },
   ],
 
@@ -311,8 +331,8 @@ export const useDockStore = create<DockStoreWithSidebar>()(
   /** 左侧边栏分割比例初始值 (0.5 = 上下各50%) */
   leftSidebarSplitRatio: 0.5,
 
-  /** 右侧边栏分割比例初始值 (0.5 = 上下各50%) */
-  rightSidebarSplitRatio: 0.5,
+  /** 右侧边栏分割比例：上分区高度占比（目标档案 ≈1/3） */
+  rightSidebarSplitRatio: 1 / 3,
 
   /** 左侧栏宽度 */
   leftSidebarWidth: DEFAULT_LEFT_SIDEBAR_WIDTH,

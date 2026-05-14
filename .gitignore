@@ -55,3 +55,12 @@ __pycache__/
 *.pyc
 *.pyo
 *.db
+
+# Local / secrets / large artifacts
+.cursor/
+Custombackend/app/data/
+Custombackend/app/DDSReferences/Camera/build2/
+Custombackend/app/DDSReferences/Camera/build3/
+Custombackend/app/DDSReferences/Camera/build_xk/
+docker/nginx/certs/
+nexus-ui/public/tiles/*.pmtiles

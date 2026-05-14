@@ -74,6 +74,9 @@ export function EoVideoDetectionLayer({
       containerRef={containerRef}
       videoRef={videoRef}
       boxes={boxes}
+      detectionEntityId={entityId}
+      ddsCameraEntityId={ddsCameraEntityId}
+      expandedMode={expandedMode}
       selectedBoxId={selectedBoxId}
       onSelectBox={onSelectBox}
       onDoubleClickPoint={onDoubleClickPoint}

@@ -155,7 +155,9 @@ class WebSocketManager:
         # 统一添加is_air_track字段
         if 'is_air_track' not in track_data:
             track_data['is_air_track'] = self._determine_air_track(track_data)
-        
+        # DDS 的 source_name 常不含「对空」→ 上面会全判对海；按接收器写入的 layer / dds id 校正
+        self._sync_is_air_track_from_dds_layer(track_data)
+
         message = {
             "type": "Track",
             "timestamp": datetime.now().isoformat(),
@@ -186,7 +188,24 @@ class WebSocketManager:
         
         # 其他都是对海航迹
         return False
-    
+
+    def _sync_is_air_track_from_dds_layer(self, track_data: Dict[str, Any]) -> None:
+        """
+        与 NexusUI `TRACK_LAYER_KEY_BY_DDS_SOURCE_ID` 一致：用 track_layer_key / dds_source_id
+        区分对空融合、探鸟与对海/雷达，避免仅靠 source_name 导致全为对海、前端全画船标。
+        """
+        tlk = str(track_data.get("track_layer_key", "") or "").strip().lower().replace("-", "_")
+        if tlk in ("fuse_air", "bird_radar"):
+            track_data["is_air_track"] = True
+        elif tlk in ("fuse_sea", "radar_wharf", "radar_jingzi"):
+            track_data["is_air_track"] = False
+
+        dds = str(track_data.get("dds_source_id", "") or "").strip().lower()
+        if dds in ("dds_forward_fuse_bird_radar_track", "dds_forward_bird_radar_track"):
+            track_data["is_air_track"] = True
+        elif dds in ("dds_forward_fuse_track", "dds_forward_radar_track1", "dds_forward_radar_track2"):
+            track_data["is_air_track"] = False
+
     def queue_message(self, message: Dict[str, Any]):
         """将消息加入广播队列"""
         self.broadcast_queue.append(message)

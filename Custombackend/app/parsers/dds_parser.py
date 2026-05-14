@@ -89,6 +89,9 @@ def _parse_fusion_track(dds_object) -> Optional[Dict]:
             'timestamp': dds_object.timestamp() if hasattr(dds_object, 'timestamp') else None,
             'trackType': dds_object.trackType() if hasattr(dds_object, 'trackType') else None,
             'trackAlias': dds_object.trackAlias() if hasattr(dds_object, 'trackAlias') else None,
+            # IDL octet trackCategoryId：前端 3=无人机图标，其余=鸟（须发到 WS 根字段，勿仅留在 DDS 内存）
+            'trackCategoryId': int(dds_object.trackCategoryId()) if hasattr(dds_object, 'trackCategoryId') else None,
+            'trackCategoryName': dds_object.trackCategoryName() if hasattr(dds_object, 'trackCategoryName') else None,
             'cpa': dds_object.cpa() if hasattr(dds_object, 'cpa') else 0,      # 添加CPA字段
             'tcpa': dds_object.tcpa() if hasattr(dds_object, 'tcpa') else 0,    # 添加TCPA字段
             'source': 'DDS',
@@ -133,6 +136,8 @@ def _parse_radar_track(dds_object) -> Optional[Dict]:
             'timestamp': dds_object.timestamp() if hasattr(dds_object, 'timestamp') else None,
             'cpa': dds_object.cpa() if hasattr(dds_object, 'cpa') else 0,      # 添加CPA字段
             'tcpa': dds_object.tcpa() if hasattr(dds_object, 'tcpa') else 0,    # 添加TCPA字段
+            'trackCategoryId': int(dds_object.trackCategoryId()) if hasattr(dds_object, 'trackCategoryId') else None,
+            'trackCategoryName': dds_object.trackCategoryName() if hasattr(dds_object, 'trackCategoryName') else None,
             'source': 'DDS',
             'data_type': 'radar_track'
         }
@@ -182,6 +187,8 @@ def _parse_ais_track(dds_object) -> Optional[Dict]:
             'trackAlias': dds_object.trackAlias() if hasattr(dds_object, 'trackAlias') else None,
             'cpa': dds_object.cpa() if hasattr(dds_object, 'cpa') else 0,      # 添加CPA字段
             'tcpa': dds_object.tcpa() if hasattr(dds_object, 'tcpa') else 0,    # 添加TCPA字段
+            'trackCategoryId': int(dds_object.trackCategoryId()) if hasattr(dds_object, 'trackCategoryId') else None,
+            'trackCategoryName': dds_object.trackCategoryName() if hasattr(dds_object, 'trackCategoryName') else None,
             'source': 'DDS',
             'data_type': 'ais_track'
         }
@@ -285,10 +292,10 @@ def _parse_alarm_event(dds_object) -> Optional[Dict]:
 
 
 def _parse_camera_status(dds_object) -> Optional[Dict]:
-    """解析相机实时状态（CameraRealTimeStatus 继承自 BaseDeviceStatus）"""
+    """解析相机实时状态：兼容旧版扁平 CameraRealTimeStatus（reverse1~6）；新版仅 rootPos、speedParam，不再输出 reverse*。"""
     try:
         result = {
-            # BaseDeviceStatus 字段
+            # 基类共有字段（旧 BaseDeviceStatus / 新 BaseStatus::BaseDeviceStatus）
             'entityId': dds_object.entityId() if hasattr(dds_object, 'entityId') else None,
             'taskType': dds_object.taskType() if hasattr(dds_object, 'taskType') else None,
             'executionState': dds_object.executionState() if hasattr(dds_object, 'executionState') else None,
@@ -296,20 +303,33 @@ def _parse_camera_status(dds_object) -> Optional[Dict]:
             'online': dds_object.online() if hasattr(dds_object, 'online') else None,
             'elec': dds_object.elec() if hasattr(dds_object, 'elec') else None,
             'timestamp': dds_object.timestamp() if hasattr(dds_object, 'timestamp') else None,
-            # CameraRealTimeStatus 字段
+            # 新版基类扩展（EntityRealTimeStatus.idl / BaseStatus::BaseDeviceStatus）
+            'entityType': dds_object.entityType() if hasattr(dds_object, 'entityType') else None,
+            'isVirtualWeapon': dds_object.isVirtualWeapon() if hasattr(dds_object, 'isVirtualWeapon') else None,
+            'dispositionType': dds_object.dispositionType() if hasattr(dds_object, 'dispositionType') else None,
+            'targetID': dds_object.targetID() if hasattr(dds_object, 'targetID') else None,
+            'targetName': dds_object.targetName() if hasattr(dds_object, 'targetName') else None,
+            'targetType': dds_object.targetType() if hasattr(dds_object, 'targetType') else None,
+            # 相机扩展
             'focus': dds_object.focus() if hasattr(dds_object, 'focus') else None,
             'panoOffset': dds_object.panoOffset() if hasattr(dds_object, 'panoOffset') else None,
             'trackID': dds_object.trackID() if hasattr(dds_object, 'trackID') else None,
+            'trackAlias': dds_object.trackAlias() if hasattr(dds_object, 'trackAlias') else None,
             'visibility': dds_object.visibility() if hasattr(dds_object, 'visibility') else None,
-            'reverse1': dds_object.reverse1() if hasattr(dds_object, 'reverse1') else None,
-            'reverse2': dds_object.reverse2() if hasattr(dds_object, 'reverse2') else None,
-            'reverse3': dds_object.reverse3() if hasattr(dds_object, 'reverse3') else None,
-            'reverse4': dds_object.reverse4() if hasattr(dds_object, 'reverse4') else None,
-            'reverse5': dds_object.reverse5() if hasattr(dds_object, 'reverse5') else None,
-            'reverse6': dds_object.reverse6() if hasattr(dds_object, 'reverse6') else None,
+            # 新版 IDL（CameraStatus::CameraRealTimeStatus）：权限 / 速度
+            'rootPos': dds_object.rootPos() if hasattr(dds_object, 'rootPos') else None,
+            'speedParam': dds_object.speedParam() if hasattr(dds_object, 'speedParam') else None,
             'source': 'DDS',
             'data_type': 'camera_status'
         }
+        # 仅旧版扁平 CameraRealTimeStatus 仍带 reverse1~6；新 IDL 已取消，不再向下游伪造 reverse*
+        if hasattr(dds_object, 'reverse1'):
+            result['reverse1'] = dds_object.reverse1()
+            result['reverse2'] = dds_object.reverse2() if hasattr(dds_object, 'reverse2') else None
+            result['reverse3'] = dds_object.reverse3() if hasattr(dds_object, 'reverse3') else None
+            result['reverse4'] = dds_object.reverse4() if hasattr(dds_object, 'reverse4') else None
+            result['reverse5'] = dds_object.reverse5() if hasattr(dds_object, 'reverse5') else None
+            result['reverse6'] = dds_object.reverse6() if hasattr(dds_object, 'reverse6') else None
         
         # PTZ信息
         if hasattr(dds_object, 'ptz'):
@@ -711,7 +731,8 @@ def _parse_generic(dds_object, structure_type: str) -> Optional[Dict]:
             'course', 'speed', 'azimuth', 'range',
             'timestamp', 'timeStamp',
             'x', 'y', 'width', 'height', 'confidence',
-            'trackType', 'classId', 'behaviorId'
+            'trackType', 'classId', 'behaviorId',
+            'trackCategoryId', 'trackCategoryName',
         ]
         
         # 尝试提取所有常见字段

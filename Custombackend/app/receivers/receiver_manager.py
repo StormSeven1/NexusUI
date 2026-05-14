@@ -17,6 +17,25 @@ from parsers import TrackParser
 from parsers.entity_parser import parse_entity_status
 from websocket_manager import ws_manager
 
+# DDS 航迹 receiver_id → 前端 track_layer_key（与 NexusUI map-entity-model / track-layer-visibility 一致）
+TRACK_LAYER_KEY_BY_RECEIVER = {
+    "dds_forward_fuse_track": "fuse_sea",
+    "dds_forward_fuse_bird_radar_track": "fuse_air",
+    "dds_forward_bird_radar_track": "bird_radar",
+    "dds_forward_radar_track1": "radar_wharf",
+    "dds_forward_radar_track2": "radar_jingzi",
+}
+
+
+def _annotate_track_receiver_metadata(track: Dict[str, Any], receiver_id: str, source_name: str) -> None:
+    """供 WS 前端归类显隐：来源名 + 接收器 id + track_layer_key（若配置表命中）"""
+    track["source_name"] = source_name
+    track["dds_source_id"] = receiver_id
+    lk = TRACK_LAYER_KEY_BY_RECEIVER.get(receiver_id)
+    if lk:
+        track["track_layer_key"] = lk
+
+
 # DDS接收器（可选）- 使用动态DDS接收器服务
 if not DDS_AVAILABLE:
     logger.warning("DDS功能不可用（FastDDS库未安装或模块未找到）")
@@ -90,8 +109,7 @@ class ReceiverManager:
         if tracks:
             self._stats[receiver_id]['parsed'] += len(tracks)
             for track in tracks:
-                # 统一添加source_name字段
-                track['source_name'] = source_name
+                _annotate_track_receiver_metadata(track, receiver_id, source_name)
                 ws_manager.queue_track_data(track)
         else:
             self._stats[receiver_id]['failed'] += 1
@@ -109,8 +127,7 @@ class ReceiverManager:
         if tracks:
             self._stats[client_id]['parsed'] += len(tracks)
             for track in tracks:
-                # 统一添加source_name字段
-                track['source_name'] = source_name
+                _annotate_track_receiver_metadata(track, client_id, source_name)
                 ws_manager.queue_track_data(track)
         else:
             self._stats[client_id]['failed'] += 1
@@ -136,8 +153,7 @@ class ReceiverManager:
             if tracks:
                 self._stats[receiver_id]['parsed'] += len(tracks)
                 for track in tracks:
-                    # 统一添加source_name字段
-                    track['source_name'] = source_name
+                    _annotate_track_receiver_metadata(track, receiver_id, source_name)
                     ws_manager.queue_track_data(track)
             else:
                 self._stats[receiver_id]['failed'] += 1
@@ -216,6 +232,7 @@ class ReceiverManager:
                     })
                 else:
                     # 航迹数据（fusion_track, ais_track, radar_track 等），发送为 Track 类型
+                    _annotate_track_receiver_metadata(parsed_data, receiver_id, source_name)
                     ws_manager.queue_track_data(parsed_data)
             else:
                 self._stats[receiver_id]['failed'] += 1
@@ -268,8 +285,7 @@ class ReceiverManager:
         if tracks:
             self._stats[poller_id]['parsed'] += len(tracks)
             for track in tracks:
-                # 统一添加source_name字段
-                track['source_name'] = source_name
+                _annotate_track_receiver_metadata(track, poller_id, source_name)
                 ws_manager.queue_track_data(track)
         else:
             self._stats[poller_id]['failed'] += 1
@@ -337,7 +353,18 @@ class ReceiverManager:
     def start_dds_receivers(self, configs: List[Dict[str, Any]]):
         """启动DDS接收器（支持多个，支持动态配置）"""
         if not DDS_AVAILABLE or DDSReceiverService is None:
-            logger.warning("DDS功能不可用，跳过DDS接收器启动")
+            enabled = [c.get("id", "") for c in configs if c.get("enabled", False)]
+            logger.error(
+                "DDS 航迹不可用：容器/环境无法 import fastdds（Python 绑定 + libfastdds 未就绪），"
+                "已跳过 {} 个已启用 DDS 源，前端将收不到 DDS 融合的航迹。",
+                len(enabled),
+            )
+            logger.error(
+                "处理办法：改用带 FastDDS 的镜像（如团队 ubuntu-fastdds-python / fast_dds_with_app），"
+                "或在当前镜像安装 eProsima Fast-DDS 及 Python 绑定并配置 LD_LIBRARY_PATH。"
+            )
+            if enabled:
+                logger.error("当前被跳过的 DDS 源 id（需在修复环境后重启后端）: {}", ", ".join(enabled))
             return
         
         for config in configs:
@@ -368,7 +395,9 @@ class ReceiverManager:
                         'data_class_name': config['data_class_name'],
                         'pubsub_type_class_name': config['pubsub_type_class_name'],
                         'type_name': config['type_name'],
-                        'use_default_xml': config['use_default_xml']
+                        'use_default_xml': config['use_default_xml'],
+                        'subscriber_xml_file': config.get('subscriber_xml_file', ''),
+                        'dds_python_module': config.get('dds_python_module', ''),
                     }
                 }
                 

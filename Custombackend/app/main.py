@@ -11,6 +11,7 @@ import signal
 import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket
@@ -19,12 +20,13 @@ import uvicorn
 from loguru import logger
 
 from config import (
-    get_settings, 
-    UDP_RECEIVERS, 
-    TCP_CLIENTS, 
-    MQTT_RECEIVERS, 
-    DDS_RECEIVERS, 
-    HTTP_POLLERS
+    get_settings,
+    UDP_RECEIVERS,
+    TCP_CLIENTS,
+    MQTT_RECEIVERS,
+    DDS_RECEIVERS,
+    HTTP_POLLERS,
+    WORK_MODE_DDS_PUBLISHER,
 )
 from database import DatabaseManager
 from websocket_manager import ws_manager
@@ -66,6 +68,33 @@ async def _receiver_stats_log_loop():
 
 # 接收器 stats 后台任务（lifespan 内 cancel）
 _receiver_stats_task: Optional[asyncio.Task] = None
+_work_mode_repeat_task: Optional[asyncio.Task] = None
+
+
+async def _work_mode_dds_repeat_loop():
+    """按 WORK_MODE_DDS_PUBLISHER.repeat_interval_sec 重复发布当前系统模式（默认 10s）。"""
+    from work_mode_dds import (
+        get_effective_work_mode,
+        publish_work_mode,
+        work_mode_dds_enabled,
+    )
+
+    interval = int(WORK_MODE_DDS_PUBLISHER.get("repeat_interval_sec", 10) or 0)
+    if interval <= 0:
+        return
+
+    while True:
+        try:
+            if work_mode_dds_enabled():
+                mode = get_effective_work_mode()
+                await asyncio.to_thread(
+                    partial(publish_work_mode, mode, quiet=True)
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"系统模式 DDS 周期发布失败: {e}")
+        await asyncio.sleep(interval)
 
 # 配置日志
 log_dir = Path("logs")
@@ -95,7 +124,7 @@ db_manager: DatabaseManager = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    global db_manager, _receiver_stats_task
+    global db_manager, _receiver_stats_task, _work_mode_repeat_task
     
     logger.info("=" * 60)
     logger.info("启动航迹数据中继服务")
@@ -155,9 +184,20 @@ async def lifespan(app: FastAPI):
     logger.info("正在启动MQTT接收器...")
     receiver_manager.start_mqtt_receivers(MQTT_RECEIVERS)
     
-    # 启动DDS接收器
+    # 启动DDS接收器（航迹主要来自 config.DDS_RECEIVERS；无 fastdds 时全部跳过）
     logger.info("正在启动DDS接收器...")
     receiver_manager.start_dds_receivers(DDS_RECEIVERS)
+    from receivers.network import DDS_AVAILABLE as _dds_py_ok
+    dds_enabled_cfg = sum(1 for c in DDS_RECEIVERS if c.get("enabled", False))
+    dds_started = len(receiver_manager.dds_receivers)
+    if dds_enabled_cfg and dds_started == 0:
+        logger.error(
+            "航迹告警：配置了 {} 个启用的 DDS 源，但实际启动 0 个；"
+            "请检查上方 DDS / fastdds 相关日志并使用含 FastDDS 的 Docker 镜像。",
+            dds_enabled_cfg,
+        )
+    elif _dds_py_ok and dds_started:
+        logger.info("DDS 接收器已成功启动 {} 路（航迹可走 DDS → WebSocket）", dds_started)
     
     # 启动HTTP轮询器
     logger.info("正在启动HTTP轮询器...")
@@ -165,7 +205,15 @@ async def lifespan(app: FastAPI):
 
     if _RECEIVER_STATS_LOG_INTERVAL_SEC > 0:
         _receiver_stats_task = asyncio.create_task(_receiver_stats_log_loop())
-    
+
+    _wm_interval = int(WORK_MODE_DDS_PUBLISHER.get("repeat_interval_sec", 10) or 0)
+    if WORK_MODE_DDS_PUBLISHER.get("enabled", True) and _wm_interval > 0:
+        _work_mode_repeat_task = asyncio.create_task(_work_mode_dds_repeat_loop())
+        logger.info(
+            "系统模式 DDS 周期发布: 每 {}s（未手动设置时使用 default_mode_key）",
+            _wm_interval,
+        )
+
     logger.info("=" * 60)
     logger.info(f"服务已启动: http://{settings.HOST}:{settings.PORT}")
     logger.info(f"WebSocket端点: ws://{settings.HOST}:{settings.PORT}/ws")
@@ -184,7 +232,22 @@ async def lifespan(app: FastAPI):
             pass
         finally:
             _receiver_stats_task = None
-    
+
+    if _work_mode_repeat_task is not None:
+        _work_mode_repeat_task.cancel()
+        try:
+            await _work_mode_repeat_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _work_mode_repeat_task = None
+
+    try:
+        from work_mode_dds import shutdown_work_mode_publisher
+        shutdown_work_mode_publisher()
+    except Exception as e:
+        logger.warning(f"关闭系统模式 DDS 发布器: {e}")
+
     # 停止接收器
     receiver_manager.stop_all()
     await receiver_manager.stop_http_pollers()

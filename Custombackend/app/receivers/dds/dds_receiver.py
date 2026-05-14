@@ -65,6 +65,8 @@ def parse_dds_object(data) -> dict:
             'timestamp': data.timeStamp() if hasattr(data, 'timeStamp') else None,
             'source': 'DDS',
             'target_type': data.trackCategoryName() if hasattr(data, 'trackCategoryName') else 'Unknown',
+            'trackCategoryId': int(data.trackCategoryId()) if hasattr(data, 'trackCategoryId') else None,
+            'trackCategoryName': data.trackCategoryName() if hasattr(data, 'trackCategoryName') else None,
         }
         return result
     except Exception as e:

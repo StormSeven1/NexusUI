@@ -3,10 +3,22 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
-import { useTrackStore, getEffectiveTrackDisposition } from "@/stores/track-store";
-import type { Asset, RestrictedZone, Track } from "@/lib/map-entity-model";
+import { useTrackStore, getTrackDispositionForRendering } from "@/stores/track-store";
+import { useTrackDisplayStore, neutralFusionColorForTrack } from "@/stores/track-display-store";
+import { trimHistoryTrailForDisplay, velocityVectorEndLngLat } from "@/lib/track-display-trail";
+import {
+  LYR_DB_AREAS,
+  LYR_TRACKS,
+  type Asset,
+  type RestrictedZone,
+  type Track,
+} from "@/lib/map-entity-model";
 import { mergeZoneFillColor } from "@/components/map/modules/polygon-draw-maplibre";
 import { useZoneStore } from "@/stores/zone-store";
+import { useDbAreaStore } from "@/stores/db-area-store";
+import type { AreaTableRow } from "@/lib/area-table-geometry";
+import { areaRowToPolygonRing, dbAreaFeatureId, dbAreaVisibilityKey } from "@/lib/area-table-geometry";
+import { DB_AREA_MAP_UI_COLOR, ringSouthEastLabelLngLat } from "@/lib/build-db-areas-geojson";
 import { useAssetStore } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import type { ZoneData } from "@/stores/zone-store";
@@ -17,6 +29,11 @@ import {
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import { trackMapDrawHistoryTrails } from "@/components/map/modules/tracks-maplibre";
 import {
+  filterTracksForMapRender,
+  isRadarTrackLayerKey,
+  resolveTrackLayerKey,
+} from "@/lib/track-layer-visibility";
+import {
   assetMapLabelTextColor,
   buildMarkerSymbolDataUrl,
   buildAssetSymbolDataUrl,
@@ -24,9 +41,8 @@ import {
   geoCircleCoords,
   geoSectorCoords,
   geoRadarSweepCoords,
-  resolveTrackMarkerFill,
   resolveTrackPointFill,
-  getFusionTrackMarkerFill,
+  isAirTrackBirdGlyph,
 } from "@/lib/map-icons";
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { AlertTriangle } from "lucide-react";
@@ -74,7 +90,8 @@ type GroupKey =
   | "optoFov"
   | "airportFov"
   | "droneFov"
-  | "zones";
+  | "zones"
+  | "dbAreas";
 
 type DroneLabelStyleResolved = ReturnType<typeof laserLabelStyleFromBundle>;
 
@@ -162,6 +179,68 @@ function syncCesiumZones(
   }
 }
 
+/** Postgres `area_table` → 3D 多边形（与 `lyr-db-areas` 显隐一致） */
+function syncCesiumDbAreas(
+  viewer: CesiumViewer,
+  C: CesiumModule,
+  groups: { dbAreas: CesiumEntity[] },
+  rows: AreaTableRow[],
+  areaVisibility: Record<string, boolean>,
+  layerMasterOn: boolean,
+) {
+  for (const e of groups.dbAreas) viewer.entities.remove(e);
+  groups.dbAreas.length = 0;
+
+  for (const row of rows) {
+    if (!layerMasterOn) continue;
+    if (areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] === false) continue;
+    const ring = areaRowToPolygonRing(row);
+    if (!ring || ring.length < 4) continue;
+    const coords = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]
+      ? ring.slice(0, -1)
+      : ring;
+    const positions = coords.map(([lng, lat]) => C.Cartesian3.fromDegrees(lng, lat));
+    const ringClosed: [number, number][] = [...coords.map(([lng, lat]) => [lng, lat] as [number, number]), coords[0]];
+    const [labelLng, labelLat] = ringSouthEastLabelLngLat(ringClosed);
+
+    const outlineCol = C.Color.fromCssColorString(DB_AREA_MAP_UI_COLOR);
+    const labelFill = outlineCol;
+    const outlineW = Math.max(1.5, Math.min(5, Number(row.line_width) || 2));
+
+    const name =
+      (row.area_name && String(row.area_name).trim()) || `区域 ${row.group_id}/${row.area_id}`;
+    const id = dbAreaFeatureId(row);
+
+    const ent = viewer.entities.add({
+      polygon: {
+        hierarchy: new C.PolygonHierarchy(positions),
+        material: C.Color.TRANSPARENT,
+        outline: true,
+        outlineColor: outlineCol,
+        outlineWidth: outlineW,
+        heightReference: C.HeightReference.CLAMP_TO_GROUND,
+      },
+      label: {
+        text: name,
+        font: '11px Roboto, "Noto Sans SC", sans-serif',
+        fillColor: labelFill,
+        outlineColor: C.Color.fromCssColorString("#09090b"),
+        outlineWidth: 2,
+        style: C.LabelStyle.FILL_AND_OUTLINE,
+        /** 与 2D `text-anchor: bottom-right` 一致：锚点为字块东南角，向西北铺开 */
+        verticalOrigin: C.VerticalOrigin.BOTTOM,
+        horizontalOrigin: C.HorizontalOrigin.RIGHT,
+        pixelOffset: new C.Cartesian2(0, 0),
+        scaleByDistance: new C.NearFarScalar(1e4, 1, 5e5, 0.4),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      position: C.Cartesian3.fromDegrees(labelLng, labelLat, 120),
+      properties: { dbAreaId: id },
+    });
+    groups.dbAreas.push(ent);
+  }
+}
+
 /**
  * 光电/机场/无人机等**非雷达**覆盖扇区：与 Map2D `OptoelectronicFovModule.setFromAssets` 一样需随 asset-store 刷新。
  * 初始化只跑一次会在长时间 `await` 后仍停留在首帧朝向；故 init 末尾与 `useAssetStore.subscribe` 都要调用。
@@ -221,9 +300,15 @@ async function syncCesiumTrackBillboards(
   allTracks: Track[],
   accent: AssetDispositionIconAccent,
 ) {
+  const td = useTrackDisplayStore.getState();
   const drawTrails = trackMapDrawHistoryTrails(allTracks);
   const visibleIds = new Set(allTracks.map((t) => t.id));
   const fullMap = new Map(allTracks.map((t) => [t.id, t]));
+
+  const pickTrackPointCss = (t: Track, eff: ReturnType<typeof getTrackDispositionForRendering>, friendlyFill?: string) =>
+    eff === "neutral"
+      ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor)
+      : resolveTrackPointFill(t, eff, accent, friendlyFill);
 
   for (const ent of groups.trackTrails) {
     viewer.entities.remove(ent);
@@ -233,8 +318,22 @@ async function syncCesiumTrackBillboards(
   const kept: CesiumEntity[] = [];
   for (const ent of groups.tracks) {
     const tid = ent.properties?.trackId?.getValue() as string | undefined;
-    if (tid && visibleIds.has(tid)) kept.push(ent);
-    else viewer.entities.remove(ent);
+    if (!tid || !visibleIds.has(tid)) {
+      viewer.entities.remove(ent);
+      continue;
+    }
+    const tr = fullMap.get(tid);
+    if (!tr) {
+      viewer.entities.remove(ent);
+      continue;
+    }
+    const wantDot = isRadarTrackLayerKey(resolveTrackLayerKey(tr));
+    const hasDot = Boolean(ent.point);
+    if (wantDot !== hasDot) {
+      viewer.entities.remove(ent);
+      continue;
+    }
+    kept.push(ent);
   }
   groups.tracks = kept;
 
@@ -248,42 +347,57 @@ async function syncCesiumTrackBillboards(
   for (const track of allTracks) {
     if (existing.has(track.id)) continue;
     const ts = trCfg.trackTypeStyles[track.type] ?? trCfg.trackTypeStyles.sea;
-    const eff = getEffectiveTrackDisposition(track);
+    const eff = getTrackDispositionForRendering(track);
     const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
-    const image = await buildMarkerSymbolDataUrl(
-      track.type,
-      eff,
-      accent,
-      track.isVirtual === true,
-      friendlyFill,
-      eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
-    );
-    const ent = viewer.entities.add({
-      position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
-      billboard: {
-        image,
-        scale: 0.90,
-        verticalOrigin: Cesium.VerticalOrigin.CENTER,
-        heightReference: Cesium.HeightReference.NONE,
-        rotation: -Cesium.Math.toRadians(track.heading ?? 0),
-        color: Cesium.Color.WHITE,
-      },
-      label: {
-        text: track.name,
-        font: '11px Roboto, "Noto Sans SC", sans-serif',
-        fillColor: Cesium.Color.fromCssColorString(
-          resolveTrackPointFill(track, eff, accent, friendlyFill),
-        ),
-        outlineColor: Cesium.Color.fromCssColorString("#09090b"),
-        outlineWidth: 2,
-        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-        pixelOffset: new Cesium.Cartesian2(0, -26),
-        scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.4),
-        translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 8e5, 0.2),
-      },
-      properties: { trackId: track.id },
-    });
+    const fusionTint =
+      eff === "neutral" ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor) : undefined;
+    const wantDot = isRadarTrackLayerKey(resolveTrackLayerKey(track));
+    const labelCommon = {
+      text: track.name,
+      font: '11px Roboto, "Noto Sans SC", sans-serif',
+      fillColor: Cesium.Color.fromCssColorString(pickTrackPointCss(track, eff, friendlyFill)),
+      outlineColor: Cesium.Color.fromCssColorString("#09090b"),
+      outlineWidth: 2,
+      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+      pixelOffset: new Cesium.Cartesian2(0, wantDot ? -22 : -26),
+      scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.4),
+      translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 8e5, 0.2),
+    };
+    const ent = wantDot
+      ? viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
+          point: {
+            pixelSize: 10,
+            color: Cesium.Color.fromCssColorString(pickTrackPointCss(track, eff, friendlyFill)).withAlpha(0.92),
+            outlineColor: Cesium.Color.fromCssColorString("#09090b"),
+            outlineWidth: 1,
+            heightReference: Cesium.HeightReference.NONE,
+          },
+          label: labelCommon,
+          properties: { trackId: track.id },
+        })
+      : viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(track.lng, track.lat, track.altitude || 0),
+          billboard: {
+            image: await buildMarkerSymbolDataUrl(
+              track.type,
+              eff,
+              accent,
+              track.isVirtual === true,
+              friendlyFill,
+              fusionTint,
+              isAirTrackBirdGlyph(track),
+            ),
+            scale: 0.90,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            heightReference: Cesium.HeightReference.NONE,
+            rotation: -Cesium.Math.toRadians(track.heading ?? 0),
+            color: Cesium.Color.WHITE,
+          },
+          label: labelCommon,
+          properties: { trackId: track.id },
+        });
     groups.tracks.push(ent);
     existing.add(track.id);
   }
@@ -295,47 +409,77 @@ async function syncCesiumTrackBillboards(
     ent.position = new Cesium.ConstantPositionProperty(
       Cesium.Cartesian3.fromDegrees(t.lng, t.lat, t.altitude || 0),
     );
-    if (ent.billboard) {
-      const ts = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
-      const eff = getEffectiveTrackDisposition(t);
-      const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
+    const ts = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
+    const eff = getTrackDispositionForRendering(t);
+    const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
+    const pc = pickTrackPointCss(t, eff, friendlyFill);
+    const fusionTint =
+      eff === "neutral" ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor) : undefined;
+    if (ent.point) {
+      ent.point.color = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc).withAlpha(0.92));
+      if (ent.label) {
+        ent.label.fillColor = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc));
+        ent.label.pixelOffset = new Cesium.ConstantProperty(new Cesium.Cartesian2(0, -22));
+      }
+    } else if (ent.billboard) {
       const image = await buildMarkerSymbolDataUrl(
         t.type,
         eff,
         accent,
         t.isVirtual === true,
         friendlyFill,
-        eff === "neutral" ? getFusionTrackMarkerFill(t) : undefined,
+        fusionTint,
+        isAirTrackBirdGlyph(t),
       );
       ent.billboard.image = new Cesium.ConstantProperty(image);
       ent.billboard.rotation = new Cesium.ConstantProperty(-Cesium.Math.toRadians(t.heading ?? 0));
       if (ent.label) {
-        ent.label.fillColor = new Cesium.ConstantProperty(
-          Cesium.Color.fromCssColorString(resolveTrackPointFill(t, eff, accent, friendlyFill)),
-        );
+        ent.label.fillColor = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc));
+        ent.label.pixelOffset = new Cesium.ConstantProperty(new Cesium.Cartesian2(0, -26));
       }
     }
   }
 
   const alt = (z: number | undefined) => (Number.isFinite(z) ? (z as number) : 0);
-  if (!drawTrails) return;
+
+  if (drawTrails) {
+    for (const t of allTracks) {
+      const trail = trimHistoryTrailForDisplay(t.historyTrail, td.trailLengthSeconds);
+      if (!trail || trail.length < 1) continue;
+      const ts2 = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
+      const eff = getTrackDispositionForRendering(t);
+      const friendlyFill2 = eff === "friendly" ? ts2.idColor : undefined;
+      const positions = [...trail, [t.lng, t.lat] as [number, number]].map(([lng, lat]) =>
+        Cesium.Cartesian3.fromDegrees(lng, lat, alt(t.altitude)),
+      );
+      const lineEnt = viewer.entities.add({
+        polyline: {
+          positions,
+          width: 2,
+          material: Cesium.Color.fromCssColorString(pickTrackPointCss(t, eff, friendlyFill2)).withAlpha(0.48),
+          clampToGround: true,
+        },
+        properties: { trackTrailFor: t.id },
+      });
+      groups.trackTrails.push(lineEnt);
+    }
+  }
+
   for (const t of allTracks) {
-    const trail = t.historyTrail;
-    if (!trail || trail.length < 1) continue;
-    const ts2 = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
-    const eff = getEffectiveTrackDisposition(t);
-    const friendlyFill2 = eff === "friendly" ? ts2.idColor : undefined;
-    const positions = [...trail, [t.lng, t.lat] as [number, number]].map(([lng, lat]) =>
-      Cesium.Cartesian3.fromDegrees(lng, lat, alt(t.altitude)),
-    );
+    const vecEnd = velocityVectorEndLngLat(t, td.vectorLengthSeconds);
+    if (!vecEnd) continue;
     const lineEnt = viewer.entities.add({
       polyline: {
-        positions,
-        width: 2,
-        material: Cesium.Color.fromCssColorString(resolveTrackPointFill(t, eff, accent, friendlyFill2)).withAlpha(0.48),
+        positions: [
+          Cesium.Cartesian3.fromDegrees(t.lng, t.lat, alt(t.altitude)),
+          Cesium.Cartesian3.fromDegrees(vecEnd[0], vecEnd[1], alt(t.altitude)),
+        ],
+        width: 4,
+        /** 与 2D MapLibre `tracks-vector` 一致：红色速度矢量，便于辨认 */
+        material: Cesium.Color.fromCssColorString("#ff2222").withAlpha(0.92),
         clampToGround: true,
       },
-      properties: { trackTrailFor: t.id },
+      properties: { trackVectorFor: t.id },
     });
     groups.trackTrails.push(lineEnt);
   }
@@ -360,6 +504,7 @@ export function Map3D() {
     airportFov: [],
     droneFov: [],
     zones: [],
+    dbAreas: [],
   });
   /** 供 `syncCesiumTrackBillboards` 与订阅 flush 使用（`loadResolvedAppConfig` 的 `assetDispositionIconAccent`） */
   const cesiumTrackAccentRef = useRef<AssetDispositionIconAccent>({});
@@ -433,6 +578,14 @@ export function Map3D() {
         /* 1) 限制区 */
         const rgba = (c: RGBA) => new Cesium.Color(c[0], c[1], c[2], c[3]);
         syncCesiumZones(v, Cesium, groups, adaptZones(useZoneStore.getState().zones));
+        syncCesiumDbAreas(
+          v,
+          Cesium,
+          groups,
+          useDbAreaStore.getState().rows,
+          useDbAreaStore.getState().areaVisibility,
+          useAppStore.getState().layerVisibility[LYR_DB_AREAS] !== false,
+        );
 
         /* 2) 雷达覆盖（圆/扫描）与光电 FOV（扇形/圆）分开展示，与 2D 图层面板两项一致 */
         const _assets = adaptAssetsForMap(useAssetStore.getState().assets);
@@ -604,6 +757,7 @@ export function Map3D() {
         for (const ent of groups.radarCoverage) ent.show = layerOn("lyr-radar-coverage");
         applyNonRadarFovLayerVisibility(groups, layerOn);
         for (const ent of groups.zones) ent.show = layerOn("lyr-zones");
+        for (const ent of groups.dbAreas) ent.show = layerOn("lyr-db-areas");
         for (const ent of groups.assets) {
           const at = ent.properties?.assetType?.getValue() as string | undefined;
           const layerKey =
@@ -672,6 +826,7 @@ export function Map3D() {
         airportFov: [],
         droneFov: [],
         zones: [],
+        dbAreas: [],
       };
     };
   }, [selectTrack, selectAsset]);
@@ -807,6 +962,7 @@ export function Map3D() {
       for (const ent of g.airportFov) ent.show = layerOn("lyr-airport");
       for (const ent of g.droneFov) ent.show = layerOn("lyr-drones");
       for (const ent of g.zones) ent.show = layerOn("lyr-zones");
+      for (const ent of g.dbAreas) ent.show = layerOn("lyr-db-areas");
       for (const ent of g.assets) {
         const at = ent.properties?.assetType?.getValue() as string | undefined;
         const layerKey =
@@ -866,6 +1022,33 @@ export function Map3D() {
     return unsub;
   }, []);
 
+  /* 数据库区域图层：子项显隐 / 总开关 → Cesium 实体 */
+  useEffect(() => {
+    const flush = () => {
+      const v = viewerRef.current;
+      const C = cesiumRef.current;
+      if (!v || !C || v.isDestroyed()) return;
+      const da = useDbAreaStore.getState();
+      syncCesiumDbAreas(
+        v,
+        C,
+        entityGroupsRef.current,
+        da.rows,
+        da.areaVisibility,
+        useAppStore.getState().layerVisibility[LYR_DB_AREAS] !== false,
+      );
+    };
+    const unsub1 = useDbAreaStore.subscribe(flush);
+    const unsub2 = useAppStore.subscribe((s, p) => {
+      if ((s.layerVisibility[LYR_DB_AREAS] ?? true) === (p.layerVisibility[LYR_DB_AREAS] ?? true)) return;
+      flush();
+    });
+    return () => {
+      unsub1();
+      unsub2();
+    };
+  }, []);
+
   /* 航迹：store 全量 → billboard；折线按 `trackMapDrawHistoryTrails`（异步 flush） */
   useEffect(() => {
     let cancelled = false;
@@ -884,7 +1067,9 @@ export function Map3D() {
       try {
         do {
           flushAgain = false;
-          const snap = useTrackStore.getState().tracks;
+          const vis = useAppStore.getState().layerVisibility;
+          const sub = useTrackDisplayStore.getState().trackSubtypeVisible;
+          const snap = filterTracksForMapRender(useTrackStore.getState().tracks, vis, sub);
           await syncCesiumTrackBillboards(v, C, entityGroupsRef.current, snap, cesiumTrackAccentRef.current);
         } while (flushAgain && !cancelled);
       } finally {
@@ -896,9 +1081,22 @@ export function Map3D() {
     const unsub = useTrackStore.subscribe(() => {
       void flush();
     });
+    const unsubDisplay = useTrackDisplayStore.subscribe(() => {
+      void flush();
+    });
+    const unsubLayerVis = useAppStore.subscribe((s, p) => {
+      if (
+        (s.layerVisibility[LYR_TRACKS] !== false) === (p.layerVisibility[LYR_TRACKS] !== false)
+      ) {
+        return;
+      }
+      void flush();
+    });
     return () => {
       cancelled = true;
       unsub();
+      unsubDisplay();
+      unsubLayerVis();
     };
   }, []);
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Maximize2 } from "lucide-react";
+import { Circle, X, Maximize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   useDockStore,
@@ -10,6 +10,10 @@ import {
   PanelLocation,
   DockPartition,
 } from "@/stores/dock-store";
+import {
+  isElectroOpticalDockPanel,
+  useEoVideoPanelFocusStore,
+} from "@/stores/eo-video-panel-focus-store";
 import {
   SNAP_SIDEBAR_THRESHOLD,
 } from "@/components/dock/types";
@@ -117,6 +121,7 @@ interface DockWindowProps {
 }
 
 export function DockWindow({
+  panelId,
   children,
   title,
   icon: Icon,
@@ -144,6 +149,11 @@ export function DockWindow({
     leftPartitions,
     rightPartitions
   } = useDockStore();
+  const eoFocusedDockId = useEoVideoPanelFocusStore((s) => s.focusedDockPanelId);
+  const setEoFocusedDockPanel = useEoVideoPanelFocusStore((s) => s.setFocusedDockPanel);
+  const isEoDock = isElectroOpticalDockPanel(panelId);
+  const eoBarSelected = isEoDock && eoFocusedDockId === panelId;
+
   const [showSnapIndicator, setShowSnapIndicator] = useState(false);
   const [snapArea, setSnapArea] = useState<PanelLocation>(null);
   const [partitionSnapTarget, setPartitionSnapTarget] = useState<PartitionSnapTarget | null>(null);
@@ -423,9 +433,10 @@ export function DockWindow({
     };
   }, [isDragging, isResizing, dragOffset, position, size, initialState, onStateChange, bringToFront]);
 
-  // 窗口激活时提升层级
+  // 窗口激活时提升层级；光电多窗时点任意处即记入「当前选中」
   const handleFocus = () => {
     bringToFront(initialState.id);
+    if (isEoDock) setEoFocusedDockPanel(panelId);
   };
 
   return (
@@ -516,11 +527,22 @@ export function DockWindow({
             className="flex cursor-move select-none items-center justify-between border-b border-nexus-border bg-nexus-bg-elevated px-3 py-2"
             style={{ backgroundColor: "#2F2F3A" }}
           >
-            <div className="flex items-center gap-2">
-              <div style={{ color: "#22d3ee", display: "flex", alignItems: "center" }}>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <div style={{ color: "#22d3ee", display: "flex", alignItems: "center", flexShrink: 0 }}>
                 <Icon size={16} />
               </div>
-              <span className="text-sm text-nexus-text-secondary" style={{ color: "#d4d4d8" }}>
+              {eoBarSelected ? (
+                <span className="shrink-0 text-sky-400" title="当前选中的光电窗口">
+                  <Circle className="size-2.5 fill-current" strokeWidth={0} aria-hidden />
+                </span>
+              ) : (
+                /* 占位与选中态宽度接近，标题不跳动 */
+                isEoDock ? <span className="inline-block w-2.5 shrink-0 opacity-0" aria-hidden /> : null
+              )}
+              <span
+                className="min-w-0 truncate text-sm text-nexus-text-secondary"
+                style={{ color: "#d4d4d8" }}
+              >
                 {title}
               </span>
             </div>

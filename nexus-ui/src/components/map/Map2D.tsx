@@ -7,6 +7,8 @@ import { useAppStore } from "@/stores/app-store";
 import { registerMapModules, unregisterMapModules } from "@/lib/map-module-registry";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { useTrackStore } from "@/stores/track-store";
+import { useTargetProfileStore } from "@/stores/target-profile-store";
+import { useDockStore } from "@/stores/dock-store";
 import {
   PUBLIC_MAP_ASSET_TYPES,
   LYR_AIRPORT,
@@ -19,10 +21,14 @@ import {
   LYR_TOWER,
   LYR_TRACKS,
   LYR_ZONES,
+  LYR_DB_AREAS,
   type Track,
 } from "@/lib/map-entity-model";
 import type { Asset } from "@/lib/map-entity-model";
 import { useZoneStore } from "@/stores/zone-store";
+import { useDbAreaStore } from "@/stores/db-area-store";
+import { useTrackDisplayStore } from "@/stores/track-display-store";
+import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
 import { useAssetStore, type AssetData } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import {
@@ -35,6 +41,11 @@ import {
   ensureEntitiesTrackTaskCache,
   listTrackTaskOwnerEntityIds,
 } from "@/lib/entities-track-task-cache";
+import {
+  buildImportantTrackTargetFromTrack,
+  buildThirdPartyPosFieldsFromTrack,
+} from "@/lib/map-gis-camera-task";
+import { evaluateThirdPartyTaskHttpResponse } from "@/lib/thirdPartyTaskServiceResponse";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 import {
   buildMarkerSymbolDataUrl,
@@ -49,6 +60,7 @@ import {
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
+import { loadSvgImage } from "@/lib/map-image-loader";
 import { getMaplibreBaseMapOptions } from "@/lib/map-2d-basemap";
 import { parseVectorLayersForPanel } from "@/lib/map-2d-basemap-layer-panel";
 import {
@@ -67,6 +79,7 @@ import {
   resolveLaserDefaults,
   resolveTdoaDefaults,
   getAssetFriendlyColorForAssetType,
+  getDefaultEoCameraTaskBackendBaseUrl,
 } from "@/lib/map-app-config";
 import {
   RadarCoverageModule,
@@ -83,15 +96,29 @@ import { TowerMaplibre, TOWER_LAYER_IDS, TOWER_ICON_LAYER } from "@/components/m
 import { DistanceMeasureMaplibre, DIST_MEASURE_LAYER_IDS } from "@/components/map/modules/distance-measure-maplibre";
 import { AngleMeasureMaplibre, ANGLE_LAYER_IDS } from "@/components/map/modules/angle-measure-maplibre";
 import { PolygonDrawMaplibre, POLY_DRAW_LAYER_IDS, POLY_ZONES_LAYER_IDS } from "@/components/map/modules/polygon-draw-maplibre";
+import {
+  installDbAreasLayers,
+  removeLegacyDbAreasFillLayer,
+  setDbAreasGeoJSON,
+  DB_AREAS_SOURCE,
+  DB_AREAS_LAYER_IDS,
+} from "@/components/map/modules/db-areas-maplibre";
+import { buildDbAreasFeatureCollection } from "@/lib/build-db-areas-geojson";
 import { LaserMaplibre, LASER_CENTER, LASER_LAYER_IDS, type LaserDevice } from "@/components/map/modules/laser-maplibre";
 import { TdoaMaplibre, TDOA_CENTER, TDOA_LAYER_IDS, type TdoaDevice } from "@/components/map/modules/tdoa-maplibre";
 import {
   TracksMaplibre,
   TRACK_TRAIL,
+  TRACK_VECTOR,
+  TRACK_DOT,
   TRACK_SYMBOL,
   TRACK_LABEL,
+  TRACK_LABEL_RADAR,
+  TRACK_PICK_LAYERS,
   HIGHLIGHT_LAYER,
+  HIGHLIGHT_RADAR_LAYER,
   LOCK_ON,
+  LOCK_ON_RADAR,
 } from "@/components/map/modules/tracks-maplibre";
 import {
   DronesMaplibre,
@@ -111,6 +138,7 @@ import {
   useMapMeasureUi,
   type Map2DMeasureHandlers,
 } from "@/stores/map-measure-bridge";
+import { MapGisContextMenu, type MapGisMenuState } from "@/components/map/MapGisContextMenu";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 
 /* 2D 地图：航迹 / 资产 / 限制区 + 测量与扇区工具 */
@@ -142,7 +170,7 @@ const ASSET_POINT_PICK_LAYERS = [
 ];
 
 /** 双击地图触发光电对准时排除：航迹符号 + 资产符号（与「空白处」语义一致） */
-const MAP_LOOK_AT_BLOCK_LAYERS = [TRACK_SYMBOL, ...ASSET_POINT_PICK_LAYERS];
+const MAP_LOOK_AT_BLOCK_LAYERS = [TRACK_SYMBOL, TRACK_DOT, ...ASSET_POINT_PICK_LAYERS];
 
 /** 仅查询样式中已存在的 layer，避免 id 未就绪或空数组触发 MapLibre 运行时异常（如 refresh 后短时竞态） */
 function queryRenderedFeaturesSafe(
@@ -182,7 +210,18 @@ const DISABLE_MAP_TRACK_RENDERING =
  * 新建 3) 时 MapLibre 默认 layer 多为 visible；若当前 `lyr-zones` 为关，需在 `addLayer` 之后补一次 apply，见该 subscribe 末尾。
  */
 const LAYER_MAPPING: Record<string, string[]> = {
-  [LYR_TRACKS]: [TRACK_TRAIL, TRACK_SYMBOL, TRACK_LABEL, HIGHLIGHT_LAYER, LOCK_ON],
+  [LYR_TRACKS]: [
+    TRACK_TRAIL,
+    TRACK_VECTOR,
+    TRACK_DOT,
+    TRACK_SYMBOL,
+    TRACK_LABEL,
+    TRACK_LABEL_RADAR,
+    HIGHLIGHT_LAYER,
+    HIGHLIGHT_RADAR_LAYER,
+    LOCK_ON,
+    LOCK_ON_RADAR,
+  ],
   [LYR_DRONES]: [
     DRONES_ROUTE_SOLID,
     DRONES_ROUTE_DASH,
@@ -202,6 +241,7 @@ const LAYER_MAPPING: Record<string, string[]> = {
   [LYR_TOWER]: [...TOWER_LAYER_IDS],
   [LYR_MEASURE]: [...MEASURE_TOOL_LAYER_IDS],
   [LYR_ZONES]: [...POLY_ZONES_LAYER_IDS],
+  [LYR_DB_AREAS]: [...DB_AREAS_LAYER_IDS],
 };
 
 /** 图层面板签名：底图矢量 / 数据图层变化时触发 apply 与 redraw */
@@ -358,29 +398,6 @@ function pickCoordsFromFeature(f: maplibregl.MapGeoJSONFeature, e: maplibregl.Ma
   return [e.lngLat.lng, e.lngLat.lat];
 }
 
-async function loadSvgImage(src: string, size: number): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image(size, size);
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`failed to load marker: ${src.slice(0, 48)}`));
-    image.src = src;
-  });
-}
-
-/** 相机元任务 `targetcollection.trackID`：约定为航迹 `uniqueID`（整型；与 Qt `alarmTrackID` / 后端一致） */
-function numericTrackIdForCameraTask(track: Track): number {
-  const s = String(track.trackId ?? "").trim();
-  if (!s) return 0;
-  const n = Number(s);
-  if (Number.isFinite(n)) return Math.trunc(n);
-  const digits = s.replace(/\D/g, "");
-  if (digits) {
-    const n2 = parseInt(digits, 10);
-    if (Number.isFinite(n2)) return n2;
-  }
-  return 0;
-}
-
 /* ---------- Map2D ---------- */
 
 export function Map2D() {
@@ -426,6 +443,7 @@ export function Map2D() {
     x: number;
     y: number;
   } | null>(null);
+  const [gisMenu, setGisMenu] = useState<MapGisMenuState | null>(null);
   const { setZoomLevel, selectTrack, selectAsset } = useAppStore();
 
   const selectTrackRef = useRef(selectTrack);
@@ -537,6 +555,21 @@ export function Map2D() {
         );
         tracksRef.current = tracksMod;
 
+        /* 数据库区域：须插在已存在的 `HIGHLIGHT_LAYER` 之下 */
+        installDbAreasLayers(map, HIGHLIGHT_LAYER);
+        removeLegacyDbAreasFillLayer(map);
+        {
+          const master = useAppStore.getState().layerVisibility[LYR_DB_AREAS] !== false;
+          const { rows, areaVisibility } = useDbAreaStore.getState();
+          setDbAreasGeoJSON(
+            map,
+            buildDbAreasFeatureCollection(rows, (row) => {
+              if (!master) return false;
+              return areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] !== false;
+            }),
+          );
+        }
+
         /* 雷达：距离环、十字线、距离/角度/中心名标签、雷达站图标 */
         const radarCov = new RadarCoverageModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
         radarCov.install();
@@ -594,12 +627,20 @@ export function Map2D() {
         /* `map.addImage` 预注册各图层 `layout["icon-image"]` 用到的位图；`hasImage` 为真则跳过。并行加载以缩短首帧等待 */
         await Promise.all([
           /* 航迹点符号：空/海/潜 × 敌我中（`getAllMarkerSymbolKeys`），供 `TRACK_SYMBOL` 等 */
-          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill }) => {
+          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill, airBird }) => {
             if (!map.hasImage(id)) {
               map.addImage(
                 id,
                 await loadSvgImage(
-                  buildMarkerSymbolDataUrl(type, disposition, assetIconAccent, virtual, friendlyFill, neutralFusionFill),
+                  buildMarkerSymbolDataUrl(
+                    type,
+                    disposition,
+                    assetIconAccent,
+                    virtual,
+                    friendlyFill,
+                    neutralFusionFill,
+                    airBird === true,
+                  ),
                   64,
                 ),
                 { pixelRatio: 2 },
@@ -719,7 +760,7 @@ export function Map2D() {
 
         if (!DISABLE_MAP_TRACK_RENDERING) {
           /* 点中航迹符号：仅在有有效要素时互斥清空资产并选中航迹（无效点击不执行分支，避免「return 后仍赋值」的阅读歧义） */
-          map.on("click", TRACK_SYMBOL, (e) => {
+          const onTrackSymbolClick = (e: maplibregl.MapLayerMouseEvent) => {
             const f = e.features?.[0];
             const id = f?.properties?.id as string | undefined;
             if (id && f) {
@@ -729,10 +770,12 @@ export function Map2D() {
               const { x, y } = projectPlacard(c[0], c[1]);
               setPlacard({ kind: "track", id, lng: c[0], lat: c[1], x, y });
             }
-          });
+          };
+          map.on("click", TRACK_SYMBOL, onTrackSymbolClick);
+          map.on("click", TRACK_DOT, onTrackSymbolClick);
 
           /* 双击航迹：重点关注采集（TargetCollectionIMChildTask），控制台打印完整 POST JSON */
-          map.on("dblclick", TRACK_SYMBOL, (e) => {
+          const onTrackDblClick = (e: maplibregl.MapLayerMouseEvent) => {
             const ev = e.originalEvent;
             if (typeof ev.preventDefault === "function") ev.preventDefault();
             const f = e.features?.[0];
@@ -740,24 +783,49 @@ export function Map2D() {
             if (!id || !f) return;
             const track = useTrackStore.getState().tracks.find((t) => t.id === id);
             if (!track) return;
+            useTargetProfileStore.getState().setFocusedShowId(track.showID);
+            const dock = useDockStore.getState();
+            dock.assignPanelToPartition("target-profile", "right-0");
+            dock.assignPanelToPartition("chat", "right-1");
             void useAppConfigStore
               .getState()
               .ensureLoaded()
               .then(async (cfg) => {
+                const target = buildImportantTrackTargetFromTrack(track);
+
+                const posGuide = cfg.thirdPartyPosGuide;
+                if (posGuide.enabled && posGuide.cameraEntityIds.length > 0) {
+                  const posFields = buildThirdPartyPosFieldsFromTrack(track);
+                  const backendBaseUrl = getDefaultEoCameraTaskBackendBaseUrl();
+                  for (const camEntityId of posGuide.cameraEntityIds) {
+                    try {
+                      const res = await fetch("/api/camera-task/third-party-pos", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", Accept: "application/json" },
+                        body: JSON.stringify({
+                          backendBaseUrl,
+                          entityId: camEntityId,
+                          ...posFields,
+                        }),
+                      });
+                      const text = await res.text().catch(() => "");
+                      const outcome = evaluateThirdPartyTaskHttpResponse(res.ok, text);
+                      console.log("[map-track-dblclick] third-party POS →", camEntityId, {
+                        accepted: outcome.accepted,
+                        summary: outcome.logLine,
+                        httpStatus: res.status,
+                        bodyPreview: text.slice(0, 420),
+                      });
+                    } catch (err: unknown) {
+                      console.warn("[map-track-dblclick] third-party POS 请求异常", camEntityId, err);
+                    }
+                  }
+                }
+
                 const cm = cfg.cameraManagement;
-                const isSea = track.type === "sea" || track.type === "underwater";
-                const alarmDataType = isSea ? 0 : 1;
-                const trackIDNum = numericTrackIdForCameraTask(track);
                 /* 与 Qt 远程 `CAMERA_IMPORTANT_TRACK` 一致：经纬 0；action/alarmTime/trackTime/alarmID 由 buildImportantTrackTaskBody 归一化 */
-                const target = {
-                  latitude: 0,
-                  longitude: 0,
-                  type: alarmDataType,
-                  trackID: trackIDNum,
-                  shipType: isSea ? 3 : 0,
-                };
                 if (!cm) {
-                  console.warn("[map-track-dblclick] cameraManagement 未配置，仅拟定字段（未发送）:", {
+                  console.warn("[map-track-dblclick] cameraManagement 未配置，未发送 IM 任务:", {
                     target,
                   });
                   return;
@@ -803,8 +871,38 @@ export function Map2D() {
                 }
               })
               .catch((err: unknown) => console.error("[map-track-dblclick]", err));
-          });
+          };
+          map.on("dblclick", TRACK_SYMBOL, onTrackDblClick);
+          map.on("dblclick", TRACK_DOT, onTrackDblClick);
         }
+
+        /* 右键：地图 / 航迹 业务菜单（量算工具激活时不弹出，交予各工具） */
+        map.on("contextmenu", (e) => {
+          if (useMapMeasureUi.getState().activeDrawTool != null) return;
+          const ev = e.originalEvent;
+          if (ev.button !== 2) return;
+          let variant: MapGisMenuState["variant"] = "map";
+          let trackId: string | null = null;
+          if (!DISABLE_MAP_TRACK_RENDERING) {
+            const tf = queryRenderedFeaturesSafe(map, e.point, [...TRACK_PICK_LAYERS]);
+            const f = tf[0];
+            const id = f?.properties?.id as string | undefined;
+            if (id) {
+              variant = "track";
+              trackId = id;
+            }
+          }
+          if (typeof ev.preventDefault === "function") ev.preventDefault();
+          void ensureEntitiesTrackTaskCache().catch(() => {});
+          setGisMenu({
+            clientX: ev.clientX,
+            clientY: ev.clientY,
+            lng: e.lngLat.lng,
+            lat: e.lngLat.lat,
+            variant,
+            trackId,
+          });
+        });
 
         /* 双击地图空白：光电对准经纬度（Qt `CMainWindow::CameraFocusOnPos` 远程 `CAMERA_LOOK_AT_CHILD`），仅父相机 */
         map.on("dblclick", (e) => {
@@ -879,7 +977,7 @@ export function Map2D() {
 
         /* 悬停于航迹符号或资产点/符号层之一则 pointer 光标 */
         map.on("mousemove", (e) => {
-          const onTrack = queryRenderedFeaturesSafe(map, e.point, [TRACK_SYMBOL]).length > 0;
+          const onTrack = queryRenderedFeaturesSafe(map, e.point, [...TRACK_PICK_LAYERS]).length > 0;
           if (onTrack) {
             map.getCanvas().style.cursor = "pointer";
             return;
@@ -893,7 +991,7 @@ export function Map2D() {
          * 若仍未命中有效资产 id，则关闭标牌、清空航迹/资产选中及多选高亮（属性框与列表选中联动 store）。
          */
         map.on("click", (e) => {
-          if (queryRenderedFeaturesSafe(map, e.point, [TRACK_SYMBOL]).length) return;
+          if (queryRenderedFeaturesSafe(map, e.point, [...TRACK_PICK_LAYERS]).length) return;
           const hits = queryRenderedFeaturesSafe(map, e.point, ASSET_POINT_PICK_LAYERS);
           const raw = hits[0];
           if (raw) {
@@ -1203,6 +1301,73 @@ export function Map2D() {
     };
   }, []);
 
+  /** 航迹显示面板：配色 / 矢量 / 尾迹秒数 → 刷新 GeoJSON */
+  useEffect(() => {
+    const flush = () => {
+      if (!tracksRef.current) return;
+      tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : useTrackStore.getState().tracks);
+    };
+    return useTrackDisplayStore.subscribe(flush);
+  }, []);
+
+  /** 图层「目标」总开关 → 重刷 GeoJSON（分类显隐在目标侧边栏，走 displayRevision） */
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((s, p) => {
+      if (
+        (s.layerVisibility[LYR_TRACKS] !== false) ===
+        (p.layerVisibility[LYR_TRACKS] !== false)
+      ) {
+        return;
+      }
+      if (!tracksRef.current) return;
+      tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : useTrackStore.getState().tracks);
+    });
+    return unsub;
+  }, []);
+
+  /** 右键「敌我属性」等：递增 `mapManualAffiliationRev` 后强制刷新航迹图层 */
+  useEffect(() => {
+    const unsub = useTrackStore.subscribe((s, p) => {
+      if (s.mapManualAffiliationRev === p.mapManualAffiliationRev) return;
+      if (!tracksRef.current) return;
+      tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : s.tracks);
+    });
+    return unsub;
+  }, []);
+
+  /* Postgres 区域图层：总开关 `lyr-db-areas` + 各区域显隐 → GeoJSON */
+  useEffect(() => {
+    const flushDbAreas = () => {
+      const m = mapRef.current;
+      if (!m?.getSource(DB_AREAS_SOURCE)) return;
+      try {
+        const master = useAppStore.getState().layerVisibility[LYR_DB_AREAS] !== false;
+        const { rows, areaVisibility } = useDbAreaStore.getState();
+        setDbAreasGeoJSON(
+          m,
+          buildDbAreasFeatureCollection(rows, (row) => {
+            if (!master) return false;
+            return areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] !== false;
+          }),
+        );
+        applyLayerPanelVisibilityFromStore(m, useAppStore.getState());
+      } catch {
+        /* style 过渡 */
+      }
+    };
+
+    const unsubDb = useDbAreaStore.subscribe(flushDbAreas);
+    const unsubMaster = useAppStore.subscribe((s, p) => {
+      if ((s.layerVisibility[LYR_DB_AREAS] ?? true) === (p.layerVisibility[LYR_DB_AREAS] ?? true)) return;
+      flushDbAreas();
+    });
+    flushDbAreas();
+    return () => {
+      unsubDb();
+      unsubMaster();
+    };
+  }, []);
+
   /* zone-store / asset-store → 地图：光电 FOV 扇区朝向/开角来自 `adaptAssetsForMap` 的 `heading`/`fovAngle`（静态+动态已在资产入口统一合并） */
   useEffect(() => {
     let pendingAssetFlush = false;
@@ -1305,6 +1470,7 @@ export function Map2D() {
   return (
     <div className="relative h-full w-full">
       <div ref={mapContainer} className="h-full w-full" />
+      {gisMenu ? <MapGisContextMenu open state={gisMenu} onClose={() => setGisMenu(null)} /> : null}
       {polyPending && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-labelledby="poly-name-title">
           <div className="w-full max-w-sm rounded-lg border border-white/10 bg-[#141418] p-4 shadow-xl">

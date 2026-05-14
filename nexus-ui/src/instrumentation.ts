@@ -7,4 +7,7 @@ export async function register() {
 
   const { startTaskStatusHttpListener } = await import("@/server/task-status-http-listener");
   startTaskStatusHttpListener();
+
+  const { startEoThirdPartyCameraRelay } = await import("@/server/eo-third-party-camera-relay");
+  startEoThirdPartyCameraRelay();
 }

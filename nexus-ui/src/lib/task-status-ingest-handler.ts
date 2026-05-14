@@ -38,7 +38,7 @@ function pickExplicitObjectKeyFromBody(o: Record<string, unknown>): string | und
  * - 独立端口 `task-status-http-listener`（默认 7774）
  *
  * `minioBucket` / `minioObjectKey`（或别名 `bucket` / `objectKey`）可由业务写入 Body；
- * 未带时若配置 `TASK_STATUS_PG_CONNECTION_STRING`，则按 Qt `getLatestScreenshotMetadata` 查 `minio_multi_metadata`。
+ * 未带时若配置 `NEXUS_POSTGRES_URL`（或兼容旧名），则按 Qt `getLatestScreenshotMetadata` 查 `minio_multi_metadata`。
  * MinIO 凭证用于同源 `/api/task-status-image-proxy` 或预签名。
  */
 export async function processTaskStatusIngest(alarmId: string, body: unknown): Promise<TaskStatusIngestResult> {

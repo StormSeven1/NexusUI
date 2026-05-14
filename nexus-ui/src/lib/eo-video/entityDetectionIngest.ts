@@ -11,6 +11,35 @@ function pickStrFromRecord(r: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
+function pickFiniteNumberFromRecord(r: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const k of keys) {
+    const v = r[k];
+    if (v === null || v === undefined || v === "") continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+/** 第 5 列优先航迹 ID，避免把检测 rectID 当成 m_nTrackID（与 Qt `rectTrackID` 语义对齐） */
+function pickRectRowFifthFromRecord(r: Record<string, unknown>): unknown {
+  const trackKeys = [
+    "m_nTrackID",
+    "mNTrackID",
+    "rectTrackID",
+    "rectTrackId",
+    "trackId",
+    "trackID",
+    "nTrackID",
+    "visualTrackingTrackId",
+  ];
+  for (const k of trackKeys) {
+    const v = r[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "" && String(v) !== "0") return v;
+  }
+  return r.rectID ?? r.rectId ?? r.trackID ?? r.trackId;
+}
+
 /** 仅海/空二分类（与 Qt 船矶浮 ↔ 海、鸟机 ↔ 空 一致）；无法识别时默认「海」（海面光电常见） */
 function inferTypeShortFromRecord(r: Record<string, unknown>): string {
   const rt = r.rectType ?? r.type ?? r.targetType ?? r.classId ?? r.category ?? r.targetClass;
@@ -22,7 +51,9 @@ function inferTypeShortFromRecord(r: Record<string, unknown>): string {
 }
 
 /** 从 singleRect.videoRect 首条对象解析目标名与类型字（纯数组几何时返回 undefined） */
-function parseSingleRectDisplayMetaFromPayload(layer: EoRectLayerPayload | null | undefined): { trackName?: string; typeShort?: string } | undefined {
+function parseSingleRectDisplayMetaFromPayload(
+  layer: EoRectLayerPayload | null | undefined,
+): NonNullable<BufferedDetectionEntry["singleDisplayMeta"]> | undefined {
   if (!layer?.videoRect) return undefined;
   const vr = layer.videoRect as unknown;
   if (!Array.isArray(vr) || vr.length === 0) return undefined;
@@ -40,7 +71,34 @@ function parseSingleRectDisplayMetaFromPayload(layer: EoRectLayerPayload | null 
     "track_name",
   ]);
   const typeShort = inferTypeShortFromRecord(rec);
-  return { trackName: trackName || undefined, typeShort };
+  const azimuthDeg = pickFiniteNumberFromRecord(rec, [
+    "azimuth",
+    "azi",
+    "azimuthDeg",
+    "azimuth_degrees",
+    "azimuthDegrees",
+    "heading",
+  ]);
+  const distanceM = pickFiniteNumberFromRecord(rec, [
+    "rectTrackDis",
+    "trackDis",
+    "distance",
+    "dis",
+    "range",
+    "rangeM",
+    "slantRange",
+  ]);
+  const speedMps = pickFiniteNumberFromRecord(rec, ["trackSpeed", "speed", "spd", "velocity", "groundSpeed"]);
+  const courseDeg = pickFiniteNumberFromRecord(rec, ["trackCourse", "course", "cog", "COG", "bearing", "headingDeg"]);
+  const out: NonNullable<BufferedDetectionEntry["singleDisplayMeta"]> = {
+    trackName: trackName || undefined,
+    typeShort,
+  };
+  if (azimuthDeg !== undefined) out.azimuthDeg = azimuthDeg;
+  if (distanceM !== undefined) out.distanceM = distanceM;
+  if (speedMps !== undefined) out.speedMps = speedMps;
+  if (courseDeg !== undefined) out.courseDeg = courseDeg;
+  return out;
 }
 
 /**
@@ -55,7 +113,7 @@ function rectRowFromRecord(o: unknown): number[] | null {
   const h = Number(r.height ?? r.h);
   if (![x, y, w, h].every((v) => Number.isFinite(v))) return null;
   if (w <= 0 || h <= 0) return null;
-  const ridRaw = r.rectID ?? r.rectId ?? r.trackID ?? r.trackId;
+  const ridRaw = pickRectRowFifthFromRecord(r);
   const row: number[] = [x, y, w, h];
   if (ridRaw !== undefined && ridRaw !== null && String(ridRaw) !== "" && String(ridRaw) !== "0") {
     const tid = Number(ridRaw);

@@ -110,9 +110,9 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
     const { panel, side } = output as { panel: string; side: "left" | "right" };
     const store = useAppStore.getState();
     if (side === "right") {
-      // 右侧仅保留 AI 助手：任何 open_panel 请求都统一落到 chat（与分区 right-0 同步）
+      // 右侧下分区为智能助手：open_panel 落到 chat（与 right-1 同步）
       void panel;
-      useDockStore.getState().assignPanelToPartition("chat", "right-0");
+      useDockStore.getState().assignPanelToPartition("chat", "right-1");
       store.setRightPanelTab("chat" as RightPanelTab);
     } else {
       const tab = panel as LeftPanelTab;

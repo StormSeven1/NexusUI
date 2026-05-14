@@ -14,6 +14,7 @@ import {
 import {
   MapPin,
   Layers,
+  Route,
   AlertTriangle,
   Crosshair,
   Eye,
@@ -28,13 +29,16 @@ import {
   Activity,
   FileCode,
   Database,
-  Map
+  Map,
+  ScanLine,
 } from "lucide-react";
 import { TrackListPanel } from "@/components/panels/TrackListPanel";
 import { LayerPanel } from "@/components/panels/LayerPanel";
 import { AssetPanel } from "@/components/panels/AssetPanel";
 import { AlertPanel } from "@/components/panels/AlertPanel";
+import { TrackDisplayPanel } from "@/components/panels/TrackDisplayPanel";
 import { ChatPanel } from "@/components/panels/ChatPanel";
+import { TargetProfilePanel } from "@/components/panels/TargetProfilePanel";
 import { EoVideoDockPanel } from "@/components/eo-video/EoVideoDockPanel";
 
 /** 独立面板文件尚未提供时，与「岸基相机」等一致的占位 */
@@ -86,6 +90,21 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
     draggable: true,
     resizable: true,
     description: "系统告警与预警",
+  },
+  {
+    id: "track-display",
+    title: "航迹显示",
+    capability: "dockable",
+    category: "target",
+    menuLabel: "航迹显示",
+    icon: Route,
+    component: TrackDisplayPanel,
+    defaultLocation: "left-top",
+    defaultSize: { width: 360, height: 400 },
+    closable: true,
+    draggable: true,
+    resizable: true,
+    description: "融合航迹配色、矢量与尾迹长度",
   },
   {
     id: "assets",
@@ -211,6 +230,21 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
   },
 
   // ========== 其他dockable窗体 ==========
+  {
+    id: "target-profile",
+    title: "目标档案",
+    capability: "dockable",
+    category: "target",
+    menuLabel: "目标档案",
+    icon: ScanLine,
+    component: TargetProfilePanel,
+    defaultLocation: "right-top",
+    defaultSize: { width: 440, height: 420 },
+    closable: true,
+    draggable: true,
+    resizable: true,
+    description: "航迹详情与查证相册",
+  },
   {
     id: "layers",
     title: "图层管理",

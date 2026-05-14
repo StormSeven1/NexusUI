@@ -160,6 +160,7 @@ import { normalizeAssetType, type PublicMapAssetType, type Track } from "@/lib/m
 import { recordTrackReceived, recordAlertReceived, recordZoneReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
+import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
 
 /**
  * 联调：`.env.local` 设 `NEXT_PUBLIC_WS_DISABLE_TRACK_INGEST=true` 时不处理航迹类 WS、不写 `track-store`，
@@ -1269,7 +1270,7 @@ function scheduleReconnect() {
 
 function openConnection() {
   if (!ws.running) return;
-  const url = getWebSocketConfig().url;
+  const url = rewriteWsUrlForHttpsPage(getWebSocketConfig().url);
   if (!url) return;
 
   if (ws.socket && (ws.socket.readyState === WebSocket.OPEN || ws.socket.readyState === WebSocket.CONNECTING)) return;
@@ -1421,6 +1422,7 @@ function startUnifiedWs() {
   if (ws.running) return;
   ws.running = true;
   ws.readyNotified = false;
+  ws.reconnectAttempt = 0;
   if (WS_DISABLE_TRACK_INGEST) {
     useTrackStore.getState().clearAllTracks();
   }

@@ -6,7 +6,10 @@ import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
 import { useAlertStore } from "@/stores/alert-store";
 import { cn } from "@/lib/utils";
-import { buildDataLayerPanelRows } from "@/lib/map-entity-model";
+import { buildDataLayerPanelRows, LYR_DB_AREAS } from "@/lib/map-entity-model";
+import { useDbAreaStore } from "@/stores/db-area-store";
+import { countDbAreaPanelUiRows, countVisibleDbAreaLeaves } from "@/lib/db-area-panel-helpers";
+import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { getMapMeasureHandlers, useMapMeasureUi } from "@/stores/map-measure-bridge";
 import {
   MapPin,
@@ -41,6 +44,8 @@ function countLayerPanelEnabled(
   basemapGroupVisible: boolean,
   basemapVectorLayers: ReadonlyArray<{ id: string }>,
   basemapVectorVisibility: Record<string, boolean>,
+  dbAreaRows: ReadonlyArray<AreaTableRow>,
+  dbAreaVisibility: Readonly<Record<string, boolean>>,
 ): number {
   const rows = buildDataLayerPanelRows(assets);
   let n = rows.filter((r) => layerVisibility[r.id] !== false).length;
@@ -48,6 +53,7 @@ function countLayerPanelEnabled(
     n += 1;
     n += basemapVectorLayers.filter((l) => basemapVectorVisibility[l.id] !== false).length;
   }
+  n += countVisibleDbAreaLeaves(dbAreaRows, dbAreaVisibility, layerVisibility[LYR_DB_AREAS] !== false);
   return n;
 }
 
@@ -55,9 +61,11 @@ function countLayerPanelEnabled(
 function countLayerPanelLoaded(
   assets: ReadonlyArray<{ asset_type: string }>,
   basemapVectorLayers: ReadonlyArray<{ id: string }>,
+  dbAreaRows: ReadonlyArray<AreaTableRow>,
 ): number {
   const rows = buildDataLayerPanelRows(assets);
-  return 1 + basemapVectorLayers.length + rows.length;
+  const dbUi = countDbAreaPanelUiRows(dbAreaRows);
+  return 1 + basemapVectorLayers.length + rows.length + dbUi;
 }
 
 // 工作区详情配置
@@ -195,6 +203,8 @@ export function WorkspaceDetails() {
   const basemapVectorVisibility = useAppStore((s) => s.basemapVectorVisibility);
   const drawnAreas = useAppStore((s) => s.drawnAreas);
   const routeLines = useAppStore((s) => s.routeLines);
+  const dbAreaRows = useDbAreaStore((s) => s.rows);
+  const dbAreaVisibility = useDbAreaStore((s) => s.areaVisibility);
 
   /** 快捷工作流弹窗状态 */
   const [quickWorkflowOpen, setQuickWorkflowOpen] = useState(false);
@@ -207,6 +217,8 @@ export function WorkspaceDetails() {
       basemapGroupVisible,
       basemapVectorLayers,
       basemapVectorVisibility,
+      dbAreaRows,
+      dbAreaVisibility,
     );
     return [
       { label: "监控目标", value: String(assets.length), icon: MapPin, color: "text-blue-400" },
@@ -222,6 +234,8 @@ export function WorkspaceDetails() {
     basemapGroupVisible,
     basemapVectorLayers,
     basemapVectorVisibility,
+    dbAreaRows,
+    dbAreaVisibility,
   ]);
 
   const assetsLiveStats = useMemo((): StatRow[] => {
@@ -246,13 +260,15 @@ export function WorkspaceDetails() {
   }, [assets]);
 
   const layersLiveStats = useMemo((): StatRow[] => {
-    const loaded = countLayerPanelLoaded(assets, basemapVectorLayers);
+    const loaded = countLayerPanelLoaded(assets, basemapVectorLayers, dbAreaRows);
     const visible = countLayerPanelEnabled(
       assets,
       layerVisibility,
       basemapGroupVisible,
       basemapVectorLayers,
       basemapVectorVisibility,
+      dbAreaRows,
+      dbAreaVisibility,
     );
     const markers = tracks.length + assets.length;
     const drawings = drawnAreas.length + routeLines.length;
@@ -271,6 +287,8 @@ export function WorkspaceDetails() {
     basemapVectorVisibility,
     drawnAreas,
     routeLines,
+    dbAreaRows,
+    dbAreaVisibility,
   ]);
 
   const config = WORKSPACE_CONFIGS[topTab];

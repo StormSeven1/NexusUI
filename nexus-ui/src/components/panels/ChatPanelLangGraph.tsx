@@ -12,11 +12,13 @@ import type { FileUIPart, UIMessage } from "ai";
 import { NxIconButton } from "@/components/nexus";
 import { ChatMessageList } from "@/components/chat/ChatMessageList";
 import { ChatInput } from "@/components/chat/ChatInput";
+import { LangGraphInterruptDialog } from "@/components/chat/LangGraphInterruptDialog";
 import { useVlmChatInjectStore } from "@/stores/vlm-chat-inject-store";
 import {
   extractLangGraphDisplayChunks,
-  parseSseDataLine,
-  splitLines,
+  forEachLangGraphSseLine,
+  parseLangGraphInterruptEvent,
+  type LangGraphInterruptUiPayload,
 } from "@/lib/langgraph-chat-sse";
 import { executeLangGraphToolCallFromData } from "@/lib/langgraph-tool-dispatch";
 import {
@@ -30,17 +32,36 @@ import {
   type TaskVerifyJudgmentState,
 } from "@/lib/task-status-judgment-ui";
 import type { TaskStatusChatPayload } from "@/lib/task-status-types";
+import { subscribeTaskStatusChat } from "@/lib/task-status-chat-feed-bus";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "sonner";
 import { Bot, ChevronRight, Trash2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** 与 Qt `TaskStatusHttp` 推送同源：订阅服务端转发流（相机管理 → PUT task-status → SSE → 本会话） */
-function taskStatusStreamUrl(): string {
-  const override = process.env.NEXT_PUBLIC_TASK_STATUS_STREAM_URL?.trim();
-  if (override) return override;
-  const base = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
-  return `${base}/api/task-status-stream`;
+/** 上游 JSON 偶发把 taskStatus/trackID 等打成字符串，与严格 `=== 4` 分支对齐 */
+function normalizeTaskStatusPayload(raw: TaskStatusChatPayload): TaskStatusChatPayload {
+  const ts = Number(raw.taskStatus);
+  const _rawTrackID = Number(raw.trackID);
+  const trackID =
+    raw.trackID != null &&
+    String(raw.trackID).trim() !== "" &&
+    Number.isFinite(_rawTrackID) &&
+    _rawTrackID > 0  // 0 不是合法航迹 ID
+      ? _rawTrackID
+      : undefined;
+  const cameraIndex =
+    raw.cameraIndex != null &&
+    String(raw.cameraIndex).trim() !== "" &&
+    Number.isFinite(Number(raw.cameraIndex))
+      ? Number(raw.cameraIndex)
+      : undefined;
+  return {
+    ...raw,
+    taskStatus: Number.isFinite(ts) ? ts : raw.taskStatus,
+    trackID,
+    cameraIndex,
+    alarmId: String(raw.alarmId ?? "").trim(),
+  };
 }
 
 /** 闪电菜单与空状态区共用的快捷问题文案 */
@@ -124,11 +145,16 @@ export function ChatPanelLangGraph() {
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const leadingToolbarRef = useRef<HTMLDivElement | null>(null);
-  /** Qt `m_mapTrackSession`：`trackId_cameraIndex` → 本条查证助手消息 id（供 taskStatus 5 追加研判） */
+  /** Qt `m_mapTrackSession`：`trackId_cameraIndex` → 当前轮查证助手消息 id（供 taskStatus 5/6/7 追加研判） */
   const verifySessionRef = useRef<Map<string, string>>(new Map());
+  /** 由 taskStatus=4（目标信息）创建或升级为 4 的气泡 id；用于区分「仅 5 占位」与「已完成一轮 4」以支持同一目标多次查证各一条气泡 */
+  const verifyFourBubbleIdsRef = useRef<Set<string>>(new Set());
   const verifyBannerRef = useRef<Map<string, string>>(new Map());
   const judgmentStateRef = useRef<Map<string, TaskVerifyJudgmentState>>(new Map());
   const vlmInjectSeq = useVlmChatInjectStore((s) => s.injectSeq);
+  /** 与 Qt SSE 根字段 `thread_id` 一致：后续用户消息与 interrupt 恢复请求携带 */
+  const langGraphThreadIdRef = useRef("");
+  const [interruptPrompt, setInterruptPrompt] = useState<LangGraphInterruptUiPayload | null>(null);
 
   useEffect(() => {
     if (!quickMenuOpen) return;
@@ -172,28 +198,30 @@ export function ChatPanelLangGraph() {
     if (typeof window === "undefined") return;
     if (process.env.NEXT_PUBLIC_TASK_STATUS_CHAT_FEED === "false") return;
 
-    const es = new EventSource(taskStatusStreamUrl());
-    es.onmessage = (ev) => {
+    const onPayload = (raw: TaskStatusChatPayload) => {
       try {
-        const msg = JSON.parse(ev.data) as
-          | { type: "connected"; t: number }
-          | { type: "task_status"; payload: TaskStatusChatPayload };
-        if (msg.type !== "task_status" || !msg.payload) return;
-        const payload = msg.payload;
-        const sessionKey = taskStatusVerifySessionKey(payload.trackID ?? undefined, payload.cameraIndex ?? undefined);
+        const payload = normalizeTaskStatusPayload(raw);
+        const sessionKey = taskStatusVerifySessionKey(
+          payload.trackID ?? undefined,
+          payload.cameraIndex ?? undefined,
+        );
 
         const app = useAppStore.getState();
         app.setRightPanelTab("chat");
         if (!app.rightSidebarOpen) app.toggleRightSidebar();
 
-        // 与 Qt 一致：trackId + cameraIndex 定位同一会话；4 建会话，5/6/7 追加研判
-        if (sessionKey && payload.taskStatus === 4) {
+        const ts = payload.taskStatus;
+
+        // trackId + cameraIndex 定位「当前轮」：每次 taskStatus=4（目标信息）新开一条助手气泡；5/6/7 只追加到该 key 下最新一条。
+        if (sessionKey && ts === 4) {
           const banner = buildTaskStatusVerifyBannerMarkdown(payload);
           const img = taskStatusImageFilePart(payload);
           const reuseId = verifySessionRef.current.get(sessionKey);
+          const fromTargetInfo = reuseId ? verifyFourBubbleIdsRef.current.has(reuseId) : false;
 
-          // 5/6/7 先于 4 到达时占位气泡已存在：只更新查证头与映射，避免产生「告警 0」+ 路径的孤儿气泡
-          if (reuseId) {
+          // 仅当占位气泡来自「先到的 5/6/7」且尚未有过 4 时，才把本条 4 合并进该气泡，避免两条碎片。
+          if (reuseId && !fromTargetInfo) {
+            verifyFourBubbleIdsRef.current.add(reuseId);
             verifyBannerRef.current.set(reuseId, banner);
             const jst = judgmentStateRef.current.get(reuseId) ?? { introShown: false, body: "" };
             judgmentStateRef.current.set(reuseId, jst);
@@ -204,6 +232,7 @@ export function ChatPanelLangGraph() {
 
           const asstId = generateId();
           verifySessionRef.current.set(sessionKey, asstId);
+          verifyFourBubbleIdsRef.current.add(asstId);
           verifyBannerRef.current.set(asstId, banner);
           judgmentStateRef.current.set(asstId, { introShown: false, body: "" });
           const parts: UIMessage["parts"] = [{ type: "text", text: banner }];
@@ -213,7 +242,7 @@ export function ChatPanelLangGraph() {
           return;
         }
 
-        if (sessionKey && (payload.taskStatus === 5 || payload.taskStatus === 6 || payload.taskStatus === 7)) {
+        if (sessionKey && (ts === 5 || ts === 6 || ts === 7)) {
           const img = taskStatusImageFilePart(payload);
           let bubbleId = verifySessionRef.current.get(sessionKey);
           if (!bubbleId) {
@@ -234,6 +263,10 @@ export function ChatPanelLangGraph() {
           return;
         }
 
+        // ts=5/6/7 且没有有效 sessionKey：研判结果孤包（trackID 无效如 0），直接丢弃，
+        // 避免产生 "正在查证ID为0的目标" 的垃圾气泡。
+        if (ts === 5 || ts === 6 || ts === 7) return;
+
         const text = formatTaskStatusAssistantMarkdown(payload);
         const asstId = generateId();
         const parts: UIMessage["parts"] = [{ type: "text", text }];
@@ -245,7 +278,8 @@ export function ChatPanelLangGraph() {
         /* ignore malformed */
       }
     };
-    return () => es.close();
+
+    return subscribeTaskStatusChat(onPayload);
   }, []);
 
   const stop = useCallback(() => {
@@ -257,11 +291,86 @@ export function ChatPanelLangGraph() {
   const handleClear = useCallback(() => {
     stop();
     setQuickMenuOpen(false);
+    langGraphThreadIdRef.current = "";
+    setInterruptPrompt(null);
     verifySessionRef.current.clear();
+    verifyFourBubbleIdsRef.current.clear();
     verifyBannerRef.current.clear();
     judgmentStateRef.current.clear();
     setMessages([]);
   }, [stop]);
+
+  const processLangGraphParsedLine = useCallback(async (parsed: Record<string, unknown>) => {
+    const tid = parsed.thread_id;
+    if (typeof tid === "string" && tid.trim()) langGraphThreadIdRef.current = tid.trim();
+
+    const intr = parseLangGraphInterruptEvent(parsed);
+    if (intr) {
+      setInterruptPrompt(intr);
+      appendToLastAssistantText(
+        setMessages,
+        "\n\n—— 任务流已暂停，请在弹窗中确认后继续 ——\n",
+      );
+      return;
+    }
+
+    const ev = String(parsed.event ?? "");
+    if (ev === "tool_call" && parsed.data != null && typeof parsed.data === "object") {
+      const reply = executeLangGraphToolCallFromData(parsed.data as Record<string, unknown>);
+      if (reply) appendToLastAssistantText(setMessages, reply);
+      return;
+    }
+    for (const c of extractLangGraphDisplayChunks(parsed)) appendToLastAssistantText(setMessages, c);
+  }, []);
+
+  /** 与 Qt `WorkflowInterruptDialog::getFeedbackJson` + 仅 POST 反馈体到同一 URL 一致 */
+  const resumeLangGraphInterrupt = useCallback(
+    async (p: LangGraphInterruptUiPayload, feedbackValue: string) => {
+      const ac = new AbortController();
+      abortRef.current = ac;
+      setInterruptPrompt(null);
+      setIsStreaming(true);
+      const body: Record<string, unknown> = {
+        interrupt_feedback: { [p.interruptId]: feedbackValue },
+        interrupt_id: p.mainInterruptId,
+        thread_id: p.threadId,
+      };
+      try {
+        const res = await fetch("/api/langgraph-chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+          body: JSON.stringify(body),
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          const raw = await res.text();
+          let detail = "";
+          try {
+            const j = JSON.parse(raw) as { error?: string; detail?: string };
+            detail = (j.detail ?? j.error ?? "").trim();
+          } catch {
+            detail = raw.trim();
+          }
+          throw new Error(detail || `HTTP ${res.status}`);
+        }
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("无响应体");
+        await forEachLangGraphSseLine(reader, processLangGraphParsedLine);
+      } catch (e) {
+        if ((e as Error).name === "AbortError") {
+          appendToLastAssistantText(setMessages, "\n\n[已停止]");
+        } else {
+          const msg = e instanceof Error ? e.message : String(e);
+          toast.error("中断反馈请求失败", { description: msg });
+          appendToLastAssistantText(setMessages, `\n\n❌ ${msg}`);
+        }
+      } finally {
+        abortRef.current = null;
+        setIsStreaming(false);
+      }
+    },
+    [processLangGraphParsedLine],
+  );
 
   const runLangGraphStream = useCallback(async (userText: string) => {
     const ac = new AbortController();
@@ -276,10 +385,12 @@ export function ChatPanelLangGraph() {
       { id: asstId, role: "assistant", parts: [{ type: "text", text: "" }] },
     ]);
 
-    const body = {
+    const body: Record<string, unknown> = {
       messages: [{ role: "user", content: userText }],
       user_context: {} as Record<string, unknown>,
     };
+    const existingThread = langGraphThreadIdRef.current.trim();
+    if (existingThread) body.thread_id = existingThread;
 
     try {
       const res = await fetch("/api/langgraph-chat", {
@@ -303,43 +414,7 @@ export function ChatPanelLangGraph() {
 
       const reader = res.body?.getReader();
       if (!reader) throw new Error("无响应体");
-
-      const dec = new TextDecoder();
-      let buf = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const { lines, rest } = splitLines(buf);
-        buf = rest;
-        for (const raw of lines) {
-          const line = raw.replace(/\r$/, "").trim();
-          if (!line) continue;
-          const parsed = parseSseDataLine(line);
-          if (!parsed) continue;
-          const ev = String(parsed.event ?? "");
-          if (ev === "tool_call" && parsed.data != null && typeof parsed.data === "object") {
-            const reply = executeLangGraphToolCallFromData(parsed.data as Record<string, unknown>);
-            if (reply) appendToLastAssistantText(setMessages, reply);
-            continue;
-          }
-          const chunks = extractLangGraphDisplayChunks(parsed);
-          for (const c of chunks) appendToLastAssistantText(setMessages, c);
-        }
-      }
-      const tail = buf.replace(/\r$/, "").trim();
-      if (tail) {
-        const parsed = parseSseDataLine(tail);
-        if (parsed) {
-          const ev = String(parsed.event ?? "");
-          if (ev === "tool_call" && parsed.data != null && typeof parsed.data === "object") {
-            const reply = executeLangGraphToolCallFromData(parsed.data as Record<string, unknown>);
-            if (reply) appendToLastAssistantText(setMessages, reply);
-          } else {
-            for (const c of extractLangGraphDisplayChunks(parsed)) appendToLastAssistantText(setMessages, c);
-          }
-        }
-      }
+      await forEachLangGraphSseLine(reader, processLangGraphParsedLine);
     } catch (e) {
       if ((e as Error).name === "AbortError") {
         appendToLastAssistantText(setMessages, "\n\n[已停止]");
@@ -352,7 +427,7 @@ export function ChatPanelLangGraph() {
       abortRef.current = null;
       setIsStreaming(false);
     }
-  }, []);
+  }, [processLangGraphParsedLine]);
 
   const handleSend = useCallback(
     (text: string, files?: FileUIPart[]) => {
@@ -361,9 +436,13 @@ export function ChatPanelLangGraph() {
       }
       const t = text.trim();
       if (!t || isStreaming) return;
+      if (interruptPrompt) {
+        toast.message("请先处理任务确认弹窗", { description: "继续执行、取消任务或关闭弹窗后再发送" });
+        return;
+      }
       void runLangGraphStream(t);
     },
-    [isStreaming, runLangGraphStream],
+    [interruptPrompt, isStreaming, runLangGraphStream],
   );
 
   const leadingToolbar = (
@@ -375,7 +454,7 @@ export function ChatPanelLangGraph() {
         <NxIconButton
           size="md"
           onClick={() => setQuickMenuOpen((o) => !o)}
-          disabled={isStreaming}
+          disabled={isStreaming || !!interruptPrompt}
           title="快捷问题"
         >
           <Zap size={15} strokeWidth={2} />
@@ -456,7 +535,7 @@ export function ChatPanelLangGraph() {
                     <li key={label} className="w-full">
                       <button
                         type="button"
-                        disabled={isStreaming}
+                        disabled={isStreaming || !!interruptPrompt}
                         onClick={() => handleSend(label)}
                         className={cn(
                           "group flex w-full items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2.5 text-left",
@@ -496,8 +575,29 @@ export function ChatPanelLangGraph() {
       <ChatInput
         onSend={handleSend}
         onStop={stop}
-        isLoading={isStreaming}
+        isLoading={isStreaming || !!interruptPrompt}
         leadingToolbar={leadingToolbar}
+      />
+      <LangGraphInterruptDialog
+        open={!!interruptPrompt}
+        payload={interruptPrompt}
+        submitting={isStreaming}
+        onDismiss={() => {
+          if (isStreaming) return;
+          setInterruptPrompt(null);
+        }}
+        onConfirm={() => {
+          if (!interruptPrompt || isStreaming) return;
+          void resumeLangGraphInterrupt(interruptPrompt, "[CONFIRM]");
+        }}
+        onCancelTask={() => {
+          if (!interruptPrompt || isStreaming) return;
+          void resumeLangGraphInterrupt(interruptPrompt, "[CANCEL]");
+        }}
+        onSubmitDetails={(details) => {
+          if (!interruptPrompt || isStreaming) return;
+          void resumeLangGraphInterrupt(interruptPrompt, details);
+        }}
       />
     </div>
   );

@@ -184,8 +184,8 @@ class TrackParser:
             
             if not track_id and not (latitude and longitude):
                 return None
-            
-            return {
+
+            row: Dict[str, Any] = {
                 'track_id': str(track_id),
                 'latitude': float(latitude),
                 'longitude': float(longitude),
@@ -197,8 +197,26 @@ class TrackParser:
                 'target_type': str(target_type),
                 'cpa': float(cpa),      # 添加CPA字段
                 'tcpa': float(tcpa),    # 添加TCPA字段
-                'raw_data': data
+                'raw_data': data,
             }
+            # 与 DDS / 前端字段对齐：HTTP 推送里若带了分类或业务 trackId，需出现在 WS 根上（勿只留在 raw_data）
+            tc = data.get('trackCategoryId') if data.get('trackCategoryId') is not None else data.get('track_category_id')
+            if tc is not None:
+                try:
+                    row['trackCategoryId'] = int(tc)
+                except (TypeError, ValueError):
+                    pass
+            tcn = data.get('trackCategoryName') if data.get('trackCategoryName') is not None else data.get('track_category_name')
+            if tcn is not None and str(tcn).strip():
+                row['trackCategoryName'] = str(tcn)
+            tt = data.get('trackType') if data.get('trackType') is not None else data.get('track_type')
+            if tt is not None and str(tt).strip():
+                row['trackType'] = str(tt)
+            tid_camel = data.get('trackId')
+            if tid_camel is not None and str(tid_camel).strip():
+                row['trackId'] = int(tid_camel) if str(tid_camel).isdigit() else tid_camel
+
+            return row
         except:
             return None
     

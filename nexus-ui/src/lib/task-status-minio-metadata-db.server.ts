@@ -4,6 +4,7 @@
  * 优先 `unique_id`；无则按 `trackid` 兜底（与 HTTP `trackID` 对齐时）。
  */
 import { Pool, type PoolClient } from "pg";
+import { resolvePostgresConnectionString } from "@/lib/postgres-connection.server";
 
 export type MinioMetadataRow = {
   minioBucket: string;
@@ -15,9 +16,7 @@ let pool: Pool | null | undefined;
 
 function getPool(): Pool | null {
   if (pool !== undefined) return pool;
-  const conn =
-    process.env.TASK_STATUS_PG_CONNECTION_STRING?.trim() ??
-    process.env.TASK_STATUS_METADATA_DATABASE_URL?.trim();
+  const conn = resolvePostgresConnectionString();
   if (!conn) {
     pool = null;
     return null;

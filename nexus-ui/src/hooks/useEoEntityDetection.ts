@@ -7,6 +7,7 @@ import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import { headersMatch, detectionRectsToEoBoxes } from "@/lib/eo-video/detectionSyncUtils";
 import { getEoDetectionWebSocketManager } from "@/lib/eo-video/eoDetectionWebSocket";
 import { ingestEntityDetectionPayload } from "@/lib/eo-video/entityDetectionIngest";
+import { parsePositiveTrackId } from "@/lib/eo-video/formatEoDdsTaskOverlay";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 
@@ -14,6 +15,25 @@ const RENDER_MS = 40;
 const DETECTION_ENTRY_STALE_MS = 2000;
 const MAX_HEADER_MISS = 20;
 const DIAG_EMIT_INTERVAL_MS = 260;
+
+function finiteFromDdsField(v: unknown): number | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "bigint") {
+    const n = Number(v.valueOf());
+    return Number.isFinite(n) ? n : undefined;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** 曾误把根载荷 `name`（相机状态/标题）写入 trackAlias，此处过滤后再当航迹别名 */
+function sanitizeDdsTrackAliasForOverlay(raw: string): string {
+  const t = raw.trim();
+  if (!t) return "";
+  if (/相机/.test(t) && /状态/.test(t)) return "";
+  return t;
+}
 
 /**
  * syncHeader 精确匹配（与 base-vue headersMatch 一致）。
@@ -144,13 +164,24 @@ export function useEoEntityDetection({
     return canonicalEntityId(raw);
   }, [ddsCameraEntityId, entityId]);
 
-  const ddsTrackAliasStr = useEoCameraDdsStatusStore((s) => {
-    if (!ddsLookupId) return "";
-    const v = s.byEntityId[ddsLookupId]?.trackAlias;
-    if (typeof v === "string") return v.trim();
-    if (v != null && String(v).trim()) return String(v).trim();
+  const ddsCameraRow = useEoCameraDdsStatusStore((s) =>
+    ddsLookupId ? s.byEntityId[ddsLookupId] : undefined,
+  );
+
+  const ddsTrackIdForUi = useMemo(() => parsePositiveTrackId(ddsCameraRow?.trackID), [ddsCameraRow?.trackID]);
+
+  const ddsAliasStrMemo = useMemo(() => {
+    const av = ddsCameraRow?.trackAlias;
+    if (typeof av === "string" && av.trim()) return sanitizeDdsTrackAliasForOverlay(av);
+    if (av != null && String(av).trim()) return sanitizeDdsTrackAliasForOverlay(String(av));
     return "";
-  });
+  }, [ddsCameraRow?.trackAlias]);
+
+  /** 与右下角 `useEoVideoDdsTaskLine` / `formatEoDdsCameraLine` 同源：仅 DDS 正整数航迹号 + trackAlias */
+  const singleTrackOverlayTitle = useMemo(() => {
+    if (ddsTrackIdForUi == null) return null;
+    return ddsAliasStrMemo || `T${ddsTrackIdForUi}`;
+  }, [ddsTrackIdForUi, ddsAliasStrMemo]);
 
   useEffect(() => {
     boatBuf.current = [];
@@ -220,6 +251,14 @@ export function useEoEntityDetection({
         const buildBoxes = (
           picker: (arr: BufferedDetectionEntry[]) => BufferedDetectionEntry | null,
         ) => {
+          const ddsRow = ddsLookupId
+            ? useEoCameraDdsStatusStore.getState().byEntityId[ddsLookupId]
+            : undefined;
+          const ddAz = finiteFromDdsField(ddsRow?.azimuth);
+          const ddCourse = finiteFromDdsField(ddsRow?.course);
+          const ddSpeed = finiteFromDdsField(ddsRow?.speed);
+          const ddDist = finiteFromDdsField(ddsRow?.distance);
+
           const singleEntry = picker(singleBuf.current);
           const singleBoxesRaw = boxesFromEntry(singleEntry, "single", "", "accent");
           const ex = expandedMode;
@@ -230,20 +269,33 @@ export function useEoEntityDetection({
                   const rawT = ((meta?.typeShort ?? "海").trim().slice(0, 1) || "海").slice(0, 1);
                   const ts = rawT === "空" ? "空" : "海";
                   const nmWs = (meta?.trackName ?? "").trim();
-                  const alias = ddsTrackAliasStr.trim();
-                  const displayName = alias || nmWs;
-                  const tid = b.trackId;
-                  const targetName = displayName || (tid != null ? `T${tid}` : "目标");
+                  const displayName = ddsAliasStrMemo || nmWs;
+                  const wsTid = b.trackId;
+                  const targetName =
+                    displayName ||
+                    (ddsTrackIdForUi != null ? `T${ddsTrackIdForUi}` : wsTid != null ? `T${wsTid}` : "目标");
                   const titleText = ex
-                    ? tid != null
-                      ? `航迹 ${tid} 号${displayName ? ` · ${displayName}` : ""}`
+                    ? ddsTrackIdForUi != null
+                      ? `航迹 ${ddsTrackIdForUi} 号${displayName ? ` · ${displayName}` : ""}`
                       : displayName || "航迹"
                     : targetName;
+                  const singleTrackDetail: NonNullable<EoDetectionBox["singleTrackDetail"]> = {};
+                  const az = ddAz ?? meta?.azimuthDeg;
+                  const distM = ddDist ?? meta?.distanceM;
+                  const spd = ddSpeed ?? meta?.speedMps;
+                  const cog = ddCourse ?? meta?.courseDeg;
+                  if (az != null && Number.isFinite(az)) singleTrackDetail.azimuthDeg = az;
+                  if (distM != null && Number.isFinite(distM)) singleTrackDetail.distanceM = distM;
+                  if (spd != null && Number.isFinite(spd)) singleTrackDetail.speedMps = spd;
+                  if (cog != null && Number.isFinite(cog)) singleTrackDetail.courseDeg = cog;
                   return {
                     ...b,
                     variant: "singleTrack" as const,
                     singleTagShort: ts,
                     label: titleText,
+                    singleTrackDetail,
+                    singleTrackOverlayTitle,
+                    ...(ddsTrackIdForUi != null ? { ddsTrackId: ddsTrackIdForUi } : {}),
                   };
                 })
               : [];
@@ -428,7 +480,7 @@ export function useEoEntityDetection({
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- encodedSyncHub 稳定引用，不影响逻辑
-  }, [enabled, id, onDiagnostic, videoRef, expandedMode, ddsTrackAliasStr, ddsLookupId]);
+  }, [enabled, id, onDiagnostic, videoRef, expandedMode, singleTrackOverlayTitle, ddsTrackIdForUi, ddsAliasStrMemo, ddsLookupId]);
 
   return {
     boxes: enabled && id ? boxes : [],

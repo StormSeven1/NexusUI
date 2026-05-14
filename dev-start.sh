@@ -8,7 +8,7 @@
 #   ./dev-start.sh --rebuild  # 容器内删 nexus-ui/.next、npm install，后端 pip install --upgrade
 #
 # 环境变量（可选）:
-#   NEXUS_DOCKER_IMAGE   默认 xk_docker:latest
+#   NEXUS_DOCKER_IMAGE   默认 xk_docker:latest（须能 import fastdds，航迹 DDS 才工作；否则会跳过全部 DDS）
 #   NEXUS_DOCKER_NAME    默认 xk_docker
 #   BACKEND_PORT         默认 27003
 #   FRONTEND_PORT        默认 22301（与 nexus-ui/.env.local 中 PORT 一致为宜）
@@ -16,6 +16,10 @@
 #   BACKEND_URL          默认 http://127.0.0.1:${BACKEND_PORT}
 #   BACKEND_ONLY=1       仅起 Custombackend
 #   NEXUS_DOCKER_NO_KILL=1  不尝试 fuser 释放 FRONTEND_PORT
+#   NEXT_PUBLIC_WS_USE_NGINX_TUNNEL  默认 false（直连 app-config 的 ws，与同时跑的 prod HTTPS+Nginx 不冲突）。
+#                                   若 dev 页也必须走 :22401 隧道，可先 export NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=true 再执行本脚本。
+#   NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT  隧道为真时设为 <本机IP>:22401（与 prod-start-nginx 的 HTTPS 端口一致）
+#   APP_CONFIG_LAN_HOST  可选，写入 public/app-config.json 的主机（默认 hostname -I 首地址）
 
 set -euo pipefail
 
@@ -55,6 +59,8 @@ fi
 echo "== NexusUI dev-start =="
 echo "仓库: $ROOT"
 echo "镜像: $IMG | 容器名: $NAME | 后端端口: $BP | 前端端口: $FP"
+echo "NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}（Docker -e 注入，覆盖 .env.local，可与 prod-start-nginx 并行）"
+echo "NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-（未设置）}"
 if [[ -n "${FRONTEND_HTTPS_SAN_IP:-}" ]]; then
   echo "前端 HTTPS 证书 SAN 含 IP: ${FRONTEND_HTTPS_SAN_IP} （可覆盖: FRONTEND_HTTPS_SAN_IP=其他IP 逗号分隔）"
 fi
@@ -90,6 +96,12 @@ if [[ ! -f "$START_SH" ]]; then
   exit 1
 fi
 chmod +x "$START_SH" 2>/dev/null || true
+chmod +x "$ROOT/docker/apply-app-config-endpoints.sh" 2>/dev/null || true
+
+_cfg_host="${APP_CONFIG_LAN_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+[[ -n "${_cfg_host:-}" ]] || _cfg_host="127.0.0.1"
+echo "== 写入 nexus-ui/public/app-config.json（开发: ${_cfg_host}:${BP}）=="
+"$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BP"
 
 echo "== 重建容器并挂载 /workspace =="
 docker rm -f "$NAME" 2>/dev/null || true
@@ -114,6 +126,8 @@ docker run -d \
   -e "NEXUS_DOCKER_NO_KILL=${NEXUS_DOCKER_NO_KILL:-0}" \
   -e "NEXUS_UI_CLEAN_NEXT=${DO_REBUILD}" \
   -e "NEXUS_PY_UPGRADE=${DO_REBUILD}" \
+  -e "NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}" \
+  -e "NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}" \
   -v "${ROOT}:/workspace" \
   -v "${START_SH}:/start.sh:ro" \
   --shm-size=64m \
@@ -136,6 +150,7 @@ echo "  后端 API: http://127.0.0.1:${BP}/api  WebSocket: ws://127.0.0.1:${BP}/
 echo ""
 echo "说明: 开发模式下每次启动会 npm install、pip install，并拉起 next dev（HTTPS）与 uvicorn。"
 echo "      若必须用 HTTP 前端，可在容器内 cd /workspace/nexus-ui && npm run dev:http"
+echo "      app-config 的 websocket.url / http.backendUrl 已由本脚本按 APP_CONFIG_LAN_HOST（默认本机局域网首 IP）与 BACKEND_PORT=${BP} 写入。"
 echo "查看日志: docker logs -f ${NAME}"
 echo "进入容器: docker exec -it ${NAME} bash"
 echo "停止容器: docker rm -f ${NAME}"

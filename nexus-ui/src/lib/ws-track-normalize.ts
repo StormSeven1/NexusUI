@@ -27,6 +27,24 @@ import { isVirtualFromProperties, type Track } from "@/lib/map-entity-model";
 import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { transformCoordinate } from "@/lib/coordinate-transform";
+import { readTrackCategoryFromRecord } from "@/lib/track-category-id-parse";
+import type { TrackLayerKey } from "@/lib/map-entity-model";
+import { TRACK_LAYER_KEY_BY_DDS_SOURCE_ID } from "@/lib/track-layer-visibility";
+
+const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
+  "fuse_sea",
+  "fuse_air",
+  "bird_radar",
+  "radar_wharf",
+  "radar_jingzi",
+]);
+
+function readTrackLayerKey(rec: Record<string, unknown>): TrackLayerKey | undefined {
+  const raw = rec.track_layer_key ?? rec.trackLayerKey;
+  if (typeof raw !== "string") return undefined;
+  const s = raw.trim().toLowerCase().replace(/-/g, "_");
+  return TRACK_LAYER_KEYS.has(s as TrackLayerKey) ? (s as TrackLayerKey) : undefined;
+}
 
 /** 判断非空对象 */
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -38,6 +56,8 @@ function asRecord(v: unknown): Record<string, unknown> | null {
  * true→对空(air)，false→对海(sea)；缺省再信 `type`。
  * 数据传递：后端报文 → 此函数 → inferTrackSurfaceKind → Track.type
  */
+/** 对空分类见 `readTrackCategoryFromRecord`（3=DDS 无人机 → isUav/图标） */
+
 function readIsAirTrack(rec: Record<string, unknown>): boolean | undefined {
   const v = rec.isAirTrack ?? rec.is_air_track;
   if (v === true || v === 1) return true;
@@ -51,11 +71,32 @@ function readIsAirTrack(rec: Record<string, unknown>): boolean | undefined {
 }
 
 /**
+ * 由 DDS 来源 / track_layer_key 推断对空(air)还是对海(sea)，不依赖 `source_name` 里是否含「对空」
+ * （Custombackend 对缺省 is_air_track 用 source_name 猜，DDS 常为「DDS数据源」→ 全判对海 → 全画船）。
+ */
+function surfaceKindFromDdsOrTrackLayerKey(rec: Record<string, unknown>): Track["type"] | undefined {
+  const ddsRaw = rec.dds_source_id ?? rec.ddsSourceId;
+  if (typeof ddsRaw === "string") {
+    const rid = ddsRaw.trim().toLowerCase();
+    const lk = TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[rid];
+    if (lk === "fuse_air" || lk === "bird_radar") return "air";
+    if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi") return "sea";
+  }
+  const tlk = readTrackLayerKey(rec);
+  if (tlk === "fuse_air" || tlk === "bird_radar") return "air";
+  if (tlk === "fuse_sea" || tlk === "radar_wharf" || tlk === "radar_jingzi") return "sea";
+  return undefined;
+}
+
+/**
  * 推断航迹类型：对空→air，对海→sea
- * 优先级：isAirTrack > type 字段 > 默认 sea
+ * 优先级：**dds_source_id / track_layer_key**（与接收器一致）→ isAirTrack → type 字段 → 默认 sea
  * 传递给 Track.type → 影响图标旋转、告警匹配、ID 截断
  */
 export function inferTrackSurfaceKind(rec: Record<string, unknown>): Track["type"] {
+  const fromDds = surfaceKindFromDdsOrTrackLayerKey(rec);
+  if (fromDds !== undefined) return fromDds;
+
   const air = readIsAirTrack(rec);
   if (air === true) return "air";
   if (air === false) return "sea";
@@ -83,14 +124,87 @@ export function trackIconHeadingDeg(kind: Track["type"], courseDeg: number): num
 }
 
 /**
- * 读取原始航向（course）
- * 优先级：heading > course > heading_deg > azimuth
- * 缺省值：对空=airDefaultCourseDeg（默认45），对海=0
+ * WebSocket 航迹常先发带 `trackCategoryId` 的首包，后续高频包仅更新坐标/速度。
+ * 若整对象覆盖且不合并，会丢失 DDS 分类 → 无人机被误判为鸟。
+ * 仅当**当前包未解析出** `trackCategoryId` 时，沿用缓存中的分类并重算 `isUav`。
+ */
+export function mergeIncomingTrackWithStickyAirClassification(incoming: Track, prev: Track | undefined): Track {
+  let out: Track = incoming;
+  if (incoming.type === "air" && prev != null && incoming.trackCategoryId === undefined && prev.trackCategoryId !== undefined) {
+    const tc = prev.trackCategoryId;
+    out = { ...incoming, trackCategoryId: tc };
+    if (tc === 3) out.isUav = true;
+    else delete out.isUav;
+  }
+  if (prev != null && out.trackLayerKey === undefined && prev.trackLayerKey !== undefined) {
+    out = { ...out, trackLayerKey: prev.trackLayerKey };
+  }
+  if (prev != null && out.ddsSourceId === undefined && prev.ddsSourceId !== undefined) {
+    out = { ...out, ddsSourceId: prev.ddsSourceId };
+  }
+  /** 有 dds 时以接收器为准写回 layer key（覆盖 prev 上可能错误的粘性 fuse_*） */
+  if (out.ddsSourceId) {
+    const lk = TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[out.ddsSourceId.trim().toLowerCase()];
+    if (lk) out = { ...out, trackLayerKey: lk };
+  }
+  /** 高频包常不带 course/heading，沿用上一帧真航向 */
+  if (prev != null) {
+    const oc = out.course;
+    const hasCourse = typeof oc === "number" && Number.isFinite(oc);
+    const pc = prev.course;
+    const prevCourse = typeof pc === "number" && Number.isFinite(pc) ? pc : undefined;
+    if (!hasCourse && prevCourse !== undefined) {
+      out = { ...out, course: prevCourse };
+    }
+  }
+  /**
+   * 高频包常丢 `dds_source_id` / `track_layer_key`，仅靠首包里的 `is_air_track` 又易被后端填成 false
+   * → 合并后按 dds/track_layer 再算一次对空/对海，与 {@link inferTrackSurfaceKind} 一致。
+   */
+  if (out.type !== "underwater") {
+    const rec: Record<string, unknown> = {
+      dds_source_id: out.ddsSourceId,
+      track_layer_key: out.trackLayerKey,
+      is_air_track: out.isAirTrack === true ? true : out.isAirTrack === false ? false : undefined,
+      type: out.type,
+    };
+    const kind = inferTrackSurfaceKind(rec);
+    const course = out.course ?? (kind === "air" ? getTrackRenderingConfig().airDefaultCourseDeg : 0);
+    out = { ...out, type: kind, heading: trackIconHeadingDeg(kind, course) };
+    if (kind === "air") {
+      out = { ...out, isAirTrack: true };
+    } else if ("isAirTrack" in out) {
+      const { isAirTrack: _drop, ...rest } = out;
+      out = rest as Track;
+    }
+  }
+  return out;
+}
+
+/** 报文里的角度字段：排除 null/空串，避免 `Number(null)===0` 误判为有效航向 */
+function toFiniteAngleDeg(raw: unknown): number | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw === "string" && raw.trim() === "") return undefined;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * 读取原始航向（course，度）。
+ * 顺序：**course → cog/COG/bearing → heading_deg → azimuth → heading**（根对象与 `properties` 均扫）；
+ * `heading` 置后，避免 DDS 占位 0 盖住真 `cog`。
  */
 function readCourseDeg(rec: Record<string, unknown>, kind: Track["type"]): number {
-  const raw = rec.heading ?? rec.course ?? rec.heading_deg ?? rec.azimuth;
-  const n = typeof raw === "number" ? raw : Number(raw);
-  return Number.isFinite(n) ? n : kindDefaultCourse(kind);
+  const keys = ["course", "cog", "COG", "bearing", "heading_deg", "azimuth", "heading"] as const;
+  const bags: Array<Record<string, unknown> | null | undefined> = [rec, asRecord(rec.properties)];
+  for (const bag of bags) {
+    if (!bag) continue;
+    for (const k of keys) {
+      const v = toFiniteAngleDeg(bag[k]);
+      if (v !== undefined) return v;
+    }
+  }
+  return kindDefaultCourse(kind);
 }
 
 /** 空中缺省原始航向读配置 `airDefaultCourseDeg`（默认 45），再叠加 `airIconHeadingOffsetDeg` */
@@ -163,15 +277,24 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   if (rec.virtual_troop !== undefined) propBag.virtual_troop = rec.virtual_troop;
   const isVirtual = isVirtualFromProperties(propBag);
   const rawUav = rec.is_uav ?? rec.isUav ?? rec.uav;
-  const isUav =
+  let isUav =
     rawUav === true ||
     rawUav === 1 ||
     (typeof rawUav === "string" && /^(1|true|yes|uav)$/i.test(rawUav.trim()));
+
+  const trackCategoryId = readTrackCategoryFromRecord(rec);
+  if (kind === "air" && trackCategoryId !== undefined) {
+    isUav = trackCategoryId === 3;
+  }
 
   const isAirTrack = kind === "air";
 
   const trackId = rec.trackId ?? rec.track_id ?? rec.tracnID;
   const trackIdStr = trackId != null && String(trackId).trim() !== "" ? String(trackId).trim() : undefined;
+
+  const aliasRaw = rec.trackAlias ?? rec.track_alias;
+  const trackAliasStr =
+    aliasRaw != null && String(aliasRaw).trim() !== "" ? String(aliasRaw).trim() : undefined;
 
   const targetType = rec.target_type ?? rec.targetType ?? rec.name ?? rec.label;
   const targetTypeStr = targetType != null ? String(targetType) : undefined;
@@ -206,11 +329,21 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const dataSourceId = rec.dataSourceId ?? rec.data_source_id;
   const dataSourceIdStr = dataSourceId != null ? String(dataSourceId) : undefined;
 
+  const ddsSrcRaw = rec.dds_source_id ?? rec.ddsSourceId;
+  const ddsSourceIdStr =
+    ddsSrcRaw != null && String(ddsSrcRaw).trim() !== "" ? String(ddsSrcRaw).trim() : undefined;
+
+  const tlkPayload = readTrackLayerKey(rec);
+  const ddsLower = ddsSourceIdStr?.trim().toLowerCase();
+  const tlkFromDds = ddsLower && TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[ddsLower] ? TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[ddsLower] : undefined;
+  const resolvedTrackLayerKey = tlkFromDds ?? tlkPayload;
+
   return {
     id: showID,
     showID,
     uniqueID,
     ...(trackIdStr ? { trackId: trackIdStr } : {}),
+    ...(trackAliasStr ? { trackAlias: trackAliasStr } : {}),
     name: String(rec.name ?? rec.label ?? showID),
     type: kind,
     disposition,
@@ -228,8 +361,11 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     ...(azimuth != null ? { azimuth } : {}),
     ...(distance != null ? { distance } : {}),
     ...(dataSourceIdStr ? { dataSourceId: dataSourceIdStr } : {}),
+    ...(ddsSourceIdStr ? { ddsSourceId: ddsSourceIdStr } : {}),
+    ...(resolvedTrackLayerKey ? { trackLayerKey: resolvedTrackLayerKey } : {}),
     ...(isVirtual ? { isVirtual: true } : {}),
     ...(isUav ? { isUav: true } : {}),
+    ...(trackCategoryId !== undefined ? { trackCategoryId } : {}),
   };
 }
 

@@ -14,6 +14,8 @@ export interface EoPipFloatingPlayerProps {
   iceServers: EoVideoIceServer[];
   pipStreamId: string;
   onSelectPipStream: (streamId: string) => void;
+  /** 双击画中画区域：与主路流对调 */
+  onSwapWithMain?: () => void;
   signalingUrl: string;
   loading: boolean;
   error: string | null;
@@ -27,6 +29,7 @@ export function EoPipFloatingPlayer({
   iceServers,
   pipStreamId,
   onSelectPipStream,
+  onSwapWithMain,
   signalingUrl,
   loading,
   error,
@@ -45,11 +48,16 @@ export function EoPipFloatingPlayer({
       <EoStreamContextMenu config={config} activeStreamId={pipStreamId} onSelectStream={onSelectPipStream}>
         <div
           role="presentation"
-          title="右键切换画中画视频流"
+          title="右键切换画中画视频流 · 双击与主画面对调"
           className={cn(
             "pointer-events-auto relative aspect-video w-full cursor-context-menu overflow-hidden rounded-sm border border-white/25 bg-black/90 shadow-xl",
           )}
           aria-label={`画中画：${streamLabel}`}
+          onDoubleClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onSwapWithMain?.();
+          }}
         >
           {signalingUrl.trim() ? (
             <EoVideoViewport

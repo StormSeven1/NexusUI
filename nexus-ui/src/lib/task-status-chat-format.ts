@@ -64,7 +64,8 @@ export function taskStatusVerifySessionKey(
   if (trackID == null || cameraIndex == null) return null;
   const t = Number(trackID);
   const c = Number(cameraIndex);
-  if (!Number.isFinite(t) || !Number.isFinite(c)) return null;
+  // trackID <= 0 视为无效（后端有时在研判包中将 trackID 置 0，不应建会话）
+  if (!Number.isFinite(t) || t <= 0 || !Number.isFinite(c)) return null;
   return `${t}_${c}`;
 }
 

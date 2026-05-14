@@ -3,9 +3,10 @@
  * - 英文与数字优先：Roboto
  * - 无人机罗盘 / 视频 OSD 数英：`--font-uav-hud`（IBM Plex Sans）
  *
- * 注意：`@import url(...)` 必须尽可能放在文件最前，避免构建期 CSS 优化器报 “@import rules must precede...” 警告。
+ * 无外网/DNS 时勿请求 fonts.googleapis.com（控制台 ERR_NAME_NOT_RESOLVED）。
+ * 需要在线 Web 字体时取消下一行注释。
  */
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@500;600;700&family=Roboto:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap");
+ /* @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@500;600;700&family=Roboto:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap"); */
 
 @import "tailwindcss";
 @import "tw-animate-css";

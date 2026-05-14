@@ -1,16 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, PanelLeftClose } from "lucide-react";
+import { Circle, ExternalLink, PanelLeftClose } from "lucide-react";
 import { useDockStore } from "@/stores/dock-store";
 import type { PanelId } from "@/stores/dock-store";
 import { useAppStore, type LeftPanelTab } from "@/stores/app-store";
 import { useAlertStore } from "@/stores/alert-store";
 import { cn } from "@/lib/utils";
 import { getWindowConfig } from "@/components/dock/windowRegistry";
+import { dockedPanelsInPartition } from "@/components/layout/dock-sidebar-utils";
+import {
+  isElectroOpticalDockPanel,
+  useEoVideoPanelFocusStore,
+} from "@/stores/eo-video-panel-focus-store";
 
 /** Keep original 4 tools; EO appears only when docked back. */
-const LEFT_TOOLS = ["tracks", "assets", "layers", "alerts"] as const satisfies readonly PanelId[];
+const LEFT_TOOLS = ["tracks", "assets", "layers", "alerts", "track-display"] as const satisfies readonly PanelId[];
 
 export function DockLeftSidebar() {
   const MIN_LEFT_WIDTH = 260;
@@ -26,21 +31,22 @@ export function DockLeftSidebar() {
   const panels = useDockStore((s) => s.panels);
   const panelRegistry = useDockStore((s) => s.panelRegistry);
   const alertTotal = useAlertStore((s) => s.alerts.length);
+  const eoFocusedDockId = useEoVideoPanelFocusStore((s) => s.focusedDockPanelId);
+  const setEoFocusedDockPanel = useEoVideoPanelFocusStore((s) => s.setFocusedDockPanel);
   const contentRef = useRef<HTMLDivElement>(null);
   const [draggingDividerFor, setDraggingDividerFor] = useState<string | null>(null);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
 
   const modeOf = (id: PanelId) => panels.find((p) => p.id === id)?.mode;
-  const isDocked = (id: PanelId) => modeOf(id) === "docked";
 
-  const part0 = leftPartitions.find((p) => p.id === "left-0");
-  const currentId = (part0?.currentPanelId ?? "tracks") as PanelId;
   const sortedPartitions = [...leftPartitions].sort((a, b) => a.index - b.index);
   const activeDockedIds = new Set(
     sortedPartitions
       .map((p) => p.currentPanelId)
       .filter((id): id is PanelId => !!id),
   );
+
+  const leftToolSet = new Set<string>(LEFT_TOOLS);
 
   /** 与 app-store 同步：其它模块仍读 leftPanelTab / leftSidebarOpen */
   useEffect(() => {
@@ -118,9 +124,11 @@ export function DockLeftSidebar() {
     useDockStore.setState({ leftSidebarOpen: true });
   };
 
-  const hasVisiblePartition = sortedPartitions.some(
-    (p) => !!p.currentPanelId && !!panelRegistry[p.currentPanelId]?.component,
-  );
+  const hasVisiblePartition = sortedPartitions.some((p) => {
+    const cid = p.currentPanelId;
+    if (cid && panelRegistry[cid]?.component) return true;
+    return dockedPanelsInPartition(panels, p.id).some((row) => !!panelRegistry[row.id]?.component);
+  });
 
   return (
     <aside
@@ -138,16 +146,14 @@ export function DockLeftSidebar() {
           {sortedPartitions.map((partition) => {
             const ratio = Math.max(0.08, partition.heightRatio);
             if (partition.id === "left-0") {
-              const left0Current = partition.currentPanelId as PanelId | null;
-              const left0Extra =
-                left0Current &&
-                !LEFT_TOOLS.includes(left0Current as (typeof LEFT_TOOLS)[number]) &&
-                isDocked(left0Current)
-                  ? [left0Current]
-                  : [];
+              const dockedHere = dockedPanelsInPartition(panels, "left-0");
+              const dockedIds = new Set(dockedHere.map((p) => p.id));
+              const left0Extras = dockedHere
+                .map((p) => p.id)
+                .filter((id) => !leftToolSet.has(id));
               const left0Buttons: PanelId[] = [
-                ...LEFT_TOOLS.filter((tid) => isDocked(tid)),
-                ...left0Extra,
+                ...LEFT_TOOLS.filter((tid) => dockedIds.has(tid)),
+                ...left0Extras,
               ];
               return (
                 <div
@@ -158,7 +164,10 @@ export function DockLeftSidebar() {
                   {left0Buttons.map((tid) => {
                     const cfg = getWindowConfig(tid);
                     const Icon = cfg?.icon;
-                    const isActive = activeDockedIds.has(tid) && leftSidebarOpen && modeOf(tid) === "docked";
+                    const isActive =
+                      partition.currentPanelId === tid &&
+                      leftSidebarOpen &&
+                      modeOf(tid) === "docked";
                     return (
                       <button
                         key={`${partition.id}:${tid}`}
@@ -188,8 +197,8 @@ export function DockLeftSidebar() {
               );
             }
 
-            const tid = partition.currentPanelId as PanelId | null;
-            if (!tid || !isDocked(tid)) {
+            const dockedHere = dockedPanelsInPartition(panels, partition.id);
+            if (dockedHere.length === 0) {
               return (
                 <div
                   key={partition.id}
@@ -199,31 +208,40 @@ export function DockLeftSidebar() {
               );
             }
 
-            const cfg = getWindowConfig(tid);
-            const Icon = cfg?.icon;
-            const isActive = activeDockedIds.has(tid) && leftSidebarOpen && modeOf(tid) === "docked";
             return (
               <div
-                key={`${partition.id}:${tid}`}
-                className="flex min-h-0 w-full items-start justify-center pt-1"
+                key={partition.id}
+                className="flex min-h-0 w-full flex-col items-center gap-1 pt-1"
                 style={{ flexBasis: `${ratio * 100}%`, flexGrow: 0, flexShrink: 0 }}
               >
-                <button
-                  type="button"
-                  onClick={() => handleTabClick(tid)}
-                  className={cn(
-                    "group relative flex h-9 w-9 items-center justify-center rounded-md transition-all duration-200",
-                    isActive
-                      ? "bg-nexus-accent-glow text-nexus-text-primary"
-                      : "text-nexus-text-muted hover:bg-nexus-bg-elevated hover:text-nexus-text-secondary",
-                  )}
-                  title={(cfg?.menuLabel ?? tid) + (isActive ? " · click again to pop out" : "")}
-                >
-                  {Icon ? <Icon size={18} /> : null}
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-nexus-accent" />
-                  )}
-                </button>
+                {dockedHere.map((row) => {
+                  const tid = row.id;
+                  const cfg = getWindowConfig(tid);
+                  const Icon = cfg?.icon;
+                  const isActive =
+                    partition.currentPanelId === tid &&
+                    leftSidebarOpen &&
+                    modeOf(tid) === "docked";
+                  return (
+                    <button
+                      key={`${partition.id}:${tid}`}
+                      type="button"
+                      onClick={() => handleTabClick(tid)}
+                      className={cn(
+                        "group relative flex h-9 w-9 items-center justify-center rounded-md transition-all duration-200",
+                        isActive
+                          ? "bg-nexus-accent-glow text-nexus-text-primary"
+                          : "text-nexus-text-muted hover:bg-nexus-bg-elevated hover:text-nexus-text-secondary",
+                      )}
+                      title={(cfg?.menuLabel ?? tid) + (isActive ? " · click again to pop out" : "")}
+                    >
+                      {Icon ? <Icon size={18} /> : null}
+                      {isActive && (
+                        <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-nexus-accent" />
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             );
           })}
@@ -255,23 +273,47 @@ export function DockLeftSidebar() {
                 )}
                 style={{ flexBasis: `${Math.max(0.08, partition.heightRatio) * 100}%`, flexGrow: 0, flexShrink: 0 }}
               >
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-nexus-border px-2 py-1.5">
-                  <span className="truncate text-xs font-medium text-nexus-text-secondary">
-                    {panelId ? getWindowConfig(panelId)?.title ?? panelId : "Empty"}
-                  </span>
+                <div
+                  className="flex shrink-0 items-center justify-between gap-2 border-b border-nexus-border px-2 py-1.5"
+                  onPointerDown={() => {
+                    if (panelId && isElectroOpticalDockPanel(panelId)) setEoFocusedDockPanel(panelId);
+                  }}
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    {panelId && isElectroOpticalDockPanel(panelId) ? (
+                      eoFocusedDockId === panelId ? (
+                        <span className="shrink-0 text-sky-400" title="当前选中的光电窗口">
+                          <Circle className="size-2.5 fill-current" strokeWidth={0} aria-hidden />
+                        </span>
+                      ) : (
+                        <span className="inline-block w-2.5 shrink-0 opacity-0" aria-hidden />
+                      )
+                    ) : null}
+                    <span className="truncate text-xs font-medium text-nexus-text-secondary">
+                      {panelId ? getWindowConfig(panelId)?.title ?? panelId : "Empty"}
+                    </span>
+                  </div>
                   {panelId ? (
                     <button
                       type="button"
                       className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-nexus-accent hover:bg-nexus-bg-elevated"
-                      title="Pop out"
-                      onClick={() => handlePanelClick(panelId)}
-                      aria-label="Pop out"
+                      title="弹出为独立窗口"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePanelClick(panelId);
+                      }}
+                      aria-label="弹出为独立窗口"
                     >
                       <ExternalLink size={14} />
                     </button>
                   ) : null}
                 </div>
-                <div className="min-h-0 flex-1 overflow-hidden">
+                <div
+                  className="min-h-0 flex-1 overflow-hidden"
+                  onPointerDownCapture={() => {
+                    if (panelId && isElectroOpticalDockPanel(panelId)) setEoFocusedDockPanel(panelId);
+                  }}
+                >
                   {PanelComp ? (
                     <PanelComp />
                   ) : (

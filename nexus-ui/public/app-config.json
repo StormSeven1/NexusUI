@@ -2,7 +2,7 @@
   "_字段说明": {
     "_关于本块": "以下键名均以 _ 开头，仅作文档，程序加载配置时会忽略。正式配置从下面的 radar、cameras、**airports**、**drones**、laserWeapons、tdoa、trackRendering、factory（**仅**敌方/中立配色覆盖）等开始。**友方**各资产类型在列表/通用图标的默认色由**各根键根级** `assetFriendlyColor` 提供，见 `getAssetFriendlyColorForAssetType`。激光/TDOA 专题扇区填充默认值用 **`sectorFillDefaultColor` / `sectorFillDefaultOpacity`**（与 `assetFriendlyColor` 不同）。雷达距离环友方环线优先 `assetFriendlyColor`，否则 **`ringLineFallbackColor`**；环线默认透明度 **`ringLineDefaultOpacity`**。**显示过滤**在源码 `src/lib/map-display-filters.ts` 硬编码，不在本文件配置。",
     "_数据流_资产与资产列表": "启动时 `loadResolvedAppConfig` 将 **radar、cameras.devices、laserWeapons.devices、tdoa.devices、airports.devices、drones.devices** 合并为 `configAssetBase`，再与 WebSocket 推送实体在 `mergeDynamicAndStaticAssets` 里按 **id** 合并（同 id 一般以动态为准；含静态 **airport / drone** 与 WS 同 id 时亦以动态为准；对 radar / camera / laser / tdoa 等与 WS **asset_type** 明显冲突时有保护逻辑）。结果写入 **`useAssetStore`**，**资产列表**只读该 store。**地图**：图层面板由 `buildDataLayerPanelRows(assets)` 按 **`asset_type`** 列出 `lyr-radar-coverage` / `lyr-opto-fov` / `lyr-laser` / `lyr-tdoa` 等；资产 billboard 依类型、在线态、敌我、实兵/虚兵选图标；**雷达距离环、光电 FOV、激光/TDOA 扇区** 由各自专题层绘制。激光/TDOA 在 store 里的行带 `properties.center_icon_visible: false`，中心点只在专题层画，避免与资产图标叠两个标。",
-
+    "_softwareCompositionLinks": "根键 `softwareCompositionLinks`（与 `_字段说明` 同级）：顶栏「软件组成」下拉。支持 JSON 数组 `[{ \"label\", \"url\" }]`，或与 Qt 一致的对象 `{ \"实体管理\": \"http://...\" }`（键名为菜单文字）。",
     "factory": {
       "_说明": "与 `_字段说明` 同级的根键 `factory`。**仅** `assetIcons.hostile` / `assetIcons.neutral` 参与地图填色（覆盖 `theme-colors` 默认敌蓝、中立灰）。**我方**颜色由各块 `label.fontColor`（及航迹 `trackTypeStyles.*.idColor`）决定，见 `map-icons` 的 `map_friendly_color` 与 `assetMapLabelTextColor`。",
       "assetIcons": {
@@ -11,7 +11,6 @@
         "neutral": "中立目标主色。"
       }
     },
-
     "websocket": {
       "url": "WebSocket 连接地址（V2 后端只有单条 WS，如 ws://192.168.18.141:8001/ws）。",
       "reconnectInterval": "重连基础间隔（毫秒），实际使用指数退避。",
@@ -20,21 +19,17 @@
       "initialReconnectMs": "首次重连等待时间（毫秒）。",
       "maxReconnectMs": "重连等待时间上限（毫秒）。"
     },
-
     "coordinateTransform": {
       "enabled": "是否启用 WGS84→GCJ02 坐标偏移。国内地图（高德/腾讯瓦片）需设为 true，国外或使用 WGS84 瓦片时设为 false。默认 true。"
     },
-
     "http": {
       "backendUrl": "后端 HTTP 基地址，用于查证图片轮询等 HTTP 请求（如 http://192.168.18.141:8001）。",
       "imagePollIntervalMs": "查证图片轮询间隔（毫秒），仅对已通过告警匹配的渲染层航迹轮询 GET /api/image/{uniqueID}。默认 3000。",
       "imageFetchTimeoutMs": "单次图片请求超时（毫秒）。默认 1000。"
     },
-
     "trackIdMode": {
       "distinguishSeaAir": "告警匹配模式。false = 18.141 模式（统一用 trackId 匹配）；true = 28.9 模式（对海用 uniqueID，对空用 trackId）。默认 false。"
     },
-
     "radar": {
       "_类型": "对象，与 `cameras` / `laserWeapons` 同形：`visibility` 为各雷达站默认；`devices` 为雷达站数组。支持根级 **`radar: [ ... ]`** 纯数组（无全局 `visibility` 时仍可加载）。",
       "visibility": {
@@ -45,39 +40,38 @@
         "_类型": "数组；每台雷达一条。用于静态资产 + 地图上多圈距离环、刻度字、角度字、十字丝、环带填充、中心名称等。",
         "每一项": {
           "id": "雷达唯一编号，与实时数据里的实体 id 可对上；同名时若 WS 推来的不是雷达类型，程序会保留本条配置。",
-        "assetType": "必填，必须为 radar（与地图资产符号 `PUBLIC_MAP_SVG_FILES.radar` 对应）。",
-        "name": "雷达名称；显示在地图中心名称标签上（若 centerNameVisible 为 true）。",
-        "center": "雷达站在地图上的位置，必须是 [经度, 纬度] 两个数字。",
-        "maxRange": "最外圈要表示到的距离，单位米；与 interval 一起决定画几圈（或用 ringCount 固定圈数）。",
-        "interval": "相邻两圈之间的半径间隔，单位米；例如 10000 表示每 10km 一圈。",
-        "ringCount": "正整数时固定圈数；写 null 或不写则按 ceil(maxRange / interval) 自动算圈数。",
-        "showRings": "false 时不画任何距离环、环带、距离字、角度字、十字丝、雷达中心名（雷达点仍可由「资产」图层显示）。true 时以上部件再各自受下面 *Visible 控制。",
-        "opacity": "每一圈环线的透明度，0～1，对应地图上线条的 line-opacity。",
-        "ringFillOpacity": "相邻两圈之间环带填充的透明度，0～1；为 0 时不画环带，只画环线。",
-        "ringFillColor": "环带填充用的颜色（十六进制或 rgb 字符串）；不强调时用与 color 相同即可。",
-        "color": "距离环线本身的颜色。",
-        "ringLineWidth": "环线线宽，像素。",
-        "ringLineDash": "环线虚线样式，数组如 [4,4]；空数组 [] 表示实线。",
-        "virtualTroop": "是否虚兵；为 true 时资产图标走虚线样式，并与 V2 虚兵雷达一致参与逻辑。",
-        "distanceLabelsVisible": "是否在每一圈的正北方向显示距离刻度文字（如 10km）。",
-        "distanceLabelColor": "距离刻度字颜色；写 null 表示用 color（环线色）作为字色。",
-        "angleLabelsVisible": "是否在最外圈上按角度间隔标一圈角度字（如 0°、30°）。",
-        "angleLabelInterval": "相邻两个角度标签相隔多少度，例如 30。",
-        "angleLabelColor": "角度字颜色；写 null 表示用 angleLabel.fontColor。",
-        "crosshairVisible": "是否画过雷达中心的十字丝（南北、东西两条线，长度到最外圈）。",
-        "centerIconVisible": "资产图层上该雷达站图标是否显示；与 `radar.visibility.centerIconVisible` 合并：条目中显式 boolean 优先。",
-        "centerNameVisible": "距离环中心名称是否显示；与 `radar.visibility.centerNameVisible` 合并：条目中显式 boolean 优先。",
-        "heading": "可选，雷达朝向（度），写入资产数据供以后扩展；当前距离环为全向圆，一般可不写。",
-        "status": "可选，online / offline / degraded；写入 `AssetData.status`，地图资产符号在线/离线/降级样式会参考（与敌我维度的配色独立）。",
-        "disposition": "可选，敌我：friendly（友方/我方，默认）、hostile（敌方）、neutral（中立）；我方中心名/图标主色见本条 `label.fontColor`（解析为 `map_friendly_color`）；敌/中见 `factory.assetIcons`。",
-        "label": "雷达中心名称标签的字体样式（fontSize 字号、fontColor 字色、haloColor 描边色、haloWidth 描边宽、textOffset 相对锚点偏移 [x,y]、textFont MapLibre 字形栈）。",
-        "distanceLabel": "每一圈正北距离刻度字的字体样式，字段含义同 label。",
-        "angleLabel": "最外圈上角度字的字体样式，字段含义同 label。",
-        "crosshair": "十字丝样式：lineWidth 线宽、lineDash 虚线段、lineOpacity 透明度、color 颜色。"
-      }
+          "assetType": "必填，必须为 radar（与地图资产符号 `PUBLIC_MAP_SVG_FILES.radar` 对应）。",
+          "name": "雷达名称；显示在地图中心名称标签上（若 centerNameVisible 为 true）。",
+          "center": "雷达站在地图上的位置，必须是 [经度, 纬度] 两个数字。",
+          "maxRange": "最外圈要表示到的距离，单位米；与 interval 一起决定画几圈（或用 ringCount 固定圈数）。",
+          "interval": "相邻两圈之间的半径间隔，单位米；例如 10000 表示每 10km 一圈。",
+          "ringCount": "正整数时固定圈数；写 null 或不写则按 ceil(maxRange / interval) 自动算圈数。",
+          "showRings": "false 时不画任何距离环、环带、距离字、角度字、十字丝、雷达中心名（雷达点仍可由「资产」图层显示）。true 时以上部件再各自受下面 *Visible 控制。",
+          "opacity": "每一圈环线的透明度，0～1，对应地图上线条的 line-opacity。",
+          "ringFillOpacity": "相邻两圈之间环带填充的透明度，0～1；为 0 时不画环带，只画环线。",
+          "ringFillColor": "环带填充用的颜色（十六进制或 rgb 字符串）；不强调时用与 color 相同即可。",
+          "color": "距离环线本身的颜色。",
+          "ringLineWidth": "环线线宽，像素。",
+          "ringLineDash": "环线虚线样式，数组如 [4,4]；空数组 [] 表示实线。",
+          "virtualTroop": "是否虚兵；为 true 时资产图标走虚线样式，并与 V2 虚兵雷达一致参与逻辑。",
+          "distanceLabelsVisible": "是否在每一圈的正北方向显示距离刻度文字（如 10km）。",
+          "distanceLabelColor": "距离刻度字颜色；写 null 表示用 color（环线色）作为字色。",
+          "angleLabelsVisible": "是否在最外圈上按角度间隔标一圈角度字（如 0°、30°）。",
+          "angleLabelInterval": "相邻两个角度标签相隔多少度，例如 30。",
+          "angleLabelColor": "角度字颜色；写 null 表示用 angleLabel.fontColor。",
+          "crosshairVisible": "是否画过雷达中心的十字丝（南北、东西两条线，长度到最外圈）。",
+          "centerIconVisible": "资产图层上该雷达站图标是否显示；与 `radar.visibility.centerIconVisible` 合并：条目中显式 boolean 优先。",
+          "centerNameVisible": "距离环中心名称是否显示；与 `radar.visibility.centerNameVisible` 合并：条目中显式 boolean 优先。",
+          "heading": "可选，雷达朝向（度），写入资产数据供以后扩展；当前距离环为全向圆，一般可不写。",
+          "status": "可选，online / offline / degraded；写入 `AssetData.status`，地图资产符号在线/离线/降级样式会参考（与敌我维度的配色独立）。",
+          "disposition": "可选，敌我：friendly（友方/我方，默认）、hostile（敌方）、neutral（中立）；我方中心名/图标主色见本条 `label.fontColor`（解析为 `map_friendly_color`）；敌/中见 `factory.assetIcons`。",
+          "label": "雷达中心名称标签的字体样式（fontSize 字号、fontColor 字色、haloColor 描边色、haloWidth 描边宽、textOffset 相对锚点偏移 [x,y]、textFont MapLibre 字形栈）。",
+          "distanceLabel": "每一圈正北距离刻度字的字体样式，字段含义同 label。",
+          "angleLabel": "最外圈上角度字的字体样式，字段含义同 label。",
+          "crosshair": "十字丝样式：lineWidth 线宽、lineDash 虚线段、lineOpacity 透明度、color 颜色。"
+        }
       }
     },
-
     "cameras": {
       "_类型": "对象；描述光电塔、摄像头等静态设备及其扇形覆盖。",
       "defaultRange": "下面 devices 里某条没写 range 时，默认覆盖半径多少米。",
@@ -113,7 +107,6 @@
         }
       }
     },
-
     "airports": {
       "_类型": "对象。**Dock 默认显隐** + **静态机场** 共用本根键：`parseAirportMapConfig` 读取根级 **`centerIconVisible` / `centerNameVisible`**；`mapAirportsDevicesPayload`（`airport-maplibre.ts`）读取 **`devices[]`** 等，与 `cameras` 同形子集一并解析。",
       "centerIconVisible": "Dock/WS 机场资产默认是否显示中心图标；写入 Dock 推送行的 `properties.center_icon_visible`（见 `useUnifiedWsFeed`）。**虚兵/实兵**仍只认各 Dock **WS 报文**，不由本键决定。",
@@ -146,7 +139,6 @@
         }
       }
     },
-
     "drones": {
       "_类型": "对象。**无人机地图渲染参数** 与 **静态无人机 `devices[]`** 写在同一根键 **`drones`**：`parseDroneMapRenderingConfig` 抽取 **`maxFovRange`、`plannedRouteLine*`、`historyTrailLine*`、`fovFillColor`** 等（排除 `devices`、`label`、`visibility`、`sectorBorder`、`scan` 等扇区块）；`mapDronesDevicesPayload` 解析 **`devices[]`**。",
       "maxFovRange": "视场最大地面射程（米）；`drones-maplibre` / `drone-store` 使用。",
@@ -195,7 +187,6 @@
         }
       }
     },
-
     "laserWeapons": {
       "_类型": "对象；激光武器扇区 + 扫描动画 + 标签。与 tdoa 结构相同，仅默认扫描参数不同；另支持根级与单台的「激光脉冲」参数（见 laserPulseOnMs / laserPulseOffMs、devices[].pulseOnMs/pulseOffMs），行为对齐旧版 LaserSectorOverlayTool。**devices 每条**除驱动 `LaserMaplibre` 外，会同步生成 **`asset_type: laser`** 的 `AssetData` 写入 **`useAssetStore`**（供资产列表与统一实体 id），地图中心点仍只由专题层绘制（store 行 `center_icon_visible: false）。",
       "activationEnabled": "根级布尔；`loadResolvedAppConfig` 时写入激光专题激活态。`false` 时各设备默认不显示扇区/扫描（单台可写同名键覆盖）；处置等运行时可改写设备级该字段。",
@@ -252,7 +243,6 @@
         }
       }
     },
-
     "tdoa": {
       "_说明": "结构与 laserWeapons 相同，但无根级/设备级 **`laserPulseOnMs` / `laserPulseOffMs` / `pulseOnMs` / `pulseOffMs`**。**devices 每条**除驱动 `TdoaMaplibre` 外，会同步生成 **`asset_type: tdoa`** 写入 **`useAssetStore`**（规则同 laserWeapons）。根对象上「defaultSectorRange」与「defaultRange」含义相同：设备未写 range 时的默认射程（米）；本示例用 defaultSectorRange，写 defaultRange 也可以。**`assetFriendlyColor`** 与 **`sectorFillDefaultColor` / `sectorFillDefaultOpacity`** 语义同 laserWeapons。",
       "activationEnabled": "根级布尔；`loadResolvedAppConfig` 时写入 TDOA 专题激活态。`false` 时各设备默认不显示扇区/扫描（单台可写同名键覆盖）；处置等运行时可改写设备级该字段。",
@@ -263,7 +253,6 @@
       "visibility": "同 laserWeapons.visibility。",
       "devices": "同 laserWeapons.devices（每条表示一个 TDOA 扇区设备）；**每项须含 assetType: tdoa**。"
     },
-
     "trackRendering": {
       "_总述": "根键 **`trackRendering`**。程序**只解析**下列子键，解析结果驻留在 `map-app-config` 模块内供 `getTrackRenderingConfig` 等读取（**非** `useTrackStore` 航迹列表）；旧版 JSON 里多写的键会被**静默忽略**。**选中/锁定**由 `tracks-highlight` / `tracks-lock-on`，不由本块控制。",
       "trackTypeStyles": {
@@ -290,7 +279,6 @@
       "airDefaultCourseDeg": "对空无报文时的默认原始航向（度），`track-ws-normalize`。"
     }
   },
-
   "radar": {
     "assetFriendlyColor": "#34d399",
     "defaultMaxRange": 12000,
@@ -301,7 +289,10 @@
     "defaultRingFillColor": "#00FF00",
     "ringLineFallbackColor": "#00FF00",
     "defaultRingLineWidth": 1,
-    "defaultRingLineDash": [4,4],
+    "defaultRingLineDash": [
+      4,
+      4
+    ],
     "defaultVirtualTroop": false,
     "defaultDistanceLabelsVisible": false,
     "defaultAngleLabelsVisible": false,
@@ -316,105 +307,151 @@
       "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
-      "textOffset": [0, 1.8],
-      "textFont": ["Open Sans Regular"]
+      "textOffset": [
+        0,
+        1.8
+      ],
+      "textFont": [
+        "Open Sans Regular"
+      ]
     },
     "distanceLabel": {
       "fontSize": 12,
       "fontColor": "#FFFFFF",
       "haloColor": "#000000",
       "haloWidth": 1.5,
-      "textOffset": [0, -0.2],
-      "textFont": ["Open Sans Regular"]
+      "textOffset": [
+        0,
+        -0.2
+      ],
+      "textFont": [
+        "Open Sans Regular"
+      ]
     },
     "angleLabel": {
       "fontSize": 11,
       "fontColor": "#FFFF00",
       "haloColor": "#000000",
       "haloWidth": 1,
-      "textOffset": [0, 0],
-      "textFont": ["Open Sans Regular"]
+      "textOffset": [
+        0,
+        0
+      ],
+      "textFont": [
+        "Open Sans Regular"
+      ]
     },
     "crosshair": {
       "lineWidth": 1,
-      "lineDash": [4, 4],
+      "lineDash": [
+        4,
+        4
+      ],
       "lineOpacity": 0.6,
       "color": "#FFFFFF"
     },
-   "devices": [
-    {
-      "id": "home",
-      "name": "home",
-      "assetFriendlyColor": "#34d399",
-      "assetType": "radar",
-      "center": [122.089, 37.545],
-      "maxRange": 2000,
-      "interval": 500,
-      "ringCount": null,
-      "showRings": true,
-      "opacity": 0.5,
-      "ringFillOpacity": 0.08,
-      "ringFillColor": "#ffffff",
-      "color": "#ffffff",
-      "ringLineWidth": 1,
-      "ringLineDash": [3, 2],
-      "virtualTroop": true,
-      "distanceLabelsVisible": true,
-      "distanceLabelColor": null,
-      "angleLabelsVisible": true,
-      "angleLabelInterval": 30,
-      "angleLabelColor": null,
-      "crosshairVisible": true,
-      "centerIconVisible": true,
-      "centerNameVisible": true,
-      "label": {
-        "fontSize": 10,
-        "fontColor": "#34d399",
-        "haloColor": "#09090b",
-        "haloWidth": 1.5,
-        "textOffset": [0, 1.8],
-        "textFont": ["Open Sans Regular"]
-      },
-      "distanceLabel": {
-        "fontSize": 11,
-        "fontColor": "#FFFFFF",
-        "haloColor": "#000000",
-        "haloWidth": 1.5,
-        "textOffset": [0, -0.2],
-        "textFont": ["Open Sans Regular"]
-      },
-      "angleLabel": {
-        "fontSize": 10,
-        "fontColor": "#FFFF00",
-        "haloColor": "#000000",
-        "haloWidth": 1,
-        "textOffset": [0, 0],
-        "textFont": ["Open Sans Regular"]
-      },
-      "crosshair": {
-        "lineWidth": 1,
-        "lineDash": [4, 4],
-        "lineOpacity": 0.55,
-        "color": "#FFFFFF"
-      },
-      "status": "online",
-      "disposition": "friendly",
-      "heading": null
-    }
+    "devices": [
+      {
+        "id": "home",
+        "name": "home",
+        "assetFriendlyColor": "#34d399",
+        "assetType": "radar",
+        "center": [
+          122.089,
+          37.545
+        ],
+        "maxRange": 2000,
+        "interval": 500,
+        "ringCount": null,
+        "showRings": true,
+        "opacity": 0.5,
+        "ringFillOpacity": 0.08,
+        "ringFillColor": "#ffffff",
+        "color": "#ffffff",
+        "ringLineWidth": 1,
+        "ringLineDash": [
+          3,
+          2
+        ],
+        "virtualTroop": true,
+        "distanceLabelsVisible": true,
+        "distanceLabelColor": null,
+        "angleLabelsVisible": true,
+        "angleLabelInterval": 30,
+        "angleLabelColor": null,
+        "crosshairVisible": true,
+        "centerIconVisible": true,
+        "centerNameVisible": true,
+        "label": {
+          "fontSize": 10,
+          "fontColor": "#34d399",
+          "haloColor": "#09090b",
+          "haloWidth": 1.5,
+          "textOffset": [
+            0,
+            1.8
+          ],
+          "textFont": [
+            "Open Sans Regular"
+          ]
+        },
+        "distanceLabel": {
+          "fontSize": 11,
+          "fontColor": "#FFFFFF",
+          "haloColor": "#000000",
+          "haloWidth": 1.5,
+          "textOffset": [
+            0,
+            -0.2
+          ],
+          "textFont": [
+            "Open Sans Regular"
+          ]
+        },
+        "angleLabel": {
+          "fontSize": 10,
+          "fontColor": "#FFFF00",
+          "haloColor": "#000000",
+          "haloWidth": 1,
+          "textOffset": [
+            0,
+            0
+          ],
+          "textFont": [
+            "Open Sans Regular"
+          ]
+        },
+        "crosshair": {
+          "lineWidth": 1,
+          "lineDash": [
+            4,
+            4
+          ],
+          "lineOpacity": 0.55,
+          "color": "#FFFFFF"
+        },
+        "status": "online",
+        "disposition": "friendly",
+        "heading": null
+      }
     ]
   },
-
-  
   "cameras": {
     "assetFriendlyColor": "#34d399",
     "defaultRange": 15000,
-    "sectorFill":  "#4704f3",
-    "sectorFillOpacity": 0.10,
+    "sectorFill": "#4704f3",
+    "sectorFillOpacity": 0.1,
     "sectorLine": "#a3eb1d",
     "sectorLineWidth": 1.2,
     "sectorLineOpacity": 0.4,
-    "sectorLineDashVirtual": [6, 4],
-    "sectorLineDashReal": [3, 3],
+    "sectorLineDashVirtual": [
+      6,
+      4
+    ],
+    "sectorLineDashReal": [
+      3,
+      3
+    ],
     "sectorBorder": {
       "lineWidth": 0,
       "lineColor": null,
@@ -430,23 +467,32 @@
       "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
-      "textOffset": [0, 1.8],
-      "textFont": ["Open Sans Regular"]
+      "textOffset": [
+        0,
+        1.8
+      ],
+      "textFont": [
+        "Open Sans Regular"
+      ]
     },
-    "devices": [
-    ]
+    "devices": []
   },
-
   "tower": {
     "assetFriendlyColor": "#6ee7b7",
     "defaultRange": 15000,
     "sectorFill": "rgba(52,211,153,0.10)",
-    "sectorFillOpacity": 0.10,
+    "sectorFillOpacity": 0.1,
     "sectorLine": "#34d399",
     "sectorLineWidth": 1.2,
     "sectorLineOpacity": 0.4,
-    "sectorLineDashVirtual": [6, 4],
-    "sectorLineDashReal": [3, 3],
+    "sectorLineDashVirtual": [
+      6,
+      4
+    ],
+    "sectorLineDashReal": [
+      3,
+      3
+    ],
     "sectorBorder": {
       "lineWidth": 0,
       "lineColor": null,
@@ -462,14 +508,16 @@
       "fontColor": "#6ee7b7",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
-      "textOffset": [0, 1.8],
-      "textFont": ["Open Sans Regular"]
+      "textOffset": [
+        0,
+        1.8
+      ],
+      "textFont": [
+        "Open Sans Regular"
+      ]
     },
-    "devices": [
-    ]
+    "devices": []
   },
-
-
   "airports": {
     "assetFriendlyColor": "#34d399",
     "centerIconVisible": true,
@@ -490,13 +538,16 @@
       "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
-      "textOffset": [0, 1.8],
-      "textFont": ["Open Sans Regular"]
+      "textOffset": [
+        0,
+        1.8
+      ],
+      "textFont": [
+        "Open Sans Regular"
+      ]
     },
-    "devices": [
-    ]
+    "devices": []
   },
-
   "drones": {
     "assetFriendlyColor": "#34d399",
     "defaultRange": 15000,
@@ -529,26 +580,34 @@
       "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
-      "textOffset": [0, 1.8],
-      "textFont": ["Open Sans Regular"]
+      "textOffset": [
+        0,
+        1.8
+      ],
+      "textFont": [
+        "Open Sans Regular"
+      ]
     },
-    "devices": [
-    ]
+    "devices": []
   },
-
   "tdoa": {
     "activationEnabled": false,
     "assetFriendlyColor": "#34d399",
     "defaultSectorRange": 15000,
     "sectorFillDefaultColor": "#fb923c",
-    "sectorFillDefaultOpacity": 0.30,
+    "sectorFillDefaultOpacity": 0.3,
     "label": {
       "fontSize": 10,
       "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
-      "textOffset": [0, 1.8],
-      "textFont": ["Open Sans Regular"]
+      "textOffset": [
+        0,
+        1.8
+      ],
+      "textFont": [
+        "Open Sans Regular"
+      ]
     },
     "scan": {
       "cycleMs": 2000,
@@ -570,7 +629,10 @@
         "deviceId": "TDOA",
         "name": "TDOA",
         "assetType": "tdoa",
-        "center": [122.098000, 37.548900],
+        "center": [
+          122.098,
+          37.5489
+        ],
         "bearing": 0,
         "angle": 60,
         "range": 5000,
@@ -589,7 +651,6 @@
       }
     ]
   },
-
   "laserWeapons": {
     "activationEnabled": false,
     "assetFriendlyColor": "#34d399",
@@ -601,8 +662,13 @@
       "fontColor": "#34d399",
       "haloColor": "#09090b",
       "haloWidth": 1.5,
-      "textOffset": [0, 1.8],
-      "textFont": ["Open Sans Regular"]
+      "textOffset": [
+        0,
+        1.8
+      ],
+      "textFont": [
+        "Open Sans Regular"
+      ]
     },
     "scan": {
       "cycleMs": 2000,
@@ -626,7 +692,10 @@
         "deviceId": "laser-1",
         "name": "激光武器",
         "assetType": "laser",
-        "center": [122.0872,37.5463],
+        "center": [
+          122.0872,
+          37.5463
+        ],
         "bearing": 0,
         "angle": 3,
         "range": 1500,
@@ -644,12 +713,23 @@
       }
     ]
   },
-
   "trackRendering": {
     "trackTypeStyles": {
-      "sea": { "idColor": "#FFFFFF", "pointSize": 4, "idSize": 10 },
-      "air": { "idColor": "#FFFF00", "pointSize": 4, "idSize": 10 },
-      "underwater": { "idColor": "#FFFFFF", "pointSize": 4, "idSize": 10 }
+      "sea": {
+        "idColor": "#FFFFFF",
+        "pointSize": 4,
+        "idSize": 10
+      },
+      "air": {
+        "idColor": "#FFFF00",
+        "pointSize": 4,
+        "idSize": 10
+      },
+      "underwater": {
+        "idColor": "#FFFFFF",
+        "pointSize": 4,
+        "idSize": 10
+      }
     },
     "trackDisplay": {
       "showTrackId": true,
@@ -665,33 +745,29 @@
     "airIconHeadingOffsetDeg": -45,
     "airDefaultCourseDeg": -45
   },
-
   "factory": {
     "assetIcons": {
       "hostile": "#3b82f6",
       "neutral": "#737378"
     }
   },
-
   "websocket": {
-    "url": "ws://192.168.18.141:26003/ws",
+    "url": "ws://192.168.18.141:27003/ws",
     "reconnectInterval": 3000,
     "heartbeatInterval": 25000,
     "maxReconnectAttempts": 12,
     "initialReconnectMs": 2000,
     "maxReconnectMs": 30000
   },
-
   "coordinateTransform": {
     "enabled": false
   },
-
   "http": {
-    "backendUrl": "http://192.168.18.141:26003",
+    "backendUrl": "http://192.168.18.141:27003",
     "imagePollIntervalMs": 3000,
     "imageFetchTimeoutMs": 1000,
     "chat": {
-      "_说明": "处置相关 HTTP 配置：手动产生方案、执行方案、处置结束",
+      "_说明": "处置相关 HTTP 配置：手动产生方案、执行方案、处置结束。顶栏「日常查证」使用 quickWorkflowUrl + dailyVerification*（与 Qt ThreatListTable 工作流模式 1 一致）。",
       "disposalPlanWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream",
       "disposalManualGeneratePlanUrl": "http://192.168.18.103:8000/api/v1/tasks/target-engagement/manual-generate-plan",
       "disposalExecuteUrl": "http://192.168.18.103:8000/api/v1/tasks/grpc-disposal/execute",
@@ -701,22 +777,58 @@
       "autoDisposalWsConnectTimeoutMs": 10000,
       "quickWorkflowUrl": "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
       "quickWorkflowTimeoutMs": 5000,
+      "dailyVerificationWorkflowId": "auto_duty_workflow-quick-1",
+      "dailyVerificationSchemaId": "SCHEME_3B065AE6",
       "quickWorkflowStatusWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream"
     }
   },
-
   "assetTargetLine": {
     "_说明": "处置方案执行后地图上资产→目标的动态连线。固定明显虚线+流动点；flowCycleMs 越大流动越慢；flowPointRadius 控制流动点大小。",
     "color": "#22d3ee",
     "lineWidth": 2.5,
     "flowCycleMs": 2500,
-    "flowPointRadius": 2.0
+    "flowPointRadius": 2
   },
-
   "trackIdMode": {
     "distinguishSeaAir": false
   },
-
+  "softwareCompositionLinks": [
+    {
+      "label": "实体管理",
+      "url": "http://192.168.18.141:7880/"
+    },
+    {
+      "label": "任务管理",
+      "url": "http://192.168.18.103:8000/chat"
+    },
+    {
+      "label": "雷达管理",
+      "url": "http://192.168.18.141:22231/dashboard"
+    },
+    {
+      "label": "相机管理",
+      "url": "https://192.168.18.141:9443/home"
+    },
+    {
+      "label": "无人机管理",
+      "url": "http://192.168.18.115:88/tsa"
+    },
+    {
+      "label": "告警管理",
+      "url": "http://192.168.18.141:8711/area-management"
+    },
+    {
+      "label": "数据管理",
+      "url": "http://192.168.18.103:8566/dashboard"
+    }
+  ],
+  "thirdPartyPosGuide": {
+    "_说明": "态势双击航迹时向所列第三方相机下发 ThirdPartyCamPosTask（0x3004 POS）。HTTP 与 NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL / 光电视频同源。航迹：targetId、经纬高、速度、航向取自 Track。",
+    "enabled": false,
+    "cameraEntityIds": [
+      "camera-hs-001"
+    ]
+  },
   "cameraManagement": {
     "_说明": "host/port 可被 NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL 覆盖。不写 path 或省略时 POST 默认 /api/v1/tasks（与光电视频 PTZ 同源）；仅兼容 Qt 根路径时写 \"path\": \"\"。",
     "host": "127.0.0.1",

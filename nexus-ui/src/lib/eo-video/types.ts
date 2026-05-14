@@ -29,9 +29,13 @@ export interface EoVideoStreamEntry {
    */
   webrtcUrl?: string;
   /** 来自实体注册表合并的相机/无人机条目（用于剔除与延迟拉流） */
-  registrySource?: "camera" | "uav";
+  registrySource?: "camera" | "uav" | "thirdPartyCamera";
+  /** 缺省按 WebRTC；`image` 为 HTTP 图片轮询（第三方相机等） */
+  playbackKind?: "webrtc" | "image";
   /** 若存在，表示该路为无人机流（右键「无人机」子菜单） */
   uav?: EoVideoStreamUavMeta;
+  /** 第三方相机：UDP 组播 `host:port`（与 `.env.local` 中 NEXT_PUBLIC_EO_THIRD_PARTY_CAMERA_MULTICAST_UDP 同源） */
+  multicastUdp?: string;
 }
 
 export interface EoVideoContextMenuGroup {
@@ -78,4 +82,18 @@ export interface EoDetectionBox {
   variant?: "default" | "singleTrack";
   /** 单目标：圆标内一字（仅海/空），对齐 Qt DrawCircleTag 圆内 `text` */
   singleTagShort?: string;
+  /** 单目标：四行航迹信息（AZI/DIS/SPD/COG），来自 WS 首框对象字段 */
+  singleTrackDetail?: {
+    azimuthDeg?: number;
+    distanceM?: number;
+    speedMps?: number;
+    courseDeg?: number;
+  };
+  /**
+   * 单目标标牌标题：与右下角 DDS 同源（`trackID` + `trackAlias`）。
+   * `null` 表示当前无有效航迹号 → 不绘制标题条；字符串为别名或 `T{id}`。
+   */
+  singleTrackOverlayTitle?: string | null;
+  /** 与 DDS / 右下角一致的航迹号，用于在 GIS `track-store` 中反查 AZI/DIS/SPD/COG */
+  ddsTrackId?: number;
 }

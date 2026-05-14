@@ -111,6 +111,10 @@ function wsEntityTypeRaw(r: Record<string, unknown>): string {
     stu === "CAMERA" || stu === "OPTOELECTRONIC" || stu === "OPTICAL" ||
     stu === "光电" || stu === "摄像头"
   ) return "camera";
+  // 第三方相机（实体服务 ontology.specificType，如 camera-hs-001）：地图资产仍用 camera，与 mergeEoVideoRegistry / 第三方光电菜单一致
+  if (stu === "THIRDPARTYCAMERA" || stu === "THIRD_PARTY_CAMERA" || stu === "THIRDPARTY_CAMERA") {
+    return "camera";
+  }
   // 电侦（电子侦察）：与光电（camera）为不同类型，图标使用 电侦.svg
   if (
     stu === "TOWER" || stu === "电侦" || stu === "电子侦察" || stu === "ESM" ||
@@ -886,6 +890,16 @@ export interface AppConfigHttpChat {
   quickWorkflowUrl: string;
   /** 快捷工作流 POST 超时（毫秒），默认 5000 */
   quickWorkflowTimeoutMs: number;
+  /**
+   * 顶栏「日常查证」启动 LangGraph 工作流 ID，与 Qt `ThreatListTable::sendDailyHandleTask` 中
+   * `workflow_id`（默认 `auto_duty_workflow-quick-1`）一致。
+   */
+  dailyVerificationWorkflowId: string;
+  /**
+   * 日常查证 POST `parameters.schema_id`，与 Qt `getActiveSchemeId()` 写入 JSON 的字段一致；
+   * 需在部署环境配置为当前激活方案 ID。
+   */
+  dailyVerificationSchemaId: string;
 }
 
 export interface AppConfigTrackIdMode {
@@ -952,6 +966,8 @@ const DEFAULT_HTTP_CHAT: AppConfigHttpChat = {
   autoDisposalWsConnectTimeoutMs: 5000,
   quickWorkflowUrl: "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
   quickWorkflowTimeoutMs: 5000,
+  dailyVerificationWorkflowId: "auto_duty_workflow-quick-1",
+  dailyVerificationSchemaId: "",
 };
 
 const DEFAULT_TRACK_ID_MODE: AppConfigTrackIdMode = { distinguishSeaAir: false };
@@ -1002,6 +1018,11 @@ function applyResolvedNewConfigs(root: Record<string, unknown>) {
         ),
         quickWorkflowUrl: str(ch.quickWorkflowUrl, DEFAULT_HTTP_CHAT.quickWorkflowUrl),
         quickWorkflowTimeoutMs: num(ch.quickWorkflowTimeoutMs, DEFAULT_HTTP_CHAT.quickWorkflowTimeoutMs),
+        dailyVerificationWorkflowId: str(
+          ch.dailyVerificationWorkflowId,
+          DEFAULT_HTTP_CHAT.dailyVerificationWorkflowId,
+        ),
+        dailyVerificationSchemaId: str(ch.dailyVerificationSchemaId, DEFAULT_HTTP_CHAT.dailyVerificationSchemaId),
       };
     }
   }
@@ -1082,6 +1103,28 @@ export type CameraManagementConfig = {
   skyOwnerEntityId?: string;
   requestTimeoutMs: number;
 };
+
+/** 根键 `thirdPartyPosGuide`：态势双击航迹 → 向第三方相机下发 `ThirdPartyCamPosTask`（雷达引导 / POS） */
+export type ThirdPartyPosGuideConfig = {
+  enabled: boolean;
+  /** 接收任务的第三方相机 `owner.entityId`（如 camera-hs-001），可多台依次下发 */
+  cameraEntityIds: string[];
+};
+
+function parseThirdPartyPosGuide(root: Record<string, unknown>): ThirdPartyPosGuideConfig {
+  const raw = asRecord(root.thirdPartyPosGuide);
+  if (!raw) return { enabled: false, cameraEntityIds: [] };
+  const enabled = raw.enabled === true;
+  const idsRaw = raw.cameraEntityIds;
+  const cameraEntityIds: string[] = [];
+  if (Array.isArray(idsRaw)) {
+    for (const x of idsRaw) {
+      const s = typeof x === "string" ? x.trim() : "";
+      if (s) cameraEntityIds.push(s);
+    }
+  }
+  return { enabled, cameraEntityIds };
+}
 
 function parseCameraManagementConfig(root: Record<string, unknown>): CameraManagementConfig | null {
   const cm = asRecord(root.cameraManagement);
@@ -1203,6 +1246,9 @@ export function getDefaultEoCameraTaskBackendBaseUrl(): string {
   return "http://192.168.18.141:8088";
 }
 
+/** 顶栏「软件组成」外链项（与 Qt TopInfoPanel 管理菜单对应） */
+export type SoftwareCompositionLinkItem = { label: string; url: string };
+
 export type ResolvedAppConfig = {
   /** 与 WS 合并前的配置静态实体：见 `mergeConfigAssetBase`（含 `airports` / `drones`） */
   configAssetBase: AssetData[];
@@ -1238,7 +1284,39 @@ export type ResolvedAppConfig = {
   chatDisposalPlanWsEnabled: boolean;
   /** 根键 `cameraManagement`：光电元任务 HTTP；无配置时为 null */
   cameraManagement: CameraManagementConfig | null;
+  /** 根键 `thirdPartyPosGuide`：第三方相机 POS 雷达引导；缺省不下发 */
+  thirdPartyPosGuide: ThirdPartyPosGuideConfig;
+  /**
+   * 根键 `softwareCompositionLinks`：顶栏「软件组成」下拉外链，与 Qt `TopInfoPanel` 管理菜单一致。
+   * 支持 JSON 数组 `[{ "label", "url" }]` 或对象 `{ "实体管理": "http://..." }`（键名作 label，忽略 `_` 开头键）。
+   */
+  softwareCompositionLinks: SoftwareCompositionLinkItem[];
 };
+
+function parseSoftwareCompositionLinks(root: Record<string, unknown>): SoftwareCompositionLinkItem[] {
+  const raw = root.softwareCompositionLinks;
+  if (raw == null) return [];
+  if (Array.isArray(raw)) {
+    const out: SoftwareCompositionLinkItem[] = [];
+    for (const it of raw) {
+      if (!it || typeof it !== "object") continue;
+      const o = it as Record<string, unknown>;
+      const label = typeof o.label === "string" ? o.label.trim() : "";
+      const url = typeof o.url === "string" ? o.url.trim() : "";
+      if (label && url) out.push({ label, url });
+    }
+    return out;
+  }
+  if (typeof raw === "object") {
+    const out: SoftwareCompositionLinkItem[] = [];
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (k.startsWith("_")) continue;
+      if (typeof v === "string" && v.trim()) out.push({ label: k.trim(), url: v.trim() });
+    }
+    return out;
+  }
+  return [];
+}
 
 function mergeProperties(
   a: Record<string, unknown> | null | undefined,
@@ -1542,6 +1620,7 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   const gptInterfaceRightPanel = uiRoot?.gptInterfaceRightPanel === true;
   /** 缺省 true：仅当配置显式写 `false` 时关闭助手侧处置方案 WS */
   const chatDisposalPlanWsEnabled = uiRoot?.chatDisposalPlanWsEnabled !== false;
+  const softwareCompositionLinks = parseSoftwareCompositionLinks(root);
   return {
     configAssetBase,
     cameras: camerasBundle,
@@ -1558,6 +1637,8 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
     gptInterfaceRightPanel,
     chatDisposalPlanWsEnabled,
     cameraManagement: mergeCameraManagementWithEnv(parseCameraManagementConfig(root)),
+    thirdPartyPosGuide: parseThirdPartyPosGuide(root),
+    softwareCompositionLinks,
   };
 }
 
@@ -1993,6 +2074,8 @@ export async function loadResolvedAppConfig(customUrl?: string): Promise<Resolve
     gptInterfaceRightPanel: false,
     chatDisposalPlanWsEnabled: true,
     cameraManagement: null,
+    thirdPartyPosGuide: { enabled: false, cameraEntityIds: [] },
+    softwareCompositionLinks: [],
   };
   if (typeof window === "undefined") return empty;
   const url = configUrl(customUrl);

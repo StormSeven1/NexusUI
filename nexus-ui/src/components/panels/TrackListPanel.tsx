@@ -5,15 +5,25 @@
  * 【数据流】WS(useUnifiedWsFeed) setTracks `useTrackStore(s => s.tracks)` 列表渲染 */
 
 import { useState, useMemo } from "react";
-import { Search, Star, Filter } from "lucide-react";
+import { Search, Star, Filter, ChevronDown, ChevronRight, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { useAppStore } from "@/stores/app-store";
-import { useTrackStore, getEffectiveTrackDisposition, isTrackAlarmLinked } from "@/stores/track-store";
-import { getFusionTrackMarkerFill } from "@/lib/map-icons";
+import { useTrackStore, getTrackDispositionForRendering, isTrackAlarmLinked } from "@/stores/track-store";
+import { getFusionTrackMarkerFill, resolveTrackPointFill } from "@/lib/map-icons";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
-import type { Track } from "@/lib/map-entity-model";
+import { LYR_TRACKS, TRACK_LAYER_KEYS_ORDERED, type Track, type TrackLayerKey } from "@/lib/map-entity-model";
+import { useTrackDisplayStore, neutralFusionColorForTrack } from "@/stores/track-display-store";
+import { effectiveTrackLayerKey, isRadarTrackLayerKey } from "@/lib/track-layer-visibility";
+
+const TRACK_SUBTYPE_LABELS: Record<TrackLayerKey, string> = {
+  fuse_sea: "对海融合航迹",
+  fuse_air: "对空融合航迹",
+  bird_radar: "探鸟雷达航迹",
+  radar_wharf: "远遥码头雷达航迹",
+  radar_jingzi: "靖子头雷达航迹",
+};
 
 /** 根据航迹 ID 模式返回列表显示的标识：18.141 显示 trackId，28.9 对空显示 showID，对海显示 trackId */
 function trackDisplayId(track: { showID: string; trackId?: string; type: string }): string {
@@ -43,7 +53,14 @@ function TrackListRow({
   selectedTrackId: string | null;
   onSelect: () => void;
 }) {
-  const disp = getEffectiveTrackDisposition(track);
+  const disp = getTrackDispositionForRendering(track);
+  const td = useTrackDisplayStore();
+  const layerKey = effectiveTrackLayerKey(track);
+  const radarRow = isRadarTrackLayerKey(layerKey);
+  const dotFill =
+    disp === "neutral"
+      ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor)
+      : resolveTrackPointFill(track, disp, null, undefined);
   return (
     <button
       type="button"
@@ -55,14 +72,22 @@ function TrackListRow({
           : "hover:bg-nexus-bg-elevated"
       )}
     >
-      <MilSymbol
-        type={track.type}
-        disposition={disp}
-        virtual={track.isVirtual === true}
-        neutralFusionFill={disp === "neutral" ? getFusionTrackMarkerFill(track) : undefined}
-        size="sm"
-        className="mt-0.5 shrink-0"
-      />
+      {radarRow ? (
+        <span
+          className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-black/35"
+          style={{ backgroundColor: dotFill }}
+          title={TRACK_SUBTYPE_LABELS[layerKey]}
+        />
+      ) : (
+        <MilSymbol
+          type={track.type}
+          disposition={disp}
+          virtual={track.isVirtual === true}
+          neutralFusionFill={disp === "neutral" ? getFusionTrackMarkerFill(track) : undefined}
+          size="sm"
+          className="mt-0.5 shrink-0"
+        />
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-1">
           <span className="truncate text-xs font-medium text-nexus-text-primary">
@@ -85,7 +110,8 @@ function TrackListRow({
           </span>
         </div>
         <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
-          {typeof track.speed === "number" ? track.speed.toFixed(1) : track.speed} kn · 航向 {formatHeading2(track.heading)}°
+          {typeof track.speed === "number" ? track.speed.toFixed(1) : track.speed} kn · 航向{" "}
+          {formatHeading2(track.course ?? track.heading)}°
           {track.type === "air" && track.altitude ? ` · 高度 ${track.altitude.toFixed(1)}ft` : ""}
           {track.type === "underwater" ? ` · 深度 ${track.altitude || 0}m` : ""}
         </div>
@@ -96,11 +122,21 @@ function TrackListRow({
 
 export function TrackListPanel() {
   const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
+  const tracksMasterOn = useAppStore((s) => s.layerVisibility[LYR_TRACKS] !== false);
+  const trackSubtypeVisible = useTrackDisplayStore((s) => s.trackSubtypeVisible);
+  const toggleTrackSubtype = useTrackDisplayStore((s) => s.toggleTrackSubtype);
   const liveTracks = useTrackStore((s) => s.tracks);
   const [search, setSearch] = useState("");
   const [filterStarred, setFilterStarred] = useState(false);
+  const [openSubtypeSection, setOpenSubtypeSection] = useState(true);
 
-  const allTracks = liveTracks;
+  const allTracks = useMemo(() => {
+    if (!tracksMasterOn) return [];
+    return liveTracks.filter((t) => {
+      const lk = effectiveTrackLayerKey(t);
+      return trackSubtypeVisible[lk] !== false;
+    });
+  }, [liveTracks, tracksMasterOn, trackSubtypeVisible]);
 
   const filtered = useMemo(() => {
     let tracks = allTracks;
@@ -148,6 +184,64 @@ export function TrackListPanel() {
               <Filter size={12} />
             </button>
           </div>
+        </div>
+
+        <div>
+          <button
+            type="button"
+            onClick={() => setOpenSubtypeSection((v) => !v)}
+            className="flex w-full items-center gap-1.5 rounded-md border border-nexus-border/60 bg-nexus-bg-base/40 px-2 py-1.5 text-left hover:bg-nexus-bg-elevated/40"
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center text-nexus-text-muted">
+              {openSubtypeSection ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            </span>
+            <span className="text-[10px] font-semibold tracking-wide text-nexus-text-secondary">
+              航迹类型（地图显隐）
+            </span>
+          </button>
+          {openSubtypeSection ? (
+            <div className="mt-1.5 space-y-0.5 border border-nexus-border/40 rounded-md overflow-hidden">
+              {TRACK_LAYER_KEYS_ORDERED.map((key) => {
+                const on = trackSubtypeVisible[key] !== false;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => toggleTrackSubtype(key)}
+                    disabled={!tracksMasterOn}
+                    className={cn(
+                      "flex w-full items-center gap-2 border-b border-nexus-border/30 px-2 py-1.5 text-left last:border-b-0",
+                      tracksMasterOn ? "hover:bg-nexus-bg-elevated/50" : "cursor-not-allowed opacity-45",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                        on
+                          ? "border-nexus-border-accent bg-nexus-accent-glow/15 text-nexus-text-primary"
+                          : "border-nexus-border bg-nexus-bg-sidebar text-nexus-text-muted",
+                      )}
+                    >
+                      {on ? <Eye size={9} /> : <EyeOff size={9} />}
+                    </span>
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate text-[10px]",
+                        on ? "text-nexus-text-primary" : "text-nexus-text-muted",
+                      )}
+                    >
+                      {TRACK_SUBTYPE_LABELS[key]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          {!tracksMasterOn ? (
+            <p className="mt-1.5 text-[9px] leading-snug text-amber-500/90">
+              图层侧「目标」已关闭，地图不绘制航迹；列表亦为空。
+            </p>
+          ) : null}
         </div>
 
         <div className="relative">

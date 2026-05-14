@@ -48,7 +48,10 @@ export function EoStreamContextMenu({ config, activeStreamId, onSelectStream, ch
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuPortal>
-        <ContextMenuContent collisionPadding={8} className="z-[520] max-h-[70vh] min-w-[9rem] overflow-y-auto p-1">
+        <ContextMenuContent
+          collisionPadding={8}
+          className="z-[10050] max-h-[70vh] min-w-[9rem] overflow-y-auto p-1"
+        >
           {config.contextMenu.title ? (
             <ContextMenuLabel className="text-nexus-accent">{config.contextMenu.title}</ContextMenuLabel>
           ) : null}
@@ -66,7 +69,7 @@ export function EoStreamContextMenu({ config, activeStreamId, onSelectStream, ch
                   </ContextMenuSubTrigger>
                   <ContextMenuSubContent
                     className={cn(
-                      "z-[530] max-h-[60vh] min-w-[10rem] overflow-y-auto rounded-md border border-white/[0.1] bg-nexus-bg-overlay p-1 shadow-xl backdrop-blur-sm",
+                      "z-[10060] max-h-[60vh] min-w-[10rem] overflow-y-auto rounded-md border border-white/[0.1] bg-nexus-bg-overlay p-1 shadow-xl backdrop-blur-sm",
                     )}
                   >
                     {renderItems(g.streamIds)}

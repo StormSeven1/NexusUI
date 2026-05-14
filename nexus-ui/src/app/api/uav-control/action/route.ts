@@ -2,6 +2,12 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import mqttImport, { type IClientOptions, type MqttClient } from "mqtt";
 import { getDronePlatformBaseUrl } from "@/lib/drone-platform-base-url";
+import {
+  fetchWithTimeout,
+  getUavTaskApiBase,
+  loginAndGetSession,
+  type LoginSession,
+} from "@/lib/server/uav-platform-server-session";
 
 export const runtime = "nodejs";
 
@@ -19,23 +25,7 @@ type ControlBody = {
   };
 };
 
-type LoginSession = {
-  token: string;
-  at: number;
-  /** 与 mqtt-info / WatchSys 登录 data.mqtt_addr 一致，转为 Node mqtt 包可用的 mqtt:// 或 mqtts:// */
-  mqttBrokerUrl?: string;
-  mqttUsername?: string;
-  mqttPassword?: string;
-};
-
-let cachedSession: LoginSession | null = null;
 const TIMEOUT_MS = 15000;
-
-/** 与 Config.ini Basic/UavServerIP+UavServerPort 及 customconfig TASK_START_FMT 一致 → UAV_TRACE_TASK */
-function getUavTaskApiBase(): string | null {
-  const b = process.env.NEXUS_UAV_TASK_API_BASE_URL?.trim();
-  return b ? b.replace(/\/$/, "") : null;
-}
 
 /** 与 uavctrlboard::sendCancelAllTasksRequest 请求体一致（POST m_struUrlConfig.UAV_TRACE_TASK） */
 async function postCancelAllMetaTasks(
@@ -89,85 +79,6 @@ async function postCancelAllMetaTasks(
   );
   const txt = await res.text().catch(() => "");
   return { ok: res.ok, status: res.status, body: txt.slice(0, 800), url };
-}
-
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, stage: string): Promise<Response> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(new Error("timeout")), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: ac.signal });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`${stage}_timeout_or_fetch_error: ${msg}`);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function pickStr(r: Record<string, unknown>, keys: string[]): string {
-  for (const k of keys) {
-    const v = r[k];
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-  return "";
-}
-
-/**
- * 与 WatchSys mqttworker（tcp 直连）及 mqtt-info 同源：登录 data.mqtt_addr 多为 tcp://host:1883；
- * Node `mqtt` 包需 mqtt:// / mqtts://（或已给出的 ws URL）。
- */
-function deriveNodeMqttBrokerUrl(mqttAddr: string): string | null {
-  const raw = mqttAddr.trim();
-  if (!raw) return null;
-  if (/^mqtts?:\/\//i.test(raw)) return raw;
-  if (/^wss?:\/\//i.test(raw)) return raw;
-  const m = raw.match(/^(tcp|ssl|tls):\/\/([^:/]+)(?::(\d+))?/i);
-  if (!m) return null;
-  const scheme = m[1].toLowerCase();
-  const host = m[2];
-  if (!host) return null;
-  const preferSsl = scheme === "ssl" || scheme === "tls";
-  const port = m[3] || (preferSsl ? "8883" : "1883");
-  const proto = preferSsl ? "mqtts" : "mqtt";
-  return `${proto}://${host}:${port}`;
-}
-
-async function loginAndGetSession(base: string): Promise<LoginSession> {
-  const now = Date.now();
-  if (cachedSession && now - cachedSession.at < 25 * 60 * 1000 && cachedSession.token) {
-    return cachedSession;
-  }
-  const username = process.env.NEXUS_DRONE_PLATFORM_USERNAME ?? "adminPC";
-  const password = process.env.NEXUS_DRONE_PLATFORM_PASSWORD ?? "adminPC";
-  const loginRes = await fetchWithTimeout(
-    `${base}/manage/api/v1/login`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ username, password, flag: 1 }),
-      cache: "no-store",
-    },
-    TIMEOUT_MS,
-    "login",
-  );
-  const text = await loginRes.text().catch(() => "");
-  if (!loginRes.ok) throw new Error(`login_failed_${loginRes.status}: ${text.slice(0, 200)}`);
-  const j = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-  const data = (j.data ?? {}) as Record<string, unknown>;
-  const tk = typeof data.access_token === "string" ? data.access_token.trim() : "";
-  if (!tk) throw new Error("login_no_access_token");
-  const mqttAddr = pickStr(data, ["mqtt_addr", "mqttAddr", "mqtt_address"]);
-  const derivedBroker = deriveNodeMqttBrokerUrl(mqttAddr);
-  const mqttUsername = pickStr(data, ["mqtt_username", "mqttUsername"]);
-  const mqttPassword = pickStr(data, ["mqtt_password", "mqttPassword"]);
-  cachedSession = {
-    token: tk,
-    at: now,
-    mqttBrokerUrl: derivedBroker || undefined,
-    mqttUsername: mqttUsername || undefined,
-    mqttPassword: mqttPassword || undefined,
-  };
-  return cachedSession;
 }
 
 function resolveMqttConnect(): (url: string, opts?: IClientOptions) => MqttClient {

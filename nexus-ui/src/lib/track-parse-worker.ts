@@ -5,10 +5,12 @@
  * 主线程只做最终的 `setTracks`（Zustand + MapLibre setData），不再被解析堵塞。
  *
  * 该文件**不**能 import 任何 app 模块（Zustand、React、Next.js 特有 API）；
- * 所有依赖的逻辑均在此内联，以保证 Worker 可被 webpack 单独打包。
+ * 仅可依赖与主线程共用的**无框架**纯函数模块（如 `track-category-id-parse.ts`）。
  * ─────────────────────────────────────────────────────────────────────────────
  */
 /* eslint-disable */
+
+import { readTrackCategoryFromRecord } from "./track-category-id-parse";
 
 // 使 TypeScript 将本文件视为独立模块，避免与 DOM lib 中 Window.self 的类型冲突
 export type { };
@@ -18,6 +20,46 @@ export type { };
 type ForceDisposition = "friendly" | "hostile" | "neutral";
 type TrackKind = "air" | "sea" | "underwater";
 
+/** 与主线程 `TRACK_LAYER_KEY_BY_DDS_SOURCE_ID` / Custombackend 接收器 id 一致（Worker 不能 import 带 @/ 的模块） */
+type LayerKey = "fuse_sea" | "fuse_air" | "bird_radar" | "radar_wharf" | "radar_jingzi";
+
+const DDS_TO_LAYER: Record<string, LayerKey> = {
+  dds_forward_fuse_track: "fuse_sea",
+  dds_forward_fuse_bird_radar_track: "fuse_air",
+  dds_forward_bird_radar_track: "bird_radar",
+  dds_forward_radar_track1: "radar_wharf",
+  dds_forward_radar_track2: "radar_jingzi",
+};
+
+const VALID_LAYER_KEYS = new Set<string>(Object.values(DDS_TO_LAYER));
+
+function _readTrackLayerKeyFromRec(rec: Record<string, unknown>): LayerKey | undefined {
+  const raw = rec.track_layer_key ?? rec.trackLayerKey;
+  if (typeof raw !== "string") return undefined;
+  const s = raw.trim().toLowerCase().replace(/-/g, "_");
+  return VALID_LAYER_KEYS.has(s) ? (s as LayerKey) : undefined;
+}
+
+function _ddsSourceStr(rec: Record<string, unknown>): string | undefined {
+  const v = rec.dds_source_id ?? rec.ddsSourceId;
+  if (v == null || String(v).trim() === "") return undefined;
+  return String(v).trim();
+}
+
+function _layerKeyFromDds(dds: string | undefined): LayerKey | undefined {
+  if (!dds) return undefined;
+  return DDS_TO_LAYER[dds.trim().toLowerCase()];
+}
+
+/** 与 `ws-track-normalize.surfaceKindFromDdsOrTrackLayerKey` 一致 */
+function _surfaceKindFromDdsOrLayer(rec: Record<string, unknown>): TrackKind | undefined {
+  const dds = _ddsSourceStr(rec)?.toLowerCase();
+  const lk = _layerKeyFromDds(dds) ?? _readTrackLayerKeyFromRec(rec);
+  if (lk === "fuse_air" || lk === "bird_radar") return "air";
+  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi") return "sea";
+  return undefined;
+}
+
 export interface TrackWorkerConfig {
   coordinateTransformEnabled: boolean;
   airIconHeadingOffsetDeg: number;
@@ -26,11 +68,13 @@ export interface TrackWorkerConfig {
 
 interface WorkerTrack {
   id: string; showID: string; uniqueID: string;
-  trackId?: string; name: string; type: TrackKind; disposition: ForceDisposition;
+  trackId?: string; trackAlias?: string; name: string; type: TrackKind; disposition: ForceDisposition;
   lat: number; lng: number; altitude?: number; heading: number; course?: number;
   speed: number; sensor: string; lastUpdate: string; starred: boolean;
   isAirTrack?: true; targetType?: string; azimuth?: number; distance?: number;
-  dataSourceId?: string; isVirtual?: true; isUav?: true;
+  dataSourceId?: string; ddsSourceId?: string; trackLayerKey?: LayerKey;
+  isVirtual?: true; isUav?: true;
+  trackCategoryId?: number;
 }
 
 export interface TrackWorkerResult {
@@ -120,6 +164,8 @@ function _isAir(rec: Record<string, unknown>): boolean | undefined {
 }
 
 function _inferKind(rec: Record<string, unknown>): TrackKind {
+  const fromDds = _surfaceKindFromDdsOrLayer(rec);
+  if (fromDds !== undefined) return fromDds;
   const air = _isAir(rec);
   if (air === true)  return "air";
   if (air === false) return "sea";
@@ -129,10 +175,30 @@ function _inferKind(rec: Record<string, unknown>): TrackKind {
   return "sea";
 }
 
-function _course(rec: Record<string, unknown>, kind: TrackKind): number {
-  const raw = rec.heading ?? rec.course ?? rec.heading_deg ?? rec.azimuth;
+function _toFiniteAngle(raw: unknown): number | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw === "string" && raw.trim() === "") return undefined;
   const n = typeof raw === "number" ? raw : Number(raw);
-  if (Number.isFinite(n)) return n;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function _firstCourseAngle(rec: Record<string, unknown>): number | undefined {
+  const keys = ["course", "cog", "COG", "bearing", "heading_deg", "azimuth", "heading"];
+  const bags = [rec, _rec(rec.properties)];
+  for (let bi = 0; bi < bags.length; bi++) {
+    const bag = bags[bi];
+    if (!bag) continue;
+    for (let ki = 0; ki < keys.length; ki++) {
+      const v = _toFiniteAngle(bag[keys[ki]]);
+      if (v !== undefined) return v;
+    }
+  }
+  return undefined;
+}
+
+function _course(rec: Record<string, unknown>, kind: TrackKind): number {
+  const v = _firstCourseAngle(rec);
+  if (v !== undefined) return v;
   return kind === "air" ? _cfg.airDefaultCourseDeg : 0;
 }
 
@@ -182,11 +248,20 @@ function _normalize(raw: unknown): WorkerTrack | null {
   if (rec.virtual_troop  !== undefined) propBag.virtual_troop  = rec.virtual_troop;
 
   const rawUav = rec.is_uav ?? rec.isUav ?? rec.uav;
-  const isUav  = rawUav === true || rawUav === 1
+  let isUav = rawUav === true || rawUav === 1
     || (typeof rawUav === "string" && /^(1|true|yes|uav)$/i.test(rawUav.trim()));
+
+  const trackCategoryId = readTrackCategoryFromRecord(rec);
+  if (kind === "air" && trackCategoryId !== undefined) {
+    isUav = trackCategoryId === 3;
+  }
 
   const trackId    = rec.trackId ?? rec.track_id ?? rec.tracnID;
   const trackIdStr = trackId != null && String(trackId).trim() ? String(trackId).trim() : undefined;
+
+  const aliasRaw     = rec.trackAlias ?? rec.track_alias;
+  const trackAliasStr =
+    aliasRaw != null && String(aliasRaw).trim() ? String(aliasRaw).trim() : undefined;
 
   const targetType    = rec.target_type ?? rec.targetType ?? rec.name ?? rec.label;
   const targetTypeStr = targetType != null ? String(targetType) : undefined;
@@ -214,9 +289,15 @@ function _normalize(raw: unknown): WorkerTrack | null {
   const dsId    = rec.dataSourceId ?? rec.data_source_id;
   const dsIdStr = dsId != null ? String(dsId) : undefined;
 
+  const ddsStr = _ddsSourceStr(rec);
+  const tlkPayload = _readTrackLayerKeyFromRec(rec);
+  const tlkFromDds = _layerKeyFromDds(ddsStr);
+  const resolvedLayerKey = tlkFromDds ?? tlkPayload;
+
   return {
     id: showID, showID, uniqueID,
     ...(trackIdStr  ? { trackId: trackIdStr }   : {}),
+    ...(trackAliasStr ? { trackAlias: trackAliasStr } : {}),
     name: String(rec.name ?? rec.label ?? showID),
     type: kind, disposition: disp, lat, lng,
     ...(altitude !== undefined ? { altitude } : {}),
@@ -229,8 +310,11 @@ function _normalize(raw: unknown): WorkerTrack | null {
     ...(azimuth  != null ? { azimuth }  : {}),
     ...(distance != null ? { distance } : {}),
     ...(dsIdStr  ? { dataSourceId: dsIdStr } : {}),
+    ...(ddsStr ? { ddsSourceId: ddsStr } : {}),
+    ...(resolvedLayerKey ? { trackLayerKey: resolvedLayerKey } : {}),
     ...(_isVirtual(propBag) ? { isVirtual: true as const } : {}),
     ...(isUav ? { isUav: true as const } : {}),
+    ...(trackCategoryId !== undefined ? { trackCategoryId } : {}),
   };
 }
 

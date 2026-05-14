@@ -89,6 +89,16 @@ export function listTrackTaskOwnerEntityIds(): string[] {
   return out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
+/** 带展示名的可任务 PTZ 主相机列表（地图右键子菜单） */
+export function listTrackTaskOwnerRows(): EntityTaskRow[] {
+  if (!cached) return [];
+  const rows: EntityTaskRow[] = [];
+  for (const r of cached.byId.values()) {
+    if (isTrackTaskOwnerRowAllowed(r)) rows.push(r);
+  }
+  return rows.sort((a, b) => a.entityId.localeCompare(b.entityId, undefined, { numeric: true }));
+}
+
 /**
  * 按 app-config 给出的 preferred owner 解析实际下发用的 entityId：
  * 1. preferred 自身满足「hasPtz + parent 为空」则直接用（主云台）；

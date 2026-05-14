@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * 数据入口：`useUnifiedWsFeed`（仅 hooks/useUnifiedWsFeed.ts）负责 WebSocket + 区域/资产轮询。
+ * 数据入口：`useUnifiedWsFeed` 负责 WebSocket；`useDbAreasPoll` 轮询 Postgres `area_table`（区域图层）。
  */
 
 import { TopNav } from "./TopNav";
@@ -11,15 +11,18 @@ import { DockProvider } from "@/components/dock/DockProvider";
 import { DockContainer } from "@/components/dock/DockContainer";
 import { StatusBar } from "./StatusBar";
 import { MapContainer } from "@/components/map/MapContainer";
-import { AgentMessageFloat } from "@/components/AgentMessageFloat";
 import { WorkspaceDetails } from "./WorkspaceDetails";
 import { useUnifiedWsFeed } from "@/hooks/useUnifiedWsFeed";
+import { useDbAreasPoll } from "@/hooks/useDbAreasPoll";
+import { TaskStatusChatSseHost } from "@/components/system/TaskStatusChatSseHost";
 
 export function AppShell() {
   useUnifiedWsFeed();
+  useDbAreasPoll();
 
   return (
     <DockProvider>
+      <TaskStatusChatSseHost />
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-nexus-bg-base">
         <TopNav />
 
@@ -44,7 +47,6 @@ export function AppShell() {
         </div>
 
         <StatusBar />
-        <AgentMessageFloat />
         <DockContainer />
       </div>
     </DockProvider>

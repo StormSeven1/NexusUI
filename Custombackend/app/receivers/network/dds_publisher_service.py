@@ -22,7 +22,7 @@ except Exception as e:
     logger.error(f"❌ 未知错误: {e}")
     DDS_AVAILABLE = False
 
-from app.dds.xml_config_generator import DDSXMLConfigGenerator
+from receivers.dds.xml_config_generator import DDSXMLConfigGenerator
 
 
 class DDSWriterListener(fastdds.DataWriterListener if DDS_AVAILABLE else object):

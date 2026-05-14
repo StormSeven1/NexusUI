@@ -85,6 +85,10 @@ class DDSReceiverService:
         
         # 是否使用默认XML（不生成自定义XML，直接用domain_id创建participant）
         self.use_default_xml = self.dds_config.get('use_default_xml', False)
+        # 使用模块目录下的静态 XML（与 entity_subscriber.xml 等统一维护），设置后不再动态生成 subscriber XML
+        self.subscriber_xml_file = (self.dds_config.get('subscriber_xml_file') or '').strip()
+        # 若与 data_class_name 不同名（例如 data_class=CameraRealTimeStatus 但绑定在 EntityRealTimeStatus 包），指定 Python 模块名
+        self.dds_python_module = (self.dds_config.get('dds_python_module') or '').strip()
         
         # DDS组件
         self.participant = None
@@ -129,6 +133,10 @@ class DDSReceiverService:
         logger.info(f"  - data_class_name: {self.data_class_name}")
         logger.info(f"  - pubsub_type_class_name: {self.pubsub_type_class_name}")
         logger.info(f"  - type_name: {self.type_name}")
+        if self.dds_python_module:
+            logger.info(f"  - dds_python_module: {self.dds_python_module}")
+        if self.subscriber_xml_file:
+            logger.info(f"  - subscriber_xml_file: {self.subscriber_xml_file}")
         
         # 动态加载DDS模块
         if not self.dds_module_path or not os.path.exists(self.dds_module_path):
@@ -160,8 +168,10 @@ class DDSReceiverService:
         if not py_files:
             raise ImportError(f"在 {self.dds_module_path} 中未找到Python模块文件")
         
-        # 优先使用与data_class_name同名的模块文件
-        if self.data_class_name in py_files:
+        # 优先使用配置的 Python 模块名；否则与 data_class_name 同名的 .py；再否则第一个 .py
+        if self.dds_python_module:
+            module_name = self.dds_python_module
+        elif self.data_class_name in py_files:
             module_name = self.data_class_name
         else:
             module_name = py_files[0]  # 否则使用第一个找到的.py文件
@@ -206,6 +216,15 @@ class DDSReceiverService:
             # 使用配置文件中指定的dds_module_path作为XML配置文件的保存路径
             xml_dir = self.dds_module_path
             os.makedirs(xml_dir, exist_ok=True)
+
+            if self.subscriber_xml_file:
+                self.xml_config_path = os.path.join(xml_dir, self.subscriber_xml_file)
+                if not os.path.isfile(self.xml_config_path):
+                    raise FileNotFoundError(
+                        f"subscriber_xml_file 未找到: {self.xml_config_path}"
+                    )
+                logger.info(f"✅ 使用静态 subscriber XML: {self.xml_config_path}")
+                return
             
             # 生成唯一的文件名
             safe_topic_name = self.topic_name.replace('/', '_').replace('\\', '_')

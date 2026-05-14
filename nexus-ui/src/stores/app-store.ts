@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { ALL_DATA_LAYER_IDS } from "@/lib/map-entity-model";
 import type { VectorLayerPanelItem } from "@/lib/map-2d-basemap-layer-panel";
 
@@ -32,7 +33,7 @@ import type { VectorLayerPanelItem } from "@/lib/map-2d-basemap-layer-panel";
  */
 
 export type MapViewMode = "2d" | "3d";
-export type LeftPanelTab = "tracks" | "assets" | "layers" | "alerts";
+export type LeftPanelTab = "tracks" | "assets" | "layers" | "alerts" | "track-display";
 export type RightPanelTab = "overview" | "dashboard" | "comm" | "environment" | "eventlog" | "datatable" | "chat";
 export type TopTab = "situation" | "assets" | "tasks" | "layers" | "analytics" | "search" | "settings";
 export type AgentType = "core" | "data" | "tactical" | "analysis";
@@ -94,6 +95,15 @@ interface AppState {
   /** 顶部主导航当前项 */
   topTab: TopTab;
 
+  /**
+   * 日常查证（与 Qt 顶栏 + `ThreatListTable::sendDailyHandleTask` 对齐）：
+   * 开启时 POST `http.chat.quickWorkflowUrl` 启动 `auto_duty_workflow-quick-1`（可配），
+   * 关闭时对 `dailyVerificationThreadIds` 依次 POST `…/workflows/{threadId}/terminate`。
+   */
+  dailyVerificationEnabled: boolean;
+  /** 当前会话内已启动的日常查证 thread_id 列表（用于终止；不入持久化） */
+  dailyVerificationThreadIds: string[];
+
   /** 地图视图：二维 MapLibre 或三维 Cesium */
   mapViewMode: MapViewMode;
 
@@ -150,6 +160,9 @@ interface AppState {
   setRightPanelTab: (tab: RightPanelTab) => void;
   /** 设置顶部主导航 */
   setTopTab: (tab: TopTab) => void;
+  setDailyVerificationEnabled: (enabled: boolean) => void;
+  pushDailyVerificationThreadId: (id: string) => void;
+  clearDailyVerificationThreads: () => void;
   setMapViewMode: (mode: MapViewMode) => void;
   /** 设置当前选中航迹 */
   selectTrack: (id: string | null) => void;
@@ -191,12 +204,22 @@ interface AppState {
 
 let _flyToSeq = 0;
 
-export const useAppStore = create<AppState>((set) => ({
+const MAP_LAYER_PREFS_STORAGE_KEY = "nexus-ui-map-layer-preferences-v1";
+
+function defaultLayerVisibilityRecord(): Record<string, boolean> {
+  return Object.fromEntries(ALL_DATA_LAYER_IDS.map((id) => [id, true]));
+}
+
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
   leftSidebarOpen: true,
   rightSidebarOpen: true,
   leftPanelTab: "tracks",
   rightPanelTab: "chat",
   topTab: "situation",
+  dailyVerificationEnabled: false,
+  dailyVerificationThreadIds: [],
   mapViewMode: "2d",
   selectedTrackId: null,
   selectedAssetId: null,
@@ -208,7 +231,7 @@ export const useAppStore = create<AppState>((set) => ({
   drawnAreas: [],
   flyToRequest: null,
 
-  layerVisibility: Object.fromEntries(ALL_DATA_LAYER_IDS.map((id) => [id, true])),
+  layerVisibility: defaultLayerVisibilityRecord(),
 
   basemapStyleName: null,
   basemapVectorLayers: [],
@@ -225,6 +248,12 @@ export const useAppStore = create<AppState>((set) => ({
   setLeftPanelTab: (tab) => set({ leftPanelTab: tab }),
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
   setTopTab: (tab) => set({ topTab: tab }),
+  setDailyVerificationEnabled: (enabled) => set({ dailyVerificationEnabled: enabled }),
+  pushDailyVerificationThreadId: (id) =>
+    set((s) => ({
+      dailyVerificationThreadIds: id.trim() ? [...s.dailyVerificationThreadIds, id.trim()] : s.dailyVerificationThreadIds,
+    })),
+  clearDailyVerificationThreads: () => set({ dailyVerificationThreadIds: [] }),
   setMapViewMode: (mode) => set({ mapViewMode: mode }),
   selectTrack: (id) => set({ selectedTrackId: id, highlightedTrackIds: id ? [id] : [] }),
   selectAsset: (id) => set({ selectedAssetId: id }),
@@ -248,12 +277,19 @@ export const useAppStore = create<AppState>((set) => ({
     })),
 
   setBasemapVectorInfo: ({ name, layers }) =>
-    set(() => ({
-      basemapStyleName: name,
-      basemapVectorLayers: layers,
-      basemapVectorVisibility: Object.fromEntries(layers.map((l) => [l.id, true])),
-      basemapGroupVisible: true,
-    })),
+    set((s) => {
+      const prev = s.basemapVectorVisibility;
+      const nextVis: Record<string, boolean> = {};
+      for (const l of layers) {
+        nextVis[l.id] = prev[l.id] !== false;
+      }
+      return {
+        basemapStyleName: name,
+        basemapVectorLayers: layers,
+        basemapVectorVisibility: nextVis,
+        basemapGroupVisible: s.basemapGroupVisible,
+      };
+    }),
 
   toggleBasemapGroupVisible: () =>
     set((s) => ({ basemapGroupVisible: !s.basemapGroupVisible })),
@@ -290,4 +326,40 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   clearAgentMessages: () => set({ agentMessages: [] }),
   setSelectedAgentMessage: (message) => set({ selectedAgentMessage: message }),
-}));
+    }),
+    {
+      name: MAP_LAYER_PREFS_STORAGE_KEY,
+      storage: createJSONStorage(() =>
+        typeof window === "undefined"
+          ? {
+              getItem: () => null,
+              setItem: () => {},
+              removeItem: () => {},
+            }
+          : window.localStorage,
+      ),
+      partialize: (s) => ({
+        layerVisibility: s.layerVisibility,
+        basemapGroupVisible: s.basemapGroupVisible,
+        basemapVectorVisibility: s.basemapVectorVisibility,
+      }),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<
+          Pick<AppState, "layerVisibility" | "basemapGroupVisible" | "basemapVectorVisibility">
+        >;
+        return {
+          ...current,
+          layerVisibility: {
+            ...defaultLayerVisibilityRecord(),
+            ...(p.layerVisibility ?? {}),
+          },
+          basemapGroupVisible: p.basemapGroupVisible ?? current.basemapGroupVisible,
+          basemapVectorVisibility: {
+            ...current.basemapVectorVisibility,
+            ...(p.basemapVectorVisibility ?? {}),
+          },
+        };
+      },
+    },
+  ),
+);

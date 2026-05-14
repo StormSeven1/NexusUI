@@ -1,0 +1,27 @@
+module casia {
+module system {
+module workmode {
+
+/**
+ * 系统工作模式（整型枚举：0..3）
+ */
+enum WorkMode {
+    EMERGENCY,   // 紧急
+    DEBUG,       // 调试
+    NORMAL,      // 平时
+    WARTIME      // 战时
+};
+
+/**
+ * 工作模式 DDS 载荷：主字段为工作模式，另预留三个字符串扩展位
+ */
+struct WorkModeStatus {
+    WorkMode work_mode;
+    string reserved_str_1;
+    string reserved_str_2;
+    string reserved_str_3;
+};
+
+}; // module workmode
+}; // module system
+}; // module casia

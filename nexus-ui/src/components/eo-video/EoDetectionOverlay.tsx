@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { canonicalEntityId } from "@/lib/camera-entity-id";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
+import { mergeSingleTrackTelemetry } from "@/lib/eo-video/mergeSingleTrackTelemetry";
 import { getVideoContentRect } from "@/lib/eo-video/videoContentRect";
+import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
+import { useTrackStore } from "@/stores/track-store";
 import { cn } from "@/lib/utils";
 
 const COLORS: Record<NonNullable<EoDetectionBox["colorToken"]>, string> = {
@@ -16,6 +20,12 @@ export interface EoDetectionOverlayProps {
   containerRef: React.RefObject<HTMLElement | null>;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   boxes: EoDetectionBox[];
+  /** 检测 WebSocket 用的实体 id（与 `useEoEntityDetection` 的 entityId 一致） */
+  detectionEntityId?: string;
+  /** DDS 相机行实体 id，可与 detectionEntityId 不同 */
+  ddsCameraEntityId?: string;
+  /** 与面板「放大窗口」一致：单目标标牌显示四行航迹信息（与 Qt 放大画面行为对齐） */
+  expandedMode?: boolean;
   selectedBoxId?: string | null;
   onSelectBox?: (boxId: string | null) => void;
   onDoubleClickPoint?: (payload: {
@@ -47,15 +57,15 @@ function drawSingleTrackTagCluster(
   boxTLX: number,
   boxTLY: number,
   typeChar: string,
-  titleText: string,
+  /** 与右下角 DDS 同源；`null` 不画标题条 */
+  titleText: string | null,
   isSelected: boolean,
+  opts: { expandedMode: boolean; detail?: EoDetectionBox["singleTrackDetail"] },
 ) {
   const tagSize = 24;
-  /** 圆外接正方形左上角：使圆心 x = 框左上角 x（Qt 30px 圆时等价于框左 −15 为圆左） */
-  const circleLeft = boxTLX - tagSize / 2;
-  const circleTop = boxTLY - tagSize;
+  /** 圆竖直径下端落在检测框上沿 boxTLY（与 Qt：圆底 = 框顶）。标题条底边与框顶对齐。 */
+  const cy = boxTLY - tagSize / 2;
   const cx = boxTLX;
-  const cy = circleTop + tagSize / 2;
   const r = tagSize / 2;
 
   const chRaw = typeChar.trim().slice(0, 1) || "海";
@@ -70,29 +80,85 @@ function drawSingleTrackTagCluster(
   ctx.lineCap = "round";
 
   const barH = Math.max(18, Math.floor((tagSize * 2) / 3));
-  /** 标题条整体在圆外接正方形右侧，留出间隙，避免矩形盖住圆 */
-  const barGap = 3;
-  const barX = circleLeft + tagSize + barGap;
-  const barY = cy - barH / 2;
-  ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+  /** 标题条左缘与检测框左缘对齐；下缘与检测框上沿重合 */
+  const barX = boxTLX;
+  const barY = boxTLY - barH;
+  const showTitleBar = titleText != null && titleText.trim() !== "";
+  const showDetail = opts.expandedMode || isSelected;
+  const d = opts.detail;
+  const aziLine =
+    d?.azimuthDeg != null && Number.isFinite(d.azimuthDeg) ? `AZI ${d.azimuthDeg.toFixed(1)}°` : "AZI —";
+  const disLine =
+    d?.distanceM != null && Number.isFinite(d.distanceM)
+      ? `DIS ${(d.distanceM / 1852).toFixed(1)}NM`
+      : "DIS —";
+  const spdLine =
+    d?.speedMps != null && Number.isFinite(d.speedMps) ? `SPD ${d.speedMps.toFixed(1)}m/s` : "SPD —";
+  const cogLine =
+    d?.courseDeg != null && Number.isFinite(d.courseDeg) ? `COG ${d.courseDeg.toFixed(1)}°` : "COG —";
+  const detailLines = [aziLine, disLine, spdLine, cogLine];
+
+  const titleFont = "11px ui-sans-serif, system-ui, sans-serif";
+  /** 四行航迹：较小字号；左/上下留白略大于行距，避免挤在一起 */
+  const detailFont = "9px ui-sans-serif, system-ui, sans-serif";
+  const detailPadLeft = 8;
+  const detailPadRight = 6;
+  const detailPadTop = 5;
+  const detailPadBottom = 5;
+  const detailLineHeight = 13;
+
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   const maxBarW = 240;
-  let text = titleText.trim() || "—";
-  let tw = ctx.measureText(text).width + 10;
-  while (tw > maxBarW && text.length > 2) {
-    text = `${text.slice(0, -2)}…`;
-    tw = ctx.measureText(text).width + 10;
+  let barW = 72;
+  let text = "";
+  if (showTitleBar) {
+    ctx.font = titleFont;
+    text = titleText!.trim();
+    let tw = ctx.measureText(text).width + 10;
+    while (tw > maxBarW && text.length > 2) {
+      text = `${text.slice(0, -2)}…`;
+      tw = ctx.measureText(text).width + 10;
+    }
+    barW = Math.max(72, Math.min(maxBarW, tw));
   }
-  const barW = Math.max(72, Math.min(maxBarW, tw));
+  if (showDetail) {
+    ctx.font = detailFont;
+    let mw = 0;
+    for (const ln of detailLines) {
+      mw = Math.max(mw, ctx.measureText(ln).width);
+    }
+    barW = Math.max(barW, Math.min(maxBarW, mw + detailPadLeft + detailPadRight));
+  }
 
-  ctx.fillStyle = isSelected ? "rgba(250,204,21,0.42)" : sea ? "rgba(177,250,255,0.88)" : "rgba(147,253,255,0.78)";
-  ctx.fillRect(barX, barY, barW, barH);
-  ctx.strokeStyle = borderMain;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(barX, barY, barW, barH);
-  ctx.fillStyle = sea ? "#0f172a" : "#1e293b";
-  ctx.fillText(text, barX + 5, barY + barH / 2);
+  if (showDetail) {
+    const detailH = detailPadTop + detailPadBottom + detailLineHeight * 4;
+    const detailY = barY - detailH;
+    ctx.fillStyle = "rgba(22, 27, 34, 0.5)";
+    ctx.fillRect(barX, detailY, barW, detailH);
+    ctx.strokeStyle = borderMain;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, detailY, barW, detailH);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+    ctx.font = detailFont;
+    ctx.textBaseline = "middle";
+    for (let i = 0; i < detailLines.length; i++) {
+      const line = detailLines[i]!;
+      const ty = detailY + detailPadTop + detailLineHeight * i + detailLineHeight / 2;
+      ctx.fillText(line, barX + detailPadLeft, ty);
+    }
+  }
+
+  if (showTitleBar) {
+    ctx.font = titleFont;
+    ctx.fillStyle = isSelected ? "rgba(250,204,21,0.42)" : sea ? "rgba(177,250,255,0.88)" : "rgba(147,253,255,0.78)";
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.strokeStyle = borderMain;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
+    ctx.fillStyle = sea ? "#0f172a" : "#1e293b";
+    ctx.fillText(text, barX + 5, barY + barH / 2);
+  }
 
   /** 圆与字后画，保证叠在标题条之上（抗锯齿边缘也不挡圆） */
   ctx.beginPath();
@@ -121,6 +187,8 @@ function drawSingleTrackOverlay(
   bh: number,
   box: EoDetectionBox,
   isSelected: boolean,
+  expandedMode: boolean,
+  mergedDetail: EoDetectionBox["singleTrackDetail"],
 ) {
   const cornerBase = Math.min(bw, bh) * 0.18;
   const corner = Math.max(8, Math.min(22, Math.min(cornerBase, Math.min(bw, bh) / 2.4)));
@@ -164,10 +232,11 @@ function drawSingleTrackOverlay(
   ctx.stroke();
 
   const typeChar = (box.singleTagShort ?? "海").slice(0, 1);
-  const tid = box.trackId;
-  const title =
-    (box.label ?? "").trim() || (tid != null && Number.isFinite(tid) ? `T${tid}` : "目标");
-  drawSingleTrackTagCluster(ctx, x, y, typeChar, title, isSelected);
+  const title = box.singleTrackOverlayTitle ?? null;
+  drawSingleTrackTagCluster(ctx, x, y, typeChar, title, isSelected, {
+    expandedMode,
+    detail: mergedDetail,
+  });
   ctx.restore();
 }
 
@@ -175,6 +244,9 @@ export function EoDetectionOverlay({
   containerRef,
   videoRef,
   boxes,
+  detectionEntityId,
+  ddsCameraEntityId,
+  expandedMode = false,
   selectedBoxId,
   onSelectBox,
   onDoubleClickPoint,
@@ -185,6 +257,15 @@ export function EoDetectionOverlay({
 }: EoDetectionOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number | null>(null);
+
+  const ddsLookupKey = useMemo(() => {
+    const raw = (ddsCameraEntityId ?? detectionEntityId ?? "").trim();
+    if (!raw) return "";
+    return canonicalEntityId(raw) || raw;
+  }, [ddsCameraEntityId, detectionEntityId]);
+
+  const ddsRow = useEoCameraDdsStatusStore((s) => (ddsLookupKey ? s.byEntityId[ddsLookupKey] : undefined));
+  const tracks = useTrackStore((s) => s.tracks);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -220,7 +301,8 @@ export function EoDetectionOverlay({
       const bh = b.h * content.h;
 
       if (b.variant === "singleTrack") {
-        drawSingleTrackOverlay(ctx, x, y, bw, bh, b, isSelected);
+        const mergedDetail = mergeSingleTrackTelemetry(b, ddsRow, tracks);
+        drawSingleTrackOverlay(ctx, x, y, bw, bh, b, isSelected, expandedMode, mergedDetail);
         continue;
       }
 
@@ -240,7 +322,18 @@ export function EoDetectionOverlay({
         ctx.fillText(b.label, x + pad, y - 4);
       }
     }
-  }, [boxes, containerRef, selectedBoxId, videoObjectFit, videoIntrinsicWidth, videoIntrinsicHeight, videoRef]);
+  }, [
+    boxes,
+    containerRef,
+    ddsRow,
+    expandedMode,
+    selectedBoxId,
+    tracks,
+    videoObjectFit,
+    videoIntrinsicWidth,
+    videoIntrinsicHeight,
+    videoRef,
+  ]);
 
   const schedule = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
@@ -272,7 +365,7 @@ export function EoDetectionOverlay({
 
   useEffect(() => {
     schedule();
-  }, [boxes, schedule]);
+  }, [boxes, ddsRow, schedule, tracks]);
 
   const resolveHit = useCallback(
     (

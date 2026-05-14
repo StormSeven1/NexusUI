@@ -39,6 +39,7 @@ export type WindowCategory =
  */
 export type PanelId =
   | "tracks"
+  | "track-display"
   | "alerts"
   | "layers"
   | "assets"
@@ -48,6 +49,8 @@ export type PanelId =
   | "electro-optical-3"
   | "electro-optical-4"
   | "chat"
+  /** 地图双击航迹：右侧栏上方目标档案（航迹信息 + 查证相册） */
+  | "target-profile"
   | "overview"
   | "eventlog"
   | "comm"

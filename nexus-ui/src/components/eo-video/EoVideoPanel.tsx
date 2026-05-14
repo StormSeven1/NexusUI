@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   clearCaptureDirHandle,
   isShowDirectoryPickerSupported,
@@ -12,6 +11,7 @@ import {
 import {
   buildEoCaptureFilename,
   captureEoPlaybackToPngBlob,
+  createEoCanvasRecorder,
   createEoVideoRecorder,
   pickRecordMimeAndExtension,
   saveCaptureBlob,
@@ -26,6 +26,7 @@ import { loadZOthersWebRtcSources } from "@/lib/eo-video/loadZOthersWebRtcSource
 import {
   fetchCameraRegistryFromPublic,
   fetchDroneDevicesFromPublic,
+  fetchThirdPartyCamerasFromApi,
   mergeRegistryStreams,
   stripRegistryStreams,
 } from "@/lib/eo-video/mergeEoVideoRegistry";
@@ -39,13 +40,14 @@ import { fetchUavPlatformSignalingUrl } from "@/lib/eo-video/resolveUavLiveByPla
 import { fetchResolvedUavPlaybackIds } from "@/lib/eo-video/resolveUavPlaybackByEntity";
 import type { EoDetectionBox, EoVideoStreamEntry, EoVideoStreamsConfig } from "@/lib/eo-video/types";
 import { postUavControlAction, type UavControlAction } from "@/lib/eo-video/uavControlClient";
+import { useUavQuickContextStore } from "@/stores/uav-quick-context-store";
 import { pokeDroneLiveStream } from "@/lib/eo-video/pokeDroneLiveStream";
 import { postUavGimbalReset, uavMainPayloadIndexForDrone } from "@/lib/eo-video/postUavGimbalReset";
 import { resolveEoPipPlaybackUrl } from "@/lib/eo-video/resolveEoPipPlaybackUrl";
 import { useEoVideoDdsTaskLine } from "@/hooks/useEoVideoDdsTaskLine";
 import { blobToBase64DataOnly } from "@/lib/eo-video/blobToBase64";
 import { Button } from "@/components/ui/button";
-import { Joystick, Loader2 } from "lucide-react";
+import { Home, Joystick, Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useVlmChatInjectStore } from "@/stores/vlm-chat-inject-store";
@@ -55,14 +57,32 @@ import { EoPipFloatingPlayer } from "./EoPipFloatingPlayer";
 import { EoStreamContextMenu } from "./EoStreamContextMenu";
 import { EoVideoBottomFloater } from "./EoVideoBottomFloater";
 import { EoVideoFloatingTools } from "./EoVideoFloatingTools";
+import { useEoThirdPartyCameraWebSocket } from "@/hooks/useEoThirdPartyCameraWebSocket";
+import { EoHighSpeedYuvStack, type EoHighSpeedBox, type EoHighSpeedYuvStackHandle } from "./EoHighSpeedYuvStack";
+import { EoThirdPartyDirectMovePad } from "./EoThirdPartyDirectMovePad";
+import { EoThirdPartySubCamPipStack } from "./EoThirdPartySubCamPip";
+import { postThirdPartyCamTask, type ThirdPartyCamTaskKind } from "@/lib/eo-video/thirdPartyCamTaskClient";
+import { evaluateThirdPartyTaskHttpResponse } from "@/lib/thirdPartyTaskServiceResponse";
 import { EoVideoPlayStage } from "./EoVideoPlayStage";
+import { EoExpandedCameraPtzHud } from "./EoExpandedCameraPtzHud";
 import { EoVideoPtzPanel } from "./EoVideoPtzPanel";
 import type { EoVideoTaskTrace } from "./EoVideoTaskTracePanel";
 import { EoVideoTaskTracePanel } from "./EoVideoTaskTracePanel";
 import { EoSnapshotPreviewPopout, type EoSnapshotPreviewPayload } from "./EoSnapshotPreviewPopout";
+import { getEoVideoExpandDockBaseTitle } from "@/lib/eo-video/eoVideoExpandDockTitle";
+import { EoVideoExpandFloatingFrame } from "./EoVideoExpandFloatingFrame";
+import { useEoFocusedUavAirportSnStore } from "@/stores/eo-focused-uav-airport-sn-store";
+import { useEoThirdPartyUdpDevStatusStore } from "@/stores/eo-third-party-udp-dev-status-store";
+import { useEoVideoPanelFocusStore } from "@/stores/eo-video-panel-focus-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import { getDefaultEoCameraTaskBackendBaseUrl } from "@/lib/map-app-config";
 import { isEoVideoDebugUiEnabled } from "@/lib/eo-video/eoVideoDebugUi";
+import {
+  EO_ACTIVE_MAIN_STREAM_STORAGE_PREFIX,
+  EO_PIP_STREAM_STORAGE_PREFIX,
+  getEoVideoStreamSyncKey,
+} from "@/lib/eo-video/eoStreamSelectionKeys";
+import { useEoVideoStreamSelectionSyncStore } from "@/stores/eo-video-stream-selection-sync-store";
 
 export interface EoVideoPanelProps {
   configUrl?: string;
@@ -79,6 +99,8 @@ export interface EoVideoPanelProps {
   className?: string;
   /** 底部拖拽条调节整体高度（约 200–920px） */
   resizable?: boolean;
+  /** 与本窗口在 Dock 注册表里的 id（如 electro-optical-1）一致，用于「当前选中光电窗口」与高亮边框 */
+  dockPanelId?: string;
 }
 
 function isCameraEntityId(id: string): boolean {
@@ -127,7 +149,6 @@ const DRONE_MAIN_PAYLOAD_SPECIAL = "80-0-0";
 const BLACK_SCREEN_LIVE_POKE_MS = 5000;
 
 const EO_VIDEO_DEBUG_UI = isEoVideoDebugUiEnabled();
-const ACTIVE_STREAM_KEY_PREFIX = "nexus.eo.activeStream.";
 
 export function EoVideoPanel({
   configUrl = "/config/eo-video.streams.json",
@@ -138,6 +159,7 @@ export function EoVideoPanel({
   onToggleExpand,
   className,
   resizable = true,
+  dockPanelId,
 }: EoVideoPanelProps) {
   const [cfg, setCfg] = useState<EoVideoStreamsConfig | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -167,7 +189,29 @@ export function EoVideoPanel({
   const [ptzPanelOpen, setPtzPanelOpen] = useState(expandedMode);
   /** 无人机：右侧手柄与相机 PTZ 同类，收起时隐藏罗盘/机场与机体状态/QWEASD 与动作面板 */
   const [uavDockExpanded, setUavDockExpanded] = useState(expandedMode);
+  /** 无人机：关闭检测 WS / WebCodecs 对齐，仅裸播 WebRTC（排查卡顿） */
+  const [uavVideoOnly, setUavVideoOnly] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.sessionStorage.getItem("eo-video-uav-video-only") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem("eo-video-uav-video-only", uavVideoOnly ? "1" : "0");
+    } catch {
+      /* noop */
+    }
+  }, [uavVideoOnly]);
   const [zoomWindowOpen, setZoomWindowOpen] = useState(false);
+
+  const eoFocusedDockId = useEoVideoPanelFocusStore((s) => s.focusedDockPanelId);
+  const setEoFocusedDockPanel = useEoVideoPanelFocusStore((s) => s.setFocusedDockPanel);
+  const dockPidNorm = dockPanelId?.trim() ?? "";
+  const eoPanelSelected = dockPidNorm.length > 0 && eoFocusedDockId === dockPidNorm;
 
   useEffect(() => {
     if (!expandedMode) {
@@ -234,20 +278,62 @@ export function EoVideoPanel({
   const [cameraResolveErr, setCameraResolveErr] = useState<string | null>(null);
 
   const entity = entityId?.trim();
+  const streamSyncKey = useMemo(
+    () => getEoVideoStreamSyncKey(streamPersistKey, entityId),
+    [streamPersistKey, entityId],
+  );
   const activeStreamStorageKey = useMemo(
-    () => `${ACTIVE_STREAM_KEY_PREFIX}${(streamPersistKey || entity || "default").trim()}`,
-    [entity, streamPersistKey],
+    () => `${EO_ACTIVE_MAIN_STREAM_STORAGE_PREFIX}${streamSyncKey}`,
+    [streamSyncKey],
   );
 
   const getSavedActiveStreamId = useCallback(
     (nextCfg: EoVideoStreamsConfig): string | null => {
       if (typeof window === "undefined") return null;
       const saved = window.localStorage.getItem(activeStreamStorageKey)?.trim();
-      if (!saved) return null;
-      return nextCfg.streams.some((s) => s.id === saved) ? saved : null;
+      if (saved && nextCfg.streams.some((s) => s.id === saved)) return saved;
+      const legacyKey = (streamPersistKey ?? "").trim();
+      if (legacyKey.endsWith("::zoom")) {
+        const legacy = window.localStorage
+          .getItem(`${EO_ACTIVE_MAIN_STREAM_STORAGE_PREFIX}${legacyKey}`)
+          ?.trim();
+        if (legacy && nextCfg.streams.some((s) => s.id === legacy)) return legacy;
+      }
+      return null;
     },
-    [activeStreamStorageKey],
+    [activeStreamStorageKey, streamPersistKey],
   );
+
+  const syncedMainFromPeer = useEoVideoStreamSelectionSyncStore((s) => s.mainBySyncKey[streamSyncKey] ?? "");
+  const syncedPipFromPeer = useEoVideoStreamSelectionSyncStore((s) => s.pipBySyncKey[streamSyncKey] ?? "");
+
+  useEffect(() => {
+    if (!cfg || !streamSyncKey) return;
+    const id = syncedMainFromPeer.trim();
+    if (!id) return;
+    if (!cfg.streams.some((s) => s.id === id)) return;
+    setActiveStreamId((cur) => (cur === id ? cur : id));
+  }, [cfg, streamSyncKey, syncedMainFromPeer]);
+
+  useEffect(() => {
+    if (!cfg || !streamSyncKey) return;
+    const id = syncedPipFromPeer.trim();
+    if (!id) return;
+    if (!cfg.streams.some((s) => s.id === id)) return;
+    setPipStreamId((cur) => (cur === id ? cur : id));
+  }, [cfg, streamSyncKey, syncedPipFromPeer]);
+
+  const pipStorageHydratedRef = useRef(false);
+  useEffect(() => {
+    if (!cfg || !streamSyncKey || typeof window === "undefined") return;
+    if (pipStorageHydratedRef.current) return;
+    pipStorageHydratedRef.current = true;
+    const p = window.localStorage.getItem(EO_PIP_STREAM_STORAGE_PREFIX + streamSyncKey)?.trim();
+    if (p && cfg.streams.some((s) => s.id === p)) {
+      setPipStreamId(p);
+      useEoVideoStreamSelectionSyncStore.getState().setPipFromPanel(streamSyncKey, p);
+    }
+  }, [cfg, streamSyncKey]);
 
   useEffect(() => {
     void useAppConfigStore.getState().ensureLoaded();
@@ -355,12 +441,15 @@ export function EoVideoPanel({
   useEffect(() => {
     const onSynced = () => {
       void (async () => {
-        const cams = await fetchCameraRegistryFromPublic();
-        const devs = await fetchDroneDevicesFromPublic();
+        const [cams, devs, thirdParty] = await Promise.all([
+          fetchCameraRegistryFromPublic(),
+          fetchDroneDevicesFromPublic(),
+          fetchThirdPartyCamerasFromApi(),
+        ]);
         setCfg((prev) => {
           if (!prev) return prev;
           try {
-            return mergeRegistryStreams(stripRegistryStreams(prev), cams, devs);
+            return mergeRegistryStreams(stripRegistryStreams(prev), cams, devs, thirdParty);
           } catch {
             return prev;
           }
@@ -377,8 +466,11 @@ export function EoVideoPanel({
       try {
         await fetch("/api/eo-drone-registry/sync", { method: "POST" }).catch(() => {});
         if (cancelled) return;
-        const cameras = await fetchCameraRegistryFromPublic();
-        const devices = await fetchDroneDevicesFromPublic();
+        const [cameras, devices, thirdParty] = await Promise.all([
+          fetchCameraRegistryFromPublic(),
+          fetchDroneDevicesFromPublic(),
+          fetchThirdPartyCamerasFromApi(),
+        ]);
 
         if (entity) {
           const p = await fetchCameraEntityPlayback(entity);
@@ -408,7 +500,7 @@ export function EoVideoPanel({
                 ],
               },
             };
-            return mergeRegistryStreams(base, cameras, devices);
+            return mergeRegistryStreams(base, cameras, devices, thirdParty);
           };
 
           // 先出首屏：避免 /api/eo-webrtc-sources 慢或挂起时长时间卡在「正在加载光电配置」
@@ -418,7 +510,10 @@ export function EoVideoPanel({
             initialStreamId && initialCfg.streams.some((s) => s.id === initialStreamId)
               ? initialStreamId
               : null;
-          setActiveStreamId(getSavedActiveStreamId(initialCfg) ?? preferredInitial ?? entity);
+          /** 放大浮层用独立 `::zoom` 存 activeStream；须优先跟随父面板传入的流，否则会错套成本地记录的别的机（如 uav-003） */
+          const pinFromParent =
+            expandedMode && preferredInitial ? preferredInitial : null;
+          setActiveStreamId(pinFromParent ?? getSavedActiveStreamId(initialCfg) ?? preferredInitial ?? entity);
           setLoadErr(null);
 
           void loadZOthersWebRtcSources()
@@ -427,7 +522,13 @@ export function EoVideoPanel({
               const nextCfg = buildCfg(zOthersStreams);
               setCfg(nextCfg);
               const saved = getSavedActiveStreamId(nextCfg);
-              if (saved) setActiveStreamId(saved);
+              const pin =
+                expandedMode &&
+                initialStreamId &&
+                nextCfg.streams.some((s) => s.id === initialStreamId)
+                  ? initialStreamId
+                  : null;
+              setActiveStreamId(pin ?? saved ?? preferredInitial ?? entity);
             })
             .catch(() => {
               /* 附加源失败不影响当前实体流 */
@@ -437,13 +538,15 @@ export function EoVideoPanel({
 
         const c = await loadEoVideoConfig(configUrl);
         if (cancelled) return;
-        const nextCfg = mergeRegistryStreams(c, cameras, devices);
+        const nextCfg = mergeRegistryStreams(c, cameras, devices, thirdParty);
         setCfg(nextCfg);
         const preferredInitial =
           initialStreamId && nextCfg.streams.some((s) => s.id === initialStreamId)
             ? initialStreamId
             : null;
-        setActiveStreamId(getSavedActiveStreamId(nextCfg) ?? preferredInitial ?? c.defaultStreamId);
+        const pinFromParent =
+          expandedMode && preferredInitial ? preferredInitial : null;
+        setActiveStreamId(pinFromParent ?? getSavedActiveStreamId(nextCfg) ?? preferredInitial ?? c.defaultStreamId);
         setLoadErr(null);
       } catch (e) {
         if (!cancelled) setLoadErr(e instanceof Error ? e.message : String(e));
@@ -452,19 +555,91 @@ export function EoVideoPanel({
     return () => {
       cancelled = true;
     };
-  }, [configUrl, entity, getSavedActiveStreamId, initialStreamId]);
+  }, [configUrl, entity, expandedMode, getSavedActiveStreamId, initialStreamId]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !streamSyncKey) return;
     const id = activeStreamId.trim();
     if (!id) return;
-    window.localStorage.setItem(activeStreamStorageKey, id);
-  }, [activeStreamId, activeStreamStorageKey]);
+    useEoVideoStreamSelectionSyncStore.getState().setMainFromPanel(streamSyncKey, id);
+  }, [activeStreamId, streamSyncKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !streamSyncKey) return;
+    const id = pipStreamId.trim();
+    if (!id) return;
+    useEoVideoStreamSelectionSyncStore.getState().setPipFromPanel(streamSyncKey, id);
+  }, [pipStreamId, streamSyncKey]);
 
   const activeStream = useMemo(
     () => cfg?.streams.find((s) => s.id === activeStreamId) ?? cfg?.streams[0],
     [cfg, activeStreamId],
   );
+
+  const expandFloatingFrameTitle = useMemo(() => {
+    const fromDock = getEoVideoExpandDockBaseTitle(dockPidNorm);
+    const base = (fromDock || activeStream?.label?.trim() || "光电").trim();
+    return `${base}-放大`;
+  }, [dockPidNorm, activeStream?.label]);
+
+  const isThirdPartyStream = useMemo(
+    () => Boolean(activeStream && activeStream.registrySource === "thirdPartyCamera"),
+    [activeStream],
+  );
+
+  const thirdPartyStackRef = useRef<EoHighSpeedYuvStackHandle | null>(null);
+
+  const thirdPartyLive = useEoThirdPartyCameraWebSocket(
+    Boolean(isThirdPartyStream && activeStream?.id),
+    activeStream?.id,
+    thirdPartyStackRef,
+  );
+  const [thirdPartyCamBusy, setThirdPartyCamBusy] = useState(false);
+
+  const thirdPartyCaptureReady = useMemo(
+    () =>
+      Boolean(
+        isThirdPartyStream &&
+          thirdPartyLive.hasFrame &&
+          thirdPartyLive.videoWidth > 0 &&
+          thirdPartyLive.videoHeight > 0,
+      ),
+    [isThirdPartyStream, thirdPartyLive.hasFrame, thirdPartyLive.videoHeight, thirdPartyLive.videoWidth],
+  );
+
+  const thirdPartyWideStoreKey = useMemo(() => {
+    const id = activeStream?.id;
+    if (!id) return "";
+    return canonicalEntityId(id) || id.trim().toLowerCase();
+  }, [activeStream?.id]);
+
+  const thirdPartyWideSubCams = useEoThirdPartyUdpDevStatusStore((s) =>
+    thirdPartyWideStoreKey ? s.byEntityId[thirdPartyWideStoreKey]?.wideSubCams : undefined,
+  );
+
+  const thirdPartyFovOverlayBoxes = useMemo((): EoHighSpeedBox[] => {
+    const w = thirdPartyWideSubCams;
+    if (!w?.length) return [];
+    return w.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
+  }, [thirdPartyWideSubCams]);
+
+  const thirdPartySubPipIds = useMemo(() => {
+    if (!expandedMode || !isThirdPartyStream || !cfg?.streams?.length || !thirdPartyWideSubCams?.length) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const norm = (id: string) => canonicalEntityId(id) || id.trim().toLowerCase();
+    const tpKeys = new Set(
+      cfg.streams.filter((s) => s.registrySource === "thirdPartyCamera").map((s) => norm(s.id)),
+    );
+    for (const b of thirdPartyWideSubCams) {
+      const k = norm(b.subCam);
+      if (!k || seen.has(k)) continue;
+      if (!tpKeys.has(k)) continue;
+      seen.add(k);
+      out.push(b.subCam.trim());
+    }
+    return out;
+  }, [expandedMode, isThirdPartyStream, cfg?.streams, thirdPartyWideSubCams]);
 
   /**
    * 检测 WS / 画框仅绑定「当前正在看的流」。
@@ -473,7 +648,13 @@ export function EoVideoPanel({
    */
   const detectionEntityId = useMemo(() => {
     /** 勿用 activeStream 的 streams[0] 回退判断 uav：失配时会错把相机检测关掉或反过来 */
-    if (cfg?.streams.find((s) => s.id === activeStreamId)?.uav) return undefined;
+    const cur = cfg?.streams.find((s) => s.id === activeStreamId);
+    if (cur?.registrySource === "thirdPartyCamera") return undefined;
+    /** 无人机检测框 WS 已与相机一致（entityId=uav-xxx + boatRect/header 等），按机实体订阅 */
+    if (cur?.uav) {
+      const uavId = cur.uav.entityId?.trim();
+      return uavId ? canonicalEntityId(uavId) : undefined;
+    }
     const sid = activeStreamId.trim();
     const ent = entity ?? "";
     if (isCameraEntityId(sid)) return canonicalEntityId(sid);
@@ -492,7 +673,9 @@ export function EoVideoPanel({
    * 检测必须严格对齐「当前流画面」；DDS store 按 entityId 更新，页面 entity 为 camera_xxx 但流 id 为自定义时仍应对上 C++ 同机状态。
    */
   const cameraDdsEntityId = useMemo(() => {
-    if (cfg?.streams.find((s) => s.id === activeStreamId)?.uav) return undefined;
+    const cur = cfg?.streams.find((s) => s.id === activeStreamId);
+    if (cur?.registrySource === "thirdPartyCamera") return undefined;
+    if (cur?.uav) return undefined;
     if (detectionEntityId) return detectionEntityId;
     const ent = entity?.trim() ?? "";
     if (ent) {
@@ -509,7 +692,9 @@ export function EoVideoPanel({
     return undefined;
   }, [cfg, activeStreamId, detectionEntityId, entity]);
 
-  const detectionEnabled = Boolean(detectionEntityId && cfg);
+  const detectionEnabled = Boolean(
+    detectionEntityId && cfg && !(activeStream?.uav && uavVideoOnly),
+  );
   const ptzSupported = Boolean(detectionEntityId && /^camera_[0-9]{3}$/i.test(detectionEntityId));
 
   /** 底部条右侧：相机 DDS（Camera WS 旁路）/ 无人机航线与状态 */
@@ -520,8 +705,8 @@ export function EoVideoPanel({
   });
 
   useEffect(() => {
-    if (!ptzSupported) setPtzPanelOpen(false);
-  }, [ptzSupported]);
+    if (!ptzSupported && !isThirdPartyStream) setPtzPanelOpen(false);
+  }, [ptzSupported, isThirdPartyStream]);
 
   const mqttWsUrlFromEnv =
     typeof process !== "undefined" && process.env.NEXT_PUBLIC_MQTT_WS_URL
@@ -580,6 +765,26 @@ export function EoVideoPanel({
     (uavMqttProductIds?.airport ?? "").trim() || (activeStream?.uav?.airportSN ?? "").trim() || null;
   const mqttDeviceSn =
     (uavMqttProductIds?.device ?? "").trim() || (activeStream?.uav?.deviceSN ?? "").trim() || null;
+
+  useEffect(() => {
+    useUavQuickContextStore.getState().setLastKnown(mqttAirportSn, mqttDeviceSn);
+  }, [mqttAirportSn, mqttDeviceSn]);
+
+  /** 地图右键无人机任务：任务服务 `deviceSn` 填机场 SN（与 WatchSys 下发一致），非机体 SN */
+  useEffect(() => {
+    const pid = dockPidNorm;
+    if (!pid || eoFocusedDockId !== pid) return;
+    if (!activeStream?.uav) {
+      useEoFocusedUavAirportSnStore.getState().setAirportSn("");
+      return;
+    }
+    const ap = (mqttAirportSn ?? activeStream.uav.airportSN ?? "").trim();
+    if (!ap) {
+      useEoFocusedUavAirportSnStore.getState().setAirportSn("");
+      return;
+    }
+    useEoFocusedUavAirportSnStore.getState().setAirportSn(ap);
+  }, [dockPidNorm, eoFocusedDockId, activeStream?.uav, mqttAirportSn, activeStream?.uav?.airportSN]);
 
   const { droneInDock: mqttDroneInDock, mqttAirportLatLon, mqttTelemetry, mqttHud, publishStickControl } = useUavMqttDockState({
     enabled: Boolean(activeStream?.uav && mqttWsUrl && (mqttAirportSn || mqttDeviceSn)),
@@ -892,6 +1097,17 @@ export function EoVideoPanel({
     });
   }, [activeStreamId]);
 
+  const swapPipWithMain = useCallback(() => {
+    if (!pipOpen) return;
+    const main = activeStreamId.trim();
+    const pip = pipStreamId.trim();
+    if (!main) return;
+    const pipEffective = pip || main;
+    if (pipEffective === main) return;
+    setActiveStreamId(pipEffective);
+    setPipStreamId(main);
+  }, [pipOpen, activeStreamId, pipStreamId]);
+
   useEffect(() => {
     if (!pipOpen || !cfg || !pipStreamId.trim()) {
       setPipSignalingUrl("");
@@ -944,6 +1160,7 @@ export function EoVideoPanel({
   ]);
 
   const showCameraLoadingGate =
+    !isThirdPartyStream &&
     !activeStream?.uav &&
     Boolean(activeStream) &&
     (activeStream?.registrySource === "camera" ||
@@ -1011,6 +1228,44 @@ export function EoVideoPanel({
       return next.length > 4000 ? next.slice(0, 4000) : next;
     });
   }, []);
+
+  const handleThirdPartyCamKindSelect = useCallback(
+    async (kind: ThirdPartyCamTaskKind) => {
+      const sid = activeStream?.id?.trim();
+      if (!sid) return;
+      setThirdPartyCamBusy(true);
+      try {
+        const res = await postThirdPartyCamTask({
+          entityId: sid,
+          backendBaseUrl: taskBackendBaseUrl,
+          taskKind: kind,
+        });
+        const text = await res.text().catch(() => "");
+        const outcome = evaluateThirdPartyTaskHttpResponse(res.ok, text);
+        if (!outcome.accepted) {
+          appendClientLog(
+            `${new Date().toLocaleTimeString()} 第三方任务「${kind}」未受理 ${outcome.logLine}`,
+          );
+          toast.error(outcome.logLine.length > 220 ? `${outcome.logLine.slice(0, 220)}…` : outcome.logLine);
+          return;
+        }
+        appendClientLog(
+          `${new Date().toLocaleTimeString()} 第三方任务「${kind}」已受理 ${outcome.logLine}`,
+        );
+        const label =
+          kind === "SEARCH" ? "搜索" : kind === "TRACK" ? "跟踪" : kind === "FOCUS" ? "聚焦" : "停止";
+        toast.success(`已下发「${label}」`, { description: outcome.logLine });
+      } catch (e) {
+        appendClientLog(
+          `${new Date().toLocaleTimeString()} 第三方任务异常：${e instanceof Error ? e.message : String(e)}`,
+        );
+        toast.error("第三方相机任务请求失败");
+      } finally {
+        setThirdPartyCamBusy(false);
+      }
+    },
+    [activeStream?.id, appendClientLog, taskBackendBaseUrl],
+  );
 
   /** 流已在推送时画面已出帧，不发私有云 poke；超时仍黑时再发（对齐 WatchSys 「先播再兜底」） */
   useEffect(() => {
@@ -1486,8 +1741,6 @@ export function EoVideoPanel({
   }, [appendClientLog]);
 
   const handleSnapshot = useCallback(async () => {
-    const v = videoRef.current;
-    if (!v) return;
     const name = buildEoCaptureFilename({
       configuredPath: "",
       streamLabel: activeStream?.label,
@@ -1495,7 +1748,16 @@ export function EoVideoPanel({
       ext: "png",
     });
     try {
-      const blob = await captureEoPlaybackToPngBlob(v, snapshotCanvasRef.current);
+      let blob: Blob;
+      if (isThirdPartyStream) {
+        const stack = thirdPartyStackRef.current;
+        if (!stack) return;
+        blob = await stack.captureToPng();
+      } else {
+        const v = videoRef.current;
+        if (!v) return;
+        blob = await captureEoPlaybackToPngBlob(v, snapshotCanvasRef.current);
+      }
       try {
         let dir = captureDirHandleSnapshotRef.current;
         if (!dir && isShowDirectoryPickerSupported()) {
@@ -1537,11 +1799,9 @@ export function EoVideoPanel({
     } catch (e) {
       appendClientLog(`${new Date().toLocaleTimeString()} 截图失败：${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [activeStream?.label, appendClientLog, resolvePerStreamCaptureDir]);
+  }, [activeStream?.label, appendClientLog, isThirdPartyStream, resolvePerStreamCaptureDir]);
 
   const handleToggleRecord = useCallback(() => {
-    const v = videoRef.current;
-    if (!v) return;
     if (recorderCtlRef.current?.isRecording()) {
       recorderCtlRef.current.stop();
       return;
@@ -1553,6 +1813,72 @@ export function EoVideoPanel({
       kind: "record",
       ext,
     });
+    if (isThirdPartyStream) {
+      const canvas = thirdPartyStackRef.current?.getRecordCanvas() ?? null;
+      if (!canvas) return;
+      const ctl = createEoCanvasRecorder({
+        canvas,
+        fileName: name,
+        mimeType,
+        onSaveBlob: async (blob, suggested) => {
+          const extFromBlob = blob.type.includes("mp4") ? "mp4" : blob.type.includes("webm") ? "webm" : ext;
+          const base = suggested.replace(/\.(mp4|webm)$/i, "");
+          const finalName = `${base}.${extFromBlob}`;
+          let dir = captureDirHandleRecordRef.current;
+          if (!dir && isShowDirectoryPickerSupported()) {
+            try {
+              dir = await pickCaptureDirectoryHandle("record");
+              await saveCaptureDirHandle(dir, "record");
+              captureDirHandleRecordRef.current = dir;
+              setCaptureFolderLabel(dir.name);
+              appendClientLog(`${new Date().toLocaleTimeString()} 已绑定本机保存文件夹「${dir.name}」`);
+            } catch (e) {
+              if (!(e instanceof DOMException && e.name === "AbortError")) {
+                appendClientLog(`${new Date().toLocaleTimeString()} 选择文件夹失败：${e instanceof Error ? e.message : String(e)}`);
+              }
+            }
+          }
+          const targetDir = await resolvePerStreamCaptureDir(dir, activeStream?.label);
+          const mode = await saveCaptureBlob(blob, finalName, targetDir);
+          appendClientLog(
+            `${new Date().toLocaleTimeString()} ${
+              mode === "directory"
+                ? `录屏已写入本机文件夹：${activeStream?.label || "光电"}/${finalName}`
+                : `录屏已触发下载：${finalName}`
+            }`,
+          );
+          setSnapshotPreview((prev) => {
+            if (prev?.objectUrl) URL.revokeObjectURL(prev.objectUrl);
+            return {
+              kind: "record",
+              objectUrl: URL.createObjectURL(blob),
+              blob,
+              fileName: finalName,
+            };
+          });
+        },
+        onError: (msg) => {
+          appendClientLog(`${new Date().toLocaleTimeString()} 录屏：${msg}`);
+          setIsRecording(false);
+          recorderCtlRef.current = null;
+        },
+        onStarted: () => {
+          setIsRecording(true);
+          appendClientLog(
+            `${new Date().toLocaleTimeString()} 录屏开始 → 容器 ${ext.toUpperCase()}${ext === "webm" ? "（当前浏览器不支持 MP4 录制）" : ""}，将保存为 ${name}`,
+          );
+        },
+        onStopped: () => {
+          setIsRecording(false);
+          recorderCtlRef.current = null;
+        },
+      });
+      recorderCtlRef.current = ctl;
+      ctl.start();
+      return;
+    }
+    const v = videoRef.current;
+    if (!v) return;
     const ctl = createEoVideoRecorder({
       video: v,
       fileName: name,
@@ -1612,7 +1938,7 @@ export function EoVideoPanel({
     });
     recorderCtlRef.current = ctl;
     ctl.start();
-  }, [activeStream?.label, appendClientLog, resolvePerStreamCaptureDir]);
+  }, [activeStream?.label, appendClientLog, isThirdPartyStream, resolvePerStreamCaptureDir]);
 
   const onSingleTrackTask = useCallback(
     async (payload: {
@@ -1714,6 +2040,8 @@ export function EoVideoPanel({
   return (
     <div
       ref={panelRootRef}
+      role={dockPidNorm ? "group" : undefined}
+      aria-label={dockPidNorm ? `光电面板 ${dockPidNorm}` : undefined}
       style={
         panelHeightPx != null
           ? { height: panelHeightPx, maxHeight: "min(92vh, 960px)" }
@@ -1722,8 +2050,12 @@ export function EoVideoPanel({
       className={cn(
         "flex min-h-0 flex-col overflow-hidden rounded-none border border-white/[0.06] bg-black/60",
         panelHeightPx != null && "shrink-0",
+        eoPanelSelected && "ring-2 ring-inset ring-sky-400/55",
         className,
       )}
+      onPointerDownCapture={() => {
+        if (dockPidNorm) setEoFocusedDockPanel(dockPidNorm);
+      }}
     >
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <EoStreamContextMenu config={cfg} activeStreamId={activeStreamId} onSelectStream={onSelectStream}>
@@ -1749,7 +2081,7 @@ export function EoVideoPanel({
                     streamLabel={activeStream.label}
                     videoRef={videoRef}
                     peerConnectionRef={peerConnectionRef}
-                    exposePeerForDetection={Boolean(detectionEntityId)}
+                    exposePeerForDetection={Boolean(detectionEntityId && detectionEnabled)}
                     entityId={detectionEntityId}
                     detectionEnabled={detectionEnabled}
                     onDetectionDiagnostic={handleDetectionDiagnostic}
@@ -1779,8 +2111,22 @@ export function EoVideoPanel({
                 )}
                 <div className="pointer-events-none absolute inset-0 z-30">
                   <div className="pointer-events-none absolute right-2 top-1/2 flex max-h-[min(88vh,560px)] -translate-y-1/2 flex-col items-end justify-center gap-2">
-                    {/* 无人机控制授权：与罗盘/控制台一致，仅放大窗口后显示 */}
-                    {expandedMode ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className={cn(
+                        "pointer-events-auto border border-white/25 bg-transparent text-white/90 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+                        expandedMode && "border-sky-400/45 bg-sky-950/50 text-sky-300",
+                      )}
+                      title={expandedMode ? "恢复默认窗口" : "放大窗口"}
+                      aria-label={expandedMode ? "恢复默认窗口" : "放大窗口"}
+                      onClick={toggleExpand}
+                    >
+                      {expandedMode ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+                    </Button>
+                    {/* 无人机控制授权 + 返航：纵向排列 */}
+                    <div className="pointer-events-auto flex flex-col items-center gap-1">
                       <Button
                         type="button"
                         variant="ghost"
@@ -1807,7 +2153,7 @@ export function EoVideoPanel({
                         }
                         aria-pressed={uavCtrlAuth.hasAuth}
                         className={cn(
-                          "pointer-events-auto border bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+                          "border bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
                           uavCtrlAuth.hasAuth
                             ? "border-sky-400/45 bg-sky-950/50 text-sky-200 hover:border-sky-400/55 hover:bg-sky-900/65 hover:text-sky-50"
                             : "border-white/25 text-white/85",
@@ -1821,7 +2167,26 @@ export function EoVideoPanel({
                           <Joystick className="size-3.5" />
                         )}
                       </Button>
-                    ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        title="返航"
+                        aria-label="返航"
+                        disabled={!mqttAirportSn || Boolean(uavActionBusy?.back)}
+                        onClick={() => void triggerUavAction("back")}
+                        className={cn(
+                          "border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+                          !mqttAirportSn || uavActionBusy?.back ? "cursor-not-allowed opacity-50" : "",
+                        )}
+                      >
+                        {uavActionBusy?.back ? (
+                          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                        ) : (
+                          <Home className="size-3.5" aria-hidden />
+                        )}
+                      </Button>
+                    </div>
                     <div className="pointer-events-auto flex flex-row items-center gap-2">
                       {snapshotPreview ? (
                         <EoSnapshotPreviewPopout
@@ -1836,6 +2201,7 @@ export function EoVideoPanel({
                       <EoVideoFloatingTools
                         className="pointer-events-auto"
                         variant="uav"
+                        hideExpandButton
                         expandedMode={expandedMode}
                         onToggleExpand={toggleExpand}
                         uavDockExpanded={uavDockExpanded}
@@ -1847,9 +2213,14 @@ export function EoVideoPanel({
                         onSnapshot={handleSnapshot}
                         onToggleRecord={handleToggleRecord}
                         onUavClientLog={appendClientLog}
+                        onUavPsdkNotify={showUavBottomFeedback}
                         onUavGimbalCenter={onUavGimbalCenter}
                         onUavGimbalDown={onUavGimbalDown}
+                        uavGatewaySn={mqttAirportSn}
+                        uavPsdkDisabled={!mqttAirportSn?.trim() || !activeStream?.uav}
                         uavGimbalDisabled={!mqttAirportSn?.trim() || !activeStream?.uav}
+                        uavVideoOnly={uavVideoOnly}
+                        onToggleUavVideoOnly={() => setUavVideoOnly((v) => !v)}
                       />
                     </div>
                   </div>
@@ -1893,6 +2264,7 @@ export function EoVideoPanel({
                   iceServers={cfg.iceServers}
                   pipStreamId={pipStreamId || activeStreamId}
                   onSelectPipStream={setPipStreamId}
+                  onSwapWithMain={swapPipWithMain}
                   signalingUrl={pipSignalingUrl}
                   loading={pipResolving}
                   error={pipErr}
@@ -1906,40 +2278,71 @@ export function EoVideoPanel({
                       {cameraResolveErr ??
                         (cameraResolveLoading ? "正在解析光电相机流地址…" : "等待相机流…")}
                     </div>
+                  ) : isThirdPartyStream ? (
+                    <>
+                      <EoHighSpeedYuvStack
+                        ref={thirdPartyStackRef}
+                        className="absolute inset-0 min-h-0"
+                        videoWidth={thirdPartyLive.videoWidth}
+                        videoHeight={thirdPartyLive.videoHeight}
+                        strideY={thirdPartyLive.strideY}
+                        yuv420={null}
+                        boxes={[]}
+                        fovOverlayBoxes={thirdPartyFovOverlayBoxes}
+                        placeholderHint={[
+                          `第三方相机 · ${activeStream.label} · ${activeStream.id}`,
+                          activeStream.multicastUdp ? `组播 UDP ${activeStream.multicastUdp}（服务端中继 → WS）` : "",
+                          thirdPartyLive.hint ||
+                            "(Next 需在 Node 起中继；端口见 EO_THIRD_PARTY_CAMERA_WS_PORT，默认 40777)",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      />
+                      {expandedMode && thirdPartySubPipIds.length > 0 ? (
+                        <EoThirdPartySubCamPipStack entityIds={thirdPartySubPipIds} />
+                      ) : null}
+                    </>
                   ) : (
-                    <EoVideoPlayStage
-                    stageRef={wrapRef}
-                    signalingUrl={playSignalingUrl}
-                    iceServers={cfg.iceServers}
-                    streamLabel={activeStream.label}
-                    videoRef={videoRef}
-                    peerConnectionRef={peerConnectionRef}
-                    exposePeerForDetection={Boolean(detectionEntityId)}
-                    entityId={detectionEntityId}
-                    detectionEnabled={detectionEnabled}
-                    onDetectionDiagnostic={handleDetectionDiagnostic}
-                    selectedBoxId={selectedBoxId}
-                    onSelectBox={setSelectedBoxId}
-                    taskBackendBaseUrl={taskBackendBaseUrl}
-                    onSaveTaskBackendBaseUrl={onSaveTaskBackendBaseUrl}
-                    onSingleTrackTask={onSingleTrackTask}
-                    onTaskClientLog={appendClientLog}
-                    snapshotSavePath={snapshotSavePath}
-                    recordSavePath={recordSavePath}
-                    onSaveCapturePaths={onSaveCapturePaths}
-                    captureLocalFolderLabel={captureFolderLabel}
-                    captureLocalFolderSupported={isShowDirectoryPickerSupported()}
-                    onPickCaptureLocalFolder={handlePickCaptureLocalFolder}
-                    onClearCaptureLocalFolder={handleClearCaptureLocalFolder}
-                    detectionBoxes={detectionBoxes}
-                    onDetectionBoxesChange={setDetectionBoxes}
-                    onBottomCenterToast={showCameraBottomFeedback}
-                      sideToolbarReserved
-                    onCaptureReadyChange={onEoCaptureReadyChange}
-                    snapshotCanvasRef={snapshotCanvasRef}
-                    expandedMode={expandedMode}
-                    ddsCameraEntityId={cameraDdsEntityId}
-                    />
+                    <>
+                      <EoVideoPlayStage
+                        stageRef={wrapRef}
+                        signalingUrl={playSignalingUrl}
+                        iceServers={cfg.iceServers}
+                        streamLabel={activeStream.label}
+                        videoRef={videoRef}
+                        peerConnectionRef={peerConnectionRef}
+                        exposePeerForDetection={Boolean(detectionEntityId && detectionEnabled)}
+                        entityId={detectionEntityId}
+                        detectionEnabled={detectionEnabled}
+                        onDetectionDiagnostic={handleDetectionDiagnostic}
+                        selectedBoxId={selectedBoxId}
+                        onSelectBox={setSelectedBoxId}
+                        taskBackendBaseUrl={taskBackendBaseUrl}
+                        onSaveTaskBackendBaseUrl={onSaveTaskBackendBaseUrl}
+                        onSingleTrackTask={onSingleTrackTask}
+                        onTaskClientLog={appendClientLog}
+                        snapshotSavePath={snapshotSavePath}
+                        recordSavePath={recordSavePath}
+                        onSaveCapturePaths={onSaveCapturePaths}
+                        captureLocalFolderLabel={captureFolderLabel}
+                        captureLocalFolderSupported={isShowDirectoryPickerSupported()}
+                        onPickCaptureLocalFolder={handlePickCaptureLocalFolder}
+                        onClearCaptureLocalFolder={handleClearCaptureLocalFolder}
+                        detectionBoxes={detectionBoxes}
+                        onDetectionBoxesChange={setDetectionBoxes}
+                        onBottomCenterToast={showCameraBottomFeedback}
+                        sideToolbarReserved
+                        onCaptureReadyChange={onEoCaptureReadyChange}
+                        snapshotCanvasRef={snapshotCanvasRef}
+                        expandedMode={expandedMode}
+                        ddsCameraEntityId={cameraDdsEntityId}
+                      />
+                      <EoExpandedCameraPtzHud
+                        expandedMode={expandedMode}
+                        entityId={cameraDdsEntityId}
+                        disabled={Boolean(showCameraLoadingGate)}
+                      />
+                    </>
                   )}
                   <div className="pointer-events-none absolute inset-0 z-30">
                     <div className="pointer-events-none absolute right-2 top-1/2 flex max-h-[min(88vh,560px)] -translate-y-1/2 flex-col items-end justify-center gap-2">
@@ -1953,10 +2356,14 @@ export function EoVideoPanel({
                         onTogglePtzPanel={() => setPtzPanelOpen((v) => !v)}
                         pipOpen={pipOpen}
                         onTogglePip={togglePip}
-                        captureReady={captureReady}
+                        captureReady={isThirdPartyStream ? thirdPartyCaptureReady : captureReady}
                         isRecording={isRecording}
                         onSnapshot={handleSnapshot}
                         onToggleRecord={handleToggleRecord}
+                        thirdPartyCamControls={isThirdPartyStream}
+                        onThirdPartyCamKind={handleThirdPartyCamKindSelect}
+                        thirdPartyCamBusy={thirdPartyCamBusy}
+                        thirdPartyDirectMoveSupported={isThirdPartyStream}
                       />
                       {snapshotPreview ? (
                         <EoSnapshotPreviewPopout
@@ -1972,7 +2379,15 @@ export function EoVideoPanel({
                   </div>
                   {/* 云台横条单行避让右侧工具；底栏本体全宽贴底（勿与云台共用外层 pl/pr/pb） */}
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[25] flex max-h-[min(58vh,420px)] flex-col justify-end gap-1 px-0 pb-0 pt-10">
-                    {ptzPanelOpen && ptzSupported && detectionEntityId ? (
+                    {ptzPanelOpen && isThirdPartyStream && activeStream?.id ? (
+                      <div className="pointer-events-auto flex w-full shrink-0 justify-end pl-2 pr-14 pb-px max-sm:pr-3">
+                        <EoThirdPartyDirectMovePad
+                          entityId={activeStream.id}
+                          backendBaseUrl={taskBackendBaseUrl}
+                          onClientLog={appendClientLog}
+                        />
+                      </div>
+                    ) : ptzPanelOpen && ptzSupported && detectionEntityId ? (
                       <div className="pointer-events-auto flex w-full shrink-0 justify-end pl-2 pr-14 pb-px max-sm:pr-3">
                         <EoVideoPtzPanel
                           entityId={detectionEntityId}
@@ -1998,6 +2413,7 @@ export function EoVideoPanel({
                     iceServers={cfg.iceServers}
                     pipStreamId={pipStreamId || activeStreamId}
                     onSelectPipStream={setPipStreamId}
+                    onSwapWithMain={swapPipWithMain}
                     signalingUrl={pipSignalingUrl}
                     loading={pipResolving}
                     error={pipErr}
@@ -2032,26 +2448,25 @@ export function EoVideoPanel({
           }
         />
       ) : null}
-      {!expandedMode && zoomWindowOpen && typeof window !== "undefined"
-        ? createPortal(
-            <div className="pointer-events-none fixed inset-0 z-[1400]">
-              <div className="absolute inset-0 bg-black/35 backdrop-blur-sm" />
-              <div className="pointer-events-auto absolute left-1/2 top-1/2 h-[min(88vh,980px)] w-[min(92vw,1500px)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-white/20 bg-black/75 shadow-2xl">
-                <EoVideoPanel
-                  configUrl={configUrl}
-                  entityId={entityId}
-                  streamPersistKey={`${streamPersistKey || entity || "default"}::zoom`}
-                  initialStreamId={activeStreamId}
-                  expandedMode
-                  onToggleExpand={() => setZoomWindowOpen(false)}
-                  className="h-full w-full border-0 bg-black/75"
-                  resizable={false}
-                />
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+      {!expandedMode && typeof window !== "undefined" ? (
+        <EoVideoExpandFloatingFrame
+          open={zoomWindowOpen}
+          onClose={() => setZoomWindowOpen(false)}
+          persistKey={`${(streamPersistKey || entity || "default").trim()}::expandFrame`}
+          title={expandFloatingFrameTitle}
+        >
+          <EoVideoPanel
+            configUrl={configUrl}
+            entityId={entityId}
+            streamPersistKey={`${streamPersistKey || entity || "default"}::zoom`}
+            initialStreamId={activeStreamId}
+            expandedMode
+            onToggleExpand={() => setZoomWindowOpen(false)}
+            className="h-full min-h-0 w-full border-0 bg-black"
+            resizable={false}
+          />
+        </EoVideoExpandFloatingFrame>
+      ) : null}
 
     </div>
   );

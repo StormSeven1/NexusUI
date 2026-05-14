@@ -110,6 +110,35 @@ export function captureEoPlaybackToPngBlob(
   return Promise.reject(new Error("视频尚未就绪，无法截图"));
 }
 
+/** 第三方相机：WebGL 主画布 + 可选 2D 检测框层，合成 PNG（与界面所见一致） */
+export function captureStackedCanvasesToPngBlob(
+  glCanvas: HTMLCanvasElement,
+  overlayCanvas: HTMLCanvasElement | null,
+): Promise<Blob> {
+  const w = glCanvas.width;
+  const h = glCanvas.height;
+  if (!w || !h) return Promise.reject(new Error("画布尚未就绪，无法截图"));
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const ctx = out.getContext("2d");
+  if (!ctx) return Promise.reject(new Error("Canvas 不可用"));
+  ctx.drawImage(glCanvas, 0, 0);
+  if (overlayCanvas && overlayCanvas.width === w && overlayCanvas.height === h) {
+    ctx.drawImage(overlayCanvas, 0, 0);
+  }
+  return new Promise((resolve, reject) => {
+    out.toBlob(
+      (blob) => {
+        if (!blob) reject(new Error("截图编码失败"));
+        else resolve(blob);
+      },
+      "image/png",
+      0.95,
+    );
+  });
+}
+
 type DirectoryHandleWithPerm = FileSystemDirectoryHandle & {
   queryPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
   requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
@@ -190,9 +219,10 @@ export type EoVideoRecordController = {
   isRecording: () => boolean;
 };
 
-export function createEoVideoRecorder(opts: {
-  video: HTMLVideoElement;
-  /** 完整文件名（含 .mp4 / .webm），应与容器格式一致 */
+function createEoMediaRecorderController(opts: {
+  acquireStream: () => MediaStream | null;
+  dimensionOk: () => boolean;
+  warmUpLabel: string;
   fileName: string;
   mimeType?: string;
   onSaveBlob: (blob: Blob, fileName: string) => void | Promise<void>;
@@ -200,16 +230,6 @@ export function createEoVideoRecorder(opts: {
   onStarted?: () => void;
   onStopped?: () => void;
 }): EoVideoRecordController {
-  const cap = (opts.video as HTMLVideoElement & { captureStream?: (frameRate?: number) => MediaStream }).captureStream;
-  if (typeof cap !== "function") {
-    opts.onError?.("当前浏览器不支持 video.captureStream，无法录屏");
-    return {
-      start: () => opts.onError?.("不支持录屏"),
-      stop: () => {},
-      isRecording: () => false,
-    };
-  }
-
   let recorder: MediaRecorder | null = null;
   let chunks: Blob[] = [];
   let capturedStream: MediaStream | null = null;
@@ -227,16 +247,20 @@ export function createEoVideoRecorder(opts: {
   return {
     start: () => {
       if (recorder && recorder.state === "recording") return;
-      if (!opts.video.videoWidth || !opts.video.videoHeight) {
-        opts.onError?.("视频尚未就绪，无法开始录制");
+      if (!opts.dimensionOk()) {
+        opts.onError?.(opts.warmUpLabel);
         return;
       }
       chunks = [];
-      let stream: MediaStream;
+      let stream: MediaStream | null = null;
       try {
-        stream = cap.call(opts.video, 30);
+        stream = opts.acquireStream();
       } catch (e) {
         opts.onError?.(e instanceof Error ? e.message : String(e));
+        return;
+      }
+      if (!stream) {
+        opts.onError?.("未获取到媒体流，无法录制");
         return;
       }
       capturedStream = stream;
@@ -292,4 +316,68 @@ export function createEoVideoRecorder(opts: {
     },
     isRecording: () => Boolean(recorder && recorder.state === "recording"),
   };
+}
+
+export function createEoVideoRecorder(opts: {
+  video: HTMLVideoElement;
+  /** 完整文件名（含 .mp4 / .webm），应与容器格式一致 */
+  fileName: string;
+  mimeType?: string;
+  onSaveBlob: (blob: Blob, fileName: string) => void | Promise<void>;
+  onError?: (msg: string) => void;
+  onStarted?: () => void;
+  onStopped?: () => void;
+}): EoVideoRecordController {
+  const cap = (opts.video as HTMLVideoElement & { captureStream?: (frameRate?: number) => MediaStream }).captureStream;
+  if (typeof cap !== "function") {
+    opts.onError?.("当前浏览器不支持 video.captureStream，无法录屏");
+    return {
+      start: () => opts.onError?.("不支持录屏"),
+      stop: () => {},
+      isRecording: () => false,
+    };
+  }
+  return createEoMediaRecorderController({
+    acquireStream: () => cap.call(opts.video, 30),
+    dimensionOk: () => Boolean(opts.video.videoWidth && opts.video.videoHeight),
+    warmUpLabel: "视频尚未就绪，无法开始录制",
+    fileName: opts.fileName,
+    mimeType: opts.mimeType,
+    onSaveBlob: opts.onSaveBlob,
+    onError: opts.onError,
+    onStarted: opts.onStarted,
+    onStopped: opts.onStopped,
+  });
+}
+
+/** 第三方相机等：从 `<canvas>` 捕获 MediaStream 录制（非 WebRTC `<video>`） */
+export function createEoCanvasRecorder(opts: {
+  canvas: HTMLCanvasElement;
+  fileName: string;
+  mimeType?: string;
+  onSaveBlob: (blob: Blob, fileName: string) => void | Promise<void>;
+  onError?: (msg: string) => void;
+  onStarted?: () => void;
+  onStopped?: () => void;
+}): EoVideoRecordController {
+  const cap = (opts.canvas as HTMLCanvasElement & { captureStream?: (frameRate?: number) => MediaStream }).captureStream;
+  if (typeof cap !== "function") {
+    opts.onError?.("当前浏览器不支持 canvas.captureStream，无法录屏");
+    return {
+      start: () => opts.onError?.("不支持录屏"),
+      stop: () => {},
+      isRecording: () => false,
+    };
+  }
+  return createEoMediaRecorderController({
+    acquireStream: () => cap.call(opts.canvas, 30),
+    dimensionOk: () => Boolean(opts.canvas.width && opts.canvas.height),
+    warmUpLabel: "画面尚未就绪，无法开始录制",
+    fileName: opts.fileName,
+    mimeType: opts.mimeType,
+    onSaveBlob: opts.onSaveBlob,
+    onError: opts.onError,
+    onStarted: opts.onStarted,
+    onStopped: opts.onStopped,
+  });
 }

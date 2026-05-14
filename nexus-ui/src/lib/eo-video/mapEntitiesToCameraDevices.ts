@@ -31,10 +31,45 @@ function isCameraOntology(raw: Record<string, unknown>): boolean {
   const o = raw.ontology;
   if (!isRecord(o)) return false;
   const st = String(o.specificType ?? "").toUpperCase();
+  /** 第三方相机单独进「第三方相机」菜单，不走光电 WebRTC */
+  if (st === "THIRDPARTYCAMERA") return false;
   const tpl = String(o.template ?? "").toUpperCase();
   if (st.includes("CAMERA") || st === "EO" || st === "IR") return true;
   if (tpl.includes("CAMERA") || tpl.includes("SENSOR")) return true;
   return false;
+}
+
+function isThirdPartyCameraRow(raw: Record<string, unknown>): boolean {
+  const o = raw.ontology;
+  if (!isRecord(o)) return false;
+  const st = String(o.specificType ?? "").trim();
+  return st.toUpperCase() === "THIRDPARTYCAMERA";
+}
+
+function mapThirdPartyCameraOne(raw: unknown): EoCameraRegistryRow | null {
+  if (!isRecord(raw)) return null;
+  if (!isThirdPartyCameraRow(raw)) return null;
+  const entityId = pickStr(raw, ["entityId", "entity_id", "id"]);
+  if (!entityId) return null;
+  return {
+    entityId,
+    label: cameraLabel(raw, entityId),
+  };
+}
+
+/** `ontology.specificType === ThirdPartyCamera`（大小写不敏感），与在线状态无关 */
+export function mapEntitiesPayloadToThirdPartyCameras(payload: unknown): EoCameraRegistryRow[] {
+  const rows = extractEntityRecords(payload);
+  const out: EoCameraRegistryRow[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const c = mapThirdPartyCameraOne(r);
+    if (!c) continue;
+    if (seen.has(c.entityId)) continue;
+    seen.add(c.entityId);
+    out.push(c);
+  }
+  return out.sort((a, b) => a.entityId.localeCompare(b.entityId, undefined, { numeric: true }));
 }
 
 function mapCameraOne(raw: unknown): EoCameraRegistryRow | null {

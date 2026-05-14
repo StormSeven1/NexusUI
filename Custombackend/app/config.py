@@ -163,7 +163,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     },
     {
         "id": "dds_camera_status",
-        "name": "DDS相机实时状态",
+        "name": "DDS相机实时状态(新版 IDL，Topic CameraRealTimeStatusTopic)",
         "enabled": True,
         "domain_id": 149,
         "topic_name": "CameraRealTimeStatusTopic",
@@ -173,10 +173,31 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "multicast_ip": "239.255.0.1",
         "multicast_port": 12359,
         "dds_module_path": "./DDSReferences/Camera",
+        "subscriber_xml_file": "entity_subscriber.xml",
+        "dds_python_module": "EntityRealTimeStatus",
         "structure_type": "Camera",
         "data_class_name": "CameraRealTimeStatus",
         "pubsub_type_class_name": "CameraRealTimeStatusPubSubType",
-        "type_name": "CameraRealTimeStatus",
+        "type_name": "casia::device::status::CameraStatus::CameraRealTimeStatus",
+        "use_default_xml": False
+    },
+    {
+        "id": "dds_camera_status_legacy",
+        "name": "DDS相机实时状态(旧版扁平结构，Topic CameraRealTimeStatusTopic1)",
+        "enabled": False,
+        "domain_id": 149,
+        "topic_name": "CameraRealTimeStatusTopic1",
+        "profile_name": "camera_status_subscriber",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
+        "multicast_port": 12359,
+        "dds_module_path": "./DDSReferences/Camera",
+        "subscriber_xml_file": "entity_subscriber.xml",
+        "structure_type": "Camera",
+        "data_class_name": "CameraRealTimeStatus",
+        "pubsub_type_class_name": "CameraRealTimeStatusPubSubType",
+        "type_name": "casia::device::status::CameraRealTimeStatus",
         "use_default_xml": False
     },
     {
@@ -218,7 +239,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
    # === TrackManager转发的DDS航迹（forwardRules） ===
     {
         "id": "dds_forward_fuse_track",
-        "name": "融合航迹",
+        "name": "对海融合航迹",
         "enabled": True,
         "domain_id": 141,
         "topic_name": "TrackDataClassTopic_FuseTrack",
@@ -234,42 +255,42 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "type_name": "TrackDataClass",
         "use_default_xml": False
     },
-    # {
-    #     "id": "dds_forward_radar_track1",
-    #     "name": "远遥航迹",
-    #     "enabled": True,
-    #     "domain_id": 141,
-    #     "topic_name": "TrackDataClassTopic_RadarTrack1",
-    #     "profile_name": "track_publisher_forward_RadarTrack1",
-    #     "discovery_server_ip": "192.168.18.141",
-    #     "discovery_server_port": 11611,
-    #     "multicast_ip": "239.255.0.1",
-    #     "multicast_port": 12355,
-    #     "dds_module_path": "./DDSReferences/fusion",
-    #     "structure_type": "radar_track",
-    #     "data_class_name": "TrackDataClass",
-    #     "pubsub_type_class_name": "TrackDataClassPubSubType",
-    #     "type_name": "TrackDataClass",
-    #     "use_default_xml": False
-    # },
-    # {
-    #     "id": "dds_forward_radar_track2",
-    #     "name": "靖子头航迹",
-    #     "enabled": True,
-    #     "domain_id": 141,
-    #     "topic_name": "TrackDataClassTopic_RadarTrack2",
-    #     "profile_name": "track_publisher_forward_RadarTrack2",
-    #     "discovery_server_ip": "192.168.18.141",
-    #     "discovery_server_port": 11611,
-    #     "multicast_ip": "239.255.0.1",
-    #     "multicast_port": 12355,
-    #     "dds_module_path": "./DDSReferences/fusion",
-    #     "structure_type": "radar_track",
-    #     "data_class_name": "TrackDataClass",
-    #     "pubsub_type_class_name": "TrackDataClassPubSubType",
-    #     "type_name": "TrackDataClass",
-    #     "use_default_xml": False
-    # },
+    {
+        "id": "dds_forward_radar_track1",
+        "name": "远遥码头雷达航迹",
+        "enabled": True,
+        "domain_id": 141,
+        "topic_name": "TrackDataClassTopic_RadarTrack1",
+        "profile_name": "track_publisher_forward_RadarTrack1",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
+        "multicast_port": 12355,
+        "dds_module_path": "./DDSReferences/fusion",
+        "structure_type": "radar_track",
+        "data_class_name": "TrackDataClass",
+        "pubsub_type_class_name": "TrackDataClassPubSubType",
+        "type_name": "TrackDataClass",
+        "use_default_xml": False
+    },
+    {
+        "id": "dds_forward_radar_track2",
+        "name": "靖子头雷达航迹",
+        "enabled": True,
+        "domain_id": 141,
+        "topic_name": "TrackDataClassTopic_RadarTrack2",
+        "profile_name": "track_publisher_forward_RadarTrack2",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
+        "multicast_port": 12355,
+        "dds_module_path": "./DDSReferences/fusion",
+        "structure_type": "radar_track",
+        "data_class_name": "TrackDataClass",
+        "pubsub_type_class_name": "TrackDataClassPubSubType",
+        "type_name": "TrackDataClass",
+        "use_default_xml": False
+    },
     # {
     #     "id": "dds_forward_ais_track",
     #     "name": "AIS航迹",
@@ -288,24 +309,24 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     #     "type_name": "TrackDataClass",
     #     "use_default_xml": False
     # },
-    # {
-    #     "id": "dds_forward_bird_radar_track",
-    #     "name": "探鸟航迹",
-    #     "enabled": True,
-    #     "domain_id": 141,
-    #     "topic_name": "TrackDataClassTopic_BirdRadarTrack",
-    #     "profile_name": "track_publisher_forward_BirdRadarTrack",
-    #     "discovery_server_ip": "192.168.18.141",
-    #     "discovery_server_port": 11611,
-    #     "multicast_ip": "239.255.0.1",
-    #     "multicast_port": 12355,
-    #     "dds_module_path": "./DDSReferences/fusion",
-    #     "structure_type": "radar_track",
-    #     "data_class_name": "TrackDataClass",
-    #     "pubsub_type_class_name": "TrackDataClassPubSubType",
-    #     "type_name": "TrackDataClass",
-    #     "use_default_xml": False
-    # },
+    {
+        "id": "dds_forward_bird_radar_track",
+        "name": "探鸟雷达航迹",
+        "enabled": True,
+        "domain_id": 141,
+        "topic_name": "TrackDataClassTopic_BirdRadarTrack",
+        "profile_name": "track_publisher_forward_BirdRadarTrack",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
+        "multicast_port": 12355,
+        "dds_module_path": "./DDSReferences/fusion",
+        "structure_type": "radar_track",
+        "data_class_name": "TrackDataClass",
+        "pubsub_type_class_name": "TrackDataClassPubSubType",
+        "type_name": "TrackDataClass",
+        "use_default_xml": False
+    },
     # {
     #     "id": "dds_forward_ku_radar_track",
     #     "name": "Ku雷达航迹",
@@ -453,6 +474,28 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "use_default_xml": False
     }
 ]
+
+# 系统工作模式 DDS 发布（供前端 TopNav 下拉框调用 /api/system/work-mode）
+# 需先在 DDSReferences/WorkMode 下编译出 libWorkModeStatus.so 与 _WorkModeStatusWrapper.so
+WORK_MODE_DDS_PUBLISHER: Dict[str, Any] = {
+    "enabled": True,
+    # 周期性重复发布当前模式（秒）；0 表示仅在手 POST /api/system/work-mode 时发布
+    "repeat_interval_sec": 10,
+    # 从未通过 API 设置模式时，周期任务使用的默认模式
+    "default_mode_key": "normal",
+    "domain_id": 115,
+    "topic_name": "WorkModeStatusTopic",
+    "profile_name": "work_mode_publisher",
+    "discovery_server_ip": "192.168.18.141",
+    "discovery_server_port": 11611,
+    "multicast_ip": "239.255.0.1",
+    "multicast_port": 12355,
+    "dds_module_relative_path": "DDSReferences/WorkMode",
+    "structure_type": "WorkModeStatus",
+    "data_class_name": "WorkModeStatus",
+    "pubsub_type_class_name": "WorkModeStatusPubSubType",
+    "type_name": "casia::system::workmode::WorkModeStatus",
+}
 
 # HTTP轮询配置
 HTTP_POLLERS: List[Dict[str, Any]] = [

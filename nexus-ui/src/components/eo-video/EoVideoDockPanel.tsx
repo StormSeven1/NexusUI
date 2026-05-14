@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Dock 光电容器：无外框留白，整块区域即为 `EoVideoPanel`（与旧版「对话框」分离）。
+ * Dock 光电容器：无外框留白，整块区域即为 `EoVideoPanel`；「放大」为独立浮动窗（见 `EoVideoExpandFloatingFrame`）。
  */
 import { cn } from "@/lib/utils";
 import { EoVideoPanel } from "./EoVideoPanel";
@@ -18,6 +18,7 @@ export function EoVideoDockPanel({ className, panelId = "electro-optical" }: EoV
         className="h-full min-h-0 rounded-none border-0 shadow-none"
         entityId="camera_004"
         streamPersistKey={panelId}
+        dockPanelId={panelId}
       />
     </div>
   );

@@ -6,8 +6,9 @@ from fastapi.responses import JSONResponse
 from datetime import datetime
 from typing import Optional
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from websocket_manager import ws_manager
+import asyncio
 from track_simulator import track_simulator
 import base64
 
@@ -965,3 +966,61 @@ async def get_track_simulator_status():
                 "timestamp": datetime.now().isoformat()
             }
         )
+
+
+class WorkModeSetBody(BaseModel):
+    """系统工作模式（与 WorkModeStatus.idl 枚举顺序一致）"""
+    mode: str = Field(
+        ...,
+        description="emergency | debug | normal | wartime",
+    )
+
+
+@router.get("/system/work-mode")
+async def get_system_work_mode():
+    """返回最近一次成功发布的模式（内存态）；从未发布过则为 null。"""
+    from work_mode_dds import get_last_published_mode, work_mode_dds_enabled, work_mode_dds_ready_hint
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "code": 200,
+            "enabled": work_mode_dds_enabled(),
+            "last_mode": get_last_published_mode(),
+            "hint_if_unavailable": work_mode_dds_ready_hint(),
+            "timestamp": datetime.now().isoformat(),
+        },
+    )
+
+
+@router.post("/system/work-mode")
+async def set_system_work_mode(body: WorkModeSetBody):
+    """发布系统工作模式到 DDS（WorkModeStatusTopic）。"""
+    from work_mode_dds import publish_work_mode, work_mode_dds_enabled, work_mode_dds_ready_hint
+
+    if not work_mode_dds_enabled():
+        raise HTTPException(status_code=503, detail="系统模式 DDS 已在服务端禁用")
+
+    try:
+        mode = await asyncio.to_thread(publish_work_mode, body.mode)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        logger.error(f"[API] 发布系统模式 DDS 失败: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"{e}; {work_mode_dds_ready_hint()}",
+        ) from e
+    except Exception as e:
+        logger.error(f"[API] 发布系统模式异常: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "code": 200,
+            "mode": mode,
+            "message": "已发布",
+            "timestamp": datetime.now().isoformat(),
+        },
+    )

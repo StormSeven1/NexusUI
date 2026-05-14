@@ -6,23 +6,49 @@ import {
   TRACK_SELECT_RING_ID,
   LOCK_ON_IMAGE_ID,
   resolveTrackPointFill,
-  getFusionTrackMarkerFill,
+  buildMarkerSymbolDataUrl,
+  isAirTrackBirdGlyph,
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
+import { loadSvgImage } from "@/lib/map-image-loader";
 import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
-import { getEffectiveTrackDisposition } from "@/stores/track-store";
+import { getTrackDispositionForRendering, useTrackStore } from "@/stores/track-store";
+import { useTrackDisplayStore, neutralFusionColorForTrack } from "@/stores/track-display-store";
+import { trimHistoryTrailForDisplay, velocityVectorEndLngLat } from "@/lib/track-display-trail";
+import { useAppStore } from "@/stores/app-store";
+import {
+  filterTracksForMapRender,
+  isRadarTrackLayerKey,
+  resolveTrackLayerKey,
+  trackMapVisibilitySignature,
+} from "@/lib/track-layer-visibility";
 
-/** GeoJSON source id：航迹点、折线、高亮环、锁定圈共用 */
+/** GeoJSON source id：仅 **LineString**（尾迹 + 速度矢量）；点符号另用融合/雷达两源，避免单源 + filter 在部分环境下军标整层失效 */
 export const TRACK_SOURCE = "tracks-source";
+
+/** 融合航迹（对海/对空）点要素：军标 symbol，与高亮环同源 */
+export const TRACK_FUSION_PTS_SOURCE = "tracks-fusion-pts";
+
+/** 三类雷达航迹点要素：圆点 circle，与高亮环同源 */
+export const TRACK_RADAR_PTS_SOURCE = "tracks-radar-pts";
 
 /** 多选高亮环：`insertBeforeLayerId` 指向本层时，雷达/光电等专题层会插在其下（由下至上绘制，高亮环盖在专题层之上） */
 export const HIGHLIGHT_LAYER = "tracks-highlight";
 
+/** 雷达航迹多选高亮（与 `HIGHLIGHT_LAYER` 同源 filter，数据源为雷达点） */
+export const HIGHLIGHT_RADAR_LAYER = "tracks-highlight-radar";
+
 export const TRACK_TRAIL = "tracks-trail";
+/** 速度矢量（course×速度×秒） */
+export const TRACK_VECTOR = "tracks-vector";
 export const TRACK_SYMBOL = "tracks-symbol";
+/** 探鸟/码头/靖子头雷达：圆点（数据源 `TRACK_RADAR_PTS_SOURCE`，无 glyph/dot filter） */
+export const TRACK_DOT = "tracks-dot";
 export const TRACK_LABEL = "tracks-label";
+export const TRACK_LABEL_RADAR = "tracks-label-radar";
 /** 锁定圈：`setLockOnFilter` 更新 filter */
 export const LOCK_ON = "tracks-lock-on";
+export const LOCK_ON_RADAR = "tracks-lock-on-radar";
 
 /** 与点符号/高亮/锁定混用同一 GeoJSON 源时，排除折线要素（须用旧版 `$type` 过滤器，勿用 `["geometry-type"]` 表达式，否则 MapLibre 报 string expected, array found） */
 const GEOM_POINT: FilterSpecification = ["==", "$type", "Point"];
@@ -33,14 +59,48 @@ function filterPointsOnly(extra: FilterSpecification | null): FilterSpecificatio
 }
 
 /** 图层面板 `lyr-tracks`、事件绑定等与 `layer.id` 一致 */
-export const TRACK_LAYER_IDS = [TRACK_TRAIL, TRACK_SYMBOL, TRACK_LABEL, HIGHLIGHT_LAYER, LOCK_ON] as const;
+export const TRACK_LAYER_IDS = [
+  TRACK_TRAIL,
+  TRACK_VECTOR,
+  TRACK_DOT,
+  TRACK_SYMBOL,
+  TRACK_LABEL,
+  TRACK_LABEL_RADAR,
+  HIGHLIGHT_LAYER,
+  HIGHLIGHT_RADAR_LAYER,
+  LOCK_ON,
+  LOCK_ON_RADAR,
+] as const;
+
+/** 点选：军标层 + 雷达圆点层 */
+export const TRACK_PICK_LAYERS = [TRACK_SYMBOL, TRACK_DOT] as const;
+
+/**
+ * 纯表达式写法（`["geometry-type"]`），避免与 `["get", ...]` 混用传统 `$type` 导致
+ * 部分 MapLibre 版本静默拒绝 addLayer。
+ */
+const LINE_TRAIL_FILTER: FilterSpecification = [
+  "all",
+  ["==", ["geometry-type"], "LineString"],
+  ["!=", ["coalesce", ["get", "_lineKind"], "trail"], "vector"],
+] as unknown as FilterSpecification;
+
+const LINE_VECTOR_FILTER: FilterSpecification = [
+  "all",
+  ["==", ["geometry-type"], "LineString"],
+  ["==", ["get", "_lineKind"], "vector"],
+] as unknown as FilterSpecification;
 
 /**
  * 与 `trackRendering.trackDisplay.maxViewportPoints` 对齐的顶点估算：每条航迹计 `1 + len(historyTrail)`（当前点 + 历史折线顶点数）。
  * **不修改** `Track`；仅用于判断是否绘制历史折线。
  */
 export function trackMapVertexEstimate(tracks: ReadonlyArray<Track>): number {
-  return tracks.reduce((n, t) => n + 1 + (t.historyTrail?.length ?? 0), 0);
+  const trailSec = useTrackDisplayStore.getState().trailLengthSeconds;
+  return tracks.reduce((n, t) => {
+    const tr = trimHistoryTrailForDisplay(t.historyTrail, trailSec);
+    return n + 1 + (tr?.length ?? 0);
+  }, 0);
 }
 
 /**
@@ -55,24 +115,34 @@ export function trackMapDrawHistoryTrails(tracks: ReadonlyArray<Track>): boolean
   return trackMapVertexEstimate(tracks) <= max;
 }
 
+function trackPointFillAndStyle(t: Track, accent: AssetDispositionIconAccent | null | undefined) {
+  const tr = getTrackRenderingConfig();
+  const td = useTrackDisplayStore.getState();
+  const seaCol = td.seaFusionColor;
+  const airCol = td.airFusionColor;
+  const disp = getTrackDispositionForRendering(t);
+  const neutralFusion = disp === "neutral" ? neutralFusionColorForTrack(t, seaCol, airCol) : undefined;
+  const style = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
+  const friendlyFill = disp === "friendly" ? style.idColor : undefined;
+  const pointFill = neutralFusion ?? resolveTrackPointFill(t, disp, accent ?? null, friendlyFill);
+  return { pointFill, disp, neutralFusion, style };
+}
+
 /**
- * `Track[]` → GeoJSON：**Point**（当前位置）始终输出；**LineString** 仅在 `trackMapDrawHistoryTrails(trackList)` 为真且存在 `historyTrail` 时输出。
+ * `Track[]` → GeoJSON：仅 **LineString**（尾迹 + 速度矢量），供 `TRACK_SOURCE`。
  */
-export function buildTrackGeoJSON(
+export function buildTrackLinesGeoJSON(
   trackList: Track[],
   accent?: AssetDispositionIconAccent | null,
 ): GeoJSON.FeatureCollection {
-  const tr = getTrackRenderingConfig();
   const drawTrails = trackMapDrawHistoryTrails(trackList);
   const features: GeoJSON.Feature[] = [];
+  const td = useTrackDisplayStore.getState();
+  const vecSec = td.vectorLengthSeconds;
 
   for (const t of trackList) {
-    const trail = t.historyTrail;
-    const disp = getEffectiveTrackDisposition(t);
-    const neutralFusion = disp === "neutral" ? getFusionTrackMarkerFill(t) : undefined;
-    const style = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
-    const friendlyFill = disp === "friendly" ? style.idColor : undefined;
-    const pointFill = resolveTrackPointFill(t, disp, accent ?? null, friendlyFill);
+    const { pointFill } = trackPointFillAndStyle(t, accent);
+    const trail = trimHistoryTrailForDisplay(t.historyTrail, td.trailLengthSeconds);
 
     if (drawTrails && trail && trail.length >= 1) {
       const coords: [number, number][] = [
@@ -86,44 +156,118 @@ export function buildTrackGeoJSON(
           properties: {
             trackId: t.id,
             lineColor: pointFill,
+            _lineKind: "trail",
           },
         });
       }
     }
 
-    const ts = style;
+    const vecEnd = velocityVectorEndLngLat(t, vecSec);
+    if (vecEnd) {
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [[t.lng, t.lat], vecEnd],
+        },
+        properties: {
+          trackId: t.id,
+          lineColor: pointFill,
+          _lineKind: "vector",
+        },
+      });
+    }
+  }
+
+  return { type: "FeatureCollection", features };
+}
+
+/**
+ * 融合航迹点 → GeoJSON：**Point** + `symbolId`，供 `TRACK_FUSION_PTS_SOURCE`。
+ */
+export function buildTrackFusionPointsGeoJSON(
+  trackList: Track[],
+  accent?: AssetDispositionIconAccent | null,
+): GeoJSON.FeatureCollection {
+  const features: GeoJSON.Feature[] = [];
+  for (const t of trackList) {
+    const layerKey = resolveTrackLayerKey(t);
+    if (isRadarTrackLayerKey(layerKey)) continue;
+    const { pointFill, disp, neutralFusion, style } = trackPointFillAndStyle(t, accent);
+    const friendlyFill = disp === "friendly" ? style.idColor : undefined;
     const v = t.isVirtual === true;
-    const iconScale = Math.max(0.55, Math.min(1.5, ts.pointSize / 3.5));
+    const iconScale = Math.max(0.55, Math.min(1.5, style.pointSize / 3.5));
+    const baseProps: Record<string, unknown> = {
+      id: t.id,
+      showID: t.showID,
+      uniqueID: t.uniqueID,
+      trackId: t.trackId ?? null,
+      isAirTrack: t.isAirTrack ?? false,
+      targetType: t.targetType ?? null,
+      name: t.name,
+      mapLabelText: getTrackIdModeConfig().distinguishSeaAir
+        ? (t.type === "air" ? t.showID : (t.trackId ?? t.showID))
+        : (t.trackId ?? t.showID),
+      type: t.type,
+      disposition: disp,
+      speed: t.speed,
+      heading: t.heading,
+      course: t.course ?? null,
+      altitude: t.altitude ?? null,
+      color: pointFill,
+      labelColor: disp === "neutral" ? pointFill : style.idColor,
+      labelTextSize: Math.max(6, Math.min(22, style.idSize)),
+      symbolId: getMarkerSymbolId(t.type, disp, v, friendlyFill, neutralFusion, isAirTrackBirdGlyph(t)),
+      iconScale,
+    };
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [t.lng, t.lat] as [number, number] },
-      properties: {
-        id: t.id,
-        showID: t.showID,
-        uniqueID: t.uniqueID,
-        trackId: t.trackId ?? null,
-        isAirTrack: t.isAirTrack ?? false,
-        targetType: t.targetType ?? null,
-        name: t.name,
-        /** 地图标牌：18.141 模式(distinguishSeaAir=false)显示 trackId；28.9 模式对空显示 showID，对海显示 trackId */
-        mapLabelText: getTrackIdModeConfig().distinguishSeaAir
-          ? (t.type === "air" ? t.showID : (t.trackId ?? t.showID))
-          : (t.trackId ?? t.showID),
-        type: t.type,
-        disposition: disp,
-        speed: t.speed,
-        heading: t.heading,
-        course: t.course ?? null,
-        altitude: t.altitude ?? null,
-        color: pointFill,
-        symbolId: getMarkerSymbolId(t.type, disp, v, friendlyFill, neutralFusion),
-        labelColor: disp === "neutral" ? pointFill : ts.idColor,
-        labelTextSize: Math.max(6, Math.min(22, ts.idSize)),
-        iconScale,
-      },
+      properties: baseProps as GeoJSON.GeoJsonProperties,
     });
   }
+  return { type: "FeatureCollection", features };
+}
 
+/**
+ * 雷达航迹点 → GeoJSON：**Point**（圆点层用 `color`），供 `TRACK_RADAR_PTS_SOURCE`。
+ */
+export function buildTrackRadarPointsGeoJSON(
+  trackList: Track[],
+  accent?: AssetDispositionIconAccent | null,
+): GeoJSON.FeatureCollection {
+  const features: GeoJSON.Feature[] = [];
+  for (const t of trackList) {
+    const layerKey = resolveTrackLayerKey(t);
+    if (!isRadarTrackLayerKey(layerKey)) continue;
+    const { pointFill, disp, style } = trackPointFillAndStyle(t, accent);
+    const baseProps: Record<string, unknown> = {
+      id: t.id,
+      showID: t.showID,
+      uniqueID: t.uniqueID,
+      trackId: t.trackId ?? null,
+      isAirTrack: t.isAirTrack ?? false,
+      targetType: t.targetType ?? null,
+      name: t.name,
+      mapLabelText: getTrackIdModeConfig().distinguishSeaAir
+        ? (t.type === "air" ? t.showID : (t.trackId ?? t.showID))
+        : (t.trackId ?? t.showID),
+      type: t.type,
+      disposition: disp,
+      speed: t.speed,
+      heading: t.heading,
+      course: t.course ?? null,
+      altitude: t.altitude ?? null,
+      color: pointFill,
+      labelColor: disp === "neutral" ? pointFill : style.idColor,
+      labelTextSize: Math.max(6, Math.min(22, style.idSize)),
+    };
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [t.lng, t.lat] as [number, number] },
+      properties: baseProps as GeoJSON.GeoJsonProperties,
+    });
+  }
   return { type: "FeatureCollection", features };
 }
 
@@ -153,7 +297,12 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
     h = Math.imul(h, 16777619) >>> 0;
     h ^= t.speed | 0;
     h = Math.imul(h, 16777619) >>> 0;
-    const eff = getEffectiveTrackDisposition(t);
+    const eff = getTrackDispositionForRendering(t);
+    const manualTag = useTrackStore.getState().manualAffiliationByShowId[t.showID] ?? "";
+    for (let i = 0; i < manualTag.length; i++) {
+      h ^= manualTag.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
     for (let i = 0; i < eff.length; i++) {
       h ^= eff.charCodeAt(i);
       h = Math.imul(h, 16777619) >>> 0;
@@ -186,24 +335,48 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
     h = Math.imul(h, 16777619) >>> 0;
     h ^= t.isUav === true ? 1 : 0;
     h = Math.imul(h, 16777619) >>> 0;
+    h ^= isAirTrackBirdGlyph(t) ? 1 : 0;
+    h = Math.imul(h, 16777619) >>> 0;
+    const lk = resolveTrackLayerKey(t);
+    const mapDot = isRadarTrackLayerKey(lk);
+    h ^= mapDot ? 1 : 0;
+    h = Math.imul(h, 16777619) >>> 0;
+    for (let i = 0; i < lk.length; i++) {
+      h ^= lk.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    const dds = t.ddsSourceId ?? "";
+    for (let i = 0; i < Math.min(dds.length, 64); i++) {
+      h ^= dds.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    /** 速度矢量依赖 course/azimuth；缺此两项时指纹会与「补 course 后」相同 → 错误跳过 setData、红线永远不出现 */
+    const crs = t.course;
+    h ^= crs != null && Number.isFinite(crs) ? Math.round((crs as number) * 100) : 0x5a11c0de;
+    h = Math.imul(h, 16777619) >>> 0;
+    const azm = t.azimuth;
+    h ^= azm != null && Number.isFinite(azm) ? Math.round((azm as number) * 100) : 0x71a2b33f;
+    h = Math.imul(h, 16777619) >>> 0;
   }
   return h >>> 0;
 }
 
 /**
- * 航迹：单一 GeoJSON 源 + 折线 + 高亮环 / 锁定圈 / 符号 / 名称标签。
+ * 航迹：**三 GeoJSON 源**（折线 / 融合点 / 雷达点）+ 高亮环 / 锁定圈 / 军标 / 圆点 / 标牌。
  * 安装分两段：`installSourceAndHighlight` 须在雷达/光电等 `insertBeforeLayerId: HIGHLIGHT_LAYER` 之前调用；
  * `installSymbolLayers` 在专题层装完后再调用（锁定圈与符号叠在最上）。
  */
 export class TracksMaplibre {
   private map: maplibregl.Map;
   private dispositionAccent: AssetDispositionIconAccent | null = null;
+  /** 并发 `setTracksAsync` 时只应用最后一次结果 */
+  private trackFlushGeneration = 0;
   /**
    * 与航迹几何无关的渲染参数每变一次 +1（如 `factory.assetIcons` 驱动的 `setTrackDispositionAccent`），
    * 使 `setTracks` 的缓存键失效，避免沿用上一帧 GeoJSON。
    */
   private trackRenderRevision = 0;
-  /** 上一帧写入 source 的签名；与当前帧一致则跳过 `buildTrackGeoJSON` + `setData`（减轻 MapLibre 压力） */
+  /** 上一帧写入三源的签名；与当前帧一致则跳过 `setData`（减轻 MapLibre 压力） */
   private lastSetDataKey = "";
 
   constructor(map: maplibregl.Map) {
@@ -221,28 +394,40 @@ export class TracksMaplibre {
   applyTrackRenderingLayout() {
     const m = this.map;
     const tr = getTrackRenderingConfig();
-    if (m.getLayer(TRACK_LABEL)) {
-      m.setLayoutProperty(TRACK_LABEL, "visibility", tr.trackDisplay.showTrackId ? "visible" : "none");
-      m.setLayoutProperty(TRACK_LABEL, "text-size", ["coalesce", ["get", "labelTextSize"], 10]);
-      m.setPaintProperty(TRACK_LABEL, "text-color", ["coalesce", ["get", "labelColor"], "#a1a1aa"]);
+    const vis = tr.trackDisplay.showTrackId ? "visible" : "none";
+    for (const lid of [TRACK_LABEL, TRACK_LABEL_RADAR]) {
+      if (m.getLayer(lid)) {
+        m.setLayoutProperty(lid, "visibility", vis);
+        m.setLayoutProperty(lid, "text-size", ["coalesce", ["get", "labelTextSize"], 10]);
+        m.setPaintProperty(lid, "text-color", ["coalesce", ["get", "labelColor"], "#a1a1aa"]);
+      }
     }
-    /* `buildTrackGeoJSON` 会读 `trackTypeStyles` 等，配置热变时需重算 */
+    /* 三源构建会读 `trackTypeStyles` 等，配置热变时需重算 */
     this.lastSetDataKey = "";
   }
 
-  /** source + 多选高亮层；供后续专题层插在下方 */
+  /** 折线源 + 融合/雷达点源 + 双高亮层；供后续专题层插在 `HIGHLIGHT_LAYER` 下 */
   installSourceAndHighlight(initialTracks: Track[]) {
     const m = this.map;
     if (m.getSource(TRACK_SOURCE)) return;
+    const accent = this.dispositionAccent;
     m.addSource(TRACK_SOURCE, {
       type: "geojson",
-      data: buildTrackGeoJSON(initialTracks, this.dispositionAccent),
+      data: buildTrackLinesGeoJSON(initialTracks, accent),
+    });
+    m.addSource(TRACK_FUSION_PTS_SOURCE, {
+      type: "geojson",
+      data: buildTrackFusionPointsGeoJSON(initialTracks, accent),
+    });
+    m.addSource(TRACK_RADAR_PTS_SOURCE, {
+      type: "geojson",
+      data: buildTrackRadarPointsGeoJSON(initialTracks, accent),
     });
     if (!m.getLayer(HIGHLIGHT_LAYER)) {
       m.addLayer({
         id: HIGHLIGHT_LAYER,
         type: "symbol",
-        source: TRACK_SOURCE,
+        source: TRACK_FUSION_PTS_SOURCE,
         filter: filterPointsOnly(["in", "id", ""]),
         layout: {
           "icon-image": TRACK_SELECT_RING_ID,
@@ -255,18 +440,42 @@ export class TracksMaplibre {
         paint: { "icon-opacity": 0.88 },
       });
     }
+    if (!m.getLayer(HIGHLIGHT_RADAR_LAYER)) {
+      m.addLayer(
+        {
+          id: HIGHLIGHT_RADAR_LAYER,
+          type: "symbol",
+          source: TRACK_RADAR_PTS_SOURCE,
+          filter: filterPointsOnly(["in", "id", ""]),
+          layout: {
+            "icon-image": TRACK_SELECT_RING_ID,
+            "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.58, 10, 0.86, 15, 1.12],
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+            "icon-rotation-alignment": "viewport",
+            "icon-pitch-alignment": "viewport",
+          },
+          paint: { "icon-opacity": 0.88 },
+        },
+        HIGHLIGHT_LAYER,
+      );
+    }
   }
 
   /** 锁定圈 + 航迹线 + 航迹符号 + 名称；须在雷达/光电安装之后调用 */
   installSymbolLayers() {
     const m = this.map;
-    if (!m.getSource(TRACK_SOURCE)) return;
+    if (!m.getSource(TRACK_SOURCE) || !m.getSource(TRACK_FUSION_PTS_SOURCE) || !m.getSource(TRACK_RADAR_PTS_SOURCE))
+      return;
+
+    const lockFilter = filterPointsOnly(["in", "id", ""]);
+
     if (!m.getLayer(LOCK_ON)) {
       m.addLayer({
         id: LOCK_ON,
         type: "symbol",
-        source: TRACK_SOURCE,
-        filter: filterPointsOnly(["in", "id", ""]),
+        source: TRACK_FUSION_PTS_SOURCE,
+        filter: lockFilter,
         layout: {
           "icon-image": LOCK_ON_IMAGE_ID,
           "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.5, 10, 0.72, 15, 1.05],
@@ -278,11 +487,31 @@ export class TracksMaplibre {
         paint: { "icon-opacity": 0.9 },
       });
     }
+    if (!m.getLayer(LOCK_ON_RADAR)) {
+      m.addLayer(
+        {
+          id: LOCK_ON_RADAR,
+          type: "symbol",
+          source: TRACK_RADAR_PTS_SOURCE,
+          filter: lockFilter,
+          layout: {
+            "icon-image": LOCK_ON_IMAGE_ID,
+            "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.5, 10, 0.72, 15, 1.05],
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+            "icon-rotation-alignment": "viewport",
+            "icon-pitch-alignment": "viewport",
+          },
+          paint: { "icon-opacity": 0.9 },
+        },
+        LOCK_ON,
+      );
+    }
     if (!m.getLayer(TRACK_SYMBOL)) {
       m.addLayer({
         id: TRACK_SYMBOL,
         type: "symbol",
-        source: TRACK_SOURCE,
+        source: TRACK_FUSION_PTS_SOURCE,
         filter: filterPointsOnly(null),
         layout: {
           "icon-image": ["get", "symbolId"],
@@ -312,12 +541,53 @@ export class TracksMaplibre {
           id: TRACK_TRAIL,
           type: "line",
           source: TRACK_SOURCE,
-          filter: ["==", "$type", "LineString"],
+          filter: LINE_TRAIL_FILTER,
+          /**
+           * 尾迹用圆点串显示：line-cap=round + line-dasharray=[0, N] 时每个"dash"退化为圆点。
+           * N 控制点间距（单位 = line-width），值越小点越密。
+           */
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": ["coalesce", ["get", "lineColor"], "#71717a"],
+            "line-width": 4,
+            "line-dasharray": [0, 1.8],
+            "line-opacity": 0.65,
+          },
+        },
+        TRACK_SYMBOL,
+      );
+    }
+    if (!m.getLayer(TRACK_VECTOR)) {
+      m.addLayer(
+        {
+          id: TRACK_VECTOR,
+          type: "line",
+          source: TRACK_SOURCE,
+          filter: LINE_VECTOR_FILTER,
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
             "line-color": ["coalesce", ["get", "lineColor"], "#71717a"],
-            "line-width": 2,
-            "line-opacity": 0.55,
+            "line-width": 1.5,
+            "line-opacity": 0.9,
+          },
+        },
+        TRACK_SYMBOL,
+      );
+    }
+    if (!m.getLayer(TRACK_DOT)) {
+      m.addLayer(
+        {
+          id: TRACK_DOT,
+          type: "circle",
+          source: TRACK_RADAR_PTS_SOURCE,
+          filter: filterPointsOnly(null),
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 3.2, 10, 5, 15, 6.5],
+            "circle-color": ["coalesce", ["get", "color"], "#71717a"],
+            "circle-opacity": 0.92,
+            "circle-stroke-width": 1,
+            "circle-stroke-color": "#09090b",
+            "circle-stroke-opacity": 0.55,
           },
         },
         TRACK_SYMBOL,
@@ -327,7 +597,30 @@ export class TracksMaplibre {
       m.addLayer({
         id: TRACK_LABEL,
         type: "symbol",
-        source: TRACK_SOURCE,
+        source: TRACK_FUSION_PTS_SOURCE,
+        filter: filterPointsOnly(null),
+        layout: {
+          "text-field": ["coalesce", ["get", "mapLabelText"], ["get", "name"], ""],
+          "text-font": ["Open Sans Regular"],
+          "text-size": 10,
+          "text-offset": [0, 2.2],
+          "text-anchor": "top",
+          "text-max-width": 10,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: {
+          "text-color": "#a1a1aa",
+          "text-halo-color": "#09090b",
+          "text-halo-width": 1.5,
+        },
+      });
+    }
+    if (!m.getLayer(TRACK_LABEL_RADAR)) {
+      m.addLayer({
+        id: TRACK_LABEL_RADAR,
+        type: "symbol",
+        source: TRACK_RADAR_PTS_SOURCE,
         filter: filterPointsOnly(null),
         layout: {
           "text-field": ["coalesce", ["get", "mapLabelText"], ["get", "name"], ""],
@@ -349,42 +642,103 @@ export class TracksMaplibre {
   }
 
   setTracks(tracks: Track[]) {
-    const src = this.map.getSource(TRACK_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (!src) return;
+    void this.setTracksAsync(tracks);
+  }
+
+  /** 自定义融合色会生成新的 `symbolId`，须先 `addImage` 再 `setData`，否则图标空白 */
+  private async setTracksAsync(tracks: Track[]) {
+    const srcLines = this.map.getSource(TRACK_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    const srcFus = this.map.getSource(TRACK_FUSION_PTS_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    const srcRad = this.map.getSource(TRACK_RADAR_PTS_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!srcLines || !srcFus || !srcRad) return;
+    const gen = ++this.trackFlushGeneration;
+    const vis = useAppStore.getState().layerVisibility;
+    const sub = useTrackDisplayStore.getState().trackSubtypeVisible;
+    const filtered = filterTracksForMapRender(tracks, vis, sub);
+    const visSig = trackMapVisibilitySignature(vis, sub);
     const trd = getTrackRenderingConfig().trackDisplay;
     const maxVp = trd.maxViewportPoints;
     const maxHist = trd.maxHistoryPointsPerTrack;
-    const drawTrails = trackMapDrawHistoryTrails(tracks) ? 1 : 0;
-    const fp = fnv1aTrackDataFingerprint(tracks);
-    const key = `${this.trackRenderRevision}:${maxVp}:${maxHist}:${drawTrails}:${tracks.length}:${fp}`;
+    const drawTrails = trackMapDrawHistoryTrails(filtered) ? 1 : 0;
+    const tdRev = useTrackDisplayStore.getState().displayRevision;
+    const affRev = useTrackStore.getState().mapManualAffiliationRev;
+    const fp = fnv1aTrackDataFingerprint(filtered);
+    const key = `${this.trackRenderRevision}:${maxVp}:${maxHist}:${drawTrails}:${tdRev}:${affRev}:${visSig}:${filtered.length}:${fp}`;
     if (key === this.lastSetDataKey) return;
+    try {
+      await this.ensureNeutralFusionImages(filtered);
+    } catch (e) {
+      console.warn("[tracks-maplibre] ensureNeutralFusionImages:", e);
+    }
+    if (gen !== this.trackFlushGeneration) return;
     this.lastSetDataKey = key;
-    src.setData(buildTrackGeoJSON(tracks, this.dispositionAccent) as GeoJSON.FeatureCollection);
+    const accent = this.dispositionAccent;
+    srcLines.setData(buildTrackLinesGeoJSON(filtered, accent) as GeoJSON.FeatureCollection);
+    srcFus.setData(buildTrackFusionPointsGeoJSON(filtered, accent) as GeoJSON.FeatureCollection);
+    srcRad.setData(buildTrackRadarPointsGeoJSON(filtered, accent) as GeoJSON.FeatureCollection);
+  }
+
+  private async ensureNeutralFusionImages(tracks: Track[]) {
+    const m = this.map;
+    const td = useTrackDisplayStore.getState();
+    const accent = this.dispositionAccent;
+    const seen = new Set<string>();
+    for (const t of tracks) {
+      if (isRadarTrackLayerKey(resolveTrackLayerKey(t))) continue;
+      const disp = getTrackDispositionForRendering(t);
+      if (disp !== "neutral") continue;
+      const tint = neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor);
+      const id = getMarkerSymbolId(t.type, disp, t.isVirtual === true, undefined, tint, isAirTrackBirdGlyph(t));
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (m.hasImage(id)) continue;
+      const srcData = buildMarkerSymbolDataUrl(
+        t.type,
+        disp,
+        accent,
+        t.isVirtual === true,
+        undefined,
+        tint,
+        isAirTrackBirdGlyph(t),
+      );
+      m.addImage(id, await loadSvgImage(srcData, 64), { pixelRatio: 2 });
+    }
   }
 
   setHighlightFilter(ids: string[]) {
-    if (!this.map.getLayer(HIGHLIGHT_LAYER)) return;
-    this.map.setFilter(
-      HIGHLIGHT_LAYER,
-      filterPointsOnly(ids.length ? (["in", "id", ...ids] as FilterSpecification) : ["in", "id", ""]),
+    const f = filterPointsOnly(
+      ids.length ? (["in", "id", ...ids] as FilterSpecification) : (["in", "id", ""] as FilterSpecification),
     );
+    if (this.map.getLayer(HIGHLIGHT_LAYER)) this.map.setFilter(HIGHLIGHT_LAYER, f);
+    if (this.map.getLayer(HIGHLIGHT_RADAR_LAYER)) this.map.setFilter(HIGHLIGHT_RADAR_LAYER, f);
   }
 
   setLockOnFilter(selectedId: string | null) {
-    if (!this.map.getLayer(LOCK_ON)) return;
-    this.map.setFilter(
-      LOCK_ON,
-      filterPointsOnly(
-        selectedId ? (["==", "id", selectedId] as FilterSpecification) : ["in", "id", ""],
-      ),
+    const f = filterPointsOnly(
+      selectedId ? (["==", "id", selectedId] as FilterSpecification) : (["in", "id", ""] as FilterSpecification),
     );
+    if (this.map.getLayer(LOCK_ON)) this.map.setFilter(LOCK_ON, f);
+    if (this.map.getLayer(LOCK_ON_RADAR)) this.map.setFilter(LOCK_ON_RADAR, f);
   }
 
   dispose() {
     const m = this.map;
-    for (const id of [TRACK_LABEL, TRACK_TRAIL, TRACK_SYMBOL, LOCK_ON, HIGHLIGHT_LAYER]) {
+    for (const id of [
+      TRACK_LABEL_RADAR,
+      TRACK_LABEL,
+      TRACK_VECTOR,
+      TRACK_TRAIL,
+      TRACK_DOT,
+      TRACK_SYMBOL,
+      LOCK_ON_RADAR,
+      LOCK_ON,
+      HIGHLIGHT_RADAR_LAYER,
+      HIGHLIGHT_LAYER,
+    ]) {
       if (m.getLayer(id)) m.removeLayer(id);
     }
-    if (m.getSource(TRACK_SOURCE)) m.removeSource(TRACK_SOURCE);
+    for (const sid of [TRACK_RADAR_PTS_SOURCE, TRACK_FUSION_PTS_SOURCE, TRACK_SOURCE]) {
+      if (m.getSource(sid)) m.removeSource(sid);
+    }
   }
 }

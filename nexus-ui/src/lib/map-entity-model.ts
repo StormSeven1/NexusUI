@@ -1,5 +1,22 @@
 import type { ForceDisposition } from "./theme-colors";
 
+/** 与后端 `track_layer_key`、DDS 来源一一对应 */
+export type TrackLayerKey =
+  | "fuse_sea"
+  | "fuse_air"
+  | "bird_radar"
+  | "radar_wharf"
+  | "radar_jingzi";
+
+/** 稳定顺序：签名 / 目标侧边栏列表 */
+export const TRACK_LAYER_KEYS_ORDERED = [
+  "fuse_sea",
+  "fuse_air",
+  "bird_radar",
+  "radar_wharf",
+  "radar_jingzi",
+] as const satisfies readonly TrackLayerKey[];
+
 /** 从 WS / 后端 properties 解析是否虚兵（供地图符号与适配器共用） */
 export function isVirtualFromProperties(properties: Record<string, unknown> | null | undefined): boolean {
   if (!properties) return false;
@@ -46,10 +63,21 @@ export interface Track {
   distance?: number;
   /** 数据源标识 */
   dataSourceId?: string;
+  /** DDS 接收器 id（与后端 `dds_source_id` 一致），用于还原 `track_layer_key` */
+  ddsSourceId?: string;
+  /**
+   * DDS 航迹来源键（与 Custombackend `track_layer_key` 一致），用于图层面板子项显隐。
+   * 缺省由 `track-layer-visibility.resolveTrackLayerKey` 按 `ddsSourceId`/文本推断。
+   */
+  trackLayerKey?: TrackLayerKey;
   /** 虚兵：航迹符号外框为虚线样式（与资产 `virtual_troop` 一致） */
   isVirtual?: boolean;
   /** 无人机等目标：为 true 时超时阈值用 `trackRendering.trackTimeout.uavSeconds` */
   isUav?: boolean;
+  /**
+   * 对空航迹 DDS `trackCategoryId`：**3 = 无人机**，其余类别视为鸟（见 `isAirTrackBirdGlyph`）。
+   */
+  trackCategoryId?: number;
   /**
    * 前端在相邻 WS 报文之间累积的**历史采样点** `[lng, lat]`（不含当前 `lng/lat`），存在 **`useTrackStore` 每条 `Track` 上**。
    * 条数上限由 `trackRendering.trackDisplay.maxHistoryPointsPerTrack` 控制；地图在 `maxViewportPoints` 全图顶点预算内才画折线，超预算时**仅不绘制**折线，**不**从本字段删除数据。
@@ -57,6 +85,8 @@ export interface Track {
   historyTrail?: [number, number][];
   /** 查证图片 data URL（由 image polling 写入） */
   verificationImage?: string;
+  /** 航迹别名（报文 trackAlias / track_alias；有则优先作标题） */
+  trackAlias?: string;
 }
 
 /** 与 `map-icons.PUBLIC_MAP_SVG_FILES` 键一致；含 WS 动态机场 / 无人机 */
@@ -150,7 +180,7 @@ export interface RestrictedZone {
   fillOpacity?: number;
 }
 
-/** 图层面板「数据图层」行：仅 `buildDataLayerPanelRows` 返回的项 */
+/** 图层面板「数据图层」单行（航迹仅一项总开关，分类显隐在目标侧边栏） */
 export type DataLayerPanelRow = { id: string; name: string };
 
 export const LYR_TRACKS = "lyr-tracks";
@@ -165,6 +195,8 @@ export const LYR_TDOA = "lyr-tdoa";
 /** 电侦（电子侦察）图标图层；与光电（LYR_OPTO_FOV）为不同类型 */
 export const LYR_TOWER = "lyr-tower";
 export const LYR_ZONES = "lyr-zones";
+/** Postgres `area_table` 区域（矩形/圆/多边形），见 `/api/db-areas`（连库 `NEXUS_POSTGRES_URL`）+ `useDbAreasPoll` */
+export const LYR_DB_AREAS = "lyr-db-areas";
 /** Map2D 量算/标绘图层分组 id（**不进** `layerVisibility` 初始键；显隐用 `applyLayerPanelVisibilityFromStore` 的 `?? true`） */
 export const LYR_MEASURE = "lyr-measure";
 
@@ -179,6 +211,7 @@ export const ALL_DATA_LAYER_IDS = [
   LYR_LASER,
   LYR_TDOA,
   LYR_ZONES,
+  LYR_DB_AREAS,
 ] as const;
 
 /**
@@ -207,5 +240,6 @@ export function buildDataLayerPanelRows(assets: ReadonlyArray<{ asset_type: stri
   if (types.has("laser")) rows.push({ id: LYR_LASER, name: "激光武器" });
   if (types.has("tdoa")) rows.push({ id: LYR_TDOA, name: "TDOA" });
   rows.push({ id: LYR_ZONES, name: "限制区域" });
+  /** `LYR_DB_AREAS` 在 `LayerPanel` 独立「区域图层」分级块中控制，不进数据图层列表 */
   return rows;
 }

@@ -44,7 +44,18 @@ export interface BufferedDetectionEntry {
    * singleRect 首框展示元数据（与 Qt `rectTrackName` / `rectType` 及 DrawCircleTag 圆内「海|空」对齐）。
    * 由 WS `videoRect` 首条对象字段解析；纯数组框时为空。
    */
-  singleDisplayMeta?: { trackName?: string; typeShort?: string };
+  singleDisplayMeta?: {
+    trackName?: string;
+    typeShort?: string;
+    /** 方位角 ° */
+    azimuthDeg?: number;
+    /** 距离 m（与 Qt `rectTrackDis` 一致，标牌换算 NM = /1852） */
+    distanceM?: number;
+    /** 地速 m/s */
+    speedMps?: number;
+    /** 航向角 °（COG） */
+    courseDeg?: number;
+  };
 }
 
 export interface MatchState {

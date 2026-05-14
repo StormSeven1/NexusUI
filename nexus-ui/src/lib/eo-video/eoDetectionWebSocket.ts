@@ -5,6 +5,7 @@ import {
   summarizeWsInboundPayload,
   unwrapDetectionEnvelope,
 } from "@/lib/eo-video/eoWsPayloadNormalize";
+import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
 
 type Listener = (data: EoCameraWsPayload) => void;
 
@@ -20,19 +21,20 @@ async function fetchServerDerivedWsUrls(): Promise<string[]> {
   }
 }
 
-/** 与 base-vue websocketService.connectWithFallback 顺序对齐：公网 env → 后端推导 → 同源代理 */
+/** 与 base-vue websocketService.connectWithFallback 顺序对齐：公网 env → 后端推导。（勿加 wss(s)://当前页/ws：Next dev 无该反代，只会握手失败） */
 async function wsUrlCandidates(): Promise<string[]> {
   if (typeof window === "undefined") return [];
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const host = window.location.host;
   const fromEnv = process.env.NEXT_PUBLIC_EO_DETECTION_WS_URL?.trim();
   const derived = await fetchServerDerivedWsUrls();
-  const list = [...(fromEnv ? [fromEnv] : []), ...derived, `${proto}//${host}/ws`];
+  const list = [...(fromEnv ? [fromEnv] : []), ...derived];
   return [...new Set(list)];
 }
 
 /** 检测框 WebSocket：多相机共连，按 canonical entityId 分发 */
 class EoDetectionWebSocketManager {
+  /** Strict Mode / 快速取消订阅时在握手完成前 teardown，会令 socket 报错；用语义世代丢弃过时回调 */
+  private wsEpoch = 0;
+
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -80,7 +82,8 @@ class EoDetectionWebSocketManager {
     };
   }
 
-  private teardownConnection() {
+  private teardownConnection(clearConnecting = true) {
+    this.wsEpoch++;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -94,12 +97,16 @@ class EoDetectionWebSocketManager {
       }
       this.ws = null;
     }
-    this.isConnecting = false;
+    if (clearConnecting) this.isConnecting = false;
   }
 
-  private tryConnect(url: string): Promise<boolean> {
+  private tryConnect(url: string, epochSnap: number): Promise<boolean> {
     return new Promise((resolve) => {
       try {
+        if (epochSnap !== this.wsEpoch) {
+          resolve(false);
+          return;
+        }
         const ws = new WebSocket(url);
         let settled = false;
         let t: ReturnType<typeof setTimeout>;
@@ -120,6 +127,15 @@ class EoDetectionWebSocketManager {
         }, this.connectTimeoutMs);
 
         ws.onopen = () => {
+          if (epochSnap !== this.wsEpoch) {
+            try {
+              ws.close();
+            } catch {
+              /* ignore */
+            }
+            finish(false);
+            return;
+          }
           this.ws = ws;
           this.isConnecting = false;
           this.reconnectAttempts = 0;
@@ -145,16 +161,25 @@ class EoDetectionWebSocketManager {
 
   private async connectWithFallback() {
     if (this.isConnecting || this.ws?.readyState === WebSocket.OPEN) return;
+    this.teardownConnection(false);
     this.isConnecting = true;
-    this.teardownConnection();
+    const connectEpoch = this.wsEpoch;
 
-    const urls = await wsUrlCandidates();
+    const urls = (await wsUrlCandidates()).map((u) => rewriteWsUrlForHttpsPage(u));
     for (const url of urls) {
-      const ok = await this.tryConnect(url);
-      if (ok) {
+      if (connectEpoch !== this.wsEpoch) {
         this.isConnecting = false;
         return;
       }
+      const ok = await this.tryConnect(url, connectEpoch);
+      if (ok && connectEpoch === this.wsEpoch) {
+        this.isConnecting = false;
+        return;
+      }
+    }
+    if (connectEpoch !== this.wsEpoch) {
+      this.isConnecting = false;
+      return;
     }
     this.isConnecting = false;
     this.scheduleReconnect();

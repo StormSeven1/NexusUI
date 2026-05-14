@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { IClientOptions, MqttClient } from "mqtt";
 /** 浏览器包为 mqtt.esm.js：仅 default，无命名 export connect（Turbopack 会静态报错） */
 import mqttImport from "mqtt";
+import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
 
 /** 从 default 上取 connect（兼容 __esModule / 嵌套 default） */
 function resolveMqttConnect(): (url: string, opts?: IClientOptions) => MqttClient {
@@ -327,13 +328,12 @@ export function buildDjiProductTopics(airportSN: string | null | undefined, devi
   return topics;
 }
 
-/** https 页面下不再把 MQTT 的 `ws://` 自动改成 `wss://`：
- *  现场 broker（如 8083）多为明文 WebSocket，`wss` 会因无 TLS 报 ERR_SSL_PROTOCOL_ERROR。
- *  若必须使用 https 前端：请让 broker 提供真实 WSS，并在 .env.local 配置 `NEXT_PUBLIC_MQTT_WS_URL=wss://...`；
- *  或改用 `npm run dev`（不加 --experimental-https）用 http:// 打开前端，可同时避免态势 WS「混合内容」被拦。
+/**
+ * 与 `NEXT_PUBLIC_WS_USE_NGINX_TUNNEL` 对齐：仅在 Nginx 同源 wss 场景下才把 `ws://` 重写为 `/wss-mqtt/`。
  */
+
 export function normalizeMqttWsUrlForBrowserPage(wsUrl: string): string {
-  return wsUrl.trim();
+  return rewriteWsUrlForHttpsPage(wsUrl.trim());
 }
 
 /**

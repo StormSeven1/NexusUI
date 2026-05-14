@@ -50,3 +50,79 @@ export function parseSseDataLine(trimmed: string): Record<string, unknown> | nul
     return null;
   }
 }
+
+/** 与 Qt `WorkflowInterruptDialog` + `GPTInterfaceWgt` 解析 `event == "interrupt"` 一致 */
+export type LangGraphInterruptUiPayload = {
+  message: string;
+  interruptId: string;
+  mainInterruptId: string;
+  threadId: string;
+  nodeName?: string;
+};
+
+export function parseLangGraphInterruptEvent(obj: Record<string, unknown>): LangGraphInterruptUiPayload | null {
+  if (String(obj.event ?? "") !== "interrupt") return null;
+  const threadRaw = obj.thread_id;
+  const threadId =
+    typeof threadRaw === "string" && threadRaw.trim() ? threadRaw.trim() : "";
+  const data = obj.data;
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  const mainRaw = d.id;
+  const mainInterruptId =
+    typeof mainRaw === "string" && mainRaw.trim()
+      ? mainRaw.trim()
+      : mainRaw != null && String(mainRaw).trim()
+        ? String(mainRaw).trim()
+        : "";
+  const nodes = d.nodes;
+  if (!Array.isArray(nodes) || nodes.length === 0) return null;
+  const node0 = nodes[0];
+  if (!node0 || typeof node0 !== "object") return null;
+  const n = node0 as Record<string, unknown>;
+  const msgRaw = n.message;
+  const message =
+    typeof msgRaw === "string" && msgRaw.trim()
+      ? msgRaw.trim()
+      : "工作流需要您确认后继续。";
+  const iidRaw = n.interrupt_id;
+  const interruptId =
+    typeof iidRaw === "string" && iidRaw.trim()
+      ? iidRaw.trim()
+      : iidRaw != null && String(iidRaw).trim()
+        ? String(iidRaw).trim()
+        : "";
+  const nn = n.node_name;
+  const nodeName = typeof nn === "string" && nn.trim() ? nn.trim() : undefined;
+  if (!interruptId || !mainInterruptId) return null;
+  return { message, interruptId, mainInterruptId, threadId, nodeName };
+}
+
+/**
+ * 消费 LangGraph SSE 流（与 `ChatPanelLangGraph` / Qt `readyRead` 按行处理一致）。
+ */
+export async function forEachLangGraphSseLine(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onParsed: (parsed: Record<string, unknown>) => void | Promise<void>,
+): Promise<void> {
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const { lines, rest } = splitLines(buf);
+    buf = rest;
+    for (const raw of lines) {
+      const line = raw.replace(/\r$/, "").trim();
+      if (!line) continue;
+      const parsed = parseSseDataLine(line);
+      if (parsed) await onParsed(parsed);
+    }
+  }
+  const tail = buf.replace(/\r$/, "").trim();
+  if (tail) {
+    const parsed = parseSseDataLine(tail);
+    if (parsed) await onParsed(parsed);
+  }
+}

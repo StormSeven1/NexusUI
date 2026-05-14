@@ -149,6 +149,10 @@ export async function resolveEoPipPlaybackUrl(
     return opts.mainPlaySignalingUrl;
   }
 
+  if (entry.playbackKind === "image" || entry.registrySource === "thirdPartyCamera") {
+    throw new Error("第三方相机为图片模式，画中画暂不可用");
+  }
+
   if (!entry.uav) {
     if (entry.signalingUrl && entry.signalingUrl !== "about:blank") {
       return entry.signalingUrl;

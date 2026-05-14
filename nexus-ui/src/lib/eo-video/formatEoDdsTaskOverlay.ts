@@ -44,7 +44,8 @@ function isCameraExecutionCompleted(executionState: unknown): boolean {
   return false;
 }
 
-function parsePositiveTrackId(trackID: unknown): number | null {
+/** 与右下角 `formatEoDdsCameraLine` 同源：仅接受正整数航迹号 */
+export function parsePositiveTrackId(trackID: unknown): number | null {
   if (trackID === null || trackID === undefined) return null;
   if (typeof trackID === "number" && Number.isFinite(trackID)) {
     const n = Math.trunc(trackID);

@@ -10,6 +10,8 @@ interface MilSymbolProps {
   disposition: ForceDisposition;
   /** 虚兵外框，与地图一致 */
   virtual?: boolean;
+  /** 对空：鸟形符号（与地图 `isAirTrackBirdGlyph` 一致） */
+  airBird?: boolean;
   /** 中立融合航迹填色（见 `getFusionTrackMarkerFill`），仅 disposition=neutral 时传入 */
   neutralFusionFill?: string | null;
   size?: "sm" | "md" | "lg";
@@ -24,6 +26,7 @@ export function MilSymbol({
   type,
   disposition,
   virtual = false,
+  airBird = false,
   neutralFusionFill,
   size = "md",
   className,
@@ -34,7 +37,7 @@ export function MilSymbol({
     lg: "h-10 w-10",
   };
   const px = { sm: 24, md: 32, lg: 40 }[size];
-  const src = buildMarkerSymbolDataUrl(type, disposition, undefined, virtual, undefined, neutralFusionFill);
+  const src = buildMarkerSymbolDataUrl(type, disposition, undefined, virtual, undefined, neutralFusionFill, airBird);
 
   return (
     <Image

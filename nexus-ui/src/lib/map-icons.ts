@@ -99,6 +99,29 @@ const TRACK_SVG_ICONS: Record<TrackType, TrackIconDef> = {
 };
 
 /**
+ * 对空「鸟」类航迹：Phosphor Icons `bird`（regular，MIT），与战机剪影同为实心填充，缩放到与 `air` 同一内层框。
+ * 来源：@phosphor-icons/core assets/regular/bird.svg
+ */
+const AIR_BIRD_TRACK_ICON: TrackIconDef = {
+  viewBox: "0 0 256 256",
+  pathD:
+    "M176,68a12,12,0,1,1-12-12A12,12,0,0,1,176,68Zm64,12a8,8,0,0,1-3.56,6.66L216,100.28V120A104.11,104.11,0,0,1,112,224H24a16,16,0,0,1-12.49-26l.1-.12L96,96.63V76.89C96,43.47,122.79,16.16,155.71,16H156a60,60,0,0,1,57.21,41.86l23.23,15.48A8,8,0,0,1,240,80Zm-22.42,0L201.9,69.54a8,8,0,0,1-3.31-4.64A44,44,0,0,0,156,32h-.22C131.64,32.12,112,52.25,112,76.89V99.52a8,8,0,0,1-1.85,5.13L24,208h26.9l70.94-85.12a8,8,0,1,1,12.29,10.24L71.75,208H112a88.1,88.1,0,0,0,88-88V96a8,8,0,0,1,3.56-6.66Z",
+};
+
+/**
+ * 对空航迹图标语义：**DDS `trackCategoryId === 3` 为无人机**（战机剪影）；**其余 category 为鸟**。
+ * 报文未带 `trackCategoryId` 时：与 `isUav` 对齐（非无人机则显示鸟形），避免旧数据全无分类。
+ */
+export function isAirTrackBirdGlyph(t: Pick<Track, "type" | "trackCategoryId" | "isUav">): boolean {
+  if (t.type !== "air") return false;
+  const c = t.trackCategoryId;
+  if (c != null && Number.isFinite(Number(c))) {
+    return Number(c) !== 3;
+  }
+  return t.isUav !== true;
+}
+
+/**
  * 获取地图引擎内部使用的图标 ID。
  *
  * Get a stable marker image ID for MapLibre/Cesium caches.
@@ -109,8 +132,10 @@ export function getMarkerSymbolId(
   virtual = false,
   friendlyTint?: string | null,
   neutralFusionFill?: string | null,
+  airBird = false,
 ): string {
-  const base = `track-${type}-${disposition}-${virtual ? "v" : "r"}`;
+  const birdSeg = type === "air" && airBird ? "-bird" : "";
+  const base = `track-${type}-${disposition}-${virtual ? "v" : "r"}${birdSeg}`;
   if (disposition === "friendly") {
     const suf = friendlyTintSuffix(friendlyTint);
     return suf ? `${base}${suf}` : base;
@@ -172,12 +197,14 @@ export function buildMarkerSymbolSvg(
   virtual = false,
   friendlyFill?: string | null,
   neutralFusionFill?: string | null,
+  airBirdGlyph = false,
 ): string {
   const color =
     disposition === "neutral" && neutralFusionFill?.trim()
       ? neutralFusionFill.trim()
       : resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
-  const icon = TRACK_SVG_ICONS[type];
+  const icon = type === "air" && airBirdGlyph ? AIR_BIRD_TRACK_ICON : TRACK_SVG_ICONS[type];
+  const innerBody = `<path d="${icon.pathD}" fill="${color}"/>`;
   const virtualFrame =
     virtual
       ? `<rect x="1" y="1" width="62" height="62" rx="10" fill="none" stroke="${color}" stroke-width="1.8" stroke-dasharray="5 4" opacity="0.92"/>`
@@ -192,7 +219,7 @@ export function buildMarkerSymbolSvg(
     `</defs>`,
     virtualFrame,
     `<svg x="4" y="6" width="56" height="54" viewBox="${icon.viewBox}" filter="url(#sh)">`,
-    `<path d="${icon.pathD}" fill="${color}"/>`,
+    innerBody,
     `</svg>`,
     `<path d="M32 2 L32 7" stroke="${color}" stroke-width="2.2" stroke-linecap="round" opacity="0.9"/>`,
     `</svg>`,
@@ -211,8 +238,11 @@ export function buildMarkerSymbolDataUrl(
   virtual = false,
   friendlyFill?: string | null,
   neutralFusionFill?: string | null,
+  airBirdGlyph = false,
 ): string {
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(buildMarkerSymbolSvg(type, disposition, accent ?? null, virtual, friendlyFill, neutralFusionFill))}`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+    buildMarkerSymbolSvg(type, disposition, accent ?? null, virtual, friendlyFill, neutralFusionFill, airBirdGlyph),
+  )}`;
 }
 
 /**
@@ -220,12 +250,7 @@ export function buildMarkerSymbolDataUrl(
  *
  * Enumerate all marker keys so we can pre-register images.
  */
-export function getAllMarkerSymbolKeys(): Array<{
-  id: string;
-  type: TrackType;
-  disposition: ForceDisposition;
-  virtual: boolean;
-}> {
+export function getAllMarkerSymbolKeys(): ReturnType<typeof getAllMarkerSymbolKeysForPrereg> {
   return getAllMarkerSymbolKeysForPrereg(null);
 }
 
@@ -245,6 +270,8 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
   virtual: boolean;
   friendlyFill?: string;
   neutralFusionFill?: string;
+  /** 仅 `type === "air"`：鸟形与战机剪影各预注册一套 */
+  airBird?: boolean;
 }> {
   const types: TrackType[] = ["air", "sea", "underwater"];
   const dispositions: ForceDisposition[] = ["hostile", "friendly", "neutral"];
@@ -265,43 +292,50 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
     virtual: boolean;
     friendlyFill?: string;
     neutralFusionFill?: string;
+    airBird?: boolean;
   }> = [];
   for (const type of types) {
-    for (const disposition of dispositions) {
-      for (const virtual of [false, true]) {
-        if (disposition !== "friendly") {
-          if (disposition === "neutral") {
-            const fills =
-              type === "air"
-                ? [FUSION_TRACK_NEUTRAL_AIR, FUSION_TRACK_NEUTRAL_UAV]
-                : [FUSION_TRACK_NEUTRAL_SEA];
-            for (const fill of fills) {
+    const birdModes: boolean[] = type === "air" ? [false, true] : [false];
+    for (const airBird of birdModes) {
+      for (const disposition of dispositions) {
+        for (const virtual of [false, true]) {
+          if (disposition !== "friendly") {
+            if (disposition === "neutral") {
+              const fills =
+                type === "air"
+                  ? [FUSION_TRACK_NEUTRAL_AIR, FUSION_TRACK_NEUTRAL_UAV]
+                  : [FUSION_TRACK_NEUTRAL_SEA];
+              for (const fill of fills) {
+                out.push({
+                  id: getMarkerSymbolId(type, disposition, virtual, undefined, fill, airBird),
+                  type,
+                  disposition,
+                  virtual,
+                  neutralFusionFill: fill,
+                  ...(type === "air" ? { airBird } : {}),
+                });
+              }
+            } else {
               out.push({
-                id: getMarkerSymbolId(type, disposition, virtual, undefined, fill),
+                id: getMarkerSymbolId(type, disposition, virtual, undefined, undefined, airBird),
                 type,
                 disposition,
                 virtual,
-                neutralFusionFill: fill,
+                ...(type === "air" ? { airBird } : {}),
               });
             }
-          } else {
+            continue;
+          }
+          for (const tint of tintList) {
             out.push({
-              id: getMarkerSymbolId(type, disposition, virtual),
+              id: getMarkerSymbolId(type, disposition, virtual, tint || undefined, undefined, airBird),
               type,
               disposition,
               virtual,
+              friendlyFill: tint || undefined,
+              ...(type === "air" ? { airBird } : {}),
             });
           }
-          continue;
-        }
-        for (const tint of tintList) {
-          out.push({
-            id: getMarkerSymbolId(type, disposition, virtual, tint || undefined),
-            type,
-            disposition,
-            virtual,
-            friendlyFill: tint || undefined,
-          });
         }
       }
     }

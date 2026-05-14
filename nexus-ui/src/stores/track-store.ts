@@ -30,7 +30,10 @@
 import { create } from "zustand";
 import type { Track } from "@/lib/map-entity-model";
 import type { ForceDisposition } from "@/lib/theme-colors";
-import { maxStoredTrailPointsPerTrack } from "@/lib/ws-track-normalize";
+
+/** 地图右键设置的演练方 / 判定：用于覆盖默认告警着色逻辑 */
+export type ManualTrackAffiliation = "unknown" | "red" | "blue" | "white";
+import { maxStoredTrailPointsPerTrack, mergeIncomingTrackWithStickyAirClassification } from "@/lib/ws-track-normalize";
 import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
 import { useDisposedStore } from "@/stores/disposed-store";
 
@@ -55,6 +58,18 @@ export function isTrackAlarmLinked(track: Track): boolean {
  */
 export function getEffectiveTrackDisposition(track: Track): ForceDisposition {
   return isTrackAlarmLinked(track) ? "hostile" : "neutral";
+}
+
+/**
+ * 地图符号 / 列表展示用敌我：优先用户右键「设置敌我属性」，否则同 {@link getEffectiveTrackDisposition}。
+ * - 红方 → 友方配色；蓝方 → 敌方配色；不明 / 白方 → 中立配色。
+ */
+export function getTrackDispositionForRendering(track: Track): ForceDisposition {
+  const manual = useTrackStore.getState().manualAffiliationByShowId[track.showID];
+  if (manual === "red") return "friendly";
+  if (manual === "blue") return "hostile";
+  if (manual === "unknown" || manual === "white") return "neutral";
+  return getEffectiveTrackDisposition(track);
 }
 
 /** 地图/订阅用：告警匹配航迹（含 historyTrail）+ 影子层单点，互斥无重复 */
@@ -97,6 +112,12 @@ interface TrackState {
    */
   updateTrackImage: (showID: string, imageUrl: string | null) => boolean;
   clearAllTracks: () => void;
+
+  /** showID → 右键手动属性 */
+  manualAffiliationByShowId: Record<string, ManualTrackAffiliation>;
+  /** 递增以使航迹图层指纹失效并重绘 */
+  mapManualAffiliationRev: number;
+  setManualTrackAffiliation: (showID: string, v: ManualTrackAffiliation) => void;
 }
 
 export const useTrackStore = create<TrackState>((set, get) => ({
@@ -104,6 +125,17 @@ export const useTrackStore = create<TrackState>((set, get) => ({
   connected: false,
   lastUpdate: null,
   shadowTracks: new Map<string, Track>(),
+  manualAffiliationByShowId: {},
+  mapManualAffiliationRev: 0,
+
+  setManualTrackAffiliation: (showID, v) => {
+    const id = String(showID ?? "").trim();
+    if (!id) return;
+    set((s) => ({
+      manualAffiliationByShowId: { ...s.manualAffiliationByShowId, [id]: v },
+      mapManualAffiliationRev: s.mapManualAffiliationRev + 1,
+    }));
+  },
 
   setTracks: (incoming, options) => {
     const alarmTrackIds = getCurrentAlarmTrackIds();
@@ -114,7 +146,9 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     let needsRenderUpdate = false;
     let shadowMutated = false;
 
-    for (const t of incoming) {
+    for (const raw of incoming) {
+      const prev = _renderCache.get(raw.showID) ?? shadow.get(raw.showID);
+      const t = mergeIncomingTrackWithStickyAirClassification(raw, prev);
       // 已处置航迹跳过
       if (disposedStore.isTrackDisposed(t.showID)) continue;
 
@@ -237,7 +271,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
   clearAllTracks: () => {
     _renderCache.clear();
     get().shadowTracks.clear();
-    set({ tracks: [] });
+    set({ tracks: [], manualAffiliationByShowId: {}, mapManualAffiliationRev: 0 });
   },
 }));
 

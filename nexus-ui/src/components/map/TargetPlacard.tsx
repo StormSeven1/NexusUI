@@ -24,13 +24,24 @@ import { buildTargetInfoFromTrack } from "@/lib/disposal/target-info-from-track"
 import { fetchDisposalPlansHttp } from "@/lib/disposal/disposal-api";
 import { useAppStore } from "@/stores/app-store";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
-import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, assetFriendlyColorFromProperties, getFusionTrackMarkerFill, resolveTrackPointFill } from "@/lib/map-icons";
+import {
+  buildAssetSymbolDataUrl,
+  buildMarkerSymbolDataUrl,
+  assetFriendlyColorFromProperties,
+  getFusionTrackMarkerFill,
+  resolveTrackPointFill,
+  isAirTrackBirdGlyph,
+} from "@/lib/map-icons";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
 import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
 import { useAlertStore } from "@/stores/alert-store";
 import { useAssetStore } from "@/stores/asset-store";
-import { useTrackStore, isTrackMatchedByAlarm, getEffectiveTrackDisposition } from "@/stores/track-store";
+import {
+  useTrackStore,
+  isTrackMatchedByAlarm,
+  getTrackDispositionForRendering,
+} from "@/stores/track-store";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -138,7 +149,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
     if (kind !== "track" || !track) return null;
     const tr = getTrackRenderingConfig();
     const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
-    const eff = getEffectiveTrackDisposition(track);
+    const eff = getTrackDispositionForRendering(track);
     const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
     return buildMarkerSymbolDataUrl(
       track.type,
@@ -147,10 +158,11 @@ export function TargetPlacard(props: TargetPlacardProps) {
       track.isVirtual === true,
       friendlyFill,
       eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
+      isAirTrackBirdGlyph(track),
     );
   }, [kind, track]);
 
-  const trackDispBadge = kind === "track" && track ? getEffectiveTrackDisposition(track) : null;
+  const trackDispBadge = kind === "track" && track ? getTrackDispositionForRendering(track) : null;
 
   const [assetIconLoaded, setAssetIconLoaded] = useState<{ id: string; url: string } | null>(null);
 
@@ -222,7 +234,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
         (asset?.asset_type ? getAssetFriendlyColorForAssetType(normalizeAssetType(asset.asset_type)) : null) ??
         FORCE_COLORS.friendly;
     }
-    const eff = getEffectiveTrackDisposition(track);
+    const eff = getTrackDispositionForRendering(track);
     const tr = getTrackRenderingConfig();
     const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
     const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
@@ -310,7 +322,17 @@ export function TargetPlacard(props: TargetPlacardProps) {
           <SectionTitle>运动</SectionTitle>
           <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1.5">
             <Row k="航速" v={track ? `${track.speed.toFixed(1)} kn` : "-"} />
-            <Row k="航向" v={track ? `${track.heading.toFixed(1)}°` : "-"} />
+            <Row
+              k="航向"
+              v={
+                track
+                  ? (() => {
+                      const brg = track.course ?? track.heading;
+                      return Number.isFinite(brg) ? `${Number(brg).toFixed(1)}°` : "-";
+                    })()
+                  : "-"
+              }
+            />
             <Row k="高度" v={track?.altitude != null ? `${track.altitude.toFixed(1)}` : "-"} />
           </div>
 

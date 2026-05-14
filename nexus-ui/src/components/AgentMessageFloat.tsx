@@ -276,19 +276,19 @@ export function AgentMessageFloat() {
                   if (originalMessage) {
                     setSelectedAgentMessage(originalMessage);
                     // 如果右侧面板未打开或未在AI助手页面，就切换到AI助手面板
-                    const panelInRight0 =
+                    const panelInRight1 =
                       useDockStore
                         .getState()
-                        .rightPartitions.find((p) => p.id === "right-0")
+                        .rightPartitions.find((p) => p.id === "right-1")
                         ?.currentPanelId;
                     if (
                       !rightSidebarOpen ||
-                      panelInRight0 !== "chat" ||
+                      panelInRight1 !== "chat" ||
                       rightPanelTab !== "chat"
                     ) {
                       useDockStore
                         .getState()
-                        .assignPanelToPartition("chat", "right-0");
+                        .assignPanelToPartition("chat", "right-1");
                       setRightPanelTab("chat");
                     }
                   }
