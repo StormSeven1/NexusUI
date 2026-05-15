@@ -25,6 +25,12 @@ except Exception as e:
     logger.error(f"❌ 未知错误: {e}")
     DDS_AVAILABLE = False
 
+# RETCODE_OK 在部分 FastDDS Python 绑定中可能不存在，统一兜底为 0
+try:
+    _RETCODE_OK = fastdds.ReturnCode_t.RETCODE_OK
+except Exception:
+    _RETCODE_OK = 0
+
 
 class DDSReceiverService:
     """
@@ -70,6 +76,8 @@ class DDSReceiverService:
         # DDS模块路径和结构类型
         self.dds_module_path = self.dds_config.get('dds_module_path', '')
         self.structure_type = self.dds_config.get('structure_type', 'fusion_track')
+        # 可选：指定要加载的Python模块文件名（不含.py后缀），默认由 data_class_name 推导
+        self.module_file_name = self.dds_config.get('module_file_name', '')
         
         # DDS数据类名（支持动态配置，其他类名自动推导）
         self.data_class_name = self.dds_config.get('data_class_name', 'TrackDataClass')
@@ -160,8 +168,10 @@ class DDSReceiverService:
         if not py_files:
             raise ImportError(f"在 {self.dds_module_path} 中未找到Python模块文件")
         
-        # 优先使用与data_class_name同名的模块文件
-        if self.data_class_name in py_files:
+        # 优先使用 module_file_name 配置，其次与 data_class_name 同名的文件，最后取第一个
+        if self.module_file_name and self.module_file_name in py_files:
+            module_name = self.module_file_name
+        elif self.data_class_name in py_files:
             module_name = self.data_class_name
         else:
             module_name = py_files[0]  # 否则使用第一个找到的.py文件
@@ -245,12 +255,26 @@ class DDSReceiverService:
                     participant_qos
                 )
             else:
-                # 自定义XML模式：加载XML配置文件，用profile创建participant
+                # 自定义XML模式：加载XML配置文件，与测试脚本相同的三级fallback
                 factory.load_XML_profiles_file(self.xml_config_path)
-                self.participant = factory.create_participant_with_profile(
-                    self.domain_id,
-                    self.profile_name
-                )
+                self.participant = None
+                try:
+                    self.participant = factory.create_participant_with_profile(
+                        self.domain_id, self.profile_name
+                    )
+                except Exception:
+                    pass
+                if self.participant is None:
+                    try:
+                        self.participant = factory.create_participant_with_profile(
+                            self.profile_name
+                        )
+                    except Exception:
+                        pass
+                if self.participant is None:
+                    pqos = fastdds.DomainParticipantQos()
+                    factory.get_participant_qos_from_profile(self.profile_name, pqos)
+                    self.participant = factory.create_participant(self.domain_id, pqos)
             
             if self.participant is None:
                 raise RuntimeError("DDS参与者初始化失败")
@@ -289,9 +313,11 @@ class DDSReceiverService:
                 name=self.name
             )
             
-            # 创建DataReader
+            # 创建DataReader —— 与测试脚本保持一致：RELIABLE + TRANSIENT_LOCAL
             reader_qos = fastdds.DataReaderQos()
             self.subscriber.get_default_datareader_qos(reader_qos)
+            reader_qos.reliability().kind = fastdds.RELIABLE_RELIABILITY_QOS
+            reader_qos.durability().kind  = fastdds.TRANSIENT_LOCAL_DURABILITY_QOS
             self.reader = self.subscriber.create_datareader(
                 topic,
                 reader_qos,
@@ -365,41 +391,30 @@ class DDSReaderListener(fastdds.DataReaderListener if DDS_AVAILABLE else object)
             self.num = 0
     
     def on_data_available(self, reader):
-        # print("AAA:","data")
-        """数据可用回调"""
+        """数据可用回调 —— 与测试脚本保持一致：单次 take_next_sample，非零返回直接退出"""
         if not DDS_AVAILABLE:
             return
         
         try:
             info = fastdds.SampleInfo()
-            
-            # 动态获取数据类
             data_class = getattr(self.dds_module, self.data_class_name)
             data = data_class()
-            reader.take_next_sample(data, info)
+            
+            if reader.take_next_sample(data, info) not in (_RETCODE_OK, 0):
+                return
+            
             self.num += 1
             
-            # 检查数据是否有效
             if info.valid_data:
-                # logger.info(f"📥 收到DDS数据 #{self.num}, structure_type={self.structure_type}")
-                
-                # 使用统一的解析器根据结构类型解析
                 if self.data_callback:
                     try:
                         from parsers.dds_parser import parse_dds_data
                         parsed_data = parse_dds_data(data, self.structure_type)
                         if parsed_data:
-                            parsed_data['name']=self.name
-                            # logger.info(f"✅ 数据解析成功，准备回调")
+                            parsed_data['name'] = self.name
                             self.data_callback(parsed_data)
-                        else:
-                            logger.warning(f"⚠️ 数据解析返回None")
                     except Exception as e:
                         logger.error(f"❌ DDS数据回调执行失败: {e}", exc_info=True)
-                else:
-                    logger.warning(f"⚠️ 没有配置data_callback")
-            else:
-                logger.debug(f"⚠️ 收到无效数据样本")
         
         except Exception as e:
             logger.error(f"❌ DDS数据接收失败: {e}", exc_info=True)

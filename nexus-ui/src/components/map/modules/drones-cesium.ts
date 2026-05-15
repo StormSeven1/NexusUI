@@ -183,15 +183,13 @@ function frustumDirectionEnu(
 }
 
 /**
- * 规范化俯仰角，避免 `pitch ± vfov/2` 穿过 ±90° 导致部分射线反向（四棱锥形变/拉丝）。
- * 例如：pitch=-90 且 vfov=10 时，下半边会变成 -95°，射线会朝“背向地面”方向，几何会异常。
+ * 仅将俯仰角规范化到 [-90, 90]，不再按 vfov/2 留边距。
+ * 旧版本会把中心 pitch 整体偏移，导致相机近竖直向下时四棱锥极度拉丝。
+ * 角点方向现在通过相机坐标系（right/up/forward）计算，无需提前平移轴线。
  */
-function normalizePitchForFrustum(pitchDeg: number, vfovDeg: number): number {
+function sanitizePitch(pitchDeg: number): number {
   const wrapped = ((((pitchDeg + 180) % 360) + 360) % 360) - 180;
-  const halfV = Math.max(0.1, Math.min(vfovDeg, 170)) / 2;
-  const minPitch = -89 + halfV;
-  const maxPitch = 89 - halfV;
-  return Math.max(minPitch, Math.min(maxPitch, wrapped));
+  return Math.max(-90, Math.min(90, wrapped));
 }
 
 /** ENU 方向 → ECEF（world）方向，单位化 */
@@ -215,8 +213,6 @@ function computeFrustumCorners(
   vfovDeg: number,
   maxRangeM: number,
 ): FrustumComputeResult {
-  const halfH = hfovDeg / 2;
-  const halfV = vfovDeg / 2;
   const dirs: Array<[number, number, "tl" | "tr" | "br" | "bl"]> = [
     [-1, +1, "tl"], [+1, +1, "tr"], [+1, -1, "br"], [-1, -1, "bl"],
   ];
@@ -229,10 +225,39 @@ function computeFrustumCorners(
   const centerHit = C.IntersectionTests.rayEllipsoid(centerRay, ellipsoid);
   const centerT =
     centerHit && centerHit.start >= 0 && centerHit.start < maxRangeM ? centerHit.start : null;
+
+  /**
+   * 用相机坐标系（right / up / forward）计算角点方向，替代旧的角度加减法。
+   * 旧做法在 pitch 接近 ±90° 时会让"上/下"两边的水平偏移量差异悬殊（拉丝），
+   * 因为 cos(pitch±halfV) 在竖直方向上高度非线性。
+   *
+   * 相机坐标系（ENU，x=East, y=North, z=Up，yaw 从北顺时针）：
+   *   forward = (sin(yaw)*cos(pitch), cos(yaw)*cos(pitch), sin(pitch))
+   *   right   = (cos(yaw),           -sin(yaw),            0         )
+   *   up      = (-sin(yaw)*sin(pitch), -cos(yaw)*sin(pitch), cos(pitch))
+   *
+   * 角点方向 = normalize(forward + hs*tan(halfH)*right + vs*tan(halfV)*up)
+   * 这与标准透视投影的 frustum 角点构造一致，任何 pitch 角下均正确。
+   */
+  const yawRad = C.Math.toRadians(yawDeg);
+  const pitchRad = C.Math.toRadians(pitchDeg);
+  const sinY = Math.sin(yawRad), cosY = Math.cos(yawRad);
+  const sinP = Math.sin(pitchRad), cosP = Math.cos(pitchRad);
+  const fwdX = sinY * cosP, fwdY = cosY * cosP, fwdZ = sinP;
+  const rgtX = cosY,        rgtY = -sinY,        rgtZ = 0;
+  const upX  = -sinY * sinP, upY  = -cosY * sinP, upZ  = cosP;
+  const tanH = Math.tan(C.Math.toRadians(hfovDeg / 2));
+  const tanV = Math.tan(C.Math.toRadians(vfovDeg / 2));
+
   for (const [hs, vs, corner] of dirs) {
-    const yawI = yawDeg + hs * halfH;
-    const pitchI = Math.max(-89.5, Math.min(89.5, pitchDeg + vs * halfV));
-    const dirEnu = frustumDirectionEnu(C, yawI, pitchI);
+    const dx = fwdX + hs * tanH * rgtX + vs * tanV * upX;
+    const dy = fwdY + hs * tanH * rgtY + vs * tanV * upY;
+    const dz = fwdZ + hs * tanH * rgtZ + vs * tanV * upZ;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const dirEnu = new C.Cartesian3(dx / len, dy / len, dz / len);
+    /* 调试用：从方向向量反算等效 yaw/pitch（仅用于日志，不参与几何计算） */
+    const dbgYaw = C.Math.toDegrees(Math.atan2(dx / len, dy / len));
+    const dbgPitch = C.Math.toDegrees(Math.asin(Math.max(-1, Math.min(1, dz / len))));
     const dirEcef = enuDirToEcef(C, origin, dirEnu);
     const ray = new C.Ray(origin, dirEcef);
     const hit = C.IntersectionTests.rayEllipsoid(ray, ellipsoid);
@@ -246,8 +271,8 @@ function computeFrustumCorners(
         : "maxRange";
     rays.push({
       corner,
-      yawDeg: yawI,
-      pitchDeg: pitchI,
+      yawDeg: dbgYaw,
+      pitchDeg: dbgPitch,
       hitGround: hasHit,
       hitDistanceM: hitT,
       usedDistanceM: t,
@@ -620,7 +645,7 @@ export class DronesCesium {
       const rawVfov = Number(raw?.vfov ?? raw?.fov_v ?? raw?.verticalFov);
       const hfovDeg = Number.isFinite(rawHfov) && rawHfov > 0 ? rawHfov : DRONE_DEFAULT_HFOV_DEG;
       const vfovDeg = Number.isFinite(rawVfov) && rawVfov > 0 ? rawVfov : DRONE_DEFAULT_VFOV_DEG;
-      const normalizedPitchDeg = normalizePitchForFrustum(pitchDeg, vfovDeg);
+      const normalizedPitchDeg = sanitizePitch(pitchDeg);
       const maxRangeM = cfg.maxFovRange;
 
       seen.add(sn);

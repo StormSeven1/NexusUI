@@ -54,7 +54,9 @@ def parse_dds_data(dds_object, structure_type: str) -> Optional[Dict[str, Any]]:
         elif structure_type in ['SingleCameraTrack', 'single_track_result']:
             return _parse_single_track_result(dds_object)
         elif structure_type == 'uav_image_track':
-            return _parse_uav_image_track(dds_object)  
+            return _parse_uav_image_track(dds_object)
+        elif structure_type == 'radar_status':
+            return _parse_radar_status(dds_object)
         elif structure_type == 'dock_status':
             return _parse_dock_status(dds_object)
         elif structure_type == 'drone_status':
@@ -298,17 +300,13 @@ def _parse_camera_status(dds_object) -> Optional[Dict]:
             'online': dds_object.online() if hasattr(dds_object, 'online') else None,
             'elec': dds_object.elec() if hasattr(dds_object, 'elec') else None,
             'timestamp': dds_object.timestamp() if hasattr(dds_object, 'timestamp') else None,
-            # CameraRealTimeStatus 字段
+            # CameraRealTimeStatus 字段（EntityRealTimeStatus IDL）
             'focus': dds_object.focus() if hasattr(dds_object, 'focus') else None,
             'panoOffset': dds_object.panoOffset() if hasattr(dds_object, 'panoOffset') else None,
             'trackID': dds_object.trackID() if hasattr(dds_object, 'trackID') else None,
             'visibility': dds_object.visibility() if hasattr(dds_object, 'visibility') else None,
-            'reverse1': dds_object.reverse1() if hasattr(dds_object, 'reverse1') else None,
-            'reverse2': dds_object.reverse2() if hasattr(dds_object, 'reverse2') else None,
-            'reverse3': dds_object.reverse3() if hasattr(dds_object, 'reverse3') else None,
-            'reverse4': dds_object.reverse4() if hasattr(dds_object, 'reverse4') else None,
-            'reverse5': dds_object.reverse5() if hasattr(dds_object, 'reverse5') else None,
-            'reverse6': dds_object.reverse6() if hasattr(dds_object, 'reverse6') else None,
+            'speedParam': dds_object.speedParam() if hasattr(dds_object, 'speedParam') else None,
+            'rootPos': dds_object.rootPos() if hasattr(dds_object, 'rootPos') else None,
             'source': 'DDS',
             'data_type': 'camera_status'
         }
@@ -347,7 +345,10 @@ def _parse_camera_status(dds_object) -> Optional[Dict]:
                 'latitude': position.latitude() if hasattr(position, 'latitude') else None,
                 'altitude': position.altitude() if hasattr(position, 'altitude') else None,
             }
-        
+        print("*"*50)
+        print("解析相机状态")
+        print("*"*50)
+
         # print("*"*50)
         # print("解析相机状态:",result)
         # print("*"*50)
@@ -473,6 +474,48 @@ def _parse_uav_image_track(dds_object) -> Optional[Dict]:
         logger.error(f"解析无人机图像航迹失败: {e}")
         return None
 
+def _parse_radar_status(dds_object) -> Optional[Dict]:
+    """解析雷达实时状态（EntityRealTimeStatus IDL - RadarRealTimeStatus）"""
+    try:
+        result = {
+            # BaseDeviceStatus 字段
+            'entityId': dds_object.entityId() if hasattr(dds_object, 'entityId') else None,
+            'online': dds_object.online() if hasattr(dds_object, 'online') else None,
+            'timestamp': dds_object.timestamp() if hasattr(dds_object, 'timestamp') else None,
+            # RadarRealTimeStatus 专有字段
+            'radarID': dds_object.radarID() if hasattr(dds_object, 'radarID') else None,
+            'radarType': dds_object.radarType() if hasattr(dds_object, 'radarType') else None,
+            'radarName': dds_object.radarName() if hasattr(dds_object, 'radarName') else None,
+            'longitude': dds_object.longitude() if hasattr(dds_object, 'longitude') else None,
+            'latitude': dds_object.latitude() if hasattr(dds_object, 'latitude') else None,
+            'transmit': dds_object.transmit() if hasattr(dds_object, 'transmit') else None,
+            'range': dds_object.range() if hasattr(dds_object, 'range') else None,
+            'pluseWidth': dds_object.pluseWidth() if hasattr(dds_object, 'pluseWidth') else None,
+            'aziOffset': dds_object.aziOffset() if hasattr(dds_object, 'aziOffset') else None,
+            'rangeOffset': dds_object.rangeOffset() if hasattr(dds_object, 'rangeOffset') else None,
+            'sampleRate': dds_object.sampleRate() if hasattr(dds_object, 'sampleRate') else None,
+            'gain': dds_object.gain() if hasattr(dds_object, 'gain') else None,
+            'seaClutter': dds_object.seaClutter() if hasattr(dds_object, 'seaClutter') else None,
+            'rainClutter': dds_object.rainClutter() if hasattr(dds_object, 'rainClutter') else None,
+            'inhibit1': dds_object.inhibit1() if hasattr(dds_object, 'inhibit1') else None,
+            'inhibit1StartAzi': dds_object.inhibit1StartAzi() if hasattr(dds_object, 'inhibit1StartAzi') else None,
+            'inhibit1EndAzi': dds_object.inhibit1EndAzi() if hasattr(dds_object, 'inhibit1EndAzi') else None,
+            'inhibit2': dds_object.inhibit2() if hasattr(dds_object, 'inhibit2') else None,
+            'inhibit2StartAzi': dds_object.inhibit2StartAzi() if hasattr(dds_object, 'inhibit2StartAzi') else None,
+            'inhibit2EndAzi': dds_object.inhibit2EndAzi() if hasattr(dds_object, 'inhibit2EndAzi') else None,
+            'source': 'DDS',
+            'data_type': 'radar_status'
+        }
+        print("*"*50)
+        print("解析雷达实时状态")
+        print("*"*50)
+
+        return result
+    except Exception as e:
+        logger.error(f"解析雷达状态失败: {e}")
+        return None
+
+
 def _parse_dock_status(dds_object) -> Optional[Dict]:
     """解析机场实时状态"""
     try:
@@ -492,9 +535,14 @@ def _parse_dock_status(dds_object) -> Optional[Dict]:
         if hasattr(dds_object, 'drone_charge_state'):
             charge = dds_object.drone_charge_state()
             result['battery_capacity_percent'] = charge.capacity_percent() if hasattr(charge, 'capacity_percent') else None
+        # print("*"*50)
+        # print("解析机场实时状态:",result)
+        # print("*"*50)
+
         print("*"*50)
-        print("解析机场实时状态:",result)
+        print("解析机场实时状态")
         print("*"*50)
+
         return result
     except Exception as e:
         logger.error(f"解析机场状态失败: {e}")
@@ -551,10 +599,11 @@ def _parse_drone_status(dds_object) -> Optional[Dict]:
             battery = dds_object.battery()
             result['battery_percent'] = battery.capacity_percent() if hasattr(battery, 'capacity_percent') else None
         
-        # print("*"*50)
-        # print("解析无人机状态:",mode_code,result['latitude'],result['longitude'],result['gimbal_pitch'])
-        # print("*"*50)
+        print("*"*50)
+        print("解析无人机状态:",mode_code,result['latitude'],result['longitude'],result['gimbal_pitch'])
+        print("*"*50)
         
+
         # 存储到文件（如果开关开启）
         if ENABLE_DRONE_DATA_STORAGE:
             try:
@@ -578,7 +627,7 @@ def _parse_drone_status(dds_object) -> Optional[Dict]:
 
 
 def _parse_drone_task(dds_object) -> Optional[Dict]:
-    """解析无人机任务状态"""
+    """解析无人机任务状态（EntityRealTimeStatus IDL - DroneTaskRealTimeStatus）"""
     try:
         result = {
             'entityId': dds_object.entityId() if hasattr(dds_object, 'entityId') else None,
@@ -586,9 +635,8 @@ def _parse_drone_task(dds_object) -> Optional[Dict]:
             'executionState': dds_object.executionState() if hasattr(dds_object, 'executionState') else None,
             'online': dds_object.online() if hasattr(dds_object, 'online') else None,
             'drone_state': dds_object.drone_state() if hasattr(dds_object, 'drone_state') else None,
-            'rev1': dds_object.rev1() if hasattr(dds_object, 'rev1') else None,
-            'rev2': dds_object.rev2() if hasattr(dds_object, 'rev2') else None,  # 存储uniqueID
-            'rev3': dds_object.rev3() if hasattr(dds_object, 'rev3') else None,
+            'drone_task_action': dds_object.drone_task_action() if hasattr(dds_object, 'drone_task_action') else None,
+            'drone_task_targetID': dds_object.drone_task_targetID() if hasattr(dds_object, 'drone_task_targetID') else None,
             'waypoints': [],
             'source': 'DDS',
             'data_type': 'drone_task'
@@ -631,7 +679,9 @@ def _parse_drone_task(dds_object) -> Optional[Dict]:
         # print("*"*50)
         # print("解析无人机任务:",result)
         # print("*"*50)
-        
+        print("*"*50)
+        print("解析无人机任务")
+        print("*"*50)
         # 存储到文件（如果开关开启）
         if ENABLE_DRONE_DATA_STORAGE:
             try:
@@ -673,6 +723,9 @@ def _parse_high_freq(dds_object) -> Optional[Dict]:
             'source': 'DDS',
             'data_type': 'high_freq'
         } 
+        print("*"*50)
+        print("解析高频数据")
+        print("*"*50)
         # print("*"*50)
         # print("解析高频数据:",result)
         # print("*"*50)

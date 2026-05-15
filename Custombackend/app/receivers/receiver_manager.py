@@ -214,6 +214,12 @@ class ReceiverManager:
                         'type': 'HighFreq',
                         'data': parsed_data
                     })
+                elif data_type == 'radar_status':
+                    # 雷达实时状态
+                    ws_manager.queue_message({
+                        'type': 'RadarStatus',
+                        'data': parsed_data
+                    })
                 else:
                     # 航迹数据（fusion_track, ais_track, radar_track 等），发送为 Track 类型
                     ws_manager.queue_track_data(parsed_data)
@@ -364,6 +370,7 @@ class ReceiverManager:
                         'multicast_ip': config['multicast_ip'],
                         'multicast_port': config['multicast_port'],
                         'dds_module_path': config['dds_module_path'],
+                        'module_file_name': config.get('module_file_name', ''),
                         'structure_type': config['structure_type'],
                         'data_class_name': config['data_class_name'],
                         'pubsub_type_class_name': config['pubsub_type_class_name'],
