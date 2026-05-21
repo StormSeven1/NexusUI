@@ -119,6 +119,8 @@ function entityCategoryFromAssetType(assetType?: string): string {
     case "tdoa": return "TDOA";
     case "drone": return "无人机";
     case "airport": return "机场";
+    case "usv": return "无人船";
+    case "missile": return "飞弹";
     case "tower": return "电侦";
     default: return "其他";
   }

@@ -378,6 +378,8 @@ export const PUBLIC_MAP_SVG_FILES = {
   tdoa: "TDOA.svg",
   airport: "无人机机场.svg",
   drone: "无人机.svg",
+  usv: "水面目标.svg",
+  missile: "水下目标.svg",
 } as const;
 
 export type PublicMapSvgKey = keyof typeof PUBLIC_MAP_SVG_FILES;
@@ -593,6 +595,36 @@ function tintPublicAssetIconInner(inner: string, color: string, type: AssetType)
   return s;
 }
 
+/** 无人船 / 飞弹：56×56 画布铺满矢量（无圆角底板）；与 `buildFramedGlyphSvgString` 同尺寸，仅去掉底板 */
+const ASSET_TYPES_PLAIN_GLYPH = new Set<AssetType>(["usv", "missile"]);
+
+const ASSET_GLYPH_CANVAS_PX = 56;
+
+function buildPlainAssetGlyphSvgString(
+  viewBox: string,
+  tintedInnerSvg: string,
+  frameColor: string,
+  virtual: boolean,
+): string {
+  const s = ASSET_GLYPH_CANVAS_PX;
+  const virtualFrame = virtual
+    ? `<rect x="2" y="2" width="52" height="52" rx="8" fill="none" stroke="${frameColor}" stroke-width="1.8" stroke-dasharray="5 4" opacity="0.92"/>`
+    : "";
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">`,
+    `<defs>`,
+    `<filter id="sh" x="-25%" y="-25%" width="150%" height="150%">`,
+    `<feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#000" flood-opacity="0.85"/>`,
+    `</filter>`,
+    `</defs>`,
+    virtualFrame,
+    `<svg x="0" y="0" width="${s}" height="${s}" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet" filter="url(#sh)">`,
+    tintedInnerSvg,
+    `</svg>`,
+    `</svg>`,
+  ].join("");
+}
+
 /** 与资产图层相同的 56×56 圆角底板 + 投影（内层已着色 SVG 片段） */
 function buildFramedGlyphSvgString(
   viewBox: string,
@@ -604,9 +636,10 @@ function buildFramedGlyphSvgString(
   const frameStrokeAttrs = virtual
     ? `stroke="${frameColor}" stroke-width="2" stroke-dasharray="4 3"`
     : `stroke="${frameColor}" stroke-width="2"`;
-  const inner = 56 - pad * 2;
+  const s = ASSET_GLYPH_CANVAS_PX;
+  const inner = s - pad * 2;
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 56 56">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">`,
     `<defs>`,
     `<filter id="ag" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="${frameColor}" flood-opacity="0.5"/></filter>`,
     `</defs>`,
@@ -659,6 +692,9 @@ export function buildAssetWrappedSvgFromPublicBody(
   const color = resolveAssetIconAccentFill(disposition, status, accent, friendlyOverride);
   const pad = type === "camera" ? 12 : 8;
   const tinted = tintPublicAssetIconInner(iconInner, color, type);
+  if (ASSET_TYPES_PLAIN_GLYPH.has(type)) {
+    return buildPlainAssetGlyphSvgString(viewBox, tinted, color, virtual);
+  }
   return buildFramedGlyphSvgString(viewBox, tinted, color, virtual, pad);
 }
 

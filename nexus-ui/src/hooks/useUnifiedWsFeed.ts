@@ -140,7 +140,7 @@ import type { AssetData } from "@/stores/asset-store";
 import { useAssetStore } from "@/stores/asset-store";
 import type { ZoneData } from "@/stores/zone-store";
 import { useZoneStore } from "@/stores/zone-store";
-import { useDroneStore } from "@/stores/drone-store";
+import { useDroneStore, resolveDroneSn } from "@/stores/drone-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import {
   mapEntitiesPayload,
@@ -150,6 +150,9 @@ import {
   getHttpConfig,
   shouldDisplayAssetId,
   shouldDisplayZone,
+  assetStatusFromDeviceState,
+  deviceStatePropsFromPayload,
+  stampDeviceStateOnAsset,
 } from "@/lib/map-app-config";
 import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
 import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
@@ -191,7 +194,7 @@ function mergeAssetRowsById(base: AssetData[], overlays: AssetData[]): AssetData
 function rebuildAndCommitAssetSnapshot() {
   const mergedStaticAndWs = mergeDynamicAndStaticAssets(configAssetBaseCache, lastWsAssetList);
   const mergedAll = mergeAssetRowsById(mergedStaticAndWs, relationshipAssetsCache);
-  useAssetStore.getState().setAssets(filterAssetsForDisplay(mergedAll));
+  useAssetStore.getState().setAssets(filterAssetsForDisplay(mergedAll.map(stampDeviceStateOnAsset)));
 }
 
 /** 把 `position.altitude` 规范写入 properties.altitude（供 3D 模型基座高度使用） */
@@ -506,21 +509,27 @@ function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
     const airportId = ap.dockSn;
     if (shouldDisplayAssetId("airport", airportId)) {
       const airportName = ds.docks[ap.dockSn]?.displayName ?? "机场";
+      const dockPayload = ds.docks[ap.dockSn]?.payload;
       const lat = ap.latitude ?? null;
       const lng = ap.longitude ?? null;
       if (lat == null || lng == null) continue;
+      const airportStatus = assetStatusFromDeviceState(dockPayload?.deviceState);
       rows.push({
         id: airportId,
         name: airportName,
         asset_type: "airport",
-        status: "online",
+        status: airportStatus,
         disposition: "friendly",
         lat,
         lng,
         range_km: null,
         heading: null,
         fov_angle: null,
-        properties: { virtual_troop: ap.virtualTroop, dock_sn: ap.dockSn },
+        properties: {
+          virtual_troop: ap.virtualTroop,
+          dock_sn: ap.dockSn,
+          ...deviceStatePropsFromPayload((dockPayload ?? {}) as Record<string, unknown>),
+        },
         mission_status: "monitoring",
         assigned_target_id: null,
         target_lat: null,
@@ -536,21 +545,29 @@ function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
       const droneAssetId = dr.deviceSn;
       if (!shouldDisplayAssetId("drone", droneAssetId, dr.name)) continue;
       const droneName = dr.name || dr.deviceSn;
+      const statusPayload = ds.drones[dr.deviceSn]?.status;
       const lat = dr.latitude ?? null;
       const lng = dr.longitude ?? null;
       if (lat == null || lng == null) continue;
+      const droneStatus = assetStatusFromDeviceState(statusPayload?.deviceState);
       rows.push({
         id: droneAssetId,
         name: droneName,
         asset_type: "drone",
-        status: "online",
+        status: droneStatus,
         disposition: "friendly",
         lat,
         lng,
         range_km: null,
         heading: null,
         fov_angle: null,
-        properties: { virtual_troop: dr.virtualTroop, dock_sn: ap.dockSn, device_sn: dr.deviceSn, entity_id: dr.entityId ?? "" },
+        properties: {
+          virtual_troop: dr.virtualTroop,
+          dock_sn: ap.dockSn,
+          device_sn: dr.deviceSn,
+          entity_id: dr.entityId ?? "",
+          ...deviceStatePropsFromPayload((statusPayload ?? {}) as Record<string, unknown>),
+        },
         mission_status: "monitoring",
         assigned_target_id: null,
         target_lat: null,
@@ -820,10 +837,11 @@ function dispatchWsMessage(raw: string) {
             const hasRange = rawRange != null && Number.isFinite(Number(rawRange)) && Number(rawRange) > 0;
             const rangeKm = hasRange ? parseCameraRangeKm(d) : undefined;
             const effectiveRangeKm = rangeKm ?? cameraDefaultRangeKm(entityId);
-            const status = d.online === false ? "offline" : "online";
+            const status = assetStatusFromDeviceState(d.deviceState);
             const baseProps: Record<string, unknown> = {
               config_kind: "camera",
               ...(typeof d.properties === "object" && d.properties ? (d.properties as Record<string, unknown>) : {}),
+              ...deviceStatePropsFromPayload(d),
             };
             if (d.ptz && typeof d.ptz === "object") baseProps.ptz = d.ptz as Record<string, unknown>;
             if (d.originPtz && typeof d.originPtz === "object") baseProps.originPtz = d.originPtz as Record<string, unknown>;
@@ -834,7 +852,6 @@ function dispatchWsMessage(raw: string) {
             if (Number.isFinite(posAlt)) baseProps.altitude = posAlt;
             if (d.taskType != null) baseProps.taskType = d.taskType;
             if (d.executionState != null) baseProps.executionState = d.executionState;
-            if (d.online !== undefined) baseProps.online = d.online;
 
             const patch: Partial<AssetData> = {
               mission_status: "monitoring",
@@ -923,11 +940,13 @@ function dispatchWsMessage(raw: string) {
           lat: Number(d.latitude),
           lng: Number(d.longitude),
           name: airportName,
+          status: assetStatusFromDeviceState(d.deviceState),
           properties: {
             ...prevProps,
             dock: d,
             map_label: airportName,
             virtual_troop: existingAsset.properties?.virtual_troop ?? false,
+            ...deviceStatePropsFromPayload(d),
           },
         });
         break;
@@ -938,6 +957,24 @@ function dispatchWsMessage(raw: string) {
         if (d) {
           useDroneStore.getState().setDroneStatus(d);
           recordDroneReceived();
+          const droneSn = resolveDroneSn(d);
+          if (droneSn) {
+            const existing = useAssetStore.getState().assets.find((a) => a.id === droneSn);
+            if (existing) {
+              const prevProps =
+                existing.properties && typeof existing.properties === "object"
+                  ? ({ ...(existing.properties as Record<string, unknown>) } as Record<string, unknown>)
+                  : {};
+              useAssetStore.getState().mergeAssetFields(droneSn, {
+                status: assetStatusFromDeviceState(d.deviceState),
+                properties: {
+                  ...prevProps,
+                  drone_status: d,
+                  ...deviceStatePropsFromPayload(d),
+                },
+              });
+            }
+          }
         }
         break;
       }

@@ -10,6 +10,8 @@ import { useTrackStore } from "@/stores/track-store";
 import {
   PUBLIC_MAP_ASSET_TYPES,
   LYR_AIRPORT,
+  LYR_USV,
+  LYR_MISSILE,
   LYR_DRONES,
   LYR_LASER,
   LYR_MEASURE,
@@ -70,6 +72,16 @@ import {
   AIRPORT_ICON_LAYER,
   AIRPORT_LABEL_LAYER,
 } from "@/components/map/modules/airport-maplibre";
+import {
+  UsvStaticMaplibre,
+  USV_ICON_LAYER,
+  USV_LABEL_LAYER,
+} from "@/components/map/modules/usv-maplibre";
+import {
+  MissileStaticMaplibre,
+  MISSILE_ICON_LAYER,
+  MISSILE_LABEL_LAYER,
+} from "@/components/map/modules/missile-maplibre";
 import { OptoelectronicFovModule, FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER } from "@/components/map/modules/optoelectronic-fov-maplibre";
 import { TowerMaplibre, TOWER_LAYER_IDS, TOWER_ICON_LAYER } from "@/components/map/modules/tower-maplibre";
 import { DistanceMeasureMaplibre, DIST_MEASURE_LAYER_IDS } from "@/components/map/modules/distance-measure-maplibre";
@@ -130,6 +142,8 @@ const ASSET_POINT_PICK_LAYERS = [
   RADAR_ASSET_ICON_LAYER,
   OPTO_ASSET_ICON_LAYER,
   AIRPORT_ICON_LAYER,
+  USV_ICON_LAYER,
+  MISSILE_ICON_LAYER,
   DRONES_STATIC_SYMBOL_LAYER,
   DRONES_SYMBOL_LAYER,
   LASER_CENTER,
@@ -165,6 +179,8 @@ const LAYER_MAPPING: Record<string, string[]> = {
     DRONES_STATIC_LABEL_LAYER,
   ],
   [LYR_AIRPORT]: [AIRPORT_ICON_LAYER, AIRPORT_LABEL_LAYER],
+  [LYR_USV]: [USV_ICON_LAYER, USV_LABEL_LAYER],
+  [LYR_MISSILE]: [MISSILE_ICON_LAYER, MISSILE_LABEL_LAYER],
   [LYR_LASER]: [...LASER_LAYER_IDS],
   [LYR_TDOA]: [...TDOA_LAYER_IDS],
   [LYR_RADAR_COVERAGE]: [...RADAR_COVERAGE_LAYER_IDS, RADAR_ASSET_ICON_LAYER],
@@ -390,6 +406,8 @@ export function Map2D() {
   const optoFovRef = useRef<OptoelectronicFovModule | null>(null);
   const towerModRef = useRef<TowerMaplibre | null>(null);
   const airportStaticRef = useRef<AirportStaticMaplibre | null>(null);
+  const usvStaticRef = useRef<UsvStaticMaplibre | null>(null);
+  const missileStaticRef = useRef<MissileStaticMaplibre | null>(null);
   const tracksRef = useRef<TracksMaplibre | null>(null);
   /** 同帧内多次 `setTracks` 合并为一次 `requestAnimationFrame`，减轻 WS 突发压力 */
   const tracksPendingRef = useRef<Track[]>([]);
@@ -624,6 +642,20 @@ export function Map2D() {
         airportStatic.setFromAssets(_assets);
         airportStaticRef.current = airportStatic;
 
+        const usvStatic = new UsvStaticMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        usvStatic.install();
+        usvStatic.setAssetDispositionAccent(assetIconAccent);
+        usvStatic.applyUsvsBundle(appCfg.unmannedShips);
+        usvStatic.setFromAssets(_assets);
+        usvStaticRef.current = usvStatic;
+
+        const missileStatic = new MissileStaticMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        missileStatic.install();
+        missileStatic.setAssetDispositionAccent(assetIconAccent);
+        missileStatic.applyMissilesBundle(appCfg.missiles);
+        missileStatic.setFromAssets(_assets);
+        missileStaticRef.current = missileStatic;
+
         tracksMod.installSymbolLayers();
         tracksMod.applyTrackRenderingLayout();
 
@@ -677,6 +709,8 @@ export function Map2D() {
             OPTO_ASSET_ICON_LAYER,
             TOWER_ICON_LAYER,
             AIRPORT_ICON_LAYER,
+            USV_ICON_LAYER,
+            MISSILE_ICON_LAYER,
             DRONES_STATIC_SYMBOL_LAYER,
             DRONES_SYMBOL_LAYER,
             LASER_CENTER,
@@ -804,6 +838,10 @@ export function Map2D() {
       radarCovRef.current = null;
       airportStaticRef.current?.dispose();
       airportStaticRef.current = null;
+      usvStaticRef.current?.dispose();
+      usvStaticRef.current = null;
+      missileStaticRef.current?.dispose();
+      missileStaticRef.current = null;
       optoFovRef.current?.dispose();
       optoFovRef.current = null;
       towerModRef.current?.dispose();
@@ -1135,6 +1173,8 @@ export function Map2D() {
       optoFovRef.current?.setFromAssets(adapted);
       towerModRef.current?.setFromAssets(adapted);
       airportStaticRef.current?.setFromAssets(adapted);
+      usvStaticRef.current?.setFromAssets(adapted);
+      missileStaticRef.current?.setFromAssets(adapted);
       dronesRef.current?.setStaticDroneSitesFromAssets(adapted, assetDispositionAccentRef.current);
 
       /* 激光/TDOA：先按类型分桶，再批量 upsert，避免高频逐条刷新 */

@@ -21,6 +21,8 @@ import {
   LYR_OPTO_FOV,
   LYR_TOWER,
   LYR_AIRPORT,
+  LYR_USV,
+  LYR_MISSILE,
   LYR_LASER,
   LYR_TDOA,
   LYR_ZONES,
@@ -287,6 +289,8 @@ export function LayerPanel() {
     if (assetTypes.has("camera")) rows.push({ id: LYR_OPTO_FOV, name: "光电装备" });
     if (assetTypes.has("tower")) rows.push({ id: LYR_TOWER, name: "电侦装备" });
     if (assetTypes.has("airport")) rows.push({ id: LYR_AIRPORT, name: "无人机场" });
+    if (assetTypes.has("usv")) rows.push({ id: LYR_USV, name: "无人船" });
+    if (assetTypes.has("missile")) rows.push({ id: LYR_MISSILE, name: "飞弹" });
     if (assetTypes.has("laser")) rows.push({ id: LYR_LASER, name: "激光武器" });
     if (assetTypes.has("tdoa")) rows.push({ id: LYR_TDOA, name: "TDOA" });
     rows.push({ id: LYR_ZONES, name: "限制区域" });

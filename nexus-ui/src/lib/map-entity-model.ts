@@ -60,7 +60,7 @@ export interface Track {
 }
 
 /** 与 `map-icons.PUBLIC_MAP_SVG_FILES` 键一致；含 WS 动态机场 / 无人机 */
-export const PUBLIC_MAP_ASSET_TYPES = ["radar", "camera", "tower", "laser", "tdoa", "airport", "drone"] as const;
+export const PUBLIC_MAP_ASSET_TYPES = ["radar", "camera", "tower", "laser", "tdoa", "airport", "drone", "usv", "missile"] as const;
 export type PublicMapAssetType = (typeof PUBLIC_MAP_ASSET_TYPES)[number];
 
 export type AssetStatus = "online" | "offline" | "degraded";
@@ -90,6 +90,8 @@ export function normalizeAssetType(raw: string | undefined | null): PublicMapAss
   }
   if (s === "dock" || s === "gateway" || s === "airport" || s === "无人机机场") return "airport";
   if (s === "uav" || s === "drone" || s === "无人机") return "drone";
+  if (s === "usv" || s === "无人船" || s === "unmanned_ship" || s === "unmanned-ship") return "usv";
+  if (s === "missile" || s === "飞弹" || s === "导弹") return "missile";
   if ((PUBLIC_MAP_ASSET_TYPES as readonly string[]).includes(s)) return s as PublicMapAssetType;
   /* 不在已知类型列表中 —— 直接抛错 */
   throw new Error(`[normalizeAssetType] ✘ 未知资产类型 "${raw}"，不在已知类型 ${PUBLIC_MAP_ASSET_TYPES.join("/")} 中`);
@@ -164,8 +166,12 @@ export const LYR_TRACKS_SEA = "lyr-tracks-sea";
 export const LYR_DRONES = "lyr-drones";
 export const LYR_RADAR_COVERAGE = "lyr-radar-coverage";
 export const LYR_OPTO_FOV = "lyr-opto-fov";
-/** 机场 Dock / 静态机场 图标与名称（Map2D：`opto-asset-icon-airport` + `fov-label-airport`） */
+/** 机场 Dock / 静态机场 图标与名称（Map2D：`nexus-airport-icon` + `nexus-airport-label`） */
 export const LYR_AIRPORT = "lyr-airport";
+/** 无人船 图标与名称（Map2D：`nexus-usv-icon` + `nexus-usv-label`） */
+export const LYR_USV = "lyr-usv";
+/** 飞弹 图标与名称（Map2D：`nexus-missile-icon` + `nexus-missile-label`） */
+export const LYR_MISSILE = "lyr-missile";
 export const LYR_LASER = "lyr-laser";
 export const LYR_TDOA = "lyr-tdoa";
 /** 电侦（电子侦察）图标图层；与光电（LYR_OPTO_FOV）为不同类型 */
@@ -183,6 +189,8 @@ export const ALL_DATA_LAYER_IDS = [
   LYR_OPTO_FOV,
   LYR_TOWER,
   LYR_AIRPORT,
+  LYR_USV,
+  LYR_MISSILE,
   LYR_LASER,
   LYR_TDOA,
   LYR_ZONES,
@@ -211,6 +219,8 @@ export function buildDataLayerPanelRows(assets: ReadonlyArray<{ asset_type: stri
   if (types.has("airport")) {
     rows.push({ id: LYR_AIRPORT, name: "无人机场" });
   }
+  if (types.has("usv")) rows.push({ id: LYR_USV, name: "无人船" });
+  if (types.has("missile")) rows.push({ id: LYR_MISSILE, name: "飞弹" });
   if (types.has("laser")) rows.push({ id: LYR_LASER, name: "激光武器" });
   if (types.has("tdoa")) rows.push({ id: LYR_TDOA, name: "TDOA" });
   rows.push({ id: LYR_ZONES, name: "限制区域" });

@@ -26,8 +26,21 @@ import { useAppStore } from "@/stores/app-store";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, assetFriendlyColorFromProperties } from "@/lib/map-icons";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
-import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
-import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType } from "@/lib/map-app-config";
+import {
+  isVirtualFromProperties,
+  normalizeAssetType,
+  type AssetStatus,
+  type PublicMapAssetType,
+  type Track,
+} from "@/lib/map-entity-model";
+import {
+  dispositionFromAssetData,
+  findAssetInStore,
+  formatAssetDeviceStateDisplay,
+  formatIsoToSecond,
+  getTrackRenderingConfig,
+  getAssetFriendlyColorForAssetType,
+} from "@/lib/map-app-config";
 import { useAlertStore } from "@/stores/alert-store";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 import { useAssetStore } from "@/stores/asset-store";
@@ -81,10 +94,24 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
+function assetTypeDisplayLabel(t: PublicMapAssetType | string | undefined): string {
+  const n = String(t ?? "").trim().toLowerCase();
+  if (n === "usv") return "无人船";
+  if (n === "missile") return "飞弹";
+  if (n === "drone") return "无人机";
+  if (n === "airport") return "机场";
+  if (n === "radar") return "雷达";
+  if (n === "camera") return "光电";
+  if (n === "tower") return "电侦";
+  if (n === "laser") return "激光";
+  if (n === "tdoa") return "TDOA";
+  return n || "资产";
+}
+
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[40px_1fr] gap-x-1.5 text-[11px]">
-      <div className="text-nexus-text-muted">{k}</div>
+    <div className="grid grid-cols-[3.5rem_1fr] gap-x-1.5 text-[11px]">
+      <div className="shrink-0 text-nexus-text-muted">{k}</div>
       <div className="min-w-0 text-nexus-text-primary">{v}</div>
     </div>
   );
@@ -94,11 +121,19 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const { kind, id, onClose, className } = props;
 
   const allAssets = useAssetStore((s) => s.assets);
+  const entityIdToDeviceSn = useDroneStore((s) => s.entityIdToDeviceSn);
   const track = useTrackStore((s) => s.tracks.find((t) => t.id === id)) as Track | undefined;
 
-  const asset = allAssets.find((a) => a.id === id);
-  const droneDisplayName = useDroneStore((s) => s.drones[id]?.displayName ?? "");
-  const dockDisplayName = useDroneStore((s) => s.docks[id]?.displayName ?? "");
+  const asset = useMemo(
+    () => findAssetInStore(allAssets, id, entityIdToDeviceSn),
+    [allAssets, id, entityIdToDeviceSn],
+  );
+  const assetStoreKey = asset?.id ?? id;
+  const droneTele = useDroneStore((s) => s.drones[assetStoreKey]);
+  const dockTele = useDroneStore((s) => s.docks[assetStoreKey]);
+  const droneDisplayName = droneTele?.displayName ?? "";
+  const dockDisplayName = dockTele?.displayName ?? "";
+  const assetOrDroneResolved = asset ?? (droneTele || dockTele ? { id } : null);
   // console.log("[TargetPlacard] id=", id, "kind=", kind, "asset=", asset ? { id: asset.id, asset_type: asset.asset_type, name: asset.name } : null, "allAssetIds=", allAssets.map(a => `${a.id}(${a.asset_type})`));
   const alerts = useAlertStore((s) => s.alerts);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
@@ -108,11 +143,29 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const [oneClickLoading, setOneClickLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  /* 目标丢失时自动关闭属性框 */
+  /* 目标丢失时自动关闭属性框（无人机/机场可仅存在于 drone-store） */
   useEffect(() => {
     if (kind === "track" && !track) onClose();
-    if (kind === "asset" && !asset) onClose();
-  }, [kind, track, asset, onClose]);
+    if (kind === "asset" && !assetOrDroneResolved) onClose();
+  }, [kind, track, assetOrDroneResolved, onClose]);
+
+  const assetLat = asset?.lat ?? droneTele?.lat ?? null;
+  const assetLng = asset?.lng ?? droneTele?.lng ?? null;
+  const assetHeading =
+    asset?.heading != null && Number.isFinite(Number(asset.heading))
+      ? Number(asset.heading)
+      : droneTele?.headingDeg != null && Number.isFinite(droneTele.headingDeg)
+        ? droneTele.headingDeg
+        : null;
+  const assetUpdatedAt = asset?.updated_at;
+  const assetTypeLabel =
+    asset != null
+      ? assetTypeDisplayLabel(normalizeAssetType(asset.asset_type))
+      : droneTele
+        ? "无人机"
+        : dockTele
+          ? "机场"
+          : "资产";
 
   /** 构建告警 trackId 集合，复用 isTrackMatchedByAlarm 逻辑匹配 */
   const relatedAlerts = useMemo(() => {
@@ -126,7 +179,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
       .slice(0, 5);
   }, [alerts, track, kind]);
 
-  const subtitle = kind === "track" ? "航迹" : "资产";
+  const subtitle = kind === "track" ? "航迹" : assetTypeLabel;
   const titleText = useMemo(() => {
     if (kind === "track") {
       const k = track ? resolveAliasKey(track) : null;
@@ -148,33 +201,34 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
   useEffect(() => {
     if (kind !== "asset") return;
-    if (!asset) return;
+    if (!asset && !droneTele && !dockTele) return;
     let cancelled = false;
-    const aid = asset.id;
-    const t = normalizeAssetType(asset.asset_type);
-    const assetFriendlyTint =
-      assetFriendlyColorFromProperties(asset.properties as Record<string, unknown> | null) ??
-      getAssetFriendlyColorForAssetType(t) ??
-      FORCE_COLORS.friendly;
-    void buildAssetSymbolDataUrl(
-      t,
-      asset.status as AssetStatus,
-      isVirtualFromProperties(asset.properties),
-      dispositionFromAssetData(asset),
-      undefined,
-      assetFriendlyTint,
-    ).then((url) => {
+    const aid = id;
+    const t = asset
+      ? normalizeAssetType(asset.asset_type)
+      : droneTele
+        ? ("drone" as const)
+        : ("airport" as const);
+    const assetFriendlyTint = asset
+      ? (assetFriendlyColorFromProperties(asset.properties as Record<string, unknown> | null) ??
+        getAssetFriendlyColorForAssetType(t) ??
+        FORCE_COLORS.friendly)
+      : (getAssetFriendlyColorForAssetType(t) ?? FORCE_COLORS.friendly);
+    const status = (asset?.status ?? "online") as AssetStatus;
+    const virtual = asset ? isVirtualFromProperties(asset.properties) : (droneTele?.virtualTroop ?? dockTele?.virtualTroop ?? false);
+    const disposition = asset ? dispositionFromAssetData(asset) : ("friendly" as const);
+    void buildAssetSymbolDataUrl(t, status, virtual, disposition, undefined, assetFriendlyTint).then((url) => {
       if (!cancelled) setAssetIconLoaded({ id: aid, url });
     });
     return () => {
       cancelled = true;
     };
-  }, [kind, asset, id]);
+  }, [kind, asset, droneTele, dockTele, id]);
 
   const symbolUrl =
     kind === "track"
       ? trackSymbolUrl
-      : kind === "asset" && assetIconLoaded?.id === (asset?.id ?? id)
+      : kind === "asset" && assetIconLoaded?.id === id
         ? assetIconLoaded.url
         : null;
 
@@ -362,8 +416,10 @@ export function TargetPlacard(props: TargetPlacardProps) {
         <>
           {/* 资产默认显示：坐标、状态 */}
           <div className="mt-1 space-y-1">
-            <Row k="坐标" v={formatLatLng(asset?.lat, asset?.lng)} />
-            <Row k="状态" v={asset?.status ?? "-"} />
+            <Row k="坐标" v={formatLatLng(assetLat, assetLng)} />
+            <Row k="状态" v={formatAssetDeviceStateDisplay(asset)} />
+            <Row k="更新时间" v={formatIsoToSecond(assetUpdatedAt)} />
+            {assetHeading != null ? <Row k="航向" v={`${assetHeading.toFixed(1)}°`} /> : null}
           </div>
 
           {/* 展开/收起 按钮 */}
@@ -378,10 +434,9 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
           {expanded && (
             <div className="mt-1 space-y-1">
-              <Row k="类型" v={asset?.asset_type ?? "-"} />
+              <Row k="类型" v={assetTypeLabel} />
               <Row k="射程" v={asset?.range_km ? `${asset.range_km} km` : "-"} />
               <Row k="任务状态" v={asset?.mission_status ?? "-"} />
-              <Row k="更新时间" v={asset?.updated_at ?? "-"} />
             </div>
           )}
         </>

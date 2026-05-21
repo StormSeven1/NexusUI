@@ -8,11 +8,17 @@ import { Search, ChevronDown, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { PUBLIC_MAP_SVG_FILES, publicIconFileUrl } from "@/lib/map-icons";
 import { normalizeAssetType, type PublicMapAssetType } from "@/lib/map-entity-model";
-import { formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
+import {
+  formatCameraTowerMapLabel,
+  formatTowerMapLabel,
+  getAssetDeviceStateTags,
+} from "@/lib/map-app-config";
 
 /** 资产类别展示顺序和中文名 */
 const CATEGORY_ORDER: { type: PublicMapAssetType; label: string }[] = [
   { type: "airport", label: "机场" },
+  { type: "usv", label: "无人船" },
+  { type: "missile", label: "飞弹" },
   { type: "radar", label: "雷达" },
   { type: "camera", label: "光电" },
   { type: "tower", label: "电侦" },
@@ -35,13 +41,6 @@ function Tag({ label, color }: { label: string; color: string }) {
       {label}
     </span>
   );
-}
-
-/** 通用资产状态标签 */
-function getGenericTags(assetStatus: string): { label: string; color: string }[] {
-  if (assetStatus === "online") return [{ label: "在线", color: "bg-emerald-500/20 text-emerald-400" }];
-  if (assetStatus === "degraded") return [{ label: "降级", color: "bg-amber-500/20 text-amber-400" }];
-  return [{ label: "离线", color: "bg-red-500/20 text-red-400" }];
 }
 
 /** 电量进度条 */
@@ -377,7 +376,7 @@ export function AssetPanel() {
                         asset={asset}
                         isSelected={selectedAssetId === asset.id}
                         onSelect={() => handleSelect(asset)}
-                        tags={getGenericTags(asset.status)}
+                        tags={getAssetDeviceStateTags(asset)}
                       />
                     )}
                   </div>

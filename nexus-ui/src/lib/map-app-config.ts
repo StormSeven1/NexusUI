@@ -37,12 +37,127 @@ import {
 import { mapAirportsDevicesPayload } from "@/components/map/modules/airport-maplibre";
 import { mapCamerasDevicesPayload } from "@/components/map/modules/optoelectronic-fov-maplibre";
 import { mapDronesDevicesPayload } from "@/components/map/modules/drones-maplibre";
+import { mapUsvsDevicesPayload } from "@/components/map/modules/usv-maplibre";
+import { mapMissilesDevicesPayload } from "@/components/map/modules/missile-maplibre";
 import type { LaserMaplibreLayerVisibility } from "@/components/map/modules/laser-maplibre";
 import type { LaserDevice, LaserScanParams } from "@/components/map/modules/laser-maplibre";
 import type { TdoaMaplibreLayerVisibility } from "@/components/map/modules/tdoa-maplibre";
 import type { TdoaDevice, TdoaScanParams } from "@/components/map/modules/tdoa-maplibre";
 function isoNow() {
   return new Date().toISOString();
+}
+
+/** IDL DeviceState：0待机 1上电 2执行 3未知 */
+const DEVICE_STATE_CN: Record<number, string> = {
+  0: "待机",
+  1: "上电",
+  2: "执行",
+  3: "未知",
+};
+
+export function deviceStateLabel(deviceState: unknown): string | undefined {
+  if (deviceState === null || deviceState === undefined) return undefined;
+  const n = Number(deviceState);
+  if (Number.isNaN(n)) return undefined;
+  return DEVICE_STATE_CN[n];
+}
+
+/** 资产 status 只认 deviceState（0待机 1上电 2执行 3未知）；无字段视为待机 */
+export function assetStatusFromDeviceState(deviceState: unknown): string {
+  if (deviceState === null || deviceState === undefined) return "offline";
+  const ds = Number(deviceState);
+  if (Number.isNaN(ds)) return "offline";
+  if (ds === 0) return "offline";
+  if (ds === 1) return "online";
+  if (ds === 2) return "online";
+  if (ds === 3) return "degraded";
+  return "offline";
+}
+
+export function resolveDeviceStateValue(...sources: unknown[]): number {
+  for (const s of sources) {
+    if (s !== undefined && s !== null && !Number.isNaN(Number(s))) {
+      return Number(s);
+    }
+  }
+  return 0;
+}
+
+export function deviceStatePropsFromPayload(d: Record<string, unknown>): Record<string, unknown> {
+  const ds = resolveDeviceStateValue(d.deviceState);
+  const label = deviceStateLabel(ds) ?? "待机";
+  return { deviceState: ds, deviceStateLabel: label };
+}
+
+const DEVICE_STATE_CN_VALUES = new Set(Object.values(DEVICE_STATE_CN));
+
+/** 标牌/列表用：只显示设备状态中文；无有效字段时默认「待机」，不显示「-」 */
+export function formatAssetDeviceStateDisplay(asset?: AssetData | null): string {
+  const props = asset?.properties as Record<string, unknown> | null;
+  const ds = resolveDeviceStateValue(props?.deviceState);
+  const cached = props?.deviceStateLabel;
+  if (typeof cached === "string" && DEVICE_STATE_CN_VALUES.has(cached)) {
+    return cached;
+  }
+  return deviceStateLabel(ds) ?? "待机";
+}
+
+/** 与资产列表同源：按 store 主键查找，兼容 entityId → deviceSn */
+export function findAssetInStore(
+  assets: AssetData[],
+  id: string,
+  entityIdToDeviceSn?: Record<string, string>,
+): AssetData | undefined {
+  const key = String(id ?? "").trim();
+  if (!key) return undefined;
+  const direct = assets.find((a) => a.id === key);
+  if (direct) return direct;
+  const sn = entityIdToDeviceSn?.[key];
+  if (sn) return assets.find((a) => a.id === sn);
+  return assets.find((a) => {
+    const p = a.properties as Record<string, unknown> | null;
+    const eid = p?.entity_id ?? p?.entityId;
+    return eid != null && String(eid) === key;
+  });
+}
+
+export type AssetDeviceStateTag = { label: string; color: string };
+
+/** 资产面板标签与属性标牌「状态」共用 */
+export function getAssetDeviceStateTags(asset: AssetData | null | undefined): AssetDeviceStateTag[] {
+  const label = formatAssetDeviceStateDisplay(asset);
+  const props = asset?.properties as Record<string, unknown> | null;
+  const n = Number(props?.deviceState ?? 0);
+  const color =
+    n === 0
+      ? "bg-red-500/20 text-red-400"
+      : n === 3
+        ? "bg-amber-500/20 text-amber-400"
+        : "bg-emerald-500/20 text-emerald-400";
+  return [{ label, color }];
+}
+
+/** 合并进 asset-store 前补齐 deviceState / deviceStateLabel */
+export function stampDeviceStateOnAsset(a: AssetData): AssetData {
+  const props = (a.properties ?? {}) as Record<string, unknown>;
+  const ds = resolveDeviceStateValue(props.deviceState);
+  const dsProps = deviceStatePropsFromPayload({ deviceState: ds });
+  return {
+    ...a,
+    status: assetStatusFromDeviceState(ds),
+    properties: { ...props, ...dsProps },
+  };
+}
+
+export function formatIsoToSecond(iso: string | null | undefined): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    const s = String(iso).replace("T", " ").replace(/Z$/i, "");
+    return s.length >= 19 ? s.slice(0, 19) : s;
+  }
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -75,6 +190,8 @@ function finiteNumberOrNull(v: unknown): number | null {
  *   - "TOWER" / "ESM" / "电侦" / "电子侦察" / "RECON" / "EW" → "tower"
  *   - "DOCK" / "AIRPORT" / "GATEWAY"                         → "airport"
  *   - "DRONE" / "UAV"                                         → "drone"
+ *   - "USV" / "无人船" / "UNMANNED_SHIP"                       → "usv"
+ *   - "MISSILE" / "飞弹" / "导弹"                               → "missile"
  *   - "LASER" / "激光" / "激光武器"                           → "laser"
  *   - "TDOA"                                                   → "tdoa"
  *   - "SURVEILLANCE_AREA" / "RESTRICTED_AREA" / "AREA" / "AREA_TYPE_*" / "SURVEILLANCE" / "FIXED_WING" / "FRAME"
@@ -103,6 +220,10 @@ function wsEntityTypeRaw(r: Record<string, unknown>): string {
   if (stu === "DOCK" || stu === "AIRPORT" || stu === "GATEWAY") return "airport";
   // 无人机
   if (stu === "DRONE" || stu === "UAV") return "drone";
+  // 无人船
+  if (stu === "USV" || stu === "无人船" || stu === "UNMANNED_SHIP" || stu === "UNMANNED-SHIP") return "usv";
+  // 飞弹
+  if (stu === "MISSILE" || stu === "飞弹" || stu === "导弹") return "missile";
   // 雷达：specificType 以 "Radar-" 开头（如 "Radar-Surveillance"、"Radar-Tracking"）或精确等于 "RADAR"
   if (stu === "RADAR" || stu === "雷达" || stu.startsWith("RADAR-") || stu.includes("RADAR") || stu.includes("雷达")) return "radar";
   // 相机（光电）：specificType 精确等于 "CAMERA"（注意：不含 TOWER，电侦是独立类型）
@@ -251,22 +372,9 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
     "friendly",
   );
 
-  /* ── 7. 提取健康/在线状态 ── */
-  /* health.healthStatus → online / offline / degraded；
-   * isLive / online.isOnline 为 0 时强制 offline */
-  const health = asRecord(r.health);
-  const healthStatus = String(health?.healthStatus ?? r.status ?? "online");
-  const status: string = (() => {
-    const hs = healthStatus.toUpperCase();
-    if (hs.includes("OFFLINE") || hs.includes("FAIL")) return "offline";
-    if (hs.includes("DEGRADED")) return "degraded";
-    return "online";
-  })();
-
-  const isLive = r.isLive;
-  const online = asRecord(r.online);
-  const effectiveStatus =
-    (isLive === 0 || online?.isOnline === 0) ? "offline" : status;
+  const propsRec = asRecord(r.properties);
+  const deviceStateRaw = resolveDeviceStateValue(r.deviceState, propsRec?.deviceState);
+  const effectiveStatus = assetStatusFromDeviceState(deviceStateRaw);
 
   /* ── 8. 【关键】识别资产类型 ── */
   /* 调用 wsEntityTypeRaw()，基于 specificType 字段识别：
@@ -298,6 +406,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
       ...((r.properties as Record<string, unknown> | null) ?? { ...r }),
       ...radarParams,
       ...radarExtraProps,
+      ...deviceStatePropsFromPayload({ deviceState: deviceStateRaw }),
     },
     mission_status: String(r.mission_status ?? "monitoring"),
     assigned_target_id: r.assigned_target_id != null ? String(r.assigned_target_id) : null,
@@ -354,6 +463,8 @@ function mergeConfigAssetBase(
   tdoaAssets: AssetData[],
   airportAssets: AssetData[],
   droneAssets: AssetData[],
+  usvAssets: AssetData[],
+  missileAssets: AssetData[],
 ): AssetData[] {
   const byId = new Map<string, AssetData>();
   for (const c of camerasAssets) {
@@ -373,6 +484,12 @@ function mergeConfigAssetBase(
   }
   for (const d of droneAssets) {
     if (d.id) byId.set(d.id, d);
+  }
+  for (const u of usvAssets) {
+    if (u.id) byId.set(u.id, u);
+  }
+  for (const m of missileAssets) {
+    if (m.id) byId.set(m.id, m);
   }
   return [...byId.values()];
 }
@@ -1113,6 +1230,10 @@ export type ResolvedAppConfig = {
   tdoa: AppConfigSectorBundle | null;
   /** 根键 `drones`：与 cameras 同形的 `label` / `visibility` / `devices` 等；**静态站名/字号**等见 `DronesMaplibre.applyDronesSectorLabelStyle` */
   drones: AppConfigSectorBundle | null;
+  /** 根键 `unmannedShips`：与 `airports` 同形；静态 `devices` 并入 `configAssetBase` */
+  unmannedShips: AppConfigSectorBundle | null;
+  /** 根键 `missiles`：与 `airports` 同形；静态 `devices` 并入 `configAssetBase` */
+  missiles: AppConfigSectorBundle | null;
   /** 根键 `factory.assetIcons`：仅 **敌方 / 中立** 覆盖默认 force 色 */
   assetDispositionIconAccent: AssetDispositionIconAccent;
   /** 根键 `trackRendering`（或 V2 根级 `trackTypeStyles` / `trackDisplay` / `trackTimeout`）：见文件头表格 */
@@ -1177,6 +1298,10 @@ function applyFriendlyColorsFromAssetSections(root: Record<string, unknown>) {
 
   const drones = asRecord(root.drones);
   if (drones) setColor("drone", drones.assetFriendlyColor);
+  const unmannedShips = asRecord(root.unmannedShips);
+  if (unmannedShips) setColor("usv", unmannedShips.assetFriendlyColor);
+  const missiles = asRecord(root.missiles);
+  if (missiles) setColor("missile", missiles.assetFriendlyColor);
 }
 
 function applyLabelColorsFromAssetSections(root: Record<string, unknown>) {
@@ -1203,6 +1328,10 @@ function applyLabelColorsFromAssetSections(root: Record<string, unknown>) {
   if (airports) setColor("airport", pickLabelColor(airports));
   const drones = asRecord(root.drones);
   if (drones) setColor("drone", pickLabelColor(drones));
+  const unmannedShips = asRecord(root.unmannedShips);
+  if (unmannedShips) setColor("usv", pickLabelColor(unmannedShips));
+  const missiles = asRecord(root.missiles);
+  if (missiles) setColor("missile", pickLabelColor(missiles));
 }
 
 /** 我方资产图标/标注：读各根键根级 `assetFriendlyColor`；未配置则 undefined（由上层回退到主题 `FORCE_COLORS.friendly`） */
@@ -1288,7 +1417,7 @@ export function mergeDynamicAndStaticAssets(configAssetBase: AssetData[], fromWs
       });
     }
   }
-  return [...byId.values()];
+  return [...byId.values()].map(stampDeviceStateOnAsset);
 }
 
 /** `radar.visibility` 或与 cameras 同形的 visibility 对象 → 全局默认 */
@@ -1395,10 +1524,14 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   const laserWeapons = parseSectorBundle(root.laserWeapons);
   const tdoaBundle = parseSectorBundle(root.tdoa);
   const dronesBundle = parseSectorBundle(root.drones);
+  const unmannedShipsBundle = parseSectorBundle(root.unmannedShips);
+  const missilesBundle = parseSectorBundle(root.missiles);
   const fromCameras = mapCamerasDevicesPayload(root.cameras);
   const fromRadar = mapRadarPayload(root.radar, buildRadarMapGlobalsFromRoot(root));
   const fromAirports = mapAirportsDevicesPayload(root.airports);
   const fromDrones = mapDronesDevicesPayload(root.drones);
+  const fromUsvs = mapUsvsDevicesPayload(root.unmannedShips);
+  const fromMissiles = mapMissilesDevicesPayload(root.missiles);
   const configAssetBase = mergeConfigAssetBase(
     fromCameras,
     fromRadar,
@@ -1406,6 +1539,8 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
     tdoaBundleToStaticAssets(tdoaBundle),
     fromAirports,
     fromDrones,
+    fromUsvs,
+    fromMissiles,
   );
 
   const airportMap = parseAirportMapConfig(root);
@@ -1435,6 +1570,8 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
     laserWeapons,
     tdoa: tdoaBundle,
     drones: dronesBundle,
+    unmannedShips: unmannedShipsBundle,
+    missiles: missilesBundle,
     assetDispositionIconAccent: parseAssetDispositionIconAccent(root),
     trackRendering,
     iconSizeStops: parseIconSizeStops(root),
@@ -1891,6 +2028,8 @@ export async function loadResolvedAppConfig(customUrl?: string): Promise<Resolve
     laserWeapons: null,
     tdoa: null,
     drones: null,
+    unmannedShips: null,
+    missiles: null,
     assetDispositionIconAccent: {},
     trackRendering: { ...DEFAULT_TRACK_RENDERING },
     iconSizeStops: null,
