@@ -286,6 +286,13 @@
   outline: none !important;
 }
 
+/* 区域/航线/量算标绘：覆盖 MapLibre 默认 grab 光标 */
+.nexus-map-draw-mode.maplibregl-map,
+.nexus-map-draw-mode .maplibregl-canvas-container.maplibregl-interactive,
+.nexus-map-draw-mode .maplibregl-canvas {
+  cursor: crosshair !important;
+}
+
 /* Cesium overrides */
 .cesium-viewer .cesium-viewer-toolbar,
 .cesium-viewer .cesium-viewer-animationContainer,

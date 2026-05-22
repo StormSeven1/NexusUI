@@ -13,6 +13,8 @@ import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 
 const RENDER_MS = 40;
 const DETECTION_ENTRY_STALE_MS = 2000;
+/** 单目标框在画面变化时更敏感：超过该时长未更新就先清掉，避免“画面动了框还挂着” */
+const SINGLE_TRACK_STALE_MS = 480;
 const MAX_HEADER_MISS = 20;
 const DIAG_EMIT_INTERVAL_MS = 260;
 
@@ -36,7 +38,7 @@ function sanitizeDdsTrackAliasForOverlay(raw: string): string {
 }
 
 /**
- * syncHeader 精确匹配（与 base-vue headersMatch 一致）。
+ * syncHeader 匹配（与 base-vue 一致；32/48 字节时比对前 32 字节前缀见 headersMatch）。
  */
 function pickBySyncHeader(
   arr: BufferedDetectionEntry[],
@@ -259,7 +261,11 @@ export function useEoEntityDetection({
           const ddSpeed = finiteFromDdsField(ddsRow?.speed);
           const ddDist = finiteFromDdsField(ddsRow?.distance);
 
-          const singleEntry = picker(singleBuf.current);
+          const pickedSingle = picker(singleBuf.current);
+          const singleEntry =
+            pickedSingle && now - pickedSingle.receivedAt <= SINGLE_TRACK_STALE_MS
+              ? pickedSingle
+              : null;
           const singleBoxesRaw = boxesFromEntry(singleEntry, "single", "", "accent");
           const ex = expandedMode;
           const singleBoxes =
@@ -309,37 +315,50 @@ export function useEoEntityDetection({
 
         /**
          * 策略优先级：
-         * 1. syncHeader 逐字节匹配（最精确，与 base-vue 完全一致）
-         * 2. 编码帧环 wallMs 时间对齐（hub 有数据但 header 不兼容时）
+         * 1. syncHeader 匹配（hub 多滞后帧扫描 + WS 与 hub 32B 前缀兼容）
+         * 2. 编码帧环 wallMs 时间对齐（hub 有数据但 header 仍对不上时）
          * 3. 取最新包（都不可用时）
          */
 
-        // —— 策略 1：syncHeader 匹配
-        const snapshot = encodedSyncHub?.snapshotForPresentation();
-        const currentSyncHeader = snapshot?.syncHeader ?? null;
+        // —— 策略 1：syncHeader 匹配（多滞后帧：仅 snapshotForPresentation(6) 常与当前显示帧/检测包错位）
         const bufHasHeader =
           hasAnyHeader(boatBuf.current, now) ||
           hasAnyHeader(planeBuf.current, now) ||
           hasAnyHeader(singleBuf.current, now);
 
+        const hubSnapForWallMs =
+          encodedSyncHub?.snapshotForPresentation(0) ??
+          encodedSyncHub?.snapshotForPresentation(6) ??
+          null;
+
         let headerMatchedThisTick = false;
 
-        if (currentSyncHeader && bufHasHeader && (headerEverMatchedRef.current || syncDiagRef.current.headerFail < 60)) {
-          const tryMatch = (arr: BufferedDetectionEntry[]): BufferedDetectionEntry | null => {
-            return pickBySyncHeader(arr, currentSyncHeader, now);
-          };
-          const testHit =
-            tryMatch(boatBuf.current) ?? tryMatch(planeBuf.current) ?? tryMatch(singleBuf.current);
-          if (testHit) {
-            headerMatchedThisTick = true;
-            headerEverMatchedRef.current = true;
-            syncMode = "header";
-            syncDiagRef.current.headerOk++;
-            buildBoxes(tryMatch);
-          } else {
+        if (encodedSyncHub && bufHasHeader && (headerEverMatchedRef.current || syncDiagRef.current.headerFail < 60)) {
+          const HEADER_MATCH_LAG_FRAMES = [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15] as const;
+          for (const lag of HEADER_MATCH_LAG_FRAMES) {
+            const snap = encodedSyncHub.snapshotForPresentation(lag);
+            if (!snap?.syncHeader) continue;
+            const hdr = snap.syncHeader;
+            const tryMatch = (arr: BufferedDetectionEntry[]): BufferedDetectionEntry | null =>
+              pickBySyncHeader(arr, hdr, now);
+            const testHit =
+              tryMatch(boatBuf.current) ?? tryMatch(planeBuf.current) ?? tryMatch(singleBuf.current);
+            if (testHit) {
+              headerMatchedThisTick = true;
+              headerEverMatchedRef.current = true;
+              syncMode = "header";
+              syncDiagRef.current.headerOk++;
+              buildBoxes(tryMatch);
+              break;
+            }
+          }
+
+          if (!headerMatchedThisTick) {
             syncDiagRef.current.headerFail++;
             if (!headerDiagRef.current) {
               const hex = (u: Uint8Array) => Array.from(u.slice(0, 8)).map(b => b.toString(16).padStart(2, "0")).join("");
+              const snapDiag = encodedSyncHub.snapshotForPresentation(0) ?? encodedSyncHub.snapshotForPresentation(6);
+              const currentSyncHeader = snapDiag?.syncHeader ?? null;
               const hubHex = currentSyncHeader ? `hub(${currentSyncHeader.length})=${hex(currentSyncHeader)}` : "hub=∅";
               const allBufs = [...boatBuf.current, ...planeBuf.current, ...singleBuf.current];
               const wsEntry = allBufs.find(e => e.header);
@@ -347,11 +366,14 @@ export function useEoEntityDetection({
 
               // 暴力交叉匹配诊断：hub 环中任意帧 vs WS 缓冲中任意条
               let crossHit = 0;
-              const allHubHeaders = encodedSyncHub?.getAllSyncHeaders() ?? [];
+              const allHubHeaders = encodedSyncHub.getAllSyncHeaders();
               const wsHeaders = allBufs.filter(e => e.header).map(e => e.header!);
               for (const hh of allHubHeaders) {
                 for (const wh of wsHeaders) {
-                  if (headersMatch(hh, wh)) { crossHit++; break; }
+                  if (headersMatch(hh, wh)) {
+                    crossHit++;
+                    break;
+                  }
                 }
                 if (crossHit > 0) break;
               }
@@ -362,7 +384,7 @@ export function useEoEntityDetection({
         }
 
         // —— 策略 2：编码帧环 wallMs + 检测延迟补偿
-        if (!headerMatchedThisTick && snapshot) {
+        if (!headerMatchedThisTick && hubSnapForWallMs) {
           syncMode = "wallMs";
           syncDiagRef.current.wallMs++;
 
@@ -390,10 +412,10 @@ export function useEoEntityDetection({
             }
           }
 
-          let frameWallMs = snapshot.wallMs;
+          let frameWallMs = hubSnapForWallMs.wallMs;
           if (rvfcMeta && typeof (rvfcMeta as unknown as Record<string, unknown>).rtpTimestamp === "number") {
             const rtpTs = (rvfcMeta as unknown as Record<string, unknown>).rtpTimestamp as number;
-            const byRtp = encodedSyncHub!.snapshotByRtpTimestamp(rtpTs);
+            const byRtp = encodedSyncHub?.snapshotByRtpTimestamp(rtpTs);
             if (byRtp) frameWallMs = byRtp.wallMs;
           }
 

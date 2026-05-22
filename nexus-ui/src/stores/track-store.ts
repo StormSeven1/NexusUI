@@ -3,14 +3,14 @@
  *
  * 【两层互斥缓存】
  * - `_renderCache`（渲染层）：模块级 Map，只存匹配告警的航迹（含 historyTrail）
- * - `shadowTracks`（影子层）：Map<showID, Track>，存不匹配告警的航迹最新单点
+ * - `shadowTracks`（影子层）：Map<showID, Track>，存不匹配告警的航迹（含 historyTrail）
  * - 一条航迹只存在于其中一层，提升时从影子删除，降级时写入影子
  *
  * 【告警匹配】
  * - WS 航迹到达后直接判断是否匹配告警
  * - 在渲染层 → 就地更新坐标，就地累积 historyTrail，不动影子
  * - 不在渲染层且匹配 → 提升到渲染层，从影子移除
- * - 不匹配 → 只存影子
+ * - 不匹配 → 只存影子（并持续累积 historyTrail，供地图画尾迹）
  *
  * 【处置过滤】
  * - setTracks 入口检查 disposedStore，已处置航迹直接跳过
@@ -34,11 +34,18 @@ import type { ForceDisposition } from "@/lib/theme-colors";
 /** 地图右键设置的演练方 / 判定：用于覆盖默认告警着色逻辑 */
 export type ManualTrackAffiliation = "unknown" | "red" | "blue" | "white";
 import { maxStoredTrailPointsPerTrack, mergeIncomingTrackWithStickyAirClassification } from "@/lib/ws-track-normalize";
-import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
+import { getTrackRenderingConfig, getTrackIdModeConfig, getTrackStaleTimeoutMs } from "@/lib/map-app-config";
 import { useDisposedStore } from "@/stores/disposed-store";
 
 /** 模块级渲染缓存 — 避免每次调用从 tracks 数组重建 Map */
 const _renderCache = new Map<string, Track>();
+
+/**
+ * 每条航迹最近一次被 WS 摄入（`setTracks`）的墙上时钟，用于超时剔除。
+ * 与 `Track.lastUpdate`（常为观测时刻）解耦，避免 DDS 时间戳与前端时钟不一致时误判；
+ * 亦避免将来 `lastUpdate` 改为纯观测时间后，剔除逻辑误用旧观测时刻。
+ */
+const _lastIngestMsByShowId = new Map<string, number>();
 
 /** 导出 renderCache 只读访问（供 image polling 等外部模块用） */
 export function getRenderCache(): ReadonlyMap<string, Track> {
@@ -83,12 +90,12 @@ interface TrackState {
   connected: boolean;
   lastUpdate: string | null;
 
-  /** 影子缓存：不匹配告警的航迹最新单点（Map<showID, Track>） */
+  /** 影子缓存：不匹配告警的航迹（Map<showID, Track>，含 historyTrail） */
   shadowTracks: Map<string, Track>;
 
   /**
    * 接收 WS 归一化后的航迹列表，就地更新两层缓存。
-   * **`historyTrail` 仅在渲染层由本方法按位移追加**（不经 `ws-track-normalize` 预合并）。
+   * `historyTrail` 由本方法按位移追加（不经 `ws-track-normalize` 预合并）。
    * @param options.lastUpdate 若给出，与 tracks 同一 `set`，避免 `setTracks`+`setLastUpdate` 触发两次订阅。
    */
   setTracks: (incoming: Track[], options?: { lastUpdate?: string | null }) => void;
@@ -101,9 +108,8 @@ interface TrackState {
    */
   syncWithAlarms: (alarmTrackIds: Set<string>) => boolean;
   /**
-   * 超时清理：移除渲染层和影子层中 lastUpdate 超过阈值的航迹。
-   * 由外部定时器调用。
-   * @returns true 表示有航迹被移除
+   * 超时清理：移除渲染层与影子层中「超过 trackTimeout 未再收到 WS 更新」的航迹
+   * （以 `lastIngest` 为准；无记录时回退 `Track.lastUpdate`）。
    */
   pruneStaleTracks: () => boolean;
   /**
@@ -152,25 +158,31 @@ export const useTrackStore = create<TrackState>((set, get) => ({
       // 已处置航迹跳过
       if (disposedStore.isTrackDisposed(t.showID)) continue;
 
+      _lastIngestMsByShowId.set(t.showID, Date.now());
+
       const inRender = _renderCache.get(t.showID);
+      const inShadow = shadow.get(t.showID);
+      const holder = inRender ?? inShadow;
+      let historyTrail = holder?.historyTrail ? [...holder.historyTrail] : [];
+      const moved = holder ? (holder.lat !== t.lat || holder.lng !== t.lng) : false;
+      if (moved && holder) {
+        historyTrail.push([holder.lng, holder.lat] as [number, number]);
+        if (historyTrail.length > trailCap) historyTrail = historyTrail.slice(-trailCap);
+      }
+      const nextTrack = historyTrail.length ? { ...t, historyTrail } : { ...t };
+
       if (inRender) {
-        // 已在渲染层 → 就地累积 historyTrail，更新坐标，不动影子
-        let historyTrail = inRender.historyTrail ? [...inRender.historyTrail] : [];
-        const moved = inRender.lat !== t.lat || inRender.lng !== t.lng;
-        if (moved) {
-          historyTrail.push([inRender.lng, inRender.lat] as [number, number]);
-          if (historyTrail.length > trailCap) historyTrail = historyTrail.slice(-trailCap);
-        }
-        _renderCache.set(t.showID, historyTrail.length ? { ...t, historyTrail } : { ...t });
+        // 已在渲染层 → 更新坐标并累积 historyTrail，不动影子
+        _renderCache.set(t.showID, nextTrack);
         needsRenderUpdate = true;
       } else if (isTrackMatchedByAlarm(t, alarmTrackIds)) {
-        // 不在渲染层但匹配告警 → 提升到渲染层，从影子移除
-        _renderCache.set(t.showID, { ...t, historyTrail: undefined });
+        // 不在渲染层但匹配告警 → 提升到渲染层，从影子移除（保留 historyTrail）
+        _renderCache.set(t.showID, nextTrack);
         if (shadow.delete(t.showID)) shadowMutated = true;
         needsRenderUpdate = true;
       } else {
-        // 不匹配 → 只存影子
-        shadow.set(t.showID, { ...t, historyTrail: undefined });
+        // 不匹配 → 只存影子（保留 historyTrail，供尾迹显示）
+        shadow.set(t.showID, nextTrack);
         shadowMutated = true;
       }
     }
@@ -195,7 +207,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     // 1. 渲染缓存优先：不匹配的降级到影子
     for (const [key, track] of _renderCache) {
       if (!isTrackMatchedByAlarm(track, alarmTrackIds)) {
-        shadow.set(key, { ...track, historyTrail: undefined });
+        shadow.set(key, { ...track });
         _renderCache.delete(key);
         changed = true;
       }
@@ -207,7 +219,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
       // 已处置的不提升
       if (disposedStore.isTrackDisposed(key)) continue;
       if (isTrackMatchedByAlarm(shadowTrack, alarmTrackIds)) {
-        _renderCache.set(key, { ...shadowTrack, historyTrail: undefined });
+        _renderCache.set(key, { ...shadowTrack });
         shadow.delete(key);
         changed = true;
       }
@@ -219,26 +231,26 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     return changed;
   },
 
-  /** 超时清理：移除渲染层和影子层中 lastUpdate 超时的航迹 */
+  /** 超时清理：移除「超过 trackTimeout 未再被 WS 摄入」的航迹（优先看 _lastIngestMsByShowId） */
   pruneStaleTracks: () => {
     const cfg = getTrackRenderingConfig();
     if (!cfg.trackTimeout.enabled) return false;
     const now = Date.now();
-    const timeoutMs = (t: Track) => {
-      const sec = t.isUav === true ? cfg.trackTimeout.uavSeconds : cfg.trackTimeout.seconds;
-      return Math.max(1, sec) * 1000;
-    };
-    const isStale = (t: Track) => {
+    const isStale = (key: string, t: Track) => {
+      const ing = _lastIngestMsByShowId.get(key);
+      const limit = getTrackStaleTimeoutMs(t);
+      if (ing != null) return now - ing > limit;
       const lu = Date.parse(t.lastUpdate);
-      return Number.isFinite(lu) && now - lu > timeoutMs(t);
+      return Number.isFinite(lu) && now - lu > limit;
     };
 
     let changed = false;
 
     // 渲染层
     for (const [key, track] of _renderCache) {
-      if (isStale(track)) {
+      if (isStale(key, track)) {
         _renderCache.delete(key);
+        _lastIngestMsByShowId.delete(key);
         changed = true;
       }
     }
@@ -246,8 +258,9 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     // 影子层
     const shadow = get().shadowTracks;
     for (const [key, track] of shadow) {
-      if (isStale(track)) {
+      if (isStale(key, track)) {
         shadow.delete(key);
+        _lastIngestMsByShowId.delete(key);
         changed = true;
       }
     }
@@ -263,6 +276,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     const track = _renderCache.get(showID);
     if (!track) return false;
     if (track.verificationImage === imageUrl) return false;
+    _lastIngestMsByShowId.set(showID, Date.now());
     _renderCache.set(showID, { ...track, verificationImage: imageUrl ?? undefined });
     set({ tracks: buildDisplayTracks(get().shadowTracks) });
     return true;
@@ -270,6 +284,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
 
   clearAllTracks: () => {
     _renderCache.clear();
+    _lastIngestMsByShowId.clear();
     get().shadowTracks.clear();
     set({ tracks: [], manualAffiliationByShowId: {}, mapManualAffiliationRev: 0 });
   },

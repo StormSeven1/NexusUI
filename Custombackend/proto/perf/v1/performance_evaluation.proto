@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package perf.eval.v1;
+
+message GetSystemResponseTimeStatsRequest {
+  uint32 limit = 1;
+}
+
+message SystemResponseTimeStats {
+  double avg_threat_to_alarm_ms = 1;
+  double avg_alarm_to_rwgl_recv_ms = 2;
+  double avg_rwgl_recv_to_scheme_ms = 3;
+  double avg_scheme_to_task_dispatch_ms = 4;
+  double avg_task_dispatch_to_wrjgl_recv_ms = 5;
+  uint32 fetched_record_count = 6;
+  uint32 threat_to_alarm_count = 7;
+  uint32 alarm_to_rwgl_recv_count = 8;
+  uint32 rwgl_recv_to_scheme_count = 9;
+  uint32 scheme_to_task_dispatch_count = 10;
+  uint32 task_dispatch_to_wrjgl_recv_count = 11;
+}
+
+message GetSystemResponseTimeStatsResponse {
+  SystemResponseTimeStats stats = 1;
+  string error_message = 2;
+}
+
+service PerformanceEvaluationService {
+  rpc GetSystemResponseTimeStats(GetSystemResponseTimeStatsRequest) returns (GetSystemResponseTimeStatsResponse);
+}

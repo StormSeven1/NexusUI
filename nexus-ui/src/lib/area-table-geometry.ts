@@ -3,6 +3,7 @@
  * - area_type 1：area_rect = lat1,lng1,lat2,lng2（矩形对角）
  * - area_type 2：start_point = 圆心 lat,lng；end_point = 圆周上一点 lat,lng
  * - area_type 3：area_points = N,lat1,lng1,...（首段为点数）
+ * - area_type 4：航线折线；start_point = 首点 lat,lng；area_points = N,lat1,lng1,...（不闭合）
  */
 
 import { geoCircleCoords } from "@/lib/map-icons";
@@ -91,20 +92,34 @@ export function ringFromCircle(
   return closeRing(geoCircleCoords(c.lng, c.lat, radiusKm, 64));
 }
 
-/** 多边形：N,lat1,lng1,... */
-export function ringFromAreaPoints(areaPoints: string | null | undefined): [number, number][] | null {
+/** 解析 area_points：N,lat1,lng1,... → [lng,lat][]（不闭合） */
+export function coordsFromAreaPoints(areaPoints: string | null | undefined, minN = 2): [number, number][] | null {
   const nums = parseNums(areaPoints);
-  if (nums.length < 3) return null;
+  if (nums.length < 1 + minN * 2) return null;
   const n = Math.floor(nums[0]);
-  if (n < 3 || nums.length < 1 + n * 2) return null;
-  const ring: [number, number][] = [];
+  if (n < minN || nums.length < 1 + n * 2) return null;
+  const out: [number, number][] = [];
   for (let i = 0; i < n; i++) {
     const lat = nums[1 + i * 2];
     const lng = nums[2 + i * 2];
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    ring.push([lng, lat]);
+    out.push([lng, lat]);
   }
-  return closeRing(ring);
+  return out;
+}
+
+/** 多边形：N,lat1,lng1,... */
+export function ringFromAreaPoints(areaPoints: string | null | undefined): [number, number][] | null {
+  const open = coordsFromAreaPoints(areaPoints, 3);
+  return open ? closeRing(open) : null;
+}
+
+/** 航线（area_type 4）：折线，不闭合 */
+export function lineFromAreaRoute(row: AreaTableRow): [number, number][] | null {
+  const fromPoints = coordsFromAreaPoints(row.area_points, 2);
+  if (fromPoints && fromPoints.length >= 2) return fromPoints;
+  const start = parseLatLngPair(row.start_point);
+  return start ? [[start.lng, start.lat]] : null;
 }
 
 export function areaRowToPolygonRing(row: AreaTableRow): [number, number][] | null {

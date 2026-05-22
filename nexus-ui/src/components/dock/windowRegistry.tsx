@@ -31,8 +31,10 @@ import {
   Database,
   Map,
   ScanLine,
+  Gauge,
 } from "lucide-react";
 import { TrackListPanel } from "@/components/panels/TrackListPanel";
+import { SystemEvaluationPanel } from "@/components/panels/SystemEvaluationPanel";
 import { LayerPanel } from "@/components/panels/LayerPanel";
 import { AssetPanel } from "@/components/panels/AssetPanel";
 import { AlertPanel } from "@/components/panels/AlertPanel";
@@ -261,6 +263,21 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
     description: "管理地图图层显示",
   },
   {
+    id: "system-evaluation",
+    title: "系统评估",
+    capability: "dockable",
+    category: "tools",
+    menuLabel: "系统评估",
+    icon: Gauge,
+    component: SystemEvaluationPanel,
+    defaultLocation: "right-bottom",
+    defaultSize: { width: 440, height: 520 },
+    closable: true,
+    draggable: true,
+    resizable: true,
+    description: "系统、航迹、相机、算法评估",
+  },
+  {
     id: "chat",
     title: "智能助手",
     capability: "dockable",
@@ -268,7 +285,7 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
     menuLabel: "智能助手",
     icon: MessageSquare,
     component: ChatPanel,
-    defaultLocation: "right-top",
+    defaultLocation: "right-bottom",
     defaultSize: { width: 440, height: 400 },
     closable: true,
     draggable: true,

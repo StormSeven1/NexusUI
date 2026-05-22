@@ -122,9 +122,8 @@ type ReceiverWithStreams = RTCRtpReceiver & {
 };
 
 /**
- * WebRTC Insertable Streams：拦截编码帧，拷贝到 frameBuffer 回调（供 WebCodecs 解码），
- * **不再 passthrough**（因为我们用 WebCodecs+Canvas 自行解码，不再依赖 <video>）。
- * 同时写入 hub 的 syncHeader 环以备回退。
+ * WebRTC Insertable Streams：拦截编码帧写入 hub 的 syncHeader 环，并可选拷贝到 `onEncodedFrame`（WebCodecs Canvas）。
+ * Transform 仍将帧 enqueue 到 writable，`<video>` 可正常硬件解码作回退或辅助（当前主画面可由 Canvas 或 video 展示）。
  */
 export function attachEncodedVideoFrameSync(
   receiver: RTCRtpReceiver,

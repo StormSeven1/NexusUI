@@ -42,11 +42,27 @@ function pickRectRowFifthFromRecord(r: Record<string, unknown>): unknown {
 
 /** 仅海/空二分类（与 Qt 船矶浮 ↔ 海、鸟机 ↔ 空 一致）；无法识别时默认「海」（海面光电常见） */
 function inferTypeShortFromRecord(r: Record<string, unknown>): string {
-  const rt = r.rectType ?? r.type ?? r.targetType ?? r.classId ?? r.category ?? r.targetClass;
+  const rt =
+    r.rectType ??
+    r.rect_type ??
+    r.type ??
+    r.targetType ??
+    r.target_type ??
+    r.classId ??
+    r.class_id ??
+    r.category ??
+    r.targetClass ??
+    r.target_class;
   const s = String(rt ?? "").toLowerCase();
   if (/plane|air|bird|uav|drone|空|机|鸟|aircraft/.test(s)) return "空";
   if (/ship|boat|vessel|buoy|海|船|浮|surface/.test(s)) return "海";
-  if (typeof rt === "number" && Number.isFinite(rt)) return "海";
+  const n = Number(rt);
+  if (Number.isFinite(n)) {
+    const t = Math.trunc(n);
+    // 与 Qt 常量保持一致：bird=1、plane=2；ship=4、buoy=5。部分链路 ship 可能为 3，一并归海。
+    if (t === 1 || t === 2) return "空";
+    if (t === 3 || t === 4 || t === 5) return "海";
+  }
   return "海";
 }
 
@@ -54,12 +70,19 @@ function inferTypeShortFromRecord(r: Record<string, unknown>): string {
 function parseSingleRectDisplayMetaFromPayload(
   layer: EoRectLayerPayload | null | undefined,
 ): NonNullable<BufferedDetectionEntry["singleDisplayMeta"]> | undefined {
-  if (!layer?.videoRect) return undefined;
+  if (!layer) return undefined;
+  const baseRec = layer as unknown as Record<string, unknown>;
   const vr = layer.videoRect as unknown;
-  if (!Array.isArray(vr) || vr.length === 0) return undefined;
-  const first = vr[0];
-  if (!first || typeof first !== "object" || Array.isArray(first)) return undefined;
-  const rec = first as Record<string, unknown>;
+  let firstRowRec: Record<string, unknown> | null = null;
+  if (Array.isArray(vr) && vr.length > 0) {
+    const first = vr[0];
+    if (first && typeof first === "object" && !Array.isArray(first)) {
+      firstRowRec = first as Record<string, unknown>;
+    }
+  } else if (vr && typeof vr === "object" && !Array.isArray(vr)) {
+    firstRowRec = vr as Record<string, unknown>;
+  }
+  const rec = firstRowRec ?? baseRec;
   const trackName = pickStrFromRecord(rec, [
     "trackAlias",
     "track_alias",

@@ -30,6 +30,7 @@ import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import { MAP_FRIENDLY_COLOR_PROP, MAP_LABEL_FONT_COLOR_PROP } from "@/lib/map-icons";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
+import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import {
   mapRadarPayload,
   type RadarMapGlobals,
@@ -576,9 +577,17 @@ export type AppConfigTrackRendering = {
   };
   trackTimeout: {
     enabled: boolean;
+    /** 非融合、非 UAV 航迹（雷达等） */
     seconds: number;
+    /**
+     * 对海/对空 **融合** DDS 航迹（`fuse_sea` / `fuse_air`）。
+     * 融合侧常按区域轮询推送，同一区域目标长时间不进包；阈值应 ≥ 单区最长静默间隔。
+     */
+    fusionSeconds: number;
+    /** 对空融合 DDS 航迹（`fuse_air`）专用超时秒数；缺省建议更短（如 2s） */
+    fusionAirSeconds: number;
     uavSeconds: number;
-    /** 无新 WS 包时仍定时按 `lastUpdate` 从 store 剔除航迹的轮询间隔（毫秒） */
+    /** 无新 WS 包时仍定时按「上次摄入时间」从 store 剔除航迹的轮询间隔（毫秒） */
     checkIntervalMs: number;
   };
   /** 空中图标相对服务端航向的附加角（度）；`track-ws-normalize` */
@@ -639,7 +648,9 @@ export const DEFAULT_TRACK_RENDERING: AppConfigTrackRendering = {
   },
   trackTimeout: {
     enabled: true,
-    seconds: 10,
+    seconds: 30,
+    fusionSeconds: 120,
+    fusionAirSeconds: 2,
     uavSeconds: 60,
     checkIntervalMs: 2000,
   },
@@ -720,6 +731,8 @@ export function parseTrackRenderingConfig(root: Record<string, unknown>): AppCon
     trackTimeout: {
       enabled: bool(tt?.enabled, base.trackTimeout.enabled),
       seconds: num(tt?.seconds, base.trackTimeout.seconds),
+      fusionSeconds: num(tt?.fusionSeconds, base.trackTimeout.fusionSeconds),
+      fusionAirSeconds: num(tt?.fusionAirSeconds, base.trackTimeout.fusionAirSeconds),
       uavSeconds: num(tt?.uavSeconds, base.trackTimeout.uavSeconds),
       checkIntervalMs: num(tt?.checkIntervalMs, base.trackTimeout.checkIntervalMs),
     },
@@ -1060,8 +1073,27 @@ export function getAssetTargetLineConfig(): AppConfigAssetTargetLine {
 }
 
 /**
- * 仅用于 **`useUnifiedWsFeed` 定时剔除**：按 `Track.lastUpdate`（ISO）与当前时间比较；
- * `isUav===true` 用 `trackTimeout.uavSeconds`，否则 `seconds`。**勿在 WS 入站写 store 时调用**。
+ * 航迹在 store 中的超时毫秒数：`UAV` / **融合**（`fuse_sea`|`fuse_air`）/ 其他 分档。
+ * `trackTimeout.enabled===false` 时返回 `Infinity`。
+ */
+export function getTrackStaleTimeoutMs(track: Track): number {
+  const cfg = getTrackRenderingConfig();
+  if (!cfg.trackTimeout.enabled) return Number.POSITIVE_INFINITY;
+  const lk = resolveTrackLayerKey(track);
+  /** 对空融合优先：不被 `isUav` 分档覆盖，避免无人机对空融合残留过久 */
+  if (lk === "fuse_air") {
+    return Math.max(1, cfg.trackTimeout.fusionAirSeconds) * 1000;
+  }
+  if (track.isUav === true) return Math.max(1, cfg.trackTimeout.uavSeconds) * 1000;
+  if (lk === "fuse_sea") {
+    return Math.max(1, cfg.trackTimeout.fusionSeconds) * 1000;
+  }
+  return Math.max(1, cfg.trackTimeout.seconds) * 1000;
+}
+
+/**
+ * 辅助过滤：按 `Track.lastUpdate` 与当前时间比较（与 store 剔除分档一致）。
+ * **勿在 WS 入站写 store 时调用**。
  */
 export function filterTracksByTimeout(tracks: Track[]): Track[] {
   const cfg = getTrackRenderingConfig();
@@ -1070,9 +1102,7 @@ export function filterTracksByTimeout(tracks: Track[]): Track[] {
   return tracks.filter((t) => {
     const lu = Date.parse(t.lastUpdate);
     if (!Number.isFinite(lu)) return true;
-    const sec = t.isUav === true ? cfg.trackTimeout.uavSeconds : cfg.trackTimeout.seconds;
-    const ms = Math.max(1, sec) * 1000;
-    return now - lu <= ms;
+    return now - lu <= getTrackStaleTimeoutMs(t);
   });
 }
 

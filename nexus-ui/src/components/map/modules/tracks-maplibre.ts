@@ -13,7 +13,12 @@ import {
 import { loadSvgImage } from "@/lib/map-image-loader";
 import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
 import { getTrackDispositionForRendering, useTrackStore } from "@/stores/track-store";
-import { useTrackDisplayStore, neutralFusionColorForTrack } from "@/stores/track-display-store";
+import {
+  useTrackDisplayStore,
+  neutralFusionColorForTrack,
+  trailLengthSecondsForTrack,
+  vectorLengthSecondsForTrack,
+} from "@/stores/track-display-store";
 import { trimHistoryTrailForDisplay, velocityVectorEndLngLat } from "@/lib/track-display-trail";
 import { useAppStore } from "@/stores/app-store";
 import {
@@ -96,8 +101,9 @@ const LINE_VECTOR_FILTER: FilterSpecification = [
  * **不修改** `Track`；仅用于判断是否绘制历史折线。
  */
 export function trackMapVertexEstimate(tracks: ReadonlyArray<Track>): number {
-  const trailSec = useTrackDisplayStore.getState().trailLengthSeconds;
+  const td = useTrackDisplayStore.getState();
   return tracks.reduce((n, t) => {
+    const trailSec = trailLengthSecondsForTrack(t, td);
     const tr = trimHistoryTrailForDisplay(t.historyTrail, trailSec);
     return n + 1 + (tr?.length ?? 0);
   }, 0);
@@ -138,11 +144,10 @@ export function buildTrackLinesGeoJSON(
   const drawTrails = trackMapDrawHistoryTrails(trackList);
   const features: GeoJSON.Feature[] = [];
   const td = useTrackDisplayStore.getState();
-  const vecSec = td.vectorLengthSeconds;
 
   for (const t of trackList) {
     const { pointFill } = trackPointFillAndStyle(t, accent);
-    const trail = trimHistoryTrailForDisplay(t.historyTrail, td.trailLengthSeconds);
+    const trail = trimHistoryTrailForDisplay(t.historyTrail, trailLengthSecondsForTrack(t, td));
 
     if (drawTrails && trail && trail.length >= 1) {
       const coords: [number, number][] = [
@@ -162,7 +167,7 @@ export function buildTrackLinesGeoJSON(
       }
     }
 
-    const vecEnd = velocityVectorEndLngLat(t, vecSec);
+    const vecEnd = velocityVectorEndLngLat(t, vectorLengthSecondsForTrack(t, td));
     if (vecEnd) {
       features.push({
         type: "Feature",
@@ -197,6 +202,9 @@ export function buildTrackFusionPointsGeoJSON(
     const friendlyFill = disp === "friendly" ? style.idColor : undefined;
     const v = t.isVirtual === true;
     const iconScale = Math.max(0.55, Math.min(1.5, style.pointSize / 3.5));
+    const airBirdGlyph = isAirTrackBirdGlyph(t);
+    const isFuseAirTrack = resolveTrackLayerKey(t) === "fuse_air";
+    const airFuseGlyph = isFuseAirTrack && airBirdGlyph;
     const baseProps: Record<string, unknown> = {
       id: t.id,
       showID: t.showID,
@@ -213,11 +221,21 @@ export function buildTrackFusionPointsGeoJSON(
       speed: t.speed,
       heading: t.heading,
       course: t.course ?? null,
+      isFuseAirTrack,
+      isAirBirdGlyph: airBirdGlyph,
       altitude: t.altitude ?? null,
       color: pointFill,
       labelColor: disp === "neutral" ? pointFill : style.idColor,
       labelTextSize: Math.max(6, Math.min(22, style.idSize)),
-      symbolId: getMarkerSymbolId(t.type, disp, v, friendlyFill, neutralFusion, isAirTrackBirdGlyph(t)),
+      symbolId: getMarkerSymbolId(
+        t.type,
+        disp,
+        v,
+        friendlyFill,
+        neutralFusion,
+        airBirdGlyph,
+        airFuseGlyph,
+      ),
       iconScale,
     };
     features.push({
@@ -515,7 +533,17 @@ export class TracksMaplibre {
         filter: filterPointsOnly(null),
         layout: {
           "icon-image": ["get", "symbolId"],
-          "icon-rotate": ["coalesce", ["get", "heading"], 0],
+          "icon-rotate": [
+            "case",
+            [
+              "all",
+              ["==", ["get", "type"], "air"],
+              ["==", ["coalesce", ["get", "isFuseAirTrack"], false], true],
+              ["==", ["coalesce", ["get", "isAirBirdGlyph"], false], true],
+            ],
+            0,
+            ["coalesce", ["get", "heading"], 0],
+          ],
           "icon-rotation-alignment": "map",
           "icon-pitch-alignment": "map",
           /* `["zoom"]` 只能作为**顶层** `interpolate`/`step` 的输入，不能包在 `*` 里 */
@@ -654,8 +682,9 @@ export class TracksMaplibre {
     const gen = ++this.trackFlushGeneration;
     const vis = useAppStore.getState().layerVisibility;
     const sub = useTrackDisplayStore.getState().trackSubtypeVisible;
-    const filtered = filterTracksForMapRender(tracks, vis, sub);
-    const visSig = trackMapVisibilitySignature(vis, sub);
+    const airSub = useTrackDisplayStore.getState().airFusionSubtypeVisible;
+    const filtered = filterTracksForMapRender(tracks, vis, sub, airSub);
+    const visSig = trackMapVisibilitySignature(vis, sub, airSub);
     const trd = getTrackRenderingConfig().trackDisplay;
     const maxVp = trd.maxViewportPoints;
     const maxHist = trd.maxHistoryPointsPerTrack;
@@ -688,7 +717,15 @@ export class TracksMaplibre {
       const disp = getTrackDispositionForRendering(t);
       if (disp !== "neutral") continue;
       const tint = neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor);
-      const id = getMarkerSymbolId(t.type, disp, t.isVirtual === true, undefined, tint, isAirTrackBirdGlyph(t));
+      const id = getMarkerSymbolId(
+        t.type,
+        disp,
+        t.isVirtual === true,
+        undefined,
+        tint,
+        isAirTrackBirdGlyph(t),
+        resolveTrackLayerKey(t) === "fuse_air" && isAirTrackBirdGlyph(t),
+      );
       if (seen.has(id)) continue;
       seen.add(id);
       if (m.hasImage(id)) continue;
@@ -700,6 +737,7 @@ export class TracksMaplibre {
         undefined,
         tint,
         isAirTrackBirdGlyph(t),
+        resolveTrackLayerKey(t) === "fuse_air" && isAirTrackBirdGlyph(t),
       );
       m.addImage(id, await loadSvgImage(srcData, 64), { pixelRatio: 2 });
     }

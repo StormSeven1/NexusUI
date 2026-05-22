@@ -13,8 +13,8 @@ import {
   useEoVideoPanelFocusStore,
 } from "@/stores/eo-video-panel-focus-store";
 
-/** 右侧竖条：上目标档案、下智能助手（与 `rightPartitions` 顺序一致） */
-const RIGHT_TOOLS = ["target-profile", "chat"] as const satisfies readonly PanelId[];
+/** 右侧竖条：上目标档案、下系统评估 + 智能助手（与 `rightPartitions` 顺序一致） */
+const RIGHT_TOOLS = ["target-profile", "system-evaluation", "chat"] as const satisfies readonly PanelId[];
 const rightToolSet = new Set<string>(RIGHT_TOOLS);
 
 export function RightSidebar() {
@@ -108,7 +108,11 @@ export function RightSidebar() {
     const mode = modeOf(tabId);
     const panel = panels.find((p) => p.id === tabId);
     const rightLocation =
-      panel?.location && panel.location.startsWith("right") ? panel.location : tabId === "chat" ? "right-1" : "right-0";
+      panel?.location && panel.location.startsWith("right")
+        ? panel.location
+        : tabId === "target-profile"
+          ? "right-0"
+          : "right-1";
     if (activeDockedIds.has(tabId) && rightSidebarOpen && mode === "docked") {
       handlePanelClick(tabId);
       return;

@@ -48,7 +48,10 @@ export const useDbAreaStore = create<DbAreaState>()(
       setRows: (rows, err = null) =>
         set((s) => ({
           rows,
-          areaVisibility: pruneVisibility(s.areaVisibility, rows),
+          // 空数组：请求失败或未连库时不要 prune，否则会清空 persisted 里的显隐；
+          // 另：首轮 fetch 早于 persist hydrate 时用 {} merge 会令全部 true 并抢先覆盖 localStorage。
+          areaVisibility:
+            rows.length > 0 ? pruneVisibility(s.areaVisibility, rows) : s.areaVisibility,
           lastError: err,
           lastFetchedAt: Date.now(),
         })),

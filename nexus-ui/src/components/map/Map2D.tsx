@@ -102,7 +102,10 @@ import {
   setDbAreasGeoJSON,
   DB_AREAS_SOURCE,
   DB_AREAS_LAYER_IDS,
+  DB_AREAS_LINE_LAYER,
+  DB_AREAS_LABEL_LAYER,
 } from "@/components/map/modules/db-areas-maplibre";
+import { AreaDbContextMenu, type AreaDbMenuState } from "@/components/map/AreaDbContextMenu";
 import { buildDbAreasFeatureCollection } from "@/lib/build-db-areas-geojson";
 import { LaserMaplibre, LASER_CENTER, LASER_LAYER_IDS, type LaserDevice } from "@/components/map/modules/laser-maplibre";
 import { TdoaMaplibre, TDOA_CENTER, TDOA_LAYER_IDS, type TdoaDevice } from "@/components/map/modules/tdoa-maplibre";
@@ -133,11 +136,17 @@ import {
   DRONES_LABEL_LAYER,
 } from "@/components/map/modules/drones-maplibre";
 import type { PolygonDrawCompletePayload } from "@/components/map/modules/polygon-draw-maplibre";
+import { DbAreaDrawMaplibre, DB_AREA_DRAW_LAYER_IDS } from "@/components/map/modules/db-area-draw-maplibre";
+import { AreaDrawSaveDialog } from "@/components/map/AreaDrawDialogs";
+import { useAreaDrawStore } from "@/stores/area-draw-store";
 import {
   registerMapMeasureHandlers,
   useMapMeasureUi,
   type Map2DMeasureHandlers,
 } from "@/stores/map-measure-bridge";
+import { isMapMeasureDrawActive, setMapDrawCursor } from "@/lib/map-draw-cursor";
+import { registerTrackEvalMap } from "@/lib/track-eval-map-bridge";
+import { useTrackEvaluationStore } from "@/stores/track-evaluation-store";
 import { MapGisContextMenu, type MapGisMenuState } from "@/components/map/MapGisContextMenu";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 
@@ -422,10 +431,12 @@ export function Map2D() {
   /** 供静态无人机站址图层与资产更新时 `assetMapLabelTextColor` 等一致 */
   const assetDispositionAccentRef = useRef<AssetDispositionIconAccent>({});
   const polygonDrawRef = useRef<PolygonDrawMaplibre | null>(null);
+  const dbAreaDrawRef = useRef<DbAreaDrawMaplibre | null>(null);
   const measureToolRefs = useRef<{
     dist: DistanceMeasureMaplibre;
     angle: AngleMeasureMaplibre;
     poly: PolygonDrawMaplibre;
+    dbArea: DbAreaDrawMaplibre;
     laser: LaserMaplibre;
     tdoa: TdoaMaplibre;
   } | null>(null);
@@ -444,6 +455,7 @@ export function Map2D() {
     y: number;
   } | null>(null);
   const [gisMenu, setGisMenu] = useState<MapGisMenuState | null>(null);
+  const [areaDbMenu, setAreaDbMenu] = useState<AreaDbMenuState | null>(null);
   const { setZoomLevel, selectTrack, selectAsset } = useAppStore();
 
   const selectTrackRef = useRef(selectTrack);
@@ -627,7 +639,7 @@ export function Map2D() {
         /* `map.addImage` 预注册各图层 `layout["icon-image"]` 用到的位图；`hasImage` 为真则跳过。并行加载以缩短首帧等待 */
         await Promise.all([
           /* 航迹点符号：空/海/潜 × 敌我中（`getAllMarkerSymbolKeys`），供 `TRACK_SYMBOL` 等 */
-          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill, airBird }) => {
+          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill, airBird, airFuse }) => {
             if (!map.hasImage(id)) {
               map.addImage(
                 id,
@@ -640,6 +652,7 @@ export function Map2D() {
                     friendlyFill,
                     neutralFusionFill,
                     airBird === true,
+                    airFuse === true,
                   ),
                   64,
                 ),
@@ -684,6 +697,22 @@ export function Map2D() {
         angle.init();
         /* 多边形标绘草稿（polydraw2-source，与限制区源分离） */
         poly.initDraft();
+
+        const dbArea = new DbAreaDrawMaplibre(map, {
+          onComplete: (p) => {
+            const session = useAreaDrawStore.getState().session;
+            if (!session) return;
+            useAreaDrawStore.getState().setPendingSave({ ...p, session });
+            useMapMeasureUi.getState().setActiveDrawTool(null);
+          },
+          onCancel: () => {
+            useAreaDrawStore.getState().setDrawing(false);
+            useAreaDrawStore.getState().setSession(null);
+            useMapMeasureUi.getState().setActiveDrawTool(null);
+          },
+        });
+        dbArea.init(HIGHLIGHT_LAYER);
+        dbAreaDrawRef.current = dbArea;
         /*
          * 激光 / TDOA 不并入上方 `OptoelectronicFovModule` / `buildFovGeoJSON` 的原因（几何虽同属扇形，产品能力不同）：
          * - 光电 FOV：静态多边形 + fill/line/label，数据为 `setFromAssets(_assets)` 的相机/塔类 `Asset`。
@@ -707,7 +736,7 @@ export function Map2D() {
         tdoa.setLayerVisibility(sectorBundleToTdoaLayerVis(appCfg.tdoa));
         { const td = resolveTdoaDefaults(appCfg.tdoa); tdoa.setDefaults(td.sectorFillDefaultColor, td.sectorFillDefaultOpacity); }
         tdoa.upsertMany(tdoaDevicesFromSectorBundle(appCfg.tdoa));
-        measureToolRefs.current = { dist, angle, poly, laser, tdoa };
+        measureToolRefs.current = { dist, angle, poly, dbArea, laser, tdoa };
 
         /* 注册专题模块到全局注册表，供 laser-activation / tdoa-activation / asset-target-line 使用 */
         registerMapModules({ laser, tdoa, drones: dronesRef.current!, map });
@@ -732,19 +761,41 @@ export function Map2D() {
           }
         }
 
-        /* 测量面板与工具栏：切换测距 / 测角 / 多边形时互斥激活 */
+        /* 测量面板与工具栏：切换测距 / 测角 / 区域标绘时互斥激活 */
         const measureHandlers: Map2DMeasureHandlers = {
           setDrawTool(tool) {
             dist.deactivate();
             angle.deactivate();
             poly.deactivate();
+            dbArea.deactivate();
+            useAreaDrawStore.getState().setDrawing(false);
+            useAreaDrawStore.getState().setSession(null);
+            useMapMeasureUi.getState().setActiveDrawTool(tool);
+            setMapDrawCursor(map, tool != null);
             if (tool === "distance") dist.activate();
             else if (tool === "angle") angle.activate();
             else if (tool === "polygon") poly.activate();
-            useMapMeasureUi.getState().setActiveDrawTool(tool);
+          },
+          startAreaDraw(session) {
+            dist.deactivate();
+            angle.deactivate();
+            poly.deactivate();
+            useAreaDrawStore.getState().setSession(session);
+            useAreaDrawStore.getState().setDrawing(true);
+            useMapMeasureUi.getState().setActiveDrawTool("area");
+            setMapDrawCursor(map, true);
+            dbArea.activate(session.shape);
+          },
+          cancelAreaDraw() {
+            dbArea.cancel();
           },
         };
         registerMapMeasureHandlers(measureHandlers);
+
+        registerTrackEvalMap(map, {
+          onRegionComplete: (r) => useTrackEvaluationStore.getState().applyRegionResult(r),
+          onRegionCancel: () => useTrackEvaluationStore.getState().onRegionDrawCancel(),
+        });
 
         /* 标牌：地图坐标 → 屏幕像素，供 TargetPlacard 定位 */
         const projectPlacard = (lng: number, lat: number) => {
@@ -881,6 +932,35 @@ export function Map2D() {
           if (useMapMeasureUi.getState().activeDrawTool != null) return;
           const ev = e.originalEvent;
           if (ev.button !== 2) return;
+          if (typeof ev.preventDefault === "function") ev.preventDefault();
+
+          const areaFeats = queryRenderedFeaturesSafe(map, e.point, [
+            DB_AREAS_LINE_LAYER,
+            DB_AREAS_LABEL_LAYER,
+          ]);
+          const areaFeat = areaFeats.find((f) => {
+            const k = f.properties?._kind as string | undefined;
+            return k === "poly" || k === "route";
+          });
+          if (areaFeat?.properties) {
+            const gid = Number(areaFeat.properties.groupId);
+            const aid = Number(areaFeat.properties.areaId);
+            const areaType = Number(areaFeat.properties.areaType);
+            const name = String(areaFeat.properties.name ?? `${gid}_${aid}`);
+            if (Number.isFinite(gid) && Number.isFinite(aid)) {
+              setGisMenu(null);
+              setAreaDbMenu({
+                clientX: ev.clientX,
+                clientY: ev.clientY,
+                groupId: gid,
+                areaId: aid,
+                areaType: Number.isFinite(areaType) ? areaType : 3,
+                areaName: name,
+              });
+              return;
+            }
+          }
+
           let variant: MapGisMenuState["variant"] = "map";
           let trackId: string | null = null;
           if (!DISABLE_MAP_TRACK_RENDERING) {
@@ -892,7 +972,7 @@ export function Map2D() {
               trackId = id;
             }
           }
-          if (typeof ev.preventDefault === "function") ev.preventDefault();
+          setAreaDbMenu(null);
           void ensureEntitiesTrackTaskCache().catch(() => {});
           setGisMenu({
             clientX: ev.clientX,
@@ -975,8 +1055,12 @@ export function Map2D() {
             .catch((err: unknown) => console.error("[map-look-at-dblclick]", err));
         });
 
-        /* 悬停于航迹符号或资产点/符号层之一则 pointer 光标 */
+        /* 悬停于航迹符号或资产点/符号层之一则 pointer 光标；标绘模式保持十字 */
         map.on("mousemove", (e) => {
+          if (isMapMeasureDrawActive()) {
+            setMapDrawCursor(map, true);
+            return;
+          }
           const onTrack = queryRenderedFeaturesSafe(map, e.point, [...TRACK_PICK_LAYERS]).length > 0;
           if (onTrack) {
             map.getCanvas().style.cursor = "pointer";
@@ -1051,6 +1135,7 @@ export function Map2D() {
       }
       unregisterMapModules();
       registerMapMeasureHandlers(null);
+      registerTrackEvalMap(null);
       radarCovRef.current?.dispose();
       radarCovRef.current = null;
       airportStaticRef.current?.dispose();
@@ -1471,6 +1556,12 @@ export function Map2D() {
     <div className="relative h-full w-full">
       <div ref={mapContainer} className="h-full w-full" />
       {gisMenu ? <MapGisContextMenu open state={gisMenu} onClose={() => setGisMenu(null)} /> : null}
+      <AreaDbContextMenu
+        open={areaDbMenu != null}
+        state={areaDbMenu}
+        onClose={() => setAreaDbMenu(null)}
+      />
+      <AreaDrawSaveDialog />
       {polyPending && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-labelledby="poly-name-title">
           <div className="w-full max-w-sm rounded-lg border border-white/10 bg-[#141418] p-4 shadow-xl">

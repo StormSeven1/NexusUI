@@ -1,5 +1,6 @@
 import type { AreaTableRow } from "@/lib/area-table-geometry";
-import { areaRowToPolygonRing, dbAreaFeatureId } from "@/lib/area-table-geometry";
+import { areaRowToPolygonRing, dbAreaFeatureId, lineFromAreaRoute } from "@/lib/area-table-geometry";
+import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
 
 /**
  * 区域图层线框 + 标签字色（深底图用柔和浅灰蓝，避免纯白刺眼；与 DB `line_color` 解耦以保证可读一致）
@@ -35,12 +36,44 @@ export function buildDbAreasFeatureCollection(
   const features: GeoJSON.Feature[] = [];
   for (const row of rows) {
     if (!includeRow(row)) continue;
-    const ring = areaRowToPolygonRing(row);
-    if (!ring || ring.length < 4) continue;
 
     const lineColor = DB_AREA_MAP_UI_COLOR;
-    const name = (row.area_name && String(row.area_name).trim()) || `区域 ${row.group_id}/${row.area_id}`;
+    const name =
+      (row.area_name && String(row.area_name).trim()) ||
+      mapAreaFallbackLabel(row.group_id, row.area_id, row.area_type);
     const id = dbAreaFeatureId(row);
+    const lineWidth = Math.max(1.5, Math.min(6, Number(row.line_width) || 2));
+
+    if (row.area_type === 4) {
+      const line = lineFromAreaRoute(row);
+      if (!line || line.length < 2) continue;
+      const [lx, ly] = line[line.length - 1]!;
+      features.push({
+        type: "Feature",
+        id,
+        geometry: { type: "LineString", coordinates: line },
+        properties: {
+          _kind: "route",
+          id,
+          name,
+          lineColor,
+          lineWidth,
+          groupId: row.group_id,
+          areaId: row.area_id,
+          areaType: row.area_type,
+        },
+      });
+      features.push({
+        type: "Feature",
+        id: `${id}-lbl`,
+        geometry: { type: "Point", coordinates: [lx, ly] },
+        properties: { _kind: "lbl", labelText: name, lineColor },
+      });
+      continue;
+    }
+
+    const ring = areaRowToPolygonRing(row);
+    if (!ring || ring.length < 4) continue;
     const [lx, ly] = ringSouthEastLabelLngLat(ring);
 
     features.push({
@@ -52,7 +85,10 @@ export function buildDbAreasFeatureCollection(
         id,
         name,
         lineColor,
-        lineWidth: Math.max(1.5, Math.min(6, Number(row.line_width) || 2)),
+        lineWidth,
+        groupId: row.group_id,
+        areaId: row.area_id,
+        areaType: row.area_type,
       },
     });
 
@@ -60,11 +96,7 @@ export function buildDbAreasFeatureCollection(
       type: "Feature",
       id: `${id}-lbl`,
       geometry: { type: "Point", coordinates: [lx, ly] },
-      properties: {
-        _kind: "lbl",
-        labelText: name,
-        lineColor,
-      },
+      properties: { _kind: "lbl", labelText: name, lineColor },
     });
   }
 

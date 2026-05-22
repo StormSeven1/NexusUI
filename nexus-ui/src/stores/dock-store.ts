@@ -193,6 +193,16 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     displayOrder: 5,
   },
   {
+    id: "system-evaluation",
+    location: "right-1",
+    mode: "docked",
+    position: { x: 520, y: 420 },
+    size: { width: 440, height: 520 },
+    zIndex: DEFAULT_Z_INDEX,
+    lastPopupPosition: null,
+    displayOrder: 6,
+  },
+  {
     id: "chat",
     location: "right-1",
     mode: "docked",
@@ -200,7 +210,7 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     size: { width: 440, height: 400 },
     zIndex: DEFAULT_Z_INDEX,
     lastPopupPosition: null,
-    displayOrder: 6,
+    displayOrder: 7,
   },
   {
     id: "overview",
@@ -261,12 +271,12 @@ export const useDockStore = create<DockStoreWithSidebar>()(
   /** 右上区域当前显示的面板 */
   rightUpperPanelTab: "target-profile",
 
-  /** 右下区域当前显示的面板 */
+  /** 右下区域当前显示的面板（系统评估 + 智能助手） */
   rightLowerPanelTab: "chat",
 
   // ============ 动态分区系统状态 ============
 
-  /** 左侧边栏：单分区承载四工具（与 migrate 双分区不同，由 UI 与 DEFAULT_PANELS 共同约定） */
+  /** 左侧边栏：单分区承载四工具 */
   leftPartitions: [
     {
       id: "left-0",
@@ -277,7 +287,7 @@ export const useDockStore = create<DockStoreWithSidebar>()(
     },
   ],
 
-  /** 右侧边栏：上目标档案、下智能助手 */
+  /** 右侧边栏：上目标档案、下系统评估 + 智能助手 */
   rightPartitions: [
     {
       id: "right-0",

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Bug,
   Camera,
   ChevronDown,
   Crosshair,
@@ -69,6 +70,10 @@ export interface EoVideoFloatingToolsProps {
    * 为 true 时不渲染首项「放大」按钮（由父级单独置顶，如无人机右侧栏）。
    */
   hideExpandButton?: boolean;
+  /** 全局调试 UI 关闭时：放大 + 相机在右侧显示「调试」开关（底部任务跟踪面板） */
+  showCameraExpandedDebugToggle?: boolean;
+  cameraExpandedDebugOpen?: boolean;
+  onToggleCameraExpandedDebug?: () => void;
 }
 
 const uavOverlayToolClass =
@@ -125,6 +130,9 @@ export function EoVideoFloatingTools({
   thirdPartyCamBusy = false,
   thirdPartyDirectMoveSupported = false,
   hideExpandButton = false,
+  showCameraExpandedDebugToggle = false,
+  cameraExpandedDebugOpen = false,
+  onToggleCameraExpandedDebug,
 }: EoVideoFloatingToolsProps) {
   const log = useCallback((s: string) => onUavClientLog?.(`${new Date().toLocaleTimeString()} ${s}`), [onUavClientLog]);
   const notify = useCallback(
@@ -528,6 +536,29 @@ export function EoVideoFloatingTools({
           >
             <PictureInPicture2 className="size-3.5" />
           </Button>
+          {showCameraExpandedDebugToggle && onToggleCameraExpandedDebug ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              title={
+                cameraExpandedDebugOpen
+                  ? "收起底部调试信息（任务跟踪 / 检测 WS）"
+                  : "在底部展开调试信息（任务跟踪 / 检测 WS）"
+              }
+              aria-label="相机放大调试信息"
+              aria-pressed={cameraExpandedDebugOpen}
+              className={cn(
+                "border border-white/25 bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+                cameraExpandedDebugOpen
+                  ? "border-amber-400/45 bg-amber-950/40 text-amber-200"
+                  : "text-white/85",
+              )}
+              onClick={() => onToggleCameraExpandedDebug()}
+            >
+              <Bug className="size-3.5" />
+            </Button>
+          ) : null}
         </>
       ) : (
         <>

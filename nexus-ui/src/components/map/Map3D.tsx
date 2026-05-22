@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { useTrackStore, getTrackDispositionForRendering } from "@/stores/track-store";
-import { useTrackDisplayStore, neutralFusionColorForTrack } from "@/stores/track-display-store";
+import {
+  useTrackDisplayStore,
+  neutralFusionColorForTrack,
+  trailLengthSecondsForTrack,
+  vectorLengthSecondsForTrack,
+} from "@/stores/track-display-store";
 import { trimHistoryTrailForDisplay, velocityVectorEndLngLat } from "@/lib/track-display-trail";
 import {
   LYR_DB_AREAS,
@@ -19,6 +24,7 @@ import { useDbAreaStore } from "@/stores/db-area-store";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { areaRowToPolygonRing, dbAreaFeatureId, dbAreaVisibilityKey } from "@/lib/area-table-geometry";
 import { DB_AREA_MAP_UI_COLOR, ringSouthEastLabelLngLat } from "@/lib/build-db-areas-geojson";
+import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
 import { useAssetStore } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import type { ZoneData } from "@/stores/zone-store";
@@ -59,6 +65,13 @@ type MotionEvent = import("cesium").ScreenSpaceEventHandler.MotionEvent;
  * RGBA 元组 [r,g,b,a]，用于 Cesium.Color，分量范围 0–1
  */
 type RGBA = [number, number, number, number];
+
+function trackBillboardRotationRad(track: Pick<Track, "heading" | "trackLayerKey" | "ddsSourceId" | "dataSourceId" | "sensor" | "targetType" | "name" | "isAirTrack" | "type" | "trackCategoryId" | "isUav">, Cesium: CesiumModule): number {
+  const noRotateBirdOnFuseAir =
+    resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track);
+  if (noRotateBirdOnFuseAir) return 0;
+  return -Cesium.Math.toRadians(track.heading ?? 0);
+}
 
 const ZONE_STYLES: Record<string, { fill: RGBA; line: RGBA }> = {
   "no-fly":  { fill: [0.94, 0.27, 0.27, 0.18], line: [0.94, 0.27, 0.27, 0.7] },
@@ -208,7 +221,8 @@ function syncCesiumDbAreas(
     const outlineW = Math.max(1.5, Math.min(5, Number(row.line_width) || 2));
 
     const name =
-      (row.area_name && String(row.area_name).trim()) || `区域 ${row.group_id}/${row.area_id}`;
+      (row.area_name && String(row.area_name).trim()) ||
+      mapAreaFallbackLabel(row.group_id, row.area_id, row.area_type);
     const id = dbAreaFeatureId(row);
 
     const ent = viewer.entities.add({
@@ -388,11 +402,12 @@ async function syncCesiumTrackBillboards(
               friendlyFill,
               fusionTint,
               isAirTrackBirdGlyph(track),
+              resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
             ),
             scale: 0.90,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             heightReference: Cesium.HeightReference.NONE,
-            rotation: -Cesium.Math.toRadians(track.heading ?? 0),
+            rotation: trackBillboardRotationRad(track, Cesium),
             color: Cesium.Color.WHITE,
           },
           label: labelCommon,
@@ -430,9 +445,10 @@ async function syncCesiumTrackBillboards(
         friendlyFill,
         fusionTint,
         isAirTrackBirdGlyph(t),
+        resolveTrackLayerKey(t) === "fuse_air" && isAirTrackBirdGlyph(t),
       );
       ent.billboard.image = new Cesium.ConstantProperty(image);
-      ent.billboard.rotation = new Cesium.ConstantProperty(-Cesium.Math.toRadians(t.heading ?? 0));
+      ent.billboard.rotation = new Cesium.ConstantProperty(trackBillboardRotationRad(t, Cesium));
       if (ent.label) {
         ent.label.fillColor = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc));
         ent.label.pixelOffset = new Cesium.ConstantProperty(new Cesium.Cartesian2(0, -26));
@@ -444,7 +460,7 @@ async function syncCesiumTrackBillboards(
 
   if (drawTrails) {
     for (const t of allTracks) {
-      const trail = trimHistoryTrailForDisplay(t.historyTrail, td.trailLengthSeconds);
+      const trail = trimHistoryTrailForDisplay(t.historyTrail, trailLengthSecondsForTrack(t, td));
       if (!trail || trail.length < 1) continue;
       const ts2 = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
       const eff = getTrackDispositionForRendering(t);
@@ -466,7 +482,7 @@ async function syncCesiumTrackBillboards(
   }
 
   for (const t of allTracks) {
-    const vecEnd = velocityVectorEndLngLat(t, td.vectorLengthSeconds);
+    const vecEnd = velocityVectorEndLngLat(t, vectorLengthSecondsForTrack(t, td));
     if (!vecEnd) continue;
     const lineEnt = viewer.entities.add({
       polyline: {
@@ -1069,7 +1085,8 @@ export function Map3D() {
           flushAgain = false;
           const vis = useAppStore.getState().layerVisibility;
           const sub = useTrackDisplayStore.getState().trackSubtypeVisible;
-          const snap = filterTracksForMapRender(useTrackStore.getState().tracks, vis, sub);
+          const airSub = useTrackDisplayStore.getState().airFusionSubtypeVisible;
+          const snap = filterTracksForMapRender(useTrackStore.getState().tracks, vis, sub, airSub);
           await syncCesiumTrackBillboards(v, C, entityGroupsRef.current, snap, cesiumTrackAccentRef.current);
         } while (flushAgain && !cancelled);
       } finally {

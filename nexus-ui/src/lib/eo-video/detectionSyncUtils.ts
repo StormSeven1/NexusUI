@@ -64,11 +64,17 @@ export function parseDetectionHeader(headerData: unknown): Uint8Array | null {
   return null;
 }
 
-/** 与 base-vue headersMatch 完全一致：长度相等 + 全字节比对 */
+/** 与 base-vue 一致：优先整包相等；长度不一致时若两侧均 ≥32B 则只比对前 HEADER_LEN 字节（兼容后端 32/48B 变体）。 */
 export function headersMatch(a: Uint8Array | null, b: Uint8Array | null): boolean {
   if (!a || !b) return false;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
+  if (a.length === b.length) {
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+  if (Math.min(a.length, b.length) < HEADER_LEN) return false;
+  for (let i = 0; i < HEADER_LEN; i++) {
     if (a[i] !== b[i]) return false;
   }
   return true;
@@ -112,7 +118,7 @@ export function createSyncHeader(frameInfo: {
 /**
  * 从 RTP 编码帧 payload 生成 HEADER_LEN 字节 syncHeader。
  * 结构：4 字节 big-endian 包大小 + (HEADER_LEN-4) 字节 NAL 数据。
- * headersMatch 使用 min(a.len, b.len) 前缀比较，兼容后端 32/48 字节。
+ * `headersMatch` 在两侧长度均 ≥HEADER_LEN 时比对前 HEADER_LEN 字节，兼容后端 32/48 字节变体。
  */
 export function createSyncHeaderFromEncodedFrame(encoded: {
   data: ArrayBuffer | ArrayBufferView;

@@ -4,6 +4,8 @@ const SRC = "nexus-db-areas-src";
 const LINE = "nexus-db-areas-line";
 const LBL = "nexus-db-areas-lbl";
 
+export const DB_AREAS_LINE_LAYER = LINE;
+export const DB_AREAS_LABEL_LAYER = LBL;
 export const DB_AREAS_SOURCE = SRC;
 /** 仅线框 + 名称，无填充 */
 export const DB_AREAS_LAYER_IDS = [LINE, LBL] as const;
@@ -20,7 +22,7 @@ export function installDbAreasLayers(map: maplibregl.Map, beforeId?: string): vo
         id: LINE,
         type: "line",
         source: SRC,
-        filter: ["==", ["get", "_kind"], "poly"],
+        filter: ["in", ["get", "_kind"], ["literal", ["poly", "route"]]],
         paint: {
           "line-color": ["get", "lineColor"],
           "line-width": ["get", "lineWidth"],

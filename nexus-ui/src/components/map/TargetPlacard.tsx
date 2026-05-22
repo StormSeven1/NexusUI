@@ -35,6 +35,7 @@ import {
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
 import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
+import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import { useAlertStore } from "@/stores/alert-store";
 import { useAssetStore } from "@/stores/asset-store";
 import {
@@ -159,6 +160,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
       friendlyFill,
       eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
       isAirTrackBirdGlyph(track),
+      resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
     );
   }, [kind, track]);
 

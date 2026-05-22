@@ -1,9 +1,19 @@
 import type { AreaTableRow } from "@/lib/area-table-geometry";
-import { areaRowToPolygonRing, dbAreaVisibilityKey } from "@/lib/area-table-geometry";
+import { areaRowToPolygonRing, dbAreaVisibilityKey, lineFromAreaRoute } from "@/lib/area-table-geometry";
 
+/** 面状区域（矩形/圆/多边形）是否可上图 */
 export function isDbAreaDrawable(row: AreaTableRow): boolean {
   const ring = areaRowToPolygonRing(row);
   return Boolean(ring && ring.length >= 4);
+}
+
+/** 列表/树是否展示（含航线折线） */
+export function isDbAreaListable(row: AreaTableRow): boolean {
+  if (row.area_type === 4) {
+    const line = lineFromAreaRoute(row);
+    return Boolean(line && line.length >= 2);
+  }
+  return isDbAreaDrawable(row);
 }
 
 /** 总开关开时，当前应绘制的区域条数（与地图一致） */

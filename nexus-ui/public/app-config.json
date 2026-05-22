@@ -271,7 +271,8 @@
       "trackTimeout": {
         "_说明": "航迹超时。",
         "enabled": "总开关。",
-        "seconds": "非 UAV 航迹超时秒数。",
+        "seconds": "非 UAV、非融合分档航迹（码头/靖子头/探鸟等）超时秒数。",
+        "fusionSeconds": "对海/对空融合 DDS（`fuse_sea`/`fuse_air`）。融合常按区域轮询推送，同一区域集体长时间不进包；应 ≥ 单区最长静默间隔（秒）。",
         "uavSeconds": "`Track.isUav===true` 时使用的超时秒数。",
         "checkIntervalMs": "定时扫 `track-store` 并剔除超时的间隔（毫秒）。"
       },
@@ -738,7 +739,8 @@
     },
     "trackTimeout": {
       "enabled": true,
-      "seconds": 10,
+      "seconds": 30,
+      "fusionSeconds": 120,
       "uavSeconds": 60,
       "checkIntervalMs": 2000
     },
@@ -752,7 +754,7 @@
     }
   },
   "websocket": {
-    "url": "ws://192.168.18.141:27003/ws",
+    "url": "ws://192.168.18.141:27004/ws",
     "reconnectInterval": 3000,
     "heartbeatInterval": 25000,
     "maxReconnectAttempts": 12,
@@ -763,7 +765,7 @@
     "enabled": false
   },
   "http": {
-    "backendUrl": "http://192.168.18.141:27003",
+    "backendUrl": "http://192.168.18.141:27004",
     "imagePollIntervalMs": 3000,
     "imageFetchTimeoutMs": 1000,
     "chat": {

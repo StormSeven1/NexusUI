@@ -33,6 +33,14 @@ export function useDbAreasPoll() {
 
     const run = async () => {
       if (!mounted.current) return;
+      if (
+        typeof window !== "undefined" &&
+        "persist" in useDbAreaStore &&
+        typeof useDbAreaStore.persist?.rehydrate === "function"
+      ) {
+        await useDbAreaStore.persist.rehydrate();
+      }
+      if (!mounted.current) return;
       const { rows, error } = await fetchAreas();
       if (!mounted.current) return;
       useDbAreaStore.getState().setRows(rows, error);

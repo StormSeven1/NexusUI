@@ -32,6 +32,9 @@ class Settings(BaseSettings):
 
     # 相机任务转发默认目标（请求体无 backendBaseUrl 时使用；与现场实体服务一致）
     CAMERA_TASK_BACKEND_BASE_URL: str = "http://192.168.18.141:8088"
+
+    # 系统评估 gRPC 服务（system-evaluation-server），格式 host:port
+    SYSTEM_EVAL_GRPC_TARGET: str = "192.168.18.141:50091"
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -165,7 +168,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "id": "dds_camera_status",
         "name": "DDS相机实时状态(新版 IDL，Topic CameraRealTimeStatusTopic)",
         "enabled": True,
-        "domain_id": 149,
+        "domain_id": 200,
         "topic_name": "CameraRealTimeStatusTopic",
         "profile_name": "camera_status_subscriber",
         "discovery_server_ip": "192.168.18.141",
@@ -185,7 +188,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "id": "dds_camera_status_legacy",
         "name": "DDS相机实时状态(旧版扁平结构，Topic CameraRealTimeStatusTopic1)",
         "enabled": False,
-        "domain_id": 149,
+        "domain_id": 200,
         "topic_name": "CameraRealTimeStatusTopic1",
         "profile_name": "camera_status_subscriber",
         "discovery_server_ip": "192.168.18.141",

@@ -19,6 +19,7 @@ import {
 import { useAppStore } from "@/stores/app-store";
 import { useDbAreaStore } from "@/stores/db-area-store";
 import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
+import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
 import { countVisibleDbAreaLeaves, isDbAreaDrawable } from "@/lib/db-area-panel-helpers";
 import {
   ChevronDown,
@@ -324,7 +325,7 @@ export function LayerPanel() {
                               const v = dbAreaVisibility[key] !== false;
                               const label =
                                 (r.area_name != null && String(r.area_name).trim()) ||
-                                `区域 ${r.group_id}/${r.area_id}`;
+                                mapAreaFallbackLabel(r.group_id, r.area_id, r.area_type);
                               return rowBtn(v, () => setAreaVisible(r.group_id, r.area_id, !v), label, key);
                             })
                           : null}

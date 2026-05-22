@@ -50,7 +50,7 @@ export function EoVideoBottomFloater({
         <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-nexus-text-primary drop-shadow-sm">
           {streamLabel}
         </span>
-        <span className="max-w-[45%] shrink-0 truncate text-right text-[10px] text-nexus-text-muted drop-shadow-sm">
+        <span className="max-w-[45%] shrink-0 truncate text-right text-[10px] text-nexus-text-primary drop-shadow-sm">
           {taskLine}
         </span>
         <span

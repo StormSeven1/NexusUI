@@ -207,6 +207,8 @@ export function EoVideoPanel({
     }
   }, [uavVideoOnly]);
   const [zoomWindowOpen, setZoomWindowOpen] = useState(false);
+  /** 全局调试 UI 关闭时：放大 + 相机在右侧点「调试」后于底部展开任务跟踪面板 */
+  const [cameraExpandedDebugOpen, setCameraExpandedDebugOpen] = useState(false);
 
   const eoFocusedDockId = useEoVideoPanelFocusStore((s) => s.focusedDockPanelId);
   const setEoFocusedDockPanel = useEoVideoPanelFocusStore((s) => s.setFocusedDockPanel);
@@ -217,6 +219,7 @@ export function EoVideoPanel({
     if (!expandedMode) {
       setPtzPanelOpen(false);
       setUavDockExpanded(false);
+      setCameraExpandedDebugOpen(false);
     } else {
       // 放大后显示无人机罗盘/控制台（小窗仅视频，与右侧工具栏一致）
       setUavDockExpanded(true);
@@ -2364,6 +2367,11 @@ export function EoVideoPanel({
                         onThirdPartyCamKind={handleThirdPartyCamKindSelect}
                         thirdPartyCamBusy={thirdPartyCamBusy}
                         thirdPartyDirectMoveSupported={isThirdPartyStream}
+                        showCameraExpandedDebugToggle={!EO_VIDEO_DEBUG_UI && expandedMode}
+                        cameraExpandedDebugOpen={cameraExpandedDebugOpen}
+                        onToggleCameraExpandedDebug={() =>
+                          setCameraExpandedDebugOpen((v) => !v)
+                        }
                       />
                       {snapshotPreview ? (
                         <EoSnapshotPreviewPopout
@@ -2393,6 +2401,23 @@ export function EoVideoPanel({
                           entityId={detectionEntityId}
                           backendBaseUrl={taskBackendBaseUrl}
                           onClientLog={appendClientLog}
+                        />
+                      </div>
+                    ) : null}
+                    {!EO_VIDEO_DEBUG_UI && expandedMode && cameraExpandedDebugOpen ? (
+                      <div className="pointer-events-auto z-[26] w-full max-h-[min(42vh,300px)] shrink-0 overflow-auto border-t border-white/[0.12] bg-black/82 backdrop-blur-sm">
+                        <EoVideoTaskTracePanel
+                          trace={taskTrace}
+                          clientEcho={clientEcho}
+                          uavMqttStatus={uavMqttFooterLine || undefined}
+                          detectionWsLine={
+                            detectionEntityId && detectionDiag.trim() ? detectionDiag : undefined
+                          }
+                          detectionWsTitle={
+                            detectionEntityId && detectionDiagHover.trim()
+                              ? detectionDiagHover
+                              : undefined
+                          }
                         />
                       </div>
                     ) : null}

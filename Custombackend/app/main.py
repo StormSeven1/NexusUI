@@ -33,6 +33,7 @@ from websocket_manager import ws_manager
 from receivers.receiver_manager import receiver_manager
 from http_api import router as api_router, set_db_manager
 from camera_task_routes import router as camera_tasks_router, router_singular_alias as camera_task_singular_router
+from system_eval_routes import router as system_eval_router
 
 import os
 
@@ -283,6 +284,7 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 app.include_router(camera_tasks_router, prefix="/api")
 app.include_router(camera_task_singular_router, prefix="/api")
+app.include_router(system_eval_router, prefix="/api")
 
 
 # WebSocket端点

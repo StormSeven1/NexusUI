@@ -11,6 +11,7 @@
 /* eslint-disable */
 
 import { readTrackCategoryFromRecord } from "./track-category-id-parse";
+import { resolveTrackLastUpdateString } from "./track-last-update-resolve";
 
 // 使 TypeScript 将本文件视为独立模块，避免与 DOM lib 中 Window.self 的类型冲突
 export type { };
@@ -302,7 +303,7 @@ function _normalize(raw: unknown): WorkerTrack | null {
     type: kind, disposition: disp, lat, lng,
     ...(altitude !== undefined ? { altitude } : {}),
     heading, speed: Number.isFinite(speed) ? speed : 0, sensor,
-    lastUpdate: String(rec.lastUpdate ?? rec.last_update ?? rec.updated_at ?? new Date().toISOString()),
+    lastUpdate: resolveTrackLastUpdateString(rec),
     starred: Boolean(rec.starred),
     ...(kind === "air" ? { isAirTrack: true as const } : {}),
     ...(targetTypeStr ? { targetType: targetTypeStr } : {}),

@@ -30,6 +30,7 @@ import { transformCoordinate } from "@/lib/coordinate-transform";
 import { readTrackCategoryFromRecord } from "@/lib/track-category-id-parse";
 import type { TrackLayerKey } from "@/lib/map-entity-model";
 import { TRACK_LAYER_KEY_BY_DDS_SOURCE_ID } from "@/lib/track-layer-visibility";
+import { resolveTrackLastUpdateString } from "@/lib/track-last-update-resolve";
 
 const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
   "fuse_sea",
@@ -353,7 +354,7 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     heading,
     speed: Number.isFinite(speed) ? speed : 0,
     sensor: sensorValue,
-    lastUpdate: String(rec.lastUpdate ?? rec.last_update ?? rec.updated_at ?? new Date().toISOString()),
+    lastUpdate: resolveTrackLastUpdateString(rec),
     starred: Boolean(rec.starred),
     ...(isAirTrack ? { isAirTrack: true } : {}),
     ...(targetTypeStr ? { targetType: targetTypeStr } : {}),

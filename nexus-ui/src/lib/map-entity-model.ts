@@ -72,7 +72,7 @@ export interface Track {
   trackLayerKey?: TrackLayerKey;
   /** 虚兵：航迹符号外框为虚线样式（与资产 `virtual_troop` 一致） */
   isVirtual?: boolean;
-  /** 无人机等目标：为 true 时超时阈值用 `trackRendering.trackTimeout.uavSeconds` */
+  /** 无人机等目标：为 true 时超时阈值用 `trackRendering.trackTimeout.uavSeconds`（与融合分档 `fusionSeconds` 互斥优先 UAV） */
   isUav?: boolean;
   /**
    * 对空航迹 DDS `trackCategoryId`：**3 = 无人机**，其余类别视为鸟（见 `isAirTrackBirdGlyph`）。

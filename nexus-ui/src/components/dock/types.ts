@@ -49,6 +49,10 @@ export type PanelId =
   | "electro-optical-3"
   | "electro-optical-4"
   | "chat"
+  /** 系统评估（含航迹/相机/算法等子 Tab） */
+  | "system-evaluation"
+  /** @deprecated 已更名为 system-evaluation，保留类型以兼容旧布局持久化 */
+  | "track-evaluation"
   /** 地图双击航迹：右侧栏上方目标档案（航迹信息 + 查证相册） */
   | "target-profile"
   | "overview"

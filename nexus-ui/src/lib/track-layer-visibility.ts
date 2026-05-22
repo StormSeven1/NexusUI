@@ -10,8 +10,18 @@ import {
   TRACK_LAYER_KEYS_ORDERED,
   type TrackLayerKey,
 } from "@/lib/map-entity-model";
+import { isAirTrackBirdGlyph } from "@/lib/map-icons";
 
 export type TrackSubtypeVisibility = Record<TrackLayerKey, boolean>;
+export type AirFusionSubtypeVisibility = {
+  uav: boolean;
+  bird: boolean;
+};
+
+export const DEFAULT_AIR_FUSION_SUBTYPE_VISIBLE: AirFusionSubtypeVisibility = {
+  uav: true,
+  bird: true,
+};
 
 /** 与 Custombackend `receiver_manager.TRACK_LAYER_KEY_BY_RECEIVER` 一致 */
 export const TRACK_LAYER_KEY_BY_DDS_SOURCE_ID: Record<string, TrackLayerKey> = {
@@ -77,22 +87,48 @@ export function effectiveTrackLayerKey(track: LayerResolveInput): TrackLayerKey 
 export function trackMapVisibilitySignature(
   layerVisibility: Record<string, boolean>,
   subtypeVisible: TrackSubtypeVisibility,
+  airSubtypeVisible: AirFusionSubtypeVisibility,
 ): string {
   const master = layerVisibility[LYR_TRACKS] !== false ? "1" : "0";
   const sub = TRACK_LAYER_KEYS_ORDERED.map((k) => (subtypeVisible[k] !== false ? "1" : "0")).join("");
-  return `${master}:${sub}`;
+  const airSub = `${airSubtypeVisible.uav !== false ? "1" : "0"}${airSubtypeVisible.bird !== false ? "1" : "0"}`;
+  return `${master}:${sub}:${airSub}`;
+}
+
+/**
+ * 对空融合(`fuse_air`)细分显隐：
+ * - 无人机：`trackCategoryId === 3`（无分类时 `isUav === true`）
+ * - 鸟：其余类别
+ */
+function isAirFusionTrackVisible(
+  track: Pick<Track, "type" | "trackCategoryId" | "isUav">,
+  airSubtypeVisible: AirFusionSubtypeVisibility,
+): boolean {
+  const bird = isAirTrackBirdGlyph(track);
+  return bird ? (airSubtypeVisible.bird !== false) : (airSubtypeVisible.uav !== false);
+}
+
+export function isTrackVisibleBySubtype(
+  track: Track,
+  subtypeVisible: TrackSubtypeVisibility,
+  airSubtypeVisible: AirFusionSubtypeVisibility,
+): boolean {
+  const lk = resolveTrackLayerKey(track);
+  if (subtypeVisible[lk] === false) return false;
+  if (lk !== "fuse_air") return true;
+  return isAirFusionTrackVisible(track, airSubtypeVisible);
 }
 
 export function filterTracksForMapRender(
   tracks: readonly Track[],
   layerVisibility: Record<string, boolean>,
   subtypeVisible: TrackSubtypeVisibility,
+  airSubtypeVisible: AirFusionSubtypeVisibility,
 ): Track[] {
   if (layerVisibility[LYR_TRACKS] === false) return [];
   const out: Track[] = [];
   for (const t of tracks) {
-    const lk = resolveTrackLayerKey(t);
-    if (subtypeVisible[lk] === false) continue;
+    if (!isTrackVisibleBySubtype(t, subtypeVisible, airSubtypeVisible)) continue;
     out.push(t);
   }
   return out;

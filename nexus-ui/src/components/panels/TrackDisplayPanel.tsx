@@ -15,8 +15,10 @@ import { useMemo, useState } from "react";
 export function TrackDisplayPanel() {
   const seaFusionColor = useTrackDisplayStore((s) => s.seaFusionColor);
   const airFusionColor = useTrackDisplayStore((s) => s.airFusionColor);
-  const vectorLengthSeconds = useTrackDisplayStore((s) => s.vectorLengthSeconds);
-  const trailLengthSeconds = useTrackDisplayStore((s) => s.trailLengthSeconds);
+  const vectorLengthSecondsSea = useTrackDisplayStore((s) => s.vectorLengthSecondsSea);
+  const vectorLengthSecondsAir = useTrackDisplayStore((s) => s.vectorLengthSecondsAir);
+  const trailLengthSecondsSea = useTrackDisplayStore((s) => s.trailLengthSecondsSea);
+  const trailLengthSecondsAir = useTrackDisplayStore((s) => s.trailLengthSecondsAir);
   const setSeaFusionColor = useTrackDisplayStore((s) => s.setSeaFusionColor);
   const setAirFusionColor = useTrackDisplayStore((s) => s.setAirFusionColor);
   const setVectorLengthSeconds = useTrackDisplayStore((s) => s.setVectorLengthSeconds);
@@ -26,6 +28,8 @@ export function TrackDisplayPanel() {
 
   const currentColor = fusionKind === "sea" ? seaFusionColor : airFusionColor;
   const setCurrentColor = fusionKind === "sea" ? setSeaFusionColor : setAirFusionColor;
+  const currentVectorLengthSeconds = fusionKind === "sea" ? vectorLengthSecondsSea : vectorLengthSecondsAir;
+  const currentTrailLengthSeconds = fusionKind === "sea" ? trailLengthSecondsSea : trailLengthSecondsAir;
 
   const fusionTabs = useMemo(
     () =>
@@ -101,15 +105,15 @@ export function TrackDisplayPanel() {
             <span className="text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
               矢量长度
             </span>
-            <span className="text-[11px] tabular-nums text-nexus-text-secondary">{vectorLengthSeconds}s</span>
+            <span className="text-[11px] tabular-nums text-nexus-text-secondary">{currentVectorLengthSeconds}s</span>
           </div>
           <input
             type="range"
             min={1}
             max={300}
             step={1}
-            value={vectorLengthSeconds}
-            onChange={(e) => setVectorLengthSeconds(Number(e.target.value))}
+            value={currentVectorLengthSeconds}
+            onChange={(e) => setVectorLengthSeconds(fusionKind, Number(e.target.value))}
             className="w-full accent-indigo-500"
           />
           <div className="mt-0.5 flex justify-between text-[9px] text-nexus-text-muted">
@@ -123,15 +127,15 @@ export function TrackDisplayPanel() {
             <span className="text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
               尾迹长度
             </span>
-            <span className="text-[11px] tabular-nums text-nexus-text-secondary">{trailLengthSeconds}s</span>
+            <span className="text-[11px] tabular-nums text-nexus-text-secondary">{currentTrailLengthSeconds}s</span>
           </div>
           <input
             type="range"
             min={1}
             max={1800}
             step={1}
-            value={trailLengthSeconds}
-            onChange={(e) => setTrailLengthSeconds(Number(e.target.value))}
+            value={currentTrailLengthSeconds}
+            onChange={(e) => setTrailLengthSeconds(fusionKind, Number(e.target.value))}
             className="w-full accent-indigo-500"
           />
           <div className="mt-0.5 flex justify-between text-[9px] text-nexus-text-muted">

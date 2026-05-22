@@ -11,6 +11,8 @@ import { useDbAreaStore } from "@/stores/db-area-store";
 import { countDbAreaPanelUiRows, countVisibleDbAreaLeaves } from "@/lib/db-area-panel-helpers";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { getMapMeasureHandlers, useMapMeasureUi } from "@/stores/map-measure-bridge";
+import { AreaDrawSetupDialog } from "@/components/map/AreaDrawDialogs";
+import { useAreaDrawStore } from "@/stores/area-draw-store";
 import {
   MapPin,
   BarChart3,
@@ -293,6 +295,8 @@ export function WorkspaceDetails() {
 
   const config = WORKSPACE_CONFIGS[topTab];
   const measureUi = useMapMeasureUi();
+  const areaDrawing = useAreaDrawStore((s) => s.drawing);
+  const [areaSetupOpen, setAreaSetupOpen] = useState(false);
 
   if (!config) return null;
 
@@ -337,27 +341,34 @@ export function WorkspaceDetails() {
         </div>
       </div>
 
-      {/* 右侧：操作工具栏（态势页：多边形 / 距离 / 角度 / 激光 / TDOA 与地图 Map2D 联动） */}
+      {/* 右侧：操作工具栏（态势页：区域 / 距离 / 角度 与地图 Map2D 联动） */}
       <div className="flex flex-wrap items-center gap-2">
         {topTab === "situation" && (
           <>
             <button
               type="button"
-              title="多边形标绘：左键加点，双击闭合；右键取消"
+              title="区域标绘：选分组与形状后绘制，写入 area_table；右键取消"
               className={cn(
                 situationToolBtn,
-                measureUi.activeDrawTool === "polygon"
+                measureUi.activeDrawTool === "area" || areaDrawing
                   ? "border-nexus-border-accent bg-nexus-accent-glow/25 text-nexus-text-primary"
                   : "text-nexus-text-secondary hover:bg-nexus-bg-elevated hover:text-nexus-text-primary",
               )}
               onClick={() => {
-                const on = measureUi.activeDrawTool === "polygon";
-                h()?.setDrawTool(on ? null : "polygon");
+                if (measureUi.activeDrawTool === "area" || areaDrawing) {
+                  getMapMeasureHandlers()?.cancelAreaDraw?.();
+                  useAreaDrawStore.getState().reset();
+                  useMapMeasureUi.getState().setActiveDrawTool(null);
+                  setAreaSetupOpen(false);
+                  return;
+                }
+                setAreaSetupOpen(true);
               }}
             >
               <Pentagon size={14} />
-              多边形
+              区域
             </button>
+            <AreaDrawSetupDialog open={areaSetupOpen} onClose={() => setAreaSetupOpen(false)} />
             <button
               type="button"
               title="距离量算：左键加点，右键清空，双击结束"

@@ -109,6 +109,16 @@ const AIR_BIRD_TRACK_ICON: TrackIconDef = {
 };
 
 /**
+ * 对空融合航迹专用轮廓（用户定制）：
+ * 水平机身 + 中部向下 V 形缺口。
+ */
+const AIR_FUSE_TRACK_ICON: TrackIconDef = {
+  viewBox: "0 0 1024 1024",
+  pathD:
+    "M80 260H336C372 260 404 282 420 314L512 496L604 314C620 282 652 260 688 260H944C966 260 984 278 984 300S966 340 944 340H712C694 340 678 350 670 366L548 606C541 620 527 628 512 628S483 620 476 606L354 366C346 350 330 340 312 340H80C58 340 40 322 40 300S58 260 80 260Z",
+};
+
+/**
  * 对空航迹图标语义：**DDS `trackCategoryId === 3` 为无人机**（战机剪影）；**其余 category 为鸟**。
  * 报文未带 `trackCategoryId` 时：与 `isUav` 对齐（非无人机则显示鸟形），避免旧数据全无分类。
  */
@@ -133,9 +143,11 @@ export function getMarkerSymbolId(
   friendlyTint?: string | null,
   neutralFusionFill?: string | null,
   airBird = false,
+  airFuse = false,
 ): string {
   const birdSeg = type === "air" && airBird ? "-bird" : "";
-  const base = `track-${type}-${disposition}-${virtual ? "v" : "r"}${birdSeg}`;
+  const fuseSeg = type === "air" && airFuse ? "-fuse" : "";
+  const base = `track-${type}-${disposition}-${virtual ? "v" : "r"}${birdSeg}${fuseSeg}`;
   if (disposition === "friendly") {
     const suf = friendlyTintSuffix(friendlyTint);
     return suf ? `${base}${suf}` : base;
@@ -198,12 +210,15 @@ export function buildMarkerSymbolSvg(
   friendlyFill?: string | null,
   neutralFusionFill?: string | null,
   airBirdGlyph = false,
+  airFuseGlyph = false,
 ): string {
   const color =
     disposition === "neutral" && neutralFusionFill?.trim()
       ? neutralFusionFill.trim()
       : resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
-  const icon = type === "air" && airBirdGlyph ? AIR_BIRD_TRACK_ICON : TRACK_SVG_ICONS[type];
+  const icon = type === "air"
+    ? (airFuseGlyph ? AIR_FUSE_TRACK_ICON : (airBirdGlyph ? AIR_BIRD_TRACK_ICON : TRACK_SVG_ICONS.air))
+    : TRACK_SVG_ICONS[type];
   const innerBody = `<path d="${icon.pathD}" fill="${color}"/>`;
   const virtualFrame =
     virtual
@@ -239,9 +254,19 @@ export function buildMarkerSymbolDataUrl(
   friendlyFill?: string | null,
   neutralFusionFill?: string | null,
   airBirdGlyph = false,
+  airFuseGlyph = false,
 ): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-    buildMarkerSymbolSvg(type, disposition, accent ?? null, virtual, friendlyFill, neutralFusionFill, airBirdGlyph),
+    buildMarkerSymbolSvg(
+      type,
+      disposition,
+      accent ?? null,
+      virtual,
+      friendlyFill,
+      neutralFusionFill,
+      airBirdGlyph,
+      airFuseGlyph,
+    ),
   )}`;
 }
 
@@ -272,6 +297,8 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
   neutralFusionFill?: string;
   /** 仅 `type === "air"`：鸟形与战机剪影各预注册一套 */
   airBird?: boolean;
+  /** 仅 `type === "air"`：对空融合专用图标 */
+  airFuse?: boolean;
 }> {
   const types: TrackType[] = ["air", "sea", "underwater"];
   const dispositions: ForceDisposition[] = ["hostile", "friendly", "neutral"];
@@ -293,10 +320,18 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
     friendlyFill?: string;
     neutralFusionFill?: string;
     airBird?: boolean;
+    airFuse?: boolean;
   }> = [];
   for (const type of types) {
-    const birdModes: boolean[] = type === "air" ? [false, true] : [false];
-    for (const airBird of birdModes) {
+    const airModes: Array<{ airBird: boolean; airFuse: boolean }> =
+      type === "air"
+        ? [
+            { airBird: false, airFuse: false },
+            { airBird: true, airFuse: false },
+            { airBird: false, airFuse: true },
+          ]
+        : [{ airBird: false, airFuse: false }];
+    for (const { airBird, airFuse } of airModes) {
       for (const disposition of dispositions) {
         for (const virtual of [false, true]) {
           if (disposition !== "friendly") {
@@ -307,33 +342,33 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
                   : [FUSION_TRACK_NEUTRAL_SEA];
               for (const fill of fills) {
                 out.push({
-                  id: getMarkerSymbolId(type, disposition, virtual, undefined, fill, airBird),
+                  id: getMarkerSymbolId(type, disposition, virtual, undefined, fill, airBird, airFuse),
                   type,
                   disposition,
                   virtual,
                   neutralFusionFill: fill,
-                  ...(type === "air" ? { airBird } : {}),
+                  ...(type === "air" ? { airBird, airFuse } : {}),
                 });
               }
             } else {
               out.push({
-                id: getMarkerSymbolId(type, disposition, virtual, undefined, undefined, airBird),
+                id: getMarkerSymbolId(type, disposition, virtual, undefined, undefined, airBird, airFuse),
                 type,
                 disposition,
                 virtual,
-                ...(type === "air" ? { airBird } : {}),
+                ...(type === "air" ? { airBird, airFuse } : {}),
               });
             }
             continue;
           }
           for (const tint of tintList) {
             out.push({
-              id: getMarkerSymbolId(type, disposition, virtual, tint || undefined, undefined, airBird),
+              id: getMarkerSymbolId(type, disposition, virtual, tint || undefined, undefined, airBird, airFuse),
               type,
               disposition,
               virtual,
               friendlyFill: tint || undefined,
-              ...(type === "air" ? { airBird } : {}),
+              ...(type === "air" ? { airBird, airFuse } : {}),
             });
           }
         }
