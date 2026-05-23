@@ -16,6 +16,7 @@
 #   BACKEND_URL          默认 http://127.0.0.1:${BACKEND_PORT}
 #   BACKEND_ONLY=1       仅起 Custombackend
 #   NEXUS_DOCKER_NO_KILL=1  不尝试 fuser 释放 FRONTEND_PORT
+#   NEXUS_PY_SKIP_INSTALL=1  跳过容器内 pip install（默认：非 --rebuild 时跳过，避免阻塞 uvicorn）
 #   NEXT_PUBLIC_WS_USE_NGINX_TUNNEL  默认 false（直连 app-config 的 ws，与同时跑的 prod HTTPS+Nginx 不冲突）。
 #                                   若 dev 页也必须走 :22401 隧道，可先 export NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=true 再执行本脚本。
 #   NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT  隧道为真时设为 <本机IP>:22401（与 prod-start-nginx 的 HTTPS 端口一致）
@@ -126,6 +127,7 @@ docker run -d \
   -e "NEXUS_DOCKER_NO_KILL=${NEXUS_DOCKER_NO_KILL:-0}" \
   -e "NEXUS_UI_CLEAN_NEXT=${DO_REBUILD}" \
   -e "NEXUS_PY_UPGRADE=${DO_REBUILD}" \
+  -e "NEXUS_PY_SKIP_INSTALL=${NEXUS_PY_SKIP_INSTALL:-$(( DO_REBUILD == 0 ? 1 : 0 ))}" \
   -e "NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}" \
   -e "NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}" \
   -v "${ROOT}:/workspace" \
@@ -148,7 +150,7 @@ echo "已启动容器: $NAME"
 echo "  前端:     https://127.0.0.1:${FP}  （自签证书；局域网用本机 IP:${FP}）"
 echo "  后端 API: http://127.0.0.1:${BP}/api  WebSocket: ws://127.0.0.1:${BP}/ws"
 echo ""
-echo "说明: 开发模式下每次启动会 npm install、pip install，并拉起 next dev（HTTPS）与 uvicorn。"
+echo "说明: 开发模式下每次启动会 npm install，并拉起 next dev（HTTPS）与 uvicorn（默认跳过 pip，--rebuild 时后台 pip）。"
 echo "      若必须用 HTTP 前端，可在容器内 cd /workspace/nexus-ui && npm run dev:http"
 echo "      app-config 的 websocket.url / http.backendUrl 已由本脚本按 APP_CONFIG_LAN_HOST（默认本机局域网首 IP）与 BACKEND_PORT=${BP} 写入。"
 echo "查看日志: docker logs -f ${NAME}"

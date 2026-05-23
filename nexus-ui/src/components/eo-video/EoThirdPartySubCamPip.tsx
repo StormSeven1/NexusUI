@@ -8,7 +8,7 @@ function EoThirdPartySubCamPipTile({ entityId }: { entityId: string }) {
   const stackRef = useRef<EoHighSpeedYuvStackHandle | null>(null);
   const live = useEoThirdPartyCameraWebSocket(true, entityId, stackRef);
   return (
-    <div className="h-[min(22vh,200px)] w-[min(42vw,360px)] shrink-0 overflow-hidden rounded-md border border-white/20 bg-black shadow-lg ring-1 ring-black/40">
+    <div className="aspect-[3/2] w-[min(28vw,240px)] shrink-0 overflow-hidden rounded-md border border-white/20 bg-black shadow-lg ring-1 ring-black/40">
       <EoHighSpeedYuvStack
         ref={stackRef}
         className="h-full w-full"
@@ -23,14 +23,37 @@ function EoThirdPartySubCamPipTile({ entityId }: { entityId: string }) {
   );
 }
 
-/** 放大态：广角母机旁路里列出的子相机，自上而下各一路 UDP→WS 画中画 */
+/** 放大态：广角母机旁路里列出的子相机，优先布局为左上与右下双窗 */
 export function EoThirdPartySubCamPipStack({ entityIds }: { entityIds: string[] }) {
   if (!entityIds.length) return null;
+  const fallbackStepPx = 150;
   return (
-    <div className="pointer-events-none absolute left-3 top-3 z-[22] flex max-h-[min(72vh,640px)] flex-col gap-2 overflow-y-auto overscroll-contain">
-      {entityIds.map((id) => (
-        <EoThirdPartySubCamPipTile key={id} entityId={id} />
-      ))}
+    <div className="pointer-events-none absolute inset-0 z-[22]">
+      {entityIds.map((id, idx) => {
+        if (idx === 0) {
+          return (
+            <div key={id} className="absolute left-3 top-3">
+              <EoThirdPartySubCamPipTile entityId={id} />
+            </div>
+          );
+        }
+        if (idx === 1) {
+          return (
+            <div key={id} className="absolute bottom-3 right-3">
+              <EoThirdPartySubCamPipTile entityId={id} />
+            </div>
+          );
+        }
+        return (
+          <div
+            key={id}
+            className="absolute right-3"
+            style={{ bottom: `${12 + (idx - 1) * fallbackStepPx}px` }}
+          >
+            <EoThirdPartySubCamPipTile entityId={id} />
+          </div>
+        );
+      })}
     </div>
   );
 }

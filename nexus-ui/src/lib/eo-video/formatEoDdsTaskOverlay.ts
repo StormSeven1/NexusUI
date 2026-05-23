@@ -63,14 +63,44 @@ export function parsePositiveTrackId(trackID: unknown): number | null {
   return t > 0 ? t : null;
 }
 
+/** 常见瞬时任务：执行中（executionState=0）时给出可读文案；已完成仍视为空闲（与 Qt 非跟踪分支一致） */
+function formatEoDdsCameraTransientTaskLine(taskType: string, active: boolean): string | null {
+  if (taskType.endsWith("PTZMoveTask")) return active ? "云台运动中" : "空闲中";
+  if (taskType.endsWith("LookAtChildTask")) return active ? "目标注视中" : "空闲中";
+  if (taskType.endsWith("PTZControlStop")) return "空闲中";
+  return null;
+}
+
 /** 右下角一行：相机仅「正在跟踪{n}号目标」/「空闲中」，与 Qt 光电条一致（不再堆 taskType/ms/在线等） */
 export function formatEoDdsCameraLine(row: EoCameraDdsStatusRow | undefined): string {
   if (!row) return "空闲中";
-  const tid = parsePositiveTrackId(row.trackID);
+  const taskType = String(row.taskType ?? "").trim();
+  const tid = parsePositiveTrackId(row.trackID) ?? parsePositiveTrackId(row.targetID);
   const ex = row.executionState;
-  if (tid == null) return "空闲中";
+  const active = isCameraExecutionActive(ex);
+  const transient = formatEoDdsCameraTransientTaskLine(taskType, active);
+  if (transient != null) return transient;
   if (isCameraExecutionCompleted(ex)) return "空闲中";
-  if (isCameraExecutionActive(ex)) return `正在跟踪${tid}号目标`;
+
+  // 对齐 C++ slot_dealCameraStatus 分支
+  if (taskType === "type.casia.tasks.v1.TargetCollectionChildTask") {
+    return active && tid != null ? `正在跟踪${tid}号目标` : "空闲中";
+  }
+  if (
+    taskType === "type.casia.tasks.v1.CameraVerification" ||
+    taskType === "type.casia.tasks.v1.CameraSkyVerification"
+  ) {
+    return active && tid != null ? `区域查证${tid}号目标` : "空闲中";
+  }
+  if (taskType === "type.casia.tasks.v1.TargetCollectionIMChildTask") {
+    return active && tid != null ? `正在跟踪${tid}号目标` : "空闲中";
+  }
+  if (taskType === "type.casia.tasks.v1.TargetStrikeChildTask") {
+    return active && tid != null ? `激光打击${tid}号目标` : "空闲中";
+  }
+
+  if (tid == null) return "空闲中";
+  if (active) return `正在跟踪${tid}号目标`;
   // 部分网关只推 trackID、暂不推 executionState：有有效航迹且非明确已结束时仍视为跟踪中
   if (ex === undefined || ex === null || String(ex).trim() === "") {
     return `正在跟踪${tid}号目标`;

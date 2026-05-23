@@ -442,6 +442,73 @@ void register_EntityType_type_identifier(
                 "casia::device::status::BaseStatus::DispositionType already registered in TypeObjectRegistry for a different type.");
         }
     }
+}void register_DeviceState_type_identifier(
+        TypeIdentifierPair& type_ids_DeviceState)
+{
+    ReturnCode_t return_code_DeviceState {eprosima::fastdds::dds::RETCODE_OK};
+    return_code_DeviceState =
+        eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+        "casia::device::status::BaseStatus::DeviceState", type_ids_DeviceState);
+    if (eprosima::fastdds::dds::RETCODE_OK != return_code_DeviceState)
+    {
+        EnumTypeFlag enum_flags_DeviceState = 0;
+        BitBound bit_bound_DeviceState = 32;
+        CommonEnumeratedHeader common_DeviceState = TypeObjectUtils::build_common_enumerated_header(bit_bound_DeviceState);
+        QualifiedTypeName type_name_DeviceState = "casia::device::status::BaseStatus::DeviceState";
+        eprosima::fastcdr::optional<AppliedBuiltinTypeAnnotations> type_ann_builtin_DeviceState;
+        eprosima::fastcdr::optional<AppliedAnnotationSeq> ann_custom_DeviceState;
+        CompleteTypeDetail detail_DeviceState = TypeObjectUtils::build_complete_type_detail(type_ann_builtin_DeviceState, ann_custom_DeviceState, type_name_DeviceState.to_string());
+        CompleteEnumeratedHeader header_DeviceState = TypeObjectUtils::build_complete_enumerated_header(common_DeviceState, detail_DeviceState);
+        CompleteEnumeratedLiteralSeq literal_seq_DeviceState;
+        {
+            EnumeratedLiteralFlag flags_DEVICE_STATE_STANDBY = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_DEVICE_STATE_STANDBY = TypeObjectUtils::build_common_enumerated_literal(0, flags_DEVICE_STATE_STANDBY);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_DEVICE_STATE_STANDBY;
+            ann_custom_DeviceState.reset();
+            MemberName name_DEVICE_STATE_STANDBY = "DEVICE_STATE_STANDBY";
+            CompleteMemberDetail detail_DEVICE_STATE_STANDBY = TypeObjectUtils::build_complete_member_detail(name_DEVICE_STATE_STANDBY, member_ann_builtin_DEVICE_STATE_STANDBY, ann_custom_DeviceState);
+            CompleteEnumeratedLiteral literal_DEVICE_STATE_STANDBY = TypeObjectUtils::build_complete_enumerated_literal(common_DEVICE_STATE_STANDBY, detail_DEVICE_STATE_STANDBY);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_DeviceState, literal_DEVICE_STATE_STANDBY);
+        }
+        {
+            EnumeratedLiteralFlag flags_DEVICE_STATE_POWERED = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_DEVICE_STATE_POWERED = TypeObjectUtils::build_common_enumerated_literal(1, flags_DEVICE_STATE_POWERED);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_DEVICE_STATE_POWERED;
+            ann_custom_DeviceState.reset();
+            MemberName name_DEVICE_STATE_POWERED = "DEVICE_STATE_POWERED";
+            CompleteMemberDetail detail_DEVICE_STATE_POWERED = TypeObjectUtils::build_complete_member_detail(name_DEVICE_STATE_POWERED, member_ann_builtin_DEVICE_STATE_POWERED, ann_custom_DeviceState);
+            CompleteEnumeratedLiteral literal_DEVICE_STATE_POWERED = TypeObjectUtils::build_complete_enumerated_literal(common_DEVICE_STATE_POWERED, detail_DEVICE_STATE_POWERED);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_DeviceState, literal_DEVICE_STATE_POWERED);
+        }
+        {
+            EnumeratedLiteralFlag flags_DEVICE_STATE_EXECUTING = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_DEVICE_STATE_EXECUTING = TypeObjectUtils::build_common_enumerated_literal(2, flags_DEVICE_STATE_EXECUTING);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_DEVICE_STATE_EXECUTING;
+            ann_custom_DeviceState.reset();
+            MemberName name_DEVICE_STATE_EXECUTING = "DEVICE_STATE_EXECUTING";
+            CompleteMemberDetail detail_DEVICE_STATE_EXECUTING = TypeObjectUtils::build_complete_member_detail(name_DEVICE_STATE_EXECUTING, member_ann_builtin_DEVICE_STATE_EXECUTING, ann_custom_DeviceState);
+            CompleteEnumeratedLiteral literal_DEVICE_STATE_EXECUTING = TypeObjectUtils::build_complete_enumerated_literal(common_DEVICE_STATE_EXECUTING, detail_DEVICE_STATE_EXECUTING);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_DeviceState, literal_DEVICE_STATE_EXECUTING);
+        }
+        {
+            EnumeratedLiteralFlag flags_DEVICE_STATE_UNKNOWN = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_DEVICE_STATE_UNKNOWN = TypeObjectUtils::build_common_enumerated_literal(3, flags_DEVICE_STATE_UNKNOWN);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_DEVICE_STATE_UNKNOWN;
+            ann_custom_DeviceState.reset();
+            MemberName name_DEVICE_STATE_UNKNOWN = "DEVICE_STATE_UNKNOWN";
+            CompleteMemberDetail detail_DEVICE_STATE_UNKNOWN = TypeObjectUtils::build_complete_member_detail(name_DEVICE_STATE_UNKNOWN, member_ann_builtin_DEVICE_STATE_UNKNOWN, ann_custom_DeviceState);
+            CompleteEnumeratedLiteral literal_DEVICE_STATE_UNKNOWN = TypeObjectUtils::build_complete_enumerated_literal(common_DEVICE_STATE_UNKNOWN, detail_DEVICE_STATE_UNKNOWN);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_DeviceState, literal_DEVICE_STATE_UNKNOWN);
+        }
+        CompleteEnumeratedType enumerated_type_DeviceState = TypeObjectUtils::build_complete_enumerated_type(enum_flags_DeviceState, header_DeviceState,
+                literal_seq_DeviceState);
+        if (eprosima::fastdds::dds::RETCODE_BAD_PARAMETER ==
+                TypeObjectUtils::build_and_register_enumerated_type_object(enumerated_type_DeviceState, type_name_DeviceState.to_string(), type_ids_DeviceState))
+        {
+            EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                "casia::device::status::BaseStatus::DeviceState already registered in TypeObjectRegistry for a different type.");
+        }
+    }
 }// TypeIdentifier is returned by reference: dependent structures/unions are registered in this same method
 void register_BaseDeviceStatus_type_identifier(
         TypeIdentifierPair& type_ids_BaseDeviceStatus)
@@ -904,6 +971,34 @@ void register_BaseDeviceStatus_type_identifier(
             CompleteStructMember member_timestamp = TypeObjectUtils::build_complete_struct_member(common_timestamp, detail_timestamp);
             TypeObjectUtils::add_complete_struct_member(member_seq_BaseDeviceStatus, member_timestamp);
         }
+        {
+            TypeIdentifierPair type_ids_deviceState;
+            ReturnCode_t return_code_deviceState {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_deviceState =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "casia::device::status::BaseStatus::DeviceState", type_ids_deviceState);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_deviceState)
+            {
+                casia::device::status::BaseStatus::register_DeviceState_type_identifier(type_ids_deviceState);
+            }
+            StructMemberFlag member_flags_deviceState = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_deviceState = 0x0000000e;
+            bool common_deviceState_ec {false};
+            CommonStructMember common_deviceState {TypeObjectUtils::build_common_struct_member(member_id_deviceState, member_flags_deviceState, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_deviceState, common_deviceState_ec))};
+            if (!common_deviceState_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure deviceState member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_deviceState = "deviceState";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_deviceState;
+            ann_custom_BaseDeviceStatus.reset();
+            CompleteMemberDetail detail_deviceState = TypeObjectUtils::build_complete_member_detail(name_deviceState, member_ann_builtin_deviceState, ann_custom_BaseDeviceStatus);
+            CompleteStructMember member_deviceState = TypeObjectUtils::build_complete_struct_member(common_deviceState, detail_deviceState);
+            TypeObjectUtils::add_complete_struct_member(member_seq_BaseDeviceStatus, member_deviceState);
+        }
         CompleteStructType struct_type_BaseDeviceStatus = TypeObjectUtils::build_complete_struct_type(struct_flags_BaseDeviceStatus, header_BaseDeviceStatus, member_seq_BaseDeviceStatus);
         if (eprosima::fastdds::dds::RETCODE_BAD_PARAMETER ==
                 TypeObjectUtils::build_and_register_struct_type_object(struct_type_BaseDeviceStatus, type_name_BaseDeviceStatus.to_string(), type_ids_BaseDeviceStatus))
@@ -1178,7 +1273,7 @@ void register_CameraRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_ptz = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_ptz = 0x0000000e;
+            MemberId member_id_ptz = 0x0000000f;
             bool common_ptz_ec {false};
             CommonStructMember common_ptz {TypeObjectUtils::build_common_struct_member(member_id_ptz, member_flags_ptz, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_ptz, common_ptz_ec))};
             if (!common_ptz_ec)
@@ -1206,7 +1301,7 @@ void register_CameraRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_originPtz = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_originPtz = 0x0000000f;
+            MemberId member_id_originPtz = 0x00000010;
             bool common_originPtz_ec {false};
             CommonStructMember common_originPtz {TypeObjectUtils::build_common_struct_member(member_id_originPtz, member_flags_originPtz, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_originPtz, common_originPtz_ec))};
             if (!common_originPtz_ec)
@@ -1236,7 +1331,7 @@ void register_CameraRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_focus = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_focus = 0x00000010;
+            MemberId member_id_focus = 0x00000011;
             bool common_focus_ec {false};
             CommonStructMember common_focus {TypeObjectUtils::build_common_struct_member(member_id_focus, member_flags_focus, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_focus, common_focus_ec))};
             if (!common_focus_ec)
@@ -1264,7 +1359,7 @@ void register_CameraRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_fov = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_fov = 0x00000011;
+            MemberId member_id_fov = 0x00000012;
             bool common_fov_ec {false};
             CommonStructMember common_fov {TypeObjectUtils::build_common_struct_member(member_id_fov, member_flags_fov, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_fov, common_fov_ec))};
             if (!common_fov_ec)
@@ -1294,7 +1389,7 @@ void register_CameraRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_panoOffset = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_panoOffset = 0x00000012;
+            MemberId member_id_panoOffset = 0x00000013;
             bool common_panoOffset_ec {false};
             CommonStructMember common_panoOffset {TypeObjectUtils::build_common_struct_member(member_id_panoOffset, member_flags_panoOffset, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_panoOffset, common_panoOffset_ec))};
             if (!common_panoOffset_ec)
@@ -1324,7 +1419,7 @@ void register_CameraRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_trackID = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_trackID = 0x00000013;
+            MemberId member_id_trackID = 0x00000014;
             bool common_trackID_ec {false};
             CommonStructMember common_trackID {TypeObjectUtils::build_common_struct_member(member_id_trackID, member_flags_trackID, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_trackID, common_trackID_ec))};
             if (!common_trackID_ec)
@@ -1354,7 +1449,7 @@ void register_CameraRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_visibility = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_visibility = 0x00000014;
+            MemberId member_id_visibility = 0x00000015;
             bool common_visibility_ec {false};
             CommonStructMember common_visibility {TypeObjectUtils::build_common_struct_member(member_id_visibility, member_flags_visibility, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_visibility, common_visibility_ec))};
             if (!common_visibility_ec)
@@ -1384,7 +1479,7 @@ void register_CameraRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_speedParam = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_speedParam = 0x00000015;
+            MemberId member_id_speedParam = 0x00000016;
             bool common_speedParam_ec {false};
             CommonStructMember common_speedParam {TypeObjectUtils::build_common_struct_member(member_id_speedParam, member_flags_speedParam, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_speedParam, common_speedParam_ec))};
             if (!common_speedParam_ec)
@@ -1414,7 +1509,7 @@ void register_CameraRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_rootPos = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_rootPos = 0x00000016;
+            MemberId member_id_rootPos = 0x00000017;
             bool common_rootPos_ec {false};
             CommonStructMember common_rootPos {TypeObjectUtils::build_common_struct_member(member_id_rootPos, member_flags_rootPos, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_rootPos, common_rootPos_ec))};
             if (!common_rootPos_ec)
@@ -1781,7 +1876,7 @@ void register_ModelRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_workingState = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_workingState = 0x0000000e;
+            MemberId member_id_workingState = 0x0000000f;
             bool common_workingState_ec {false};
             CommonStructMember common_workingState {TypeObjectUtils::build_common_struct_member(member_id_workingState, member_flags_workingState, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_workingState, common_workingState_ec))};
             if (!common_workingState_ec)
@@ -1819,7 +1914,7 @@ void register_ModelRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_errorMessage = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_errorMessage = 0x0000000f;
+            MemberId member_id_errorMessage = 0x00000010;
             bool common_errorMessage_ec {false};
             CommonStructMember common_errorMessage {TypeObjectUtils::build_common_struct_member(member_id_errorMessage, member_flags_errorMessage, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_errorMessage, common_errorMessage_ec))};
             if (!common_errorMessage_ec)
@@ -1847,7 +1942,7 @@ void register_ModelRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_modelResourceUsage = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_modelResourceUsage = 0x00000010;
+            MemberId member_id_modelResourceUsage = 0x00000011;
             bool common_modelResourceUsage_ec {false};
             CommonStructMember common_modelResourceUsage {TypeObjectUtils::build_common_struct_member(member_id_modelResourceUsage, member_flags_modelResourceUsage, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_modelResourceUsage, common_modelResourceUsage_ec))};
             if (!common_modelResourceUsage_ec)
@@ -1930,7 +2025,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_radarID = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_radarID = 0x0000000e;
+            MemberId member_id_radarID = 0x0000000f;
             bool common_radarID_ec {false};
             CommonStructMember common_radarID {TypeObjectUtils::build_common_struct_member(member_id_radarID, member_flags_radarID, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_radarID, common_radarID_ec))};
             if (!common_radarID_ec)
@@ -1960,7 +2055,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_radarType = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_radarType = 0x0000000f;
+            MemberId member_id_radarType = 0x00000010;
             bool common_radarType_ec {false};
             CommonStructMember common_radarType {TypeObjectUtils::build_common_struct_member(member_id_radarType, member_flags_radarType, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_radarType, common_radarType_ec))};
             if (!common_radarType_ec)
@@ -1998,7 +2093,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_radarName = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_radarName = 0x00000010;
+            MemberId member_id_radarName = 0x00000011;
             bool common_radarName_ec {false};
             CommonStructMember common_radarName {TypeObjectUtils::build_common_struct_member(member_id_radarName, member_flags_radarName, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_radarName, common_radarName_ec))};
             if (!common_radarName_ec)
@@ -2028,7 +2123,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_longitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_longitude = 0x00000011;
+            MemberId member_id_longitude = 0x00000012;
             bool common_longitude_ec {false};
             CommonStructMember common_longitude {TypeObjectUtils::build_common_struct_member(member_id_longitude, member_flags_longitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_longitude, common_longitude_ec))};
             if (!common_longitude_ec)
@@ -2058,7 +2153,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_latitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_latitude = 0x00000012;
+            MemberId member_id_latitude = 0x00000013;
             bool common_latitude_ec {false};
             CommonStructMember common_latitude {TypeObjectUtils::build_common_struct_member(member_id_latitude, member_flags_latitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_latitude, common_latitude_ec))};
             if (!common_latitude_ec)
@@ -2088,7 +2183,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_transmit = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_transmit = 0x00000013;
+            MemberId member_id_transmit = 0x00000014;
             bool common_transmit_ec {false};
             CommonStructMember common_transmit {TypeObjectUtils::build_common_struct_member(member_id_transmit, member_flags_transmit, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_transmit, common_transmit_ec))};
             if (!common_transmit_ec)
@@ -2118,7 +2213,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_range = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_range = 0x00000014;
+            MemberId member_id_range = 0x00000015;
             bool common_range_ec {false};
             CommonStructMember common_range {TypeObjectUtils::build_common_struct_member(member_id_range, member_flags_range, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_range, common_range_ec))};
             if (!common_range_ec)
@@ -2148,7 +2243,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_pluseWidth = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_pluseWidth = 0x00000015;
+            MemberId member_id_pluseWidth = 0x00000016;
             bool common_pluseWidth_ec {false};
             CommonStructMember common_pluseWidth {TypeObjectUtils::build_common_struct_member(member_id_pluseWidth, member_flags_pluseWidth, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_pluseWidth, common_pluseWidth_ec))};
             if (!common_pluseWidth_ec)
@@ -2178,7 +2273,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_aziOffset = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_aziOffset = 0x00000016;
+            MemberId member_id_aziOffset = 0x00000017;
             bool common_aziOffset_ec {false};
             CommonStructMember common_aziOffset {TypeObjectUtils::build_common_struct_member(member_id_aziOffset, member_flags_aziOffset, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_aziOffset, common_aziOffset_ec))};
             if (!common_aziOffset_ec)
@@ -2208,7 +2303,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_rangeOffset = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_rangeOffset = 0x00000017;
+            MemberId member_id_rangeOffset = 0x00000018;
             bool common_rangeOffset_ec {false};
             CommonStructMember common_rangeOffset {TypeObjectUtils::build_common_struct_member(member_id_rangeOffset, member_flags_rangeOffset, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_rangeOffset, common_rangeOffset_ec))};
             if (!common_rangeOffset_ec)
@@ -2238,7 +2333,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_sampleRate = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_sampleRate = 0x00000018;
+            MemberId member_id_sampleRate = 0x00000019;
             bool common_sampleRate_ec {false};
             CommonStructMember common_sampleRate {TypeObjectUtils::build_common_struct_member(member_id_sampleRate, member_flags_sampleRate, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_sampleRate, common_sampleRate_ec))};
             if (!common_sampleRate_ec)
@@ -2268,7 +2363,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_gain = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_gain = 0x00000019;
+            MemberId member_id_gain = 0x0000001a;
             bool common_gain_ec {false};
             CommonStructMember common_gain {TypeObjectUtils::build_common_struct_member(member_id_gain, member_flags_gain, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_gain, common_gain_ec))};
             if (!common_gain_ec)
@@ -2298,7 +2393,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_seaClutter = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_seaClutter = 0x0000001a;
+            MemberId member_id_seaClutter = 0x0000001b;
             bool common_seaClutter_ec {false};
             CommonStructMember common_seaClutter {TypeObjectUtils::build_common_struct_member(member_id_seaClutter, member_flags_seaClutter, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_seaClutter, common_seaClutter_ec))};
             if (!common_seaClutter_ec)
@@ -2328,7 +2423,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_rainClutter = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_rainClutter = 0x0000001b;
+            MemberId member_id_rainClutter = 0x0000001c;
             bool common_rainClutter_ec {false};
             CommonStructMember common_rainClutter {TypeObjectUtils::build_common_struct_member(member_id_rainClutter, member_flags_rainClutter, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_rainClutter, common_rainClutter_ec))};
             if (!common_rainClutter_ec)
@@ -2358,7 +2453,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_inhibit1 = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_inhibit1 = 0x0000001c;
+            MemberId member_id_inhibit1 = 0x0000001d;
             bool common_inhibit1_ec {false};
             CommonStructMember common_inhibit1 {TypeObjectUtils::build_common_struct_member(member_id_inhibit1, member_flags_inhibit1, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_inhibit1, common_inhibit1_ec))};
             if (!common_inhibit1_ec)
@@ -2388,7 +2483,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_inhibit1StartAzi = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_inhibit1StartAzi = 0x0000001d;
+            MemberId member_id_inhibit1StartAzi = 0x0000001e;
             bool common_inhibit1StartAzi_ec {false};
             CommonStructMember common_inhibit1StartAzi {TypeObjectUtils::build_common_struct_member(member_id_inhibit1StartAzi, member_flags_inhibit1StartAzi, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_inhibit1StartAzi, common_inhibit1StartAzi_ec))};
             if (!common_inhibit1StartAzi_ec)
@@ -2418,7 +2513,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_inhibit1EndAzi = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_inhibit1EndAzi = 0x0000001e;
+            MemberId member_id_inhibit1EndAzi = 0x0000001f;
             bool common_inhibit1EndAzi_ec {false};
             CommonStructMember common_inhibit1EndAzi {TypeObjectUtils::build_common_struct_member(member_id_inhibit1EndAzi, member_flags_inhibit1EndAzi, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_inhibit1EndAzi, common_inhibit1EndAzi_ec))};
             if (!common_inhibit1EndAzi_ec)
@@ -2448,7 +2543,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_inhibit2 = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_inhibit2 = 0x0000001f;
+            MemberId member_id_inhibit2 = 0x00000020;
             bool common_inhibit2_ec {false};
             CommonStructMember common_inhibit2 {TypeObjectUtils::build_common_struct_member(member_id_inhibit2, member_flags_inhibit2, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_inhibit2, common_inhibit2_ec))};
             if (!common_inhibit2_ec)
@@ -2478,7 +2573,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_inhibit2StartAzi = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_inhibit2StartAzi = 0x00000020;
+            MemberId member_id_inhibit2StartAzi = 0x00000021;
             bool common_inhibit2StartAzi_ec {false};
             CommonStructMember common_inhibit2StartAzi {TypeObjectUtils::build_common_struct_member(member_id_inhibit2StartAzi, member_flags_inhibit2StartAzi, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_inhibit2StartAzi, common_inhibit2StartAzi_ec))};
             if (!common_inhibit2StartAzi_ec)
@@ -2508,7 +2603,7 @@ void register_RadarRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_inhibit2EndAzi = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_inhibit2EndAzi = 0x00000021;
+            MemberId member_id_inhibit2EndAzi = 0x00000022;
             bool common_inhibit2EndAzi_ec {false};
             CommonStructMember common_inhibit2EndAzi {TypeObjectUtils::build_common_struct_member(member_id_inhibit2EndAzi, member_flags_inhibit2EndAzi, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_inhibit2EndAzi, common_inhibit2EndAzi_ec))};
             if (!common_inhibit2EndAzi_ec)
@@ -8721,7 +8816,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_home_position_is_valid = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_home_position_is_valid = 0x0000000e;
+            MemberId member_id_home_position_is_valid = 0x0000000f;
             bool common_home_position_is_valid_ec {false};
             CommonStructMember common_home_position_is_valid {TypeObjectUtils::build_common_struct_member(member_id_home_position_is_valid, member_flags_home_position_is_valid, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_home_position_is_valid, common_home_position_is_valid_ec))};
             if (!common_home_position_is_valid_ec)
@@ -8751,7 +8846,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_heading = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_heading = 0x0000000f;
+            MemberId member_id_heading = 0x00000010;
             bool common_heading_ec {false};
             CommonStructMember common_heading {TypeObjectUtils::build_common_struct_member(member_id_heading, member_flags_heading, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_heading, common_heading_ec))};
             if (!common_heading_ec)
@@ -8779,7 +8874,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_rtcm_info = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_rtcm_info = 0x00000010;
+            MemberId member_id_rtcm_info = 0x00000011;
             bool common_rtcm_info_ec {false};
             CommonStructMember common_rtcm_info {TypeObjectUtils::build_common_struct_member(member_id_rtcm_info, member_flags_rtcm_info, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_rtcm_info, common_rtcm_info_ec))};
             if (!common_rtcm_info_ec)
@@ -8807,7 +8902,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_wireless_link_topo = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_wireless_link_topo = 0x00000011;
+            MemberId member_id_wireless_link_topo = 0x00000012;
             bool common_wireless_link_topo_ec {false};
             CommonStructMember common_wireless_link_topo {TypeObjectUtils::build_common_struct_member(member_id_wireless_link_topo, member_flags_wireless_link_topo, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_wireless_link_topo, common_wireless_link_topo_ec))};
             if (!common_wireless_link_topo_ec)
@@ -8835,7 +8930,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_air_conditioner = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_air_conditioner = 0x00000012;
+            MemberId member_id_air_conditioner = 0x00000013;
             bool common_air_conditioner_ec {false};
             CommonStructMember common_air_conditioner {TypeObjectUtils::build_common_struct_member(member_id_air_conditioner, member_flags_air_conditioner, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_air_conditioner, common_air_conditioner_ec))};
             if (!common_air_conditioner_ec)
@@ -8865,7 +8960,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_air_transfer_enable = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_air_transfer_enable = 0x00000013;
+            MemberId member_id_air_transfer_enable = 0x00000014;
             bool common_air_transfer_enable_ec {false};
             CommonStructMember common_air_transfer_enable {TypeObjectUtils::build_common_struct_member(member_id_air_transfer_enable, member_flags_air_transfer_enable, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_air_transfer_enable, common_air_transfer_enable_ec))};
             if (!common_air_transfer_enable_ec)
@@ -8893,7 +8988,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_silent_mode = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_silent_mode = 0x00000014;
+            MemberId member_id_silent_mode = 0x00000015;
             bool common_silent_mode_ec {false};
             CommonStructMember common_silent_mode {TypeObjectUtils::build_common_struct_member(member_id_silent_mode, member_flags_silent_mode, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_silent_mode, common_silent_mode_ec))};
             if (!common_silent_mode_ec)
@@ -8921,7 +9016,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_user_experience_improvement = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_user_experience_improvement = 0x00000015;
+            MemberId member_id_user_experience_improvement = 0x00000016;
             bool common_user_experience_improvement_ec {false};
             CommonStructMember common_user_experience_improvement {TypeObjectUtils::build_common_struct_member(member_id_user_experience_improvement, member_flags_user_experience_improvement, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_user_experience_improvement, common_user_experience_improvement_ec))};
             if (!common_user_experience_improvement_ec)
@@ -8981,7 +9076,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_dongle_infos = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_dongle_infos = 0x00000016;
+            MemberId member_id_dongle_infos = 0x00000017;
             bool common_dongle_infos_ec {false};
             CommonStructMember common_dongle_infos {TypeObjectUtils::build_common_struct_member(member_id_dongle_infos, member_flags_dongle_infos, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_dongle_infos, common_dongle_infos_ec))};
             if (!common_dongle_infos_ec)
@@ -9009,7 +9104,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_drone_battery_maintenance_info = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_drone_battery_maintenance_info = 0x00000017;
+            MemberId member_id_drone_battery_maintenance_info = 0x00000018;
             bool common_drone_battery_maintenance_info_ec {false};
             CommonStructMember common_drone_battery_maintenance_info {TypeObjectUtils::build_common_struct_member(member_id_drone_battery_maintenance_info, member_flags_drone_battery_maintenance_info, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_drone_battery_maintenance_info, common_drone_battery_maintenance_info_ec))};
             if (!common_drone_battery_maintenance_info_ec)
@@ -9037,7 +9132,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_maintain_status = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_maintain_status = 0x00000018;
+            MemberId member_id_maintain_status = 0x00000019;
             bool common_maintain_status_ec {false};
             CommonStructMember common_maintain_status {TypeObjectUtils::build_common_struct_member(member_id_maintain_status, member_flags_maintain_status, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_maintain_status, common_maintain_status_ec))};
             if (!common_maintain_status_ec)
@@ -9065,7 +9160,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_position_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_position_state = 0x00000019;
+            MemberId member_id_position_state = 0x0000001a;
             bool common_position_state_ec {false};
             CommonStructMember common_position_state {TypeObjectUtils::build_common_struct_member(member_id_position_state, member_flags_position_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_position_state, common_position_state_ec))};
             if (!common_position_state_ec)
@@ -9093,7 +9188,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_emergency_stop_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_emergency_stop_state = 0x0000001a;
+            MemberId member_id_emergency_stop_state = 0x0000001b;
             bool common_emergency_stop_state_ec {false};
             CommonStructMember common_emergency_stop_state {TypeObjectUtils::build_common_struct_member(member_id_emergency_stop_state, member_flags_emergency_stop_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_emergency_stop_state, common_emergency_stop_state_ec))};
             if (!common_emergency_stop_state_ec)
@@ -9121,7 +9216,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_drone_charge_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_drone_charge_state = 0x0000001b;
+            MemberId member_id_drone_charge_state = 0x0000001c;
             bool common_drone_charge_state_ec {false};
             CommonStructMember common_drone_charge_state {TypeObjectUtils::build_common_struct_member(member_id_drone_charge_state, member_flags_drone_charge_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_drone_charge_state, common_drone_charge_state_ec))};
             if (!common_drone_charge_state_ec)
@@ -9149,7 +9244,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_backup_battery = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_backup_battery = 0x0000001c;
+            MemberId member_id_backup_battery = 0x0000001d;
             bool common_backup_battery_ec {false};
             CommonStructMember common_backup_battery {TypeObjectUtils::build_common_struct_member(member_id_backup_battery, member_flags_backup_battery, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_backup_battery, common_backup_battery_ec))};
             if (!common_backup_battery_ec)
@@ -9179,7 +9274,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_alarm_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_alarm_state = 0x0000001d;
+            MemberId member_id_alarm_state = 0x0000001e;
             bool common_alarm_state_ec {false};
             CommonStructMember common_alarm_state {TypeObjectUtils::build_common_struct_member(member_id_alarm_state, member_flags_alarm_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_alarm_state, common_alarm_state_ec))};
             if (!common_alarm_state_ec)
@@ -9207,7 +9302,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_battery_store_mode = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_battery_store_mode = 0x0000001e;
+            MemberId member_id_battery_store_mode = 0x0000001f;
             bool common_battery_store_mode_ec {false};
             CommonStructMember common_battery_store_mode {TypeObjectUtils::build_common_struct_member(member_id_battery_store_mode, member_flags_battery_store_mode, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_battery_store_mode, common_battery_store_mode_ec))};
             if (!common_battery_store_mode_ec)
@@ -9237,7 +9332,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_activation_time = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_activation_time = 0x0000001f;
+            MemberId member_id_activation_time = 0x00000020;
             bool common_activation_time_ec {false};
             CommonStructMember common_activation_time {TypeObjectUtils::build_common_struct_member(member_id_activation_time, member_flags_activation_time, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_activation_time, common_activation_time_ec))};
             if (!common_activation_time_ec)
@@ -9267,7 +9362,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_height = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_height = 0x00000020;
+            MemberId member_id_height = 0x00000021;
             bool common_height_ec {false};
             CommonStructMember common_height {TypeObjectUtils::build_common_struct_member(member_id_height, member_flags_height, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_height, common_height_ec))};
             if (!common_height_ec)
@@ -9295,7 +9390,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_alternate_land_point = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_alternate_land_point = 0x00000021;
+            MemberId member_id_alternate_land_point = 0x00000022;
             bool common_alternate_land_point_ec {false};
             CommonStructMember common_alternate_land_point {TypeObjectUtils::build_common_struct_member(member_id_alternate_land_point, member_flags_alternate_land_point, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_alternate_land_point, common_alternate_land_point_ec))};
             if (!common_alternate_land_point_ec)
@@ -9323,7 +9418,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_compatible_status = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_compatible_status = 0x00000022;
+            MemberId member_id_compatible_status = 0x00000023;
             bool common_compatible_status_ec {false};
             CommonStructMember common_compatible_status {TypeObjectUtils::build_common_struct_member(member_id_compatible_status, member_flags_compatible_status, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_compatible_status, common_compatible_status_ec))};
             if (!common_compatible_status_ec)
@@ -9353,7 +9448,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_acc_time = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_acc_time = 0x00000023;
+            MemberId member_id_acc_time = 0x00000024;
             bool common_acc_time_ec {false};
             CommonStructMember common_acc_time {TypeObjectUtils::build_common_struct_member(member_id_acc_time, member_flags_acc_time, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_acc_time, common_acc_time_ec))};
             if (!common_acc_time_ec)
@@ -9383,7 +9478,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_first_power_on = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_first_power_on = 0x00000024;
+            MemberId member_id_first_power_on = 0x00000025;
             bool common_first_power_on_ec {false};
             CommonStructMember common_first_power_on {TypeObjectUtils::build_common_struct_member(member_id_first_power_on, member_flags_first_power_on, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_first_power_on, common_first_power_on_ec))};
             if (!common_first_power_on_ec)
@@ -9411,7 +9506,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_storage = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_storage = 0x00000025;
+            MemberId member_id_storage = 0x00000026;
             bool common_storage_ec {false};
             CommonStructMember common_storage {TypeObjectUtils::build_common_struct_member(member_id_storage, member_flags_storage, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_storage, common_storage_ec))};
             if (!common_storage_ec)
@@ -9441,7 +9536,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_working_current = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_working_current = 0x00000026;
+            MemberId member_id_working_current = 0x00000027;
             bool common_working_current_ec {false};
             CommonStructMember common_working_current {TypeObjectUtils::build_common_struct_member(member_id_working_current, member_flags_working_current, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_working_current, common_working_current_ec))};
             if (!common_working_current_ec)
@@ -9471,7 +9566,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_working_voltage = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_working_voltage = 0x00000027;
+            MemberId member_id_working_voltage = 0x00000028;
             bool common_working_voltage_ec {false};
             CommonStructMember common_working_voltage {TypeObjectUtils::build_common_struct_member(member_id_working_voltage, member_flags_working_voltage, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_working_voltage, common_working_voltage_ec))};
             if (!common_working_voltage_ec)
@@ -9501,7 +9596,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_humidity = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_humidity = 0x00000028;
+            MemberId member_id_humidity = 0x00000029;
             bool common_humidity_ec {false};
             CommonStructMember common_humidity {TypeObjectUtils::build_common_struct_member(member_id_humidity, member_flags_humidity, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_humidity, common_humidity_ec))};
             if (!common_humidity_ec)
@@ -9531,7 +9626,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_temperature = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_temperature = 0x00000029;
+            MemberId member_id_temperature = 0x0000002a;
             bool common_temperature_ec {false};
             CommonStructMember common_temperature {TypeObjectUtils::build_common_struct_member(member_id_temperature, member_flags_temperature, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_temperature, common_temperature_ec))};
             if (!common_temperature_ec)
@@ -9561,7 +9656,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_environment_temperature = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_environment_temperature = 0x0000002a;
+            MemberId member_id_environment_temperature = 0x0000002b;
             bool common_environment_temperature_ec {false};
             CommonStructMember common_environment_temperature {TypeObjectUtils::build_common_struct_member(member_id_environment_temperature, member_flags_environment_temperature, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_environment_temperature, common_environment_temperature_ec))};
             if (!common_environment_temperature_ec)
@@ -9591,7 +9686,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_wind_speed = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_wind_speed = 0x0000002b;
+            MemberId member_id_wind_speed = 0x0000002c;
             bool common_wind_speed_ec {false};
             CommonStructMember common_wind_speed {TypeObjectUtils::build_common_struct_member(member_id_wind_speed, member_flags_wind_speed, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_wind_speed, common_wind_speed_ec))};
             if (!common_wind_speed_ec)
@@ -9619,7 +9714,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_rainfall = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_rainfall = 0x0000002c;
+            MemberId member_id_rainfall = 0x0000002d;
             bool common_rainfall_ec {false};
             CommonStructMember common_rainfall {TypeObjectUtils::build_common_struct_member(member_id_rainfall, member_flags_rainfall, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_rainfall, common_rainfall_ec))};
             if (!common_rainfall_ec)
@@ -9647,7 +9742,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_live_capacity = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_live_capacity = 0x0000002d;
+            MemberId member_id_live_capacity = 0x0000002e;
             bool common_live_capacity_ec {false};
             CommonStructMember common_live_capacity {TypeObjectUtils::build_common_struct_member(member_id_live_capacity, member_flags_live_capacity, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_live_capacity, common_live_capacity_ec))};
             if (!common_live_capacity_ec)
@@ -9675,7 +9770,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_live_status = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_live_status = 0x0000002e;
+            MemberId member_id_live_status = 0x0000002f;
             bool common_live_status_ec {false};
             CommonStructMember common_live_status {TypeObjectUtils::build_common_struct_member(member_id_live_status, member_flags_live_status, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_live_status, common_live_status_ec))};
             if (!common_live_status_ec)
@@ -9703,7 +9798,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_wireless_link = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_wireless_link = 0x0000002f;
+            MemberId member_id_wireless_link = 0x00000030;
             bool common_wireless_link_ec {false};
             CommonStructMember common_wireless_link {TypeObjectUtils::build_common_struct_member(member_id_wireless_link, member_flags_wireless_link, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_wireless_link, common_wireless_link_ec))};
             if (!common_wireless_link_ec)
@@ -9731,7 +9826,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_media_file_detail = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_media_file_detail = 0x00000030;
+            MemberId member_id_media_file_detail = 0x00000031;
             bool common_media_file_detail_ec {false};
             CommonStructMember common_media_file_detail {TypeObjectUtils::build_common_struct_member(member_id_media_file_detail, member_flags_media_file_detail, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_media_file_detail, common_media_file_detail_ec))};
             if (!common_media_file_detail_ec)
@@ -9761,7 +9856,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_job_number = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_job_number = 0x00000031;
+            MemberId member_id_job_number = 0x00000032;
             bool common_job_number_ec {false};
             CommonStructMember common_job_number {TypeObjectUtils::build_common_struct_member(member_id_job_number, member_flags_job_number, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_job_number, common_job_number_ec))};
             if (!common_job_number_ec)
@@ -9791,7 +9886,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_drone_in_dock = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_drone_in_dock = 0x00000032;
+            MemberId member_id_drone_in_dock = 0x00000033;
             bool common_drone_in_dock_ec {false};
             CommonStructMember common_drone_in_dock {TypeObjectUtils::build_common_struct_member(member_id_drone_in_dock, member_flags_drone_in_dock, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_drone_in_dock, common_drone_in_dock_ec))};
             if (!common_drone_in_dock_ec)
@@ -9819,7 +9914,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_network_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_network_state = 0x00000033;
+            MemberId member_id_network_state = 0x00000034;
             bool common_network_state_ec {false};
             CommonStructMember common_network_state {TypeObjectUtils::build_common_struct_member(member_id_network_state, member_flags_network_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_network_state, common_network_state_ec))};
             if (!common_network_state_ec)
@@ -9847,7 +9942,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_supplement_light_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_supplement_light_state = 0x00000034;
+            MemberId member_id_supplement_light_state = 0x00000035;
             bool common_supplement_light_state_ec {false};
             CommonStructMember common_supplement_light_state {TypeObjectUtils::build_common_struct_member(member_id_supplement_light_state, member_flags_supplement_light_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_supplement_light_state, common_supplement_light_state_ec))};
             if (!common_supplement_light_state_ec)
@@ -9875,7 +9970,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_cover_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_cover_state = 0x00000035;
+            MemberId member_id_cover_state = 0x00000036;
             bool common_cover_state_ec {false};
             CommonStructMember common_cover_state {TypeObjectUtils::build_common_struct_member(member_id_cover_state, member_flags_cover_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_cover_state, common_cover_state_ec))};
             if (!common_cover_state_ec)
@@ -9903,7 +9998,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_sub_device = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_sub_device = 0x00000036;
+            MemberId member_id_sub_device = 0x00000037;
             bool common_sub_device_ec {false};
             CommonStructMember common_sub_device {TypeObjectUtils::build_common_struct_member(member_id_sub_device, member_flags_sub_device, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_sub_device, common_sub_device_ec))};
             if (!common_sub_device_ec)
@@ -9931,7 +10026,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_flighttask_step_code = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_flighttask_step_code = 0x00000037;
+            MemberId member_id_flighttask_step_code = 0x00000038;
             bool common_flighttask_step_code_ec {false};
             CommonStructMember common_flighttask_step_code {TypeObjectUtils::build_common_struct_member(member_id_flighttask_step_code, member_flags_flighttask_step_code, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_flighttask_step_code, common_flighttask_step_code_ec))};
             if (!common_flighttask_step_code_ec)
@@ -9959,7 +10054,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_mode_code = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_mode_code = 0x00000038;
+            MemberId member_id_mode_code = 0x00000039;
             bool common_mode_code_ec {false};
             CommonStructMember common_mode_code {TypeObjectUtils::build_common_struct_member(member_id_mode_code, member_flags_mode_code, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_mode_code, common_mode_code_ec))};
             if (!common_mode_code_ec)
@@ -9987,7 +10082,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_firmware_upgrade_status = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_firmware_upgrade_status = 0x00000039;
+            MemberId member_id_firmware_upgrade_status = 0x0000003a;
             bool common_firmware_upgrade_status_ec {false};
             CommonStructMember common_firmware_upgrade_status {TypeObjectUtils::build_common_struct_member(member_id_firmware_upgrade_status, member_flags_firmware_upgrade_status, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_firmware_upgrade_status, common_firmware_upgrade_status_ec))};
             if (!common_firmware_upgrade_status_ec)
@@ -10025,7 +10120,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_firmware_version = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_firmware_version = 0x0000003a;
+            MemberId member_id_firmware_version = 0x0000003b;
             bool common_firmware_version_ec {false};
             CommonStructMember common_firmware_version {TypeObjectUtils::build_common_struct_member(member_id_firmware_version, member_flags_firmware_version, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_firmware_version, common_firmware_version_ec))};
             if (!common_firmware_version_ec)
@@ -10055,7 +10150,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_latitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_latitude = 0x0000003b;
+            MemberId member_id_latitude = 0x0000003c;
             bool common_latitude_ec {false};
             CommonStructMember common_latitude {TypeObjectUtils::build_common_struct_member(member_id_latitude, member_flags_latitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_latitude, common_latitude_ec))};
             if (!common_latitude_ec)
@@ -10085,7 +10180,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_longitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_longitude = 0x0000003c;
+            MemberId member_id_longitude = 0x0000003d;
             bool common_longitude_ec {false};
             CommonStructMember common_longitude {TypeObjectUtils::build_common_struct_member(member_id_longitude, member_flags_longitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_longitude, common_longitude_ec))};
             if (!common_longitude_ec)
@@ -10123,7 +10218,7 @@ void register_Dock2RealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_dock_sn = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_dock_sn = 0x0000003d;
+            MemberId member_id_dock_sn = 0x0000003e;
             bool common_dock_sn_ec {false};
             CommonStructMember common_dock_sn {TypeObjectUtils::build_common_struct_member(member_id_dock_sn, member_flags_dock_sn, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_dock_sn, common_dock_sn_ec))};
             if (!common_dock_sn_ec)
@@ -12534,7 +12629,7 @@ void register_DroneTaskRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_current_wayline = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_current_wayline = 0x0000000e;
+            MemberId member_id_current_wayline = 0x0000000f;
             bool common_current_wayline_ec {false};
             CommonStructMember common_current_wayline {TypeObjectUtils::build_common_struct_member(member_id_current_wayline, member_flags_current_wayline, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_current_wayline, common_current_wayline_ec))};
             if (!common_current_wayline_ec)
@@ -12562,7 +12657,7 @@ void register_DroneTaskRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_current_SearchArea = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_current_SearchArea = 0x0000000f;
+            MemberId member_id_current_SearchArea = 0x00000010;
             bool common_current_SearchArea_ec {false};
             CommonStructMember common_current_SearchArea {TypeObjectUtils::build_common_struct_member(member_id_current_SearchArea, member_flags_current_SearchArea, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_current_SearchArea, common_current_SearchArea_ec))};
             if (!common_current_SearchArea_ec)
@@ -12590,7 +12685,7 @@ void register_DroneTaskRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_current_GenerateArea = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_current_GenerateArea = 0x00000010;
+            MemberId member_id_current_GenerateArea = 0x00000011;
             bool common_current_GenerateArea_ec {false};
             CommonStructMember common_current_GenerateArea {TypeObjectUtils::build_common_struct_member(member_id_current_GenerateArea, member_flags_current_GenerateArea, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_current_GenerateArea, common_current_GenerateArea_ec))};
             if (!common_current_GenerateArea_ec)
@@ -12628,7 +12723,7 @@ void register_DroneTaskRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_drone_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_drone_state = 0x00000011;
+            MemberId member_id_drone_state = 0x00000012;
             bool common_drone_state_ec {false};
             CommonStructMember common_drone_state {TypeObjectUtils::build_common_struct_member(member_id_drone_state, member_flags_drone_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_drone_state, common_drone_state_ec))};
             if (!common_drone_state_ec)
@@ -12666,7 +12761,7 @@ void register_DroneTaskRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_drone_task_action = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_drone_task_action = 0x00000012;
+            MemberId member_id_drone_task_action = 0x00000013;
             bool common_drone_task_action_ec {false};
             CommonStructMember common_drone_task_action {TypeObjectUtils::build_common_struct_member(member_id_drone_task_action, member_flags_drone_task_action, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_drone_task_action, common_drone_task_action_ec))};
             if (!common_drone_task_action_ec)
@@ -12704,7 +12799,7 @@ void register_DroneTaskRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_drone_task_targetID = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_drone_task_targetID = 0x00000013;
+            MemberId member_id_drone_task_targetID = 0x00000014;
             bool common_drone_task_targetID_ec {false};
             CommonStructMember common_drone_task_targetID {TypeObjectUtils::build_common_struct_member(member_id_drone_task_targetID, member_flags_drone_task_targetID, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_drone_task_targetID, common_drone_task_targetID_ec))};
             if (!common_drone_task_targetID_ec)
@@ -19126,7 +19221,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_best_link_gateway = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_best_link_gateway = 0x0000000e;
+            MemberId member_id_best_link_gateway = 0x0000000f;
             bool common_best_link_gateway_ec {false};
             CommonStructMember common_best_link_gateway {TypeObjectUtils::build_common_struct_member(member_id_best_link_gateway, member_flags_best_link_gateway, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_best_link_gateway, common_best_link_gateway_ec))};
             if (!common_best_link_gateway_ec)
@@ -19154,7 +19249,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_wireless_link_topo = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_wireless_link_topo = 0x0000000f;
+            MemberId member_id_wireless_link_topo = 0x00000010;
             bool common_wireless_link_topo_ec {false};
             CommonStructMember common_wireless_link_topo {TypeObjectUtils::build_common_struct_member(member_id_wireless_link_topo, member_flags_wireless_link_topo, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_wireless_link_topo, common_wireless_link_topo_ec))};
             if (!common_wireless_link_topo_ec)
@@ -19214,7 +19309,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_cameras = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_cameras = 0x00000010;
+            MemberId member_id_cameras = 0x00000011;
             bool common_cameras_ec {false};
             CommonStructMember common_cameras {TypeObjectUtils::build_common_struct_member(member_id_cameras, member_flags_cameras, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_cameras, common_cameras_ec))};
             if (!common_cameras_ec)
@@ -19252,7 +19347,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_flysafe_database_version = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_flysafe_database_version = 0x00000011;
+            MemberId member_id_flysafe_database_version = 0x00000012;
             bool common_flysafe_database_version_ec {false};
             CommonStructMember common_flysafe_database_version {TypeObjectUtils::build_common_struct_member(member_id_flysafe_database_version, member_flags_flysafe_database_version, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_flysafe_database_version, common_flysafe_database_version_ec))};
             if (!common_flysafe_database_version_ec)
@@ -19282,7 +19377,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_offline_map_enable = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_offline_map_enable = 0x00000012;
+            MemberId member_id_offline_map_enable = 0x00000013;
             bool common_offline_map_enable_ec {false};
             CommonStructMember common_offline_map_enable {TypeObjectUtils::build_common_struct_member(member_id_offline_map_enable, member_flags_offline_map_enable, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_offline_map_enable, common_offline_map_enable_ec))};
             if (!common_offline_map_enable_ec)
@@ -19342,7 +19437,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_dongle_infos = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_dongle_infos = 0x00000013;
+            MemberId member_id_dongle_infos = 0x00000014;
             bool common_dongle_infos_ec {false};
             CommonStructMember common_dongle_infos {TypeObjectUtils::build_common_struct_member(member_id_dongle_infos, member_flags_dongle_infos, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_dongle_infos, common_dongle_infos_ec))};
             if (!common_dongle_infos_ec)
@@ -19370,7 +19465,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_current_rth_mode = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_current_rth_mode = 0x00000014;
+            MemberId member_id_current_rth_mode = 0x00000015;
             bool common_current_rth_mode_ec {false};
             CommonStructMember common_current_rth_mode {TypeObjectUtils::build_common_struct_member(member_id_current_rth_mode, member_flags_current_rth_mode, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_current_rth_mode, common_current_rth_mode_ec))};
             if (!common_current_rth_mode_ec)
@@ -19398,7 +19493,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_rth_mode = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_rth_mode = 0x00000015;
+            MemberId member_id_rth_mode = 0x00000016;
             bool common_rth_mode_ec {false};
             CommonStructMember common_rth_mode {TypeObjectUtils::build_common_struct_member(member_id_rth_mode, member_flags_rth_mode, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_rth_mode, common_rth_mode_ec))};
             if (!common_rth_mode_ec)
@@ -19426,7 +19521,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_obstacle_avoidance = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_obstacle_avoidance = 0x00000016;
+            MemberId member_id_obstacle_avoidance = 0x00000017;
             bool common_obstacle_avoidance_ec {false};
             CommonStructMember common_obstacle_avoidance {TypeObjectUtils::build_common_struct_member(member_id_obstacle_avoidance, member_flags_obstacle_avoidance, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_obstacle_avoidance, common_obstacle_avoidance_ec))};
             if (!common_obstacle_avoidance_ec)
@@ -19456,7 +19551,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_is_near_area_limit = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_is_near_area_limit = 0x00000017;
+            MemberId member_id_is_near_area_limit = 0x00000018;
             bool common_is_near_area_limit_ec {false};
             CommonStructMember common_is_near_area_limit {TypeObjectUtils::build_common_struct_member(member_id_is_near_area_limit, member_flags_is_near_area_limit, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_is_near_area_limit, common_is_near_area_limit_ec))};
             if (!common_is_near_area_limit_ec)
@@ -19486,7 +19581,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_is_near_height_limit = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_is_near_height_limit = 0x00000018;
+            MemberId member_id_is_near_height_limit = 0x00000019;
             bool common_is_near_height_limit_ec {false};
             CommonStructMember common_is_near_height_limit {TypeObjectUtils::build_common_struct_member(member_id_is_near_height_limit, member_flags_is_near_height_limit, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_is_near_height_limit, common_is_near_height_limit_ec))};
             if (!common_is_near_height_limit_ec)
@@ -19516,7 +19611,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_height_limit = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_height_limit = 0x00000019;
+            MemberId member_id_height_limit = 0x0000001a;
             bool common_height_limit_ec {false};
             CommonStructMember common_height_limit {TypeObjectUtils::build_common_struct_member(member_id_height_limit, member_flags_height_limit, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_height_limit, common_height_limit_ec))};
             if (!common_height_limit_ec)
@@ -19546,7 +19641,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_night_lights_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_night_lights_state = 0x0000001a;
+            MemberId member_id_night_lights_state = 0x0000001b;
             bool common_night_lights_state_ec {false};
             CommonStructMember common_night_lights_state {TypeObjectUtils::build_common_struct_member(member_id_night_lights_state, member_flags_night_lights_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_night_lights_state, common_night_lights_state_ec))};
             if (!common_night_lights_state_ec)
@@ -19576,7 +19671,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_activation_time = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_activation_time = 0x0000001b;
+            MemberId member_id_activation_time = 0x0000001c;
             bool common_activation_time_ec {false};
             CommonStructMember common_activation_time {TypeObjectUtils::build_common_struct_member(member_id_activation_time, member_flags_activation_time, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_activation_time, common_activation_time_ec))};
             if (!common_activation_time_ec)
@@ -19604,7 +19699,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_maintain_status = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_maintain_status = 0x0000001c;
+            MemberId member_id_maintain_status = 0x0000001d;
             bool common_maintain_status_ec {false};
             CommonStructMember common_maintain_status {TypeObjectUtils::build_common_struct_member(member_id_maintain_status, member_flags_maintain_status, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_maintain_status, common_maintain_status_ec))};
             if (!common_maintain_status_ec)
@@ -19634,7 +19729,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_total_flight_sorties = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_total_flight_sorties = 0x0000001d;
+            MemberId member_id_total_flight_sorties = 0x0000001e;
             bool common_total_flight_sorties_ec {false};
             CommonStructMember common_total_flight_sorties {TypeObjectUtils::build_common_struct_member(member_id_total_flight_sorties, member_flags_total_flight_sorties, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_total_flight_sorties, common_total_flight_sorties_ec))};
             if (!common_total_flight_sorties_ec)
@@ -19662,7 +19757,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_type_subtype_gimbalindex = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_type_subtype_gimbalindex = 0x0000001e;
+            MemberId member_id_type_subtype_gimbalindex = 0x0000001f;
             bool common_type_subtype_gimbalindex_ec {false};
             CommonStructMember common_type_subtype_gimbalindex {TypeObjectUtils::build_common_struct_member(member_id_type_subtype_gimbalindex, member_flags_type_subtype_gimbalindex, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_type_subtype_gimbalindex, common_type_subtype_gimbalindex_ec))};
             if (!common_type_subtype_gimbalindex_ec)
@@ -19700,7 +19795,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_track_id = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_track_id = 0x0000001f;
+            MemberId member_id_track_id = 0x00000020;
             bool common_track_id_ec {false};
             CommonStructMember common_track_id {TypeObjectUtils::build_common_struct_member(member_id_track_id, member_flags_track_id, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_track_id, common_track_id_ec))};
             if (!common_track_id_ec)
@@ -19728,7 +19823,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_position_state = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_position_state = 0x00000020;
+            MemberId member_id_position_state = 0x00000021;
             bool common_position_state_ec {false};
             CommonStructMember common_position_state {TypeObjectUtils::build_common_struct_member(member_id_position_state, member_flags_position_state, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_position_state, common_position_state_ec))};
             if (!common_position_state_ec)
@@ -19756,7 +19851,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_storage = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_storage = 0x00000021;
+            MemberId member_id_storage = 0x00000022;
             bool common_storage_ec {false};
             CommonStructMember common_storage {TypeObjectUtils::build_common_struct_member(member_id_storage, member_flags_storage, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_storage, common_storage_ec))};
             if (!common_storage_ec)
@@ -19784,7 +19879,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_battery = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_battery = 0x00000022;
+            MemberId member_id_battery = 0x00000023;
             bool common_battery_ec {false};
             CommonStructMember common_battery {TypeObjectUtils::build_common_struct_member(member_id_battery, member_flags_battery, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_battery, common_battery_ec))};
             if (!common_battery_ec)
@@ -19814,7 +19909,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_total_flight_distance = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_total_flight_distance = 0x00000023;
+            MemberId member_id_total_flight_distance = 0x00000024;
             bool common_total_flight_distance_ec {false};
             CommonStructMember common_total_flight_distance {TypeObjectUtils::build_common_struct_member(member_id_total_flight_distance, member_flags_total_flight_distance, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_total_flight_distance, common_total_flight_distance_ec))};
             if (!common_total_flight_distance_ec)
@@ -19844,7 +19939,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_total_flight_time = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_total_flight_time = 0x00000024;
+            MemberId member_id_total_flight_time = 0x00000025;
             bool common_total_flight_time_ec {false};
             CommonStructMember common_total_flight_time {TypeObjectUtils::build_common_struct_member(member_id_total_flight_time, member_flags_total_flight_time, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_total_flight_time, common_total_flight_time_ec))};
             if (!common_total_flight_time_ec)
@@ -19874,7 +19969,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_serious_low_battery_warning_threshold = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_serious_low_battery_warning_threshold = 0x00000025;
+            MemberId member_id_serious_low_battery_warning_threshold = 0x00000026;
             bool common_serious_low_battery_warning_threshold_ec {false};
             CommonStructMember common_serious_low_battery_warning_threshold {TypeObjectUtils::build_common_struct_member(member_id_serious_low_battery_warning_threshold, member_flags_serious_low_battery_warning_threshold, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_serious_low_battery_warning_threshold, common_serious_low_battery_warning_threshold_ec))};
             if (!common_serious_low_battery_warning_threshold_ec)
@@ -19904,7 +19999,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_low_battery_warning_threshold = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_low_battery_warning_threshold = 0x00000026;
+            MemberId member_id_low_battery_warning_threshold = 0x00000027;
             bool common_low_battery_warning_threshold_ec {false};
             CommonStructMember common_low_battery_warning_threshold {TypeObjectUtils::build_common_struct_member(member_id_low_battery_warning_threshold, member_flags_low_battery_warning_threshold, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_low_battery_warning_threshold, common_low_battery_warning_threshold_ec))};
             if (!common_low_battery_warning_threshold_ec)
@@ -19942,7 +20037,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_control_source = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_control_source = 0x00000027;
+            MemberId member_id_control_source = 0x00000028;
             bool common_control_source_ec {false};
             CommonStructMember common_control_source {TypeObjectUtils::build_common_struct_member(member_id_control_source, member_flags_control_source, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_control_source, common_control_source_ec))};
             if (!common_control_source_ec)
@@ -19970,7 +20065,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_wind_direction = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_wind_direction = 0x00000028;
+            MemberId member_id_wind_direction = 0x00000029;
             bool common_wind_direction_ec {false};
             CommonStructMember common_wind_direction {TypeObjectUtils::build_common_struct_member(member_id_wind_direction, member_flags_wind_direction, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_wind_direction, common_wind_direction_ec))};
             if (!common_wind_direction_ec)
@@ -20000,7 +20095,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_wind_speed = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_wind_speed = 0x00000029;
+            MemberId member_id_wind_speed = 0x0000002a;
             bool common_wind_speed_ec {false};
             CommonStructMember common_wind_speed {TypeObjectUtils::build_common_struct_member(member_id_wind_speed, member_flags_wind_speed, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_wind_speed, common_wind_speed_ec))};
             if (!common_wind_speed_ec)
@@ -20030,7 +20125,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_home_distance = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_home_distance = 0x0000002a;
+            MemberId member_id_home_distance = 0x0000002b;
             bool common_home_distance_ec {false};
             CommonStructMember common_home_distance {TypeObjectUtils::build_common_struct_member(member_id_home_distance, member_flags_home_distance, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_home_distance, common_home_distance_ec))};
             if (!common_home_distance_ec)
@@ -20060,7 +20155,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_home_latitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_home_latitude = 0x0000002b;
+            MemberId member_id_home_latitude = 0x0000002c;
             bool common_home_latitude_ec {false};
             CommonStructMember common_home_latitude {TypeObjectUtils::build_common_struct_member(member_id_home_latitude, member_flags_home_latitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_home_latitude, common_home_latitude_ec))};
             if (!common_home_latitude_ec)
@@ -20090,7 +20185,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_home_longitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_home_longitude = 0x0000002c;
+            MemberId member_id_home_longitude = 0x0000002d;
             bool common_home_longitude_ec {false};
             CommonStructMember common_home_longitude {TypeObjectUtils::build_common_struct_member(member_id_home_longitude, member_flags_home_longitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_home_longitude, common_home_longitude_ec))};
             if (!common_home_longitude_ec)
@@ -20120,7 +20215,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_attitude_head = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_attitude_head = 0x0000002d;
+            MemberId member_id_attitude_head = 0x0000002e;
             bool common_attitude_head_ec {false};
             CommonStructMember common_attitude_head {TypeObjectUtils::build_common_struct_member(member_id_attitude_head, member_flags_attitude_head, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_attitude_head, common_attitude_head_ec))};
             if (!common_attitude_head_ec)
@@ -20150,7 +20245,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_attitude_roll = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_attitude_roll = 0x0000002e;
+            MemberId member_id_attitude_roll = 0x0000002f;
             bool common_attitude_roll_ec {false};
             CommonStructMember common_attitude_roll {TypeObjectUtils::build_common_struct_member(member_id_attitude_roll, member_flags_attitude_roll, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_attitude_roll, common_attitude_roll_ec))};
             if (!common_attitude_roll_ec)
@@ -20180,7 +20275,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_attitude_pitch = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_attitude_pitch = 0x0000002f;
+            MemberId member_id_attitude_pitch = 0x00000030;
             bool common_attitude_pitch_ec {false};
             CommonStructMember common_attitude_pitch {TypeObjectUtils::build_common_struct_member(member_id_attitude_pitch, member_flags_attitude_pitch, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_attitude_pitch, common_attitude_pitch_ec))};
             if (!common_attitude_pitch_ec)
@@ -20210,7 +20305,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_elevation = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_elevation = 0x00000030;
+            MemberId member_id_elevation = 0x00000031;
             bool common_elevation_ec {false};
             CommonStructMember common_elevation {TypeObjectUtils::build_common_struct_member(member_id_elevation, member_flags_elevation, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_elevation, common_elevation_ec))};
             if (!common_elevation_ec)
@@ -20240,7 +20335,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_height = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_height = 0x00000031;
+            MemberId member_id_height = 0x00000032;
             bool common_height_ec {false};
             CommonStructMember common_height {TypeObjectUtils::build_common_struct_member(member_id_height, member_flags_height, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_height, common_height_ec))};
             if (!common_height_ec)
@@ -20270,7 +20365,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_latitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_latitude = 0x00000032;
+            MemberId member_id_latitude = 0x00000033;
             bool common_latitude_ec {false};
             CommonStructMember common_latitude {TypeObjectUtils::build_common_struct_member(member_id_latitude, member_flags_latitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_latitude, common_latitude_ec))};
             if (!common_latitude_ec)
@@ -20300,7 +20395,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_longitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_longitude = 0x00000033;
+            MemberId member_id_longitude = 0x00000034;
             bool common_longitude_ec {false};
             CommonStructMember common_longitude {TypeObjectUtils::build_common_struct_member(member_id_longitude, member_flags_longitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_longitude, common_longitude_ec))};
             if (!common_longitude_ec)
@@ -20330,7 +20425,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_vertical_speed = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_vertical_speed = 0x00000034;
+            MemberId member_id_vertical_speed = 0x00000035;
             bool common_vertical_speed_ec {false};
             CommonStructMember common_vertical_speed {TypeObjectUtils::build_common_struct_member(member_id_vertical_speed, member_flags_vertical_speed, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_vertical_speed, common_vertical_speed_ec))};
             if (!common_vertical_speed_ec)
@@ -20360,7 +20455,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_horizontal_speed = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_horizontal_speed = 0x00000035;
+            MemberId member_id_horizontal_speed = 0x00000036;
             bool common_horizontal_speed_ec {false};
             CommonStructMember common_horizontal_speed {TypeObjectUtils::build_common_struct_member(member_id_horizontal_speed, member_flags_horizontal_speed, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_horizontal_speed, common_horizontal_speed_ec))};
             if (!common_horizontal_speed_ec)
@@ -20390,7 +20485,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_firmware_upgrade_status = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_firmware_upgrade_status = 0x00000036;
+            MemberId member_id_firmware_upgrade_status = 0x00000037;
             bool common_firmware_upgrade_status_ec {false};
             CommonStructMember common_firmware_upgrade_status {TypeObjectUtils::build_common_struct_member(member_id_firmware_upgrade_status, member_flags_firmware_upgrade_status, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_firmware_upgrade_status, common_firmware_upgrade_status_ec))};
             if (!common_firmware_upgrade_status_ec)
@@ -20420,7 +20515,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_compatible_status = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_compatible_status = 0x00000037;
+            MemberId member_id_compatible_status = 0x00000038;
             bool common_compatible_status_ec {false};
             CommonStructMember common_compatible_status {TypeObjectUtils::build_common_struct_member(member_id_compatible_status, member_flags_compatible_status, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_compatible_status, common_compatible_status_ec))};
             if (!common_compatible_status_ec)
@@ -20458,7 +20553,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_firmware_version = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_firmware_version = 0x00000038;
+            MemberId member_id_firmware_version = 0x00000039;
             bool common_firmware_version_ec {false};
             CommonStructMember common_firmware_version {TypeObjectUtils::build_common_struct_member(member_id_firmware_version, member_flags_firmware_version, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_firmware_version, common_firmware_version_ec))};
             if (!common_firmware_version_ec)
@@ -20486,7 +20581,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_gear = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_gear = 0x00000039;
+            MemberId member_id_gear = 0x0000003a;
             bool common_gear_ec {false};
             CommonStructMember common_gear {TypeObjectUtils::build_common_struct_member(member_id_gear, member_flags_gear, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_gear, common_gear_ec))};
             if (!common_gear_ec)
@@ -20514,7 +20609,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_mode_code_reason = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_mode_code_reason = 0x0000003a;
+            MemberId member_id_mode_code_reason = 0x0000003b;
             bool common_mode_code_reason_ec {false};
             CommonStructMember common_mode_code_reason {TypeObjectUtils::build_common_struct_member(member_id_mode_code_reason, member_flags_mode_code_reason, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_mode_code_reason, common_mode_code_reason_ec))};
             if (!common_mode_code_reason_ec)
@@ -20544,7 +20639,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_commander_flight_height = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_commander_flight_height = 0x0000003b;
+            MemberId member_id_commander_flight_height = 0x0000003c;
             bool common_commander_flight_height_ec {false};
             CommonStructMember common_commander_flight_height {TypeObjectUtils::build_common_struct_member(member_id_commander_flight_height, member_flags_commander_flight_height, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_commander_flight_height, common_commander_flight_height_ec))};
             if (!common_commander_flight_height_ec)
@@ -20574,7 +20669,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_commander_flight_mode = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_commander_flight_mode = 0x0000003c;
+            MemberId member_id_commander_flight_mode = 0x0000003d;
             bool common_commander_flight_mode_ec {false};
             CommonStructMember common_commander_flight_mode {TypeObjectUtils::build_common_struct_member(member_id_commander_flight_mode, member_flags_commander_flight_mode, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_commander_flight_mode, common_commander_flight_mode_ec))};
             if (!common_commander_flight_mode_ec)
@@ -20604,7 +20699,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_commander_mode_lost_action = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_commander_mode_lost_action = 0x0000003d;
+            MemberId member_id_commander_mode_lost_action = 0x0000003e;
             bool common_commander_mode_lost_action_ec {false};
             CommonStructMember common_commander_mode_lost_action {TypeObjectUtils::build_common_struct_member(member_id_commander_mode_lost_action, member_flags_commander_mode_lost_action, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_commander_mode_lost_action, common_commander_mode_lost_action_ec))};
             if (!common_commander_mode_lost_action_ec)
@@ -20632,7 +20727,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_camera_watermark_settings = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_camera_watermark_settings = 0x0000003e;
+            MemberId member_id_camera_watermark_settings = 0x0000003f;
             bool common_camera_watermark_settings_ec {false};
             CommonStructMember common_camera_watermark_settings {TypeObjectUtils::build_common_struct_member(member_id_camera_watermark_settings, member_flags_camera_watermark_settings, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_camera_watermark_settings, common_camera_watermark_settings_ec))};
             if (!common_camera_watermark_settings_ec)
@@ -20660,7 +20755,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_mode_code = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_mode_code = 0x0000003f;
+            MemberId member_id_mode_code = 0x00000040;
             bool common_mode_code_ec {false};
             CommonStructMember common_mode_code {TypeObjectUtils::build_common_struct_member(member_id_mode_code, member_flags_mode_code, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_mode_code, common_mode_code_ec))};
             if (!common_mode_code_ec)
@@ -20698,7 +20793,7 @@ void register_DroneRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_drone_sn = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_drone_sn = 0x00000040;
+            MemberId member_id_drone_sn = 0x00000041;
             bool common_drone_sn_ec {false};
             CommonStructMember common_drone_sn {TypeObjectUtils::build_common_struct_member(member_id_drone_sn, member_flags_drone_sn, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_drone_sn, common_drone_sn_ec))};
             if (!common_drone_sn_ec)
@@ -20778,7 +20873,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_attitude_head = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_attitude_head = 0x0000000e;
+            MemberId member_id_attitude_head = 0x0000000f;
             bool common_attitude_head_ec {false};
             CommonStructMember common_attitude_head {TypeObjectUtils::build_common_struct_member(member_id_attitude_head, member_flags_attitude_head, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_attitude_head, common_attitude_head_ec))};
             if (!common_attitude_head_ec)
@@ -20808,7 +20903,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_latitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_latitude = 0x0000000f;
+            MemberId member_id_latitude = 0x00000010;
             bool common_latitude_ec {false};
             CommonStructMember common_latitude {TypeObjectUtils::build_common_struct_member(member_id_latitude, member_flags_latitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_latitude, common_latitude_ec))};
             if (!common_latitude_ec)
@@ -20838,7 +20933,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_longitude = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_longitude = 0x00000010;
+            MemberId member_id_longitude = 0x00000011;
             bool common_longitude_ec {false};
             CommonStructMember common_longitude {TypeObjectUtils::build_common_struct_member(member_id_longitude, member_flags_longitude, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_longitude, common_longitude_ec))};
             if (!common_longitude_ec)
@@ -20868,7 +20963,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_height = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_height = 0x00000011;
+            MemberId member_id_height = 0x00000012;
             bool common_height_ec {false};
             CommonStructMember common_height {TypeObjectUtils::build_common_struct_member(member_id_height, member_flags_height, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_height, common_height_ec))};
             if (!common_height_ec)
@@ -20898,7 +20993,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_speed_x = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_speed_x = 0x00000012;
+            MemberId member_id_speed_x = 0x00000013;
             bool common_speed_x_ec {false};
             CommonStructMember common_speed_x {TypeObjectUtils::build_common_struct_member(member_id_speed_x, member_flags_speed_x, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_speed_x, common_speed_x_ec))};
             if (!common_speed_x_ec)
@@ -20928,7 +21023,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_speed_y = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_speed_y = 0x00000013;
+            MemberId member_id_speed_y = 0x00000014;
             bool common_speed_y_ec {false};
             CommonStructMember common_speed_y {TypeObjectUtils::build_common_struct_member(member_id_speed_y, member_flags_speed_y, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_speed_y, common_speed_y_ec))};
             if (!common_speed_y_ec)
@@ -20958,7 +21053,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_speed_z = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_speed_z = 0x00000014;
+            MemberId member_id_speed_z = 0x00000015;
             bool common_speed_z_ec {false};
             CommonStructMember common_speed_z {TypeObjectUtils::build_common_struct_member(member_id_speed_z, member_flags_speed_z, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_speed_z, common_speed_z_ec))};
             if (!common_speed_z_ec)
@@ -20988,7 +21083,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_gimbal_pitch = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_gimbal_pitch = 0x00000015;
+            MemberId member_id_gimbal_pitch = 0x00000016;
             bool common_gimbal_pitch_ec {false};
             CommonStructMember common_gimbal_pitch {TypeObjectUtils::build_common_struct_member(member_id_gimbal_pitch, member_flags_gimbal_pitch, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_gimbal_pitch, common_gimbal_pitch_ec))};
             if (!common_gimbal_pitch_ec)
@@ -21018,7 +21113,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_gimbal_roll = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_gimbal_roll = 0x00000016;
+            MemberId member_id_gimbal_roll = 0x00000017;
             bool common_gimbal_roll_ec {false};
             CommonStructMember common_gimbal_roll {TypeObjectUtils::build_common_struct_member(member_id_gimbal_roll, member_flags_gimbal_roll, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_gimbal_roll, common_gimbal_roll_ec))};
             if (!common_gimbal_roll_ec)
@@ -21048,7 +21143,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_gimbal_yaw = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_gimbal_yaw = 0x00000017;
+            MemberId member_id_gimbal_yaw = 0x00000018;
             bool common_gimbal_yaw_ec {false};
             CommonStructMember common_gimbal_yaw {TypeObjectUtils::build_common_struct_member(member_id_gimbal_yaw, member_flags_gimbal_yaw, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_gimbal_yaw, common_gimbal_yaw_ec))};
             if (!common_gimbal_yaw_ec)
@@ -21086,7 +21181,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_drone_sn = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_drone_sn = 0x00000018;
+            MemberId member_id_drone_sn = 0x00000019;
             bool common_drone_sn_ec {false};
             CommonStructMember common_drone_sn {TypeObjectUtils::build_common_struct_member(member_id_drone_sn, member_flags_drone_sn, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_drone_sn, common_drone_sn_ec))};
             if (!common_drone_sn_ec)
@@ -21124,7 +21219,7 @@ void register_highFreqRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_dock_sn = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_dock_sn = 0x00000019;
+            MemberId member_id_dock_sn = 0x0000001a;
             bool common_dock_sn_ec {false};
             CommonStructMember common_dock_sn {TypeObjectUtils::build_common_struct_member(member_id_dock_sn, member_flags_dock_sn, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_dock_sn, common_dock_sn_ec))};
             if (!common_dock_sn_ec)
@@ -21672,7 +21767,7 @@ void register_USVRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_ptz = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_ptz = 0x0000000e;
+            MemberId member_id_ptz = 0x0000000f;
             bool common_ptz_ec {false};
             CommonStructMember common_ptz {TypeObjectUtils::build_common_struct_member(member_id_ptz, member_flags_ptz, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_ptz, common_ptz_ec))};
             if (!common_ptz_ec)
@@ -21700,7 +21795,7 @@ void register_USVRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_ptz1 = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_ptz1 = 0x0000000f;
+            MemberId member_id_ptz1 = 0x00000010;
             bool common_ptz1_ec {false};
             CommonStructMember common_ptz1 {TypeObjectUtils::build_common_struct_member(member_id_ptz1, member_flags_ptz1, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_ptz1, common_ptz1_ec))};
             if (!common_ptz1_ec)
@@ -21728,7 +21823,7 @@ void register_USVRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_ptz2 = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_ptz2 = 0x00000010;
+            MemberId member_id_ptz2 = 0x00000011;
             bool common_ptz2_ec {false};
             CommonStructMember common_ptz2 {TypeObjectUtils::build_common_struct_member(member_id_ptz2, member_flags_ptz2, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_ptz2, common_ptz2_ec))};
             if (!common_ptz2_ec)
@@ -21756,7 +21851,7 @@ void register_USVRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_ptz3 = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_ptz3 = 0x00000011;
+            MemberId member_id_ptz3 = 0x00000012;
             bool common_ptz3_ec {false};
             CommonStructMember common_ptz3 {TypeObjectUtils::build_common_struct_member(member_id_ptz3, member_flags_ptz3, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_ptz3, common_ptz3_ec))};
             if (!common_ptz3_ec)
@@ -21784,7 +21879,7 @@ void register_USVRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_ptz4 = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_ptz4 = 0x00000012;
+            MemberId member_id_ptz4 = 0x00000013;
             bool common_ptz4_ec {false};
             CommonStructMember common_ptz4 {TypeObjectUtils::build_common_struct_member(member_id_ptz4, member_flags_ptz4, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_ptz4, common_ptz4_ec))};
             if (!common_ptz4_ec)
@@ -21812,7 +21907,7 @@ void register_USVRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_ptz5 = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_ptz5 = 0x00000013;
+            MemberId member_id_ptz5 = 0x00000014;
             bool common_ptz5_ec {false};
             CommonStructMember common_ptz5 {TypeObjectUtils::build_common_struct_member(member_id_ptz5, member_flags_ptz5, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_ptz5, common_ptz5_ec))};
             if (!common_ptz5_ec)
@@ -21840,7 +21935,7 @@ void register_USVRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_usv_info = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_usv_info = 0x00000014;
+            MemberId member_id_usv_info = 0x00000015;
             bool common_usv_info_ec {false};
             CommonStructMember common_usv_info {TypeObjectUtils::build_common_struct_member(member_id_usv_info, member_flags_usv_info, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_usv_info, common_usv_info_ec))};
             if (!common_usv_info_ec)
@@ -21868,7 +21963,7 @@ void register_USVRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_strikeState = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_strikeState = 0x00000015;
+            MemberId member_id_strikeState = 0x00000016;
             bool common_strikeState_ec {false};
             CommonStructMember common_strikeState {TypeObjectUtils::build_common_struct_member(member_id_strikeState, member_flags_strikeState, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_strikeState, common_strikeState_ec))};
             if (!common_strikeState_ec)
@@ -22145,7 +22240,7 @@ void register_JammerRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_jammerState = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_jammerState = 0x0000000e;
+            MemberId member_id_jammerState = 0x0000000f;
             bool common_jammerState_ec {false};
             CommonStructMember common_jammerState {TypeObjectUtils::build_common_struct_member(member_id_jammerState, member_flags_jammerState, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_jammerState, common_jammerState_ec))};
             if (!common_jammerState_ec)
@@ -22175,7 +22270,7 @@ void register_JammerRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_hitPoint = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_hitPoint = 0x0000000f;
+            MemberId member_id_hitPoint = 0x00000010;
             bool common_hitPoint_ec {false};
             CommonStructMember common_hitPoint {TypeObjectUtils::build_common_struct_member(member_id_hitPoint, member_flags_hitPoint, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_hitPoint, common_hitPoint_ec))};
             if (!common_hitPoint_ec)
@@ -22203,7 +22298,7 @@ void register_JammerRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_jammerType = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_jammerType = 0x00000010;
+            MemberId member_id_jammerType = 0x00000011;
             bool common_jammerType_ec {false};
             CommonStructMember common_jammerType {TypeObjectUtils::build_common_struct_member(member_id_jammerType, member_flags_jammerType, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_jammerType, common_jammerType_ec))};
             if (!common_jammerType_ec)
@@ -22263,7 +22358,7 @@ void register_JammerRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_jammerAbility = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_jammerAbility = 0x00000011;
+            MemberId member_id_jammerAbility = 0x00000012;
             bool common_jammerAbility_ec {false};
             CommonStructMember common_jammerAbility {TypeObjectUtils::build_common_struct_member(member_id_jammerAbility, member_flags_jammerAbility, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_jammerAbility, common_jammerAbility_ec))};
             if (!common_jammerAbility_ec)
@@ -22346,7 +22441,7 @@ void register_LaserRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_laserState = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_laserState = 0x0000000e;
+            MemberId member_id_laserState = 0x0000000f;
             bool common_laserState_ec {false};
             CommonStructMember common_laserState {TypeObjectUtils::build_common_struct_member(member_id_laserState, member_flags_laserState, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_laserState, common_laserState_ec))};
             if (!common_laserState_ec)
@@ -22376,7 +22471,7 @@ void register_LaserRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_hitPoint = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_hitPoint = 0x0000000f;
+            MemberId member_id_hitPoint = 0x00000010;
             bool common_hitPoint_ec {false};
             CommonStructMember common_hitPoint {TypeObjectUtils::build_common_struct_member(member_id_hitPoint, member_flags_hitPoint, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_hitPoint, common_hitPoint_ec))};
             if (!common_hitPoint_ec)
@@ -22459,7 +22554,7 @@ void register_MunitionRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_munitionState = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_munitionState = 0x0000000e;
+            MemberId member_id_munitionState = 0x0000000f;
             bool common_munitionState_ec {false};
             CommonStructMember common_munitionState {TypeObjectUtils::build_common_struct_member(member_id_munitionState, member_flags_munitionState, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_munitionState, common_munitionState_ec))};
             if (!common_munitionState_ec)
@@ -22489,7 +22584,7 @@ void register_MunitionRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_hitPoint = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_hitPoint = 0x0000000f;
+            MemberId member_id_hitPoint = 0x00000010;
             bool common_hitPoint_ec {false};
             CommonStructMember common_hitPoint {TypeObjectUtils::build_common_struct_member(member_id_hitPoint, member_flags_hitPoint, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_hitPoint, common_hitPoint_ec))};
             if (!common_hitPoint_ec)
@@ -22572,7 +22667,7 @@ void register_WeaponRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_weaponState = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_weaponState = 0x0000000e;
+            MemberId member_id_weaponState = 0x0000000f;
             bool common_weaponState_ec {false};
             CommonStructMember common_weaponState {TypeObjectUtils::build_common_struct_member(member_id_weaponState, member_flags_weaponState, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_weaponState, common_weaponState_ec))};
             if (!common_weaponState_ec)
@@ -22602,7 +22697,7 @@ void register_WeaponRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_hitPoint = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_hitPoint = 0x0000000f;
+            MemberId member_id_hitPoint = 0x00000010;
             bool common_hitPoint_ec {false};
             CommonStructMember common_hitPoint {TypeObjectUtils::build_common_struct_member(member_id_hitPoint, member_flags_hitPoint, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_hitPoint, common_hitPoint_ec))};
             if (!common_hitPoint_ec)
@@ -22632,7 +22727,7 @@ void register_WeaponRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_launchPlatformID = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_launchPlatformID = 0x00000010;
+            MemberId member_id_launchPlatformID = 0x00000011;
             bool common_launchPlatformID_ec {false};
             CommonStructMember common_launchPlatformID {TypeObjectUtils::build_common_struct_member(member_id_launchPlatformID, member_flags_launchPlatformID, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_launchPlatformID, common_launchPlatformID_ec))};
             if (!common_launchPlatformID_ec)
@@ -22670,7 +22765,7 @@ void register_WeaponRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_launchPlatformName = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_launchPlatformName = 0x00000011;
+            MemberId member_id_launchPlatformName = 0x00000012;
             bool common_launchPlatformName_ec {false};
             CommonStructMember common_launchPlatformName {TypeObjectUtils::build_common_struct_member(member_id_launchPlatformName, member_flags_launchPlatformName, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_launchPlatformName, common_launchPlatformName_ec))};
             if (!common_launchPlatformName_ec)
@@ -22700,7 +22795,7 @@ void register_WeaponRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_attackAngle = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_attackAngle = 0x00000012;
+            MemberId member_id_attackAngle = 0x00000013;
             bool common_attackAngle_ec {false};
             CommonStructMember common_attackAngle {TypeObjectUtils::build_common_struct_member(member_id_attackAngle, member_flags_attackAngle, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_attackAngle, common_attackAngle_ec))};
             if (!common_attackAngle_ec)
@@ -22730,7 +22825,7 @@ void register_WeaponRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_missDistance = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_missDistance = 0x00000013;
+            MemberId member_id_missDistance = 0x00000014;
             bool common_missDistance_ec {false};
             CommonStructMember common_missDistance {TypeObjectUtils::build_common_struct_member(member_id_missDistance, member_flags_missDistance, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_missDistance, common_missDistance_ec))};
             if (!common_missDistance_ec)
@@ -22760,7 +22855,7 @@ void register_WeaponRealTimeStatus_type_identifier(
             }
             StructMemberFlag member_flags_moveStep = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_moveStep = 0x00000014;
+            MemberId member_id_moveStep = 0x00000015;
             bool common_moveStep_ec {false};
             CommonStructMember common_moveStep {TypeObjectUtils::build_common_struct_member(member_id_moveStep, member_flags_moveStep, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_moveStep, common_moveStep_ec))};
             if (!common_moveStep_ec)

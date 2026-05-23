@@ -24,7 +24,7 @@
 
 #include "EntityRealTimeStatus.hpp"
 
-constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_DroneRealTimeStatus_max_cdr_typesize {3832UL};
+constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_DroneRealTimeStatus_max_cdr_typesize {3840UL};
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_DroneRealTimeStatus_max_key_cdr_typesize {0UL};
 
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneTaskStatus_Wayline_max_cdr_typesize {1660UL};
@@ -38,7 +38,7 @@ constexpr uint32_t casia_device_status_Dock2Status_DongleInfoInDock_max_key_cdr_
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_DroneCameraStatus_max_cdr_typesize {544UL};
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_DroneCameraStatus_max_key_cdr_typesize {0UL};
 
-constexpr uint32_t casia_device_status_MunitionStatus_MunitionRealTimeStatus_max_cdr_typesize {1128UL};
+constexpr uint32_t casia_device_status_MunitionStatus_MunitionRealTimeStatus_max_cdr_typesize {1136UL};
 constexpr uint32_t casia_device_status_MunitionStatus_MunitionRealTimeStatus_max_key_cdr_typesize {0UL};
 
 
@@ -65,7 +65,7 @@ constexpr uint32_t casia_device_status_Dock2Status_PositionStateInDock_max_key_c
 constexpr uint32_t casia_device_status_Dock2Status_StorageCapacity_max_cdr_typesize {12UL};
 constexpr uint32_t casia_device_status_Dock2Status_StorageCapacity_max_key_cdr_typesize {0UL};
 
-constexpr uint32_t casia_device_status_USVStatus_USVRealTimeStatus_max_cdr_typesize {1500UL};
+constexpr uint32_t casia_device_status_USVStatus_USVRealTimeStatus_max_cdr_typesize {1508UL};
 constexpr uint32_t casia_device_status_USVStatus_USVRealTimeStatus_max_key_cdr_typesize {0UL};
 
 
@@ -86,14 +86,14 @@ constexpr uint32_t casia_device_status_Dock2Status_LiveStatus_max_key_cdr_typesi
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_ObstacleAvoidance_max_cdr_typesize {16UL};
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_ObstacleAvoidance_max_key_cdr_typesize {0UL};
 
-constexpr uint32_t casia_device_status_JammerStatus_JammerRealTimeStatus_max_cdr_typesize {1136UL};
+constexpr uint32_t casia_device_status_JammerStatus_JammerRealTimeStatus_max_cdr_typesize {1144UL};
 constexpr uint32_t casia_device_status_JammerStatus_JammerRealTimeStatus_max_key_cdr_typesize {0UL};
 
 constexpr uint32_t casia_device_status_USVStatus_USVInfo_max_cdr_typesize {48UL};
 constexpr uint32_t casia_device_status_USVStatus_USVInfo_max_key_cdr_typesize {0UL};
 
 
-constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneTaskStatus_DroneTaskRealTimeStatus_max_cdr_typesize {4096UL};
+constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneTaskStatus_DroneTaskRealTimeStatus_max_cdr_typesize {4104UL};
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneTaskStatus_DroneTaskRealTimeStatus_max_key_cdr_typesize {0UL};
 
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneTaskStatus_WaypointTurnParam_max_cdr_typesize {20UL};
@@ -112,7 +112,7 @@ constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_EsimInfo_m
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_EsimInfo_max_key_cdr_typesize {0UL};
 
 
-constexpr uint32_t casia_device_status_BaseStatus_BaseDeviceStatus_max_cdr_typesize {1116UL};
+constexpr uint32_t casia_device_status_BaseStatus_BaseDeviceStatus_max_cdr_typesize {1120UL};
 constexpr uint32_t casia_device_status_BaseStatus_BaseDeviceStatus_max_key_cdr_typesize {0UL};
 
 constexpr uint32_t casia_device_status_Dock2Status_WirelessLink_max_cdr_typesize {56UL};
@@ -123,10 +123,11 @@ constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_CameraWate
 
 
 
+
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_TemperaturePoint_max_cdr_typesize {32UL};
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_TemperaturePoint_max_key_cdr_typesize {0UL};
 
-constexpr uint32_t casia_device_status_LaserStatus_LaserRealTimeStatus_max_cdr_typesize {1128UL};
+constexpr uint32_t casia_device_status_LaserStatus_LaserRealTimeStatus_max_cdr_typesize {1136UL};
 constexpr uint32_t casia_device_status_LaserStatus_LaserRealTimeStatus_max_key_cdr_typesize {0UL};
 
 
@@ -186,7 +187,7 @@ constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_MaintainSt
 constexpr uint32_t casia_device_status_USVStatus_USVPTZStatus_max_cdr_typesize {56UL};
 constexpr uint32_t casia_device_status_USVStatus_USVPTZStatus_max_key_cdr_typesize {0UL};
 
-constexpr uint32_t casia_device_status_Dock2Status_Dock2RealTimeStatus_max_cdr_typesize {3828UL};
+constexpr uint32_t casia_device_status_Dock2Status_Dock2RealTimeStatus_max_cdr_typesize {3836UL};
 constexpr uint32_t casia_device_status_Dock2Status_Dock2RealTimeStatus_max_key_cdr_typesize {0UL};
 
 
@@ -200,7 +201,7 @@ constexpr uint32_t casia_device_status_Dock2Status_AlternateLandPoint_max_key_cd
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_SdrNode_max_cdr_typesize {268UL};
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_SdrNode_max_key_cdr_typesize {0UL};
 
-constexpr uint32_t casia_device_status_ModelStatus_ModelRealTimeStatus_max_cdr_typesize {1424UL};
+constexpr uint32_t casia_device_status_ModelStatus_ModelRealTimeStatus_max_cdr_typesize {1432UL};
 constexpr uint32_t casia_device_status_ModelStatus_ModelRealTimeStatus_max_key_cdr_typesize {0UL};
 
 
@@ -227,7 +228,7 @@ constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_highFreqRe
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_DongleInfoInDrone_max_cdr_typesize {820UL};
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneStatus_DongleInfoInDrone_max_key_cdr_typesize {0UL};
 
-constexpr uint32_t casia_device_status_CameraStatus_CameraRealTimeStatus_max_cdr_typesize {1248UL};
+constexpr uint32_t casia_device_status_CameraStatus_CameraRealTimeStatus_max_cdr_typesize {1256UL};
 constexpr uint32_t casia_device_status_CameraStatus_CameraRealTimeStatus_max_key_cdr_typesize {0UL};
 
 
@@ -238,7 +239,7 @@ constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneTaskStatus_Search
 constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneTaskStatus_SearchArea_max_key_cdr_typesize {0UL};
 
 
-constexpr uint32_t casia_device_status_RadarStatus_RadarRealTimeStatus_max_cdr_typesize {1460UL};
+constexpr uint32_t casia_device_status_RadarStatus_RadarRealTimeStatus_max_cdr_typesize {1468UL};
 constexpr uint32_t casia_device_status_RadarStatus_RadarRealTimeStatus_max_key_cdr_typesize {0UL};
 
 
@@ -269,7 +270,7 @@ constexpr uint32_t casia_device_status_DroneGeneralStatus_DroneTaskStatus_Action
 
 
 
-constexpr uint32_t casia_device_status_WeaponStatus_WeaponRealTimeStatus_max_cdr_typesize {1412UL};
+constexpr uint32_t casia_device_status_WeaponStatus_WeaponRealTimeStatus_max_cdr_typesize {1420UL};
 constexpr uint32_t casia_device_status_WeaponStatus_WeaponRealTimeStatus_max_key_cdr_typesize {0UL};
 
 

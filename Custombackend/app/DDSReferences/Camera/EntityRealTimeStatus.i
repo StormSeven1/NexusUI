@@ -132,6 +132,7 @@ namespace swig {
 
 %traits_penumn(enum casia::device::status::BaseStatus::EntityType);
 %traits_penumn(enum casia::device::status::BaseStatus::DispositionType);
+%traits_penumn(enum casia::device::status::BaseStatus::DeviceState);
 ////////////////////////////////////////////////////////
 // Binding for class casia::device::status::BaseStatus::BaseDeviceStatus
 ////////////////////////////////////////////////////////
@@ -293,6 +294,17 @@ namespace swig {
 // We ignore them to prevent this
 %ignore casia::device::status::BaseStatus::BaseDeviceStatus::timestamp();
 %rename("%s") casia::device::status::BaseStatus::BaseDeviceStatus::timestamp() const;
+
+
+
+%ignore casia::device::status::BaseStatus::BaseDeviceStatus::deviceState(casia::device::status::BaseStatus::DeviceState&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore casia::device::status::BaseStatus::BaseDeviceStatus::deviceState();
+%rename("%s") casia::device::status::BaseStatus::BaseDeviceStatus::deviceState() const;
 
 
 

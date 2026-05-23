@@ -24,6 +24,7 @@ TRACK_LAYER_KEY_BY_RECEIVER = {
     "dds_forward_bird_radar_track": "bird_radar",
     "dds_forward_radar_track1": "radar_wharf",
     "dds_forward_radar_track2": "radar_jingzi",
+    "dds_forward_ais_track": "ais_track",
 }
 
 
@@ -179,15 +180,11 @@ class ReceiverManager:
                 data_type = parsed_data.get('data_type', '')
                 
                 if data_type == 'camera_status':
-                    if(parsed_data['entityId'] in ["camera_004","camera_001"]):
-                        # print("*"*50)
-                        # print("解析相机状态:",parsed_data)
-                        # print("*"*50)
-                        # 相机状态数据，发送为 Camera 类型
-                        ws_manager.queue_message({
-                            'type': 'Camera',
-                            'data': parsed_data
-                        })
+                    # 相机状态：全量转发至 WS（勿按 entityId 白名单过滤，否则光电页 DDS 任务条无数据）
+                    ws_manager.queue_message({
+                        'type': 'Camera',
+                        'data': parsed_data
+                    })
                 elif data_type == 'alarm_event':
                     # 告警数据，发送为 Alarm 类型
                     ws_manager.queue_message({

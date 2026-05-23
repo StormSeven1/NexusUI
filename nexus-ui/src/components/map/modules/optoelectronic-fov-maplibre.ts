@@ -31,6 +31,11 @@
  */
 import type maplibregl from "maplibre-gl";
 import { parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
+import {
+  shouldRenderOptoCameraFov,
+  shouldRenderOptoCameraIcon,
+  type OptoDeviceVisibilityMap,
+} from "@/lib/opto-device-layer-visibility";
 import type { AssetData } from "@/stores/asset-store";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
 import { parseForceDisposition } from "@/lib/theme-colors";
@@ -183,13 +188,19 @@ function assetStatusFromLabel(s: string | undefined): AssetStatus {
 }
 
 /** 构建 FOV 多边形 + 名称点：仅处理 camera（光电），不含 tower（电侦） */
-export function buildFovGeoJSON(assetList: Asset[], accent?: AssetDispositionIconAccent | null) {
+export function buildFovGeoJSON(
+  assetList: Asset[],
+  accent?: AssetDispositionIconAccent | null,
+  perDevice?: Readonly<OptoDeviceVisibilityMap>,
+  panelCameraIds?: ReadonlySet<string> | null,
+) {
   /* 仅光电(camera)画 FOV 扇区；电侦(tower)由 tower-maplibre 独立渲染 */
   const polyFeatures = assetList
     .filter(
       (a) =>
         a.type === "camera" &&
         a.showFov !== false &&
+        shouldRenderOptoCameraFov(a.id, perDevice ?? {}, panelCameraIds ?? null) &&
         a.range &&
         a.range > 0,
     )
@@ -216,6 +227,7 @@ export function buildFovGeoJSON(assetList: Asset[], accent?: AssetDispositionIco
   for (const a of assetList) {
     /* 仅光电(camera)画 FOV 名称标签；电侦(tower)由 tower-maplibre 独立渲染 */
     if (a.type !== "camera") continue;
+    if (!shouldRenderOptoCameraFov(a.id, perDevice ?? {}, panelCameraIds ?? null)) continue;
     const showName = a.nameLabelVisible !== false && String(a.name ?? "").trim() !== "";
     if (!showName) continue;
     const disp = a.disposition ?? "friendly";
@@ -242,14 +254,19 @@ export function buildFovGeoJSON(assetList: Asset[], accent?: AssetDispositionIco
 }
 
 /** 光电(camera) 中心图标（电侦/tower 已移至 `tower-maplibre.ts`，不再在此处理） */
-export function buildOptoAssetIconGeoJSON(assetList: Asset[]): GeoJSON.FeatureCollection {
+export function buildOptoAssetIconGeoJSON(
+  assetList: Asset[],
+  perDevice?: Readonly<OptoDeviceVisibilityMap>,
+  panelCameraIds?: ReadonlySet<string> | null,
+): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
     features: assetList
       .filter(
         (a) =>
           a.type === "camera" &&
-          a.centerIconVisible !== false,
+          a.centerIconVisible !== false &&
+          shouldRenderOptoCameraIcon(a.id, perDevice ?? {}, panelCameraIds ?? null),
       )
       .map((a) => ({
         type: "Feature" as const,
@@ -494,13 +511,38 @@ export class OptoelectronicFovModule {
     this.refreshOptoIcons();
   }
 
-  private refreshFovLabelGeoJson() {
+  private perDeviceVisibility: OptoDeviceVisibilityMap = {};
+  /** 图层面板 PTZ 主相机白名单；`null` 表示尚未加载 */
+  private panelCameraIds: ReadonlySet<string> | null = null;
+
+  setPerDeviceVisibility(
+    map: Readonly<OptoDeviceVisibilityMap>,
+    panelCameraIds?: ReadonlySet<string> | null,
+  ) {
+    this.perDeviceVisibility = { ...map };
+    if (panelCameraIds !== undefined) this.panelCameraIds = panelCameraIds;
+    this.lastFovDataSig = "";
+    this.lastIconDataSig = "";
+    this.refreshFovGeoJson();
+    this.refreshOptoIcons();
+  }
+
+  private refreshFovGeoJson() {
     const m = this.map;
     const f = m.getSource(FOV_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!f || !this.lastFovAssets) return;
     f.setData(
-      buildFovGeoJSON(this.lastFovAssets, this.assetDispositionAccent) as GeoJSON.FeatureCollection,
+      buildFovGeoJSON(
+        this.lastFovAssets,
+        this.assetDispositionAccent,
+        this.perDeviceVisibility,
+        this.panelCameraIds,
+      ) as GeoJSON.FeatureCollection,
     );
+  }
+
+  private refreshFovLabelGeoJson() {
+    this.refreshFovGeoJson();
   }
 
   private refreshOptoIcons() {
@@ -511,7 +553,9 @@ export class OptoelectronicFovModule {
     if (nextSig === this.lastIconDataSig) return;
     const os = m.getSource(OPTO_ASSET_ICON_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (os) {
-      os.setData(buildOptoAssetIconGeoJSON(assets) as GeoJSON.FeatureCollection);
+      os.setData(
+        buildOptoAssetIconGeoJSON(assets, this.perDeviceVisibility, this.panelCameraIds) as GeoJSON.FeatureCollection,
+      );
       this.lastIconDataSig = nextSig;
     }
   }
@@ -585,7 +629,12 @@ export class OptoelectronicFovModule {
     const nextFovSig = this.buildFovDataSig(assets);
     if (f) {
       f.setData(
-        buildFovGeoJSON(assets, this.assetDispositionAccent) as GeoJSON.FeatureCollection,
+        buildFovGeoJSON(
+          assets,
+          this.assetDispositionAccent,
+          this.perDeviceVisibility,
+          this.panelCameraIds,
+        ) as GeoJSON.FeatureCollection,
       );
     }
     try {
@@ -620,6 +669,7 @@ export class OptoelectronicFovModule {
           quantizeDeg(a.heading),
           quantizeDeg(a.fovAngle ?? 360),
           a.showFov === false ? "0" : "1",
+          shouldRenderOptoCameraFov(a.id, this.perDeviceVisibility, this.panelCameraIds) ? "1" : "0",
           a.nameLabelVisible === false ? "0" : "1",
           a.name ?? "",
           a.status ?? "",
@@ -643,6 +693,7 @@ export class OptoelectronicFovModule {
           Number(a.lng).toFixed(6),
           Number(a.lat).toFixed(6),
           a.centerIconVisible === false ? "0" : "1",
+          shouldRenderOptoCameraIcon(a.id, this.perDeviceVisibility, this.panelCameraIds) ? "1" : "0",
           a.status ?? "",
           a.disposition ?? "",
           a.isVirtual === true ? "1" : "0",

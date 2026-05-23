@@ -379,6 +379,7 @@ export function startEoThirdPartyCameraRelay(): void {
         ...parsed,
         kind: "thirdPartyDevStatusBasic",
         entityId: entityId || fromJson || src,
+        sequence,
       });
       for (const c of sockets) {
         if (c.readyState === WebSocket.OPEN) c.send(envelope);

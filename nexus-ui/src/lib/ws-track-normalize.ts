@@ -38,6 +38,7 @@ const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
   "bird_radar",
   "radar_wharf",
   "radar_jingzi",
+  "ais_track",
 ]);
 
 function readTrackLayerKey(rec: Record<string, unknown>): TrackLayerKey | undefined {

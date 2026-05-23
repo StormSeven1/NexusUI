@@ -200,6 +200,9 @@ eProsima_user_DllExport size_t calculate_serialized_size(
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(13),
                 data.timestamp(), current_alignment);
 
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
+                data.deviceState(), current_alignment);
+
 
     calculated_size += calculator.end_calculate_type_serialized_size(previous_encoding, current_alignment);
 
@@ -234,6 +237,7 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -309,6 +313,10 @@ eProsima_user_DllExport void deserialize(
                                                 dcdr >> data.timestamp();
                                             break;
 
+                                        case 14:
+                                                dcdr >> data.deviceState();
+                                            break;
+
                     default:
                         ret_value = false;
                         break;
@@ -325,6 +333,7 @@ void serialize_key(
             extern void serialize_key(
                     Cdr& scdr,
                     const casia::device::status::BaseStatus::GeoPosition& data);
+
 
 
 
@@ -358,6 +367,8 @@ void serialize_key(
                         scdr << data.elec();
 
                         scdr << data.timestamp();
+
+                        scdr << data.deviceState();
 
 }
 
@@ -625,30 +636,33 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.ptz(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.originPtz(), current_alignment);
+                data.ptz(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.focus(), current_alignment);
+                data.originPtz(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
-                data.fov(), current_alignment);
+                data.focus(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
-                data.panoOffset(), current_alignment);
+                data.fov(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(19),
-                data.trackID(), current_alignment);
+                data.panoOffset(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(20),
-                data.visibility(), current_alignment);
+                data.trackID(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(21),
-                data.speedParam(), current_alignment);
+                data.visibility(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(22),
+                data.speedParam(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(23),
                 data.rootPos(), current_alignment);
 
 
@@ -685,15 +699,16 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.ptz()
-        << eprosima::fastcdr::MemberId(15) << data.originPtz()
-        << eprosima::fastcdr::MemberId(16) << data.focus()
-        << eprosima::fastcdr::MemberId(17) << data.fov()
-        << eprosima::fastcdr::MemberId(18) << data.panoOffset()
-        << eprosima::fastcdr::MemberId(19) << data.trackID()
-        << eprosima::fastcdr::MemberId(20) << data.visibility()
-        << eprosima::fastcdr::MemberId(21) << data.speedParam()
-        << eprosima::fastcdr::MemberId(22) << data.rootPos()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.ptz()
+        << eprosima::fastcdr::MemberId(16) << data.originPtz()
+        << eprosima::fastcdr::MemberId(17) << data.focus()
+        << eprosima::fastcdr::MemberId(18) << data.fov()
+        << eprosima::fastcdr::MemberId(19) << data.panoOffset()
+        << eprosima::fastcdr::MemberId(20) << data.trackID()
+        << eprosima::fastcdr::MemberId(21) << data.visibility()
+        << eprosima::fastcdr::MemberId(22) << data.speedParam()
+        << eprosima::fastcdr::MemberId(23) << data.rootPos()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -770,38 +785,42 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.ptz();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.originPtz();
+                                                dcdr >> data.ptz();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.focus();
+                                                dcdr >> data.originPtz();
                                             break;
 
                                         case 17:
-                                                dcdr >> data.fov();
+                                                dcdr >> data.focus();
                                             break;
 
                                         case 18:
-                                                dcdr >> data.panoOffset();
+                                                dcdr >> data.fov();
                                             break;
 
                                         case 19:
-                                                dcdr >> data.trackID();
+                                                dcdr >> data.panoOffset();
                                             break;
 
                                         case 20:
-                                                dcdr >> data.visibility();
+                                                dcdr >> data.trackID();
                                             break;
 
                                         case 21:
-                                                dcdr >> data.speedParam();
+                                                dcdr >> data.visibility();
                                             break;
 
                                         case 22:
+                                                dcdr >> data.speedParam();
+                                            break;
+
+                                        case 23:
                                                 dcdr >> data.rootPos();
                                             break;
 
@@ -1021,12 +1040,15 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.workingState(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.errorMessage(), current_alignment);
+                data.workingState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
+                data.errorMessage(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
                 data.modelResourceUsage(), current_alignment);
 
 
@@ -1063,9 +1085,10 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.workingState()
-        << eprosima::fastcdr::MemberId(15) << data.errorMessage()
-        << eprosima::fastcdr::MemberId(16) << data.modelResourceUsage()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.workingState()
+        << eprosima::fastcdr::MemberId(16) << data.errorMessage()
+        << eprosima::fastcdr::MemberId(17) << data.modelResourceUsage()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -1142,14 +1165,18 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.workingState();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.errorMessage();
+                                                dcdr >> data.workingState();
                                             break;
 
                                         case 16:
+                                                dcdr >> data.errorMessage();
+                                            break;
+
+                                        case 17:
                                                 dcdr >> data.modelResourceUsage();
                                             break;
 
@@ -1233,63 +1260,66 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.radarID(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.radarType(), current_alignment);
+                data.radarID(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.radarName(), current_alignment);
+                data.radarType(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
-                data.longitude(), current_alignment);
+                data.radarName(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
-                data.latitude(), current_alignment);
+                data.longitude(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(19),
-                data.transmit(), current_alignment);
+                data.latitude(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(20),
-                data.range(), current_alignment);
+                data.transmit(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(21),
-                data.pluseWidth(), current_alignment);
+                data.range(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(22),
-                data.aziOffset(), current_alignment);
+                data.pluseWidth(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(23),
-                data.rangeOffset(), current_alignment);
+                data.aziOffset(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(24),
-                data.sampleRate(), current_alignment);
+                data.rangeOffset(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(25),
-                data.gain(), current_alignment);
+                data.sampleRate(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(26),
-                data.seaClutter(), current_alignment);
+                data.gain(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(27),
-                data.rainClutter(), current_alignment);
+                data.seaClutter(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(28),
-                data.inhibit1(), current_alignment);
+                data.rainClutter(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(29),
-                data.inhibit1StartAzi(), current_alignment);
+                data.inhibit1(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(30),
-                data.inhibit1EndAzi(), current_alignment);
+                data.inhibit1StartAzi(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(31),
-                data.inhibit2(), current_alignment);
+                data.inhibit1EndAzi(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(32),
-                data.inhibit2StartAzi(), current_alignment);
+                data.inhibit2(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(33),
+                data.inhibit2StartAzi(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(34),
                 data.inhibit2EndAzi(), current_alignment);
 
 
@@ -1326,26 +1356,27 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.radarID()
-        << eprosima::fastcdr::MemberId(15) << data.radarType()
-        << eprosima::fastcdr::MemberId(16) << data.radarName()
-        << eprosima::fastcdr::MemberId(17) << data.longitude()
-        << eprosima::fastcdr::MemberId(18) << data.latitude()
-        << eprosima::fastcdr::MemberId(19) << data.transmit()
-        << eprosima::fastcdr::MemberId(20) << data.range()
-        << eprosima::fastcdr::MemberId(21) << data.pluseWidth()
-        << eprosima::fastcdr::MemberId(22) << data.aziOffset()
-        << eprosima::fastcdr::MemberId(23) << data.rangeOffset()
-        << eprosima::fastcdr::MemberId(24) << data.sampleRate()
-        << eprosima::fastcdr::MemberId(25) << data.gain()
-        << eprosima::fastcdr::MemberId(26) << data.seaClutter()
-        << eprosima::fastcdr::MemberId(27) << data.rainClutter()
-        << eprosima::fastcdr::MemberId(28) << data.inhibit1()
-        << eprosima::fastcdr::MemberId(29) << data.inhibit1StartAzi()
-        << eprosima::fastcdr::MemberId(30) << data.inhibit1EndAzi()
-        << eprosima::fastcdr::MemberId(31) << data.inhibit2()
-        << eprosima::fastcdr::MemberId(32) << data.inhibit2StartAzi()
-        << eprosima::fastcdr::MemberId(33) << data.inhibit2EndAzi()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.radarID()
+        << eprosima::fastcdr::MemberId(16) << data.radarType()
+        << eprosima::fastcdr::MemberId(17) << data.radarName()
+        << eprosima::fastcdr::MemberId(18) << data.longitude()
+        << eprosima::fastcdr::MemberId(19) << data.latitude()
+        << eprosima::fastcdr::MemberId(20) << data.transmit()
+        << eprosima::fastcdr::MemberId(21) << data.range()
+        << eprosima::fastcdr::MemberId(22) << data.pluseWidth()
+        << eprosima::fastcdr::MemberId(23) << data.aziOffset()
+        << eprosima::fastcdr::MemberId(24) << data.rangeOffset()
+        << eprosima::fastcdr::MemberId(25) << data.sampleRate()
+        << eprosima::fastcdr::MemberId(26) << data.gain()
+        << eprosima::fastcdr::MemberId(27) << data.seaClutter()
+        << eprosima::fastcdr::MemberId(28) << data.rainClutter()
+        << eprosima::fastcdr::MemberId(29) << data.inhibit1()
+        << eprosima::fastcdr::MemberId(30) << data.inhibit1StartAzi()
+        << eprosima::fastcdr::MemberId(31) << data.inhibit1EndAzi()
+        << eprosima::fastcdr::MemberId(32) << data.inhibit2()
+        << eprosima::fastcdr::MemberId(33) << data.inhibit2StartAzi()
+        << eprosima::fastcdr::MemberId(34) << data.inhibit2EndAzi()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -1422,82 +1453,86 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.radarID();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.radarType();
+                                                dcdr >> data.radarID();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.radarName();
+                                                dcdr >> data.radarType();
                                             break;
 
                                         case 17:
-                                                dcdr >> data.longitude();
+                                                dcdr >> data.radarName();
                                             break;
 
                                         case 18:
-                                                dcdr >> data.latitude();
+                                                dcdr >> data.longitude();
                                             break;
 
                                         case 19:
-                                                dcdr >> data.transmit();
+                                                dcdr >> data.latitude();
                                             break;
 
                                         case 20:
-                                                dcdr >> data.range();
+                                                dcdr >> data.transmit();
                                             break;
 
                                         case 21:
-                                                dcdr >> data.pluseWidth();
+                                                dcdr >> data.range();
                                             break;
 
                                         case 22:
-                                                dcdr >> data.aziOffset();
+                                                dcdr >> data.pluseWidth();
                                             break;
 
                                         case 23:
-                                                dcdr >> data.rangeOffset();
+                                                dcdr >> data.aziOffset();
                                             break;
 
                                         case 24:
-                                                dcdr >> data.sampleRate();
+                                                dcdr >> data.rangeOffset();
                                             break;
 
                                         case 25:
-                                                dcdr >> data.gain();
+                                                dcdr >> data.sampleRate();
                                             break;
 
                                         case 26:
-                                                dcdr >> data.seaClutter();
+                                                dcdr >> data.gain();
                                             break;
 
                                         case 27:
-                                                dcdr >> data.rainClutter();
+                                                dcdr >> data.seaClutter();
                                             break;
 
                                         case 28:
-                                                dcdr >> data.inhibit1();
+                                                dcdr >> data.rainClutter();
                                             break;
 
                                         case 29:
-                                                dcdr >> data.inhibit1StartAzi();
+                                                dcdr >> data.inhibit1();
                                             break;
 
                                         case 30:
-                                                dcdr >> data.inhibit1EndAzi();
+                                                dcdr >> data.inhibit1StartAzi();
                                             break;
 
                                         case 31:
-                                                dcdr >> data.inhibit2();
+                                                dcdr >> data.inhibit1EndAzi();
                                             break;
 
                                         case 32:
-                                                dcdr >> data.inhibit2StartAzi();
+                                                dcdr >> data.inhibit2();
                                             break;
 
                                         case 33:
+                                                dcdr >> data.inhibit2StartAzi();
+                                            break;
+
+                                        case 34:
                                                 dcdr >> data.inhibit2EndAzi();
                                             break;
 
@@ -4612,147 +4647,150 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.home_position_is_valid(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.heading(), current_alignment);
+                data.home_position_is_valid(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.rtcm_info(), current_alignment);
+                data.heading(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
-                data.wireless_link_topo(), current_alignment);
+                data.rtcm_info(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
-                data.air_conditioner(), current_alignment);
+                data.wireless_link_topo(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(19),
-                data.air_transfer_enable(), current_alignment);
+                data.air_conditioner(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(20),
-                data.silent_mode(), current_alignment);
+                data.air_transfer_enable(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(21),
-                data.user_experience_improvement(), current_alignment);
+                data.silent_mode(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(22),
-                data.dongle_infos(), current_alignment);
+                data.user_experience_improvement(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(23),
-                data.drone_battery_maintenance_info(), current_alignment);
+                data.dongle_infos(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(24),
-                data.maintain_status(), current_alignment);
+                data.drone_battery_maintenance_info(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(25),
-                data.position_state(), current_alignment);
+                data.maintain_status(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(26),
-                data.emergency_stop_state(), current_alignment);
+                data.position_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(27),
-                data.drone_charge_state(), current_alignment);
+                data.emergency_stop_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(28),
-                data.backup_battery(), current_alignment);
+                data.drone_charge_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(29),
-                data.alarm_state(), current_alignment);
+                data.backup_battery(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(30),
-                data.battery_store_mode(), current_alignment);
+                data.alarm_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(31),
-                data.activation_time(), current_alignment);
+                data.battery_store_mode(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(32),
-                data.height(), current_alignment);
+                data.activation_time(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(33),
-                data.alternate_land_point(), current_alignment);
+                data.height(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(34),
-                data.compatible_status(), current_alignment);
+                data.alternate_land_point(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(35),
-                data.acc_time(), current_alignment);
+                data.compatible_status(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(36),
-                data.first_power_on(), current_alignment);
+                data.acc_time(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(37),
-                data.storage(), current_alignment);
+                data.first_power_on(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(38),
-                data.working_current(), current_alignment);
+                data.storage(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(39),
-                data.working_voltage(), current_alignment);
+                data.working_current(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(40),
-                data.humidity(), current_alignment);
+                data.working_voltage(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(41),
-                data.temperature(), current_alignment);
+                data.humidity(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(42),
-                data.environment_temperature(), current_alignment);
+                data.temperature(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(43),
-                data.wind_speed(), current_alignment);
+                data.environment_temperature(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(44),
-                data.rainfall(), current_alignment);
+                data.wind_speed(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(45),
-                data.live_capacity(), current_alignment);
+                data.rainfall(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(46),
-                data.live_status(), current_alignment);
+                data.live_capacity(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(47),
-                data.wireless_link(), current_alignment);
+                data.live_status(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(48),
-                data.media_file_detail(), current_alignment);
+                data.wireless_link(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(49),
-                data.job_number(), current_alignment);
+                data.media_file_detail(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(50),
-                data.drone_in_dock(), current_alignment);
+                data.job_number(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(51),
-                data.network_state(), current_alignment);
+                data.drone_in_dock(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(52),
-                data.supplement_light_state(), current_alignment);
+                data.network_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(53),
-                data.cover_state(), current_alignment);
+                data.supplement_light_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(54),
-                data.sub_device(), current_alignment);
+                data.cover_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(55),
-                data.flighttask_step_code(), current_alignment);
+                data.sub_device(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(56),
-                data.mode_code(), current_alignment);
+                data.flighttask_step_code(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(57),
-                data.firmware_upgrade_status(), current_alignment);
+                data.mode_code(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(58),
-                data.firmware_version(), current_alignment);
+                data.firmware_upgrade_status(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(59),
-                data.latitude(), current_alignment);
+                data.firmware_version(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(60),
-                data.longitude(), current_alignment);
+                data.latitude(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(61),
+                data.longitude(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(62),
                 data.dock_sn(), current_alignment);
 
 
@@ -4789,54 +4827,55 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.home_position_is_valid()
-        << eprosima::fastcdr::MemberId(15) << data.heading()
-        << eprosima::fastcdr::MemberId(16) << data.rtcm_info()
-        << eprosima::fastcdr::MemberId(17) << data.wireless_link_topo()
-        << eprosima::fastcdr::MemberId(18) << data.air_conditioner()
-        << eprosima::fastcdr::MemberId(19) << data.air_transfer_enable()
-        << eprosima::fastcdr::MemberId(20) << data.silent_mode()
-        << eprosima::fastcdr::MemberId(21) << data.user_experience_improvement()
-        << eprosima::fastcdr::MemberId(22) << data.dongle_infos()
-        << eprosima::fastcdr::MemberId(23) << data.drone_battery_maintenance_info()
-        << eprosima::fastcdr::MemberId(24) << data.maintain_status()
-        << eprosima::fastcdr::MemberId(25) << data.position_state()
-        << eprosima::fastcdr::MemberId(26) << data.emergency_stop_state()
-        << eprosima::fastcdr::MemberId(27) << data.drone_charge_state()
-        << eprosima::fastcdr::MemberId(28) << data.backup_battery()
-        << eprosima::fastcdr::MemberId(29) << data.alarm_state()
-        << eprosima::fastcdr::MemberId(30) << data.battery_store_mode()
-        << eprosima::fastcdr::MemberId(31) << data.activation_time()
-        << eprosima::fastcdr::MemberId(32) << data.height()
-        << eprosima::fastcdr::MemberId(33) << data.alternate_land_point()
-        << eprosima::fastcdr::MemberId(34) << data.compatible_status()
-        << eprosima::fastcdr::MemberId(35) << data.acc_time()
-        << eprosima::fastcdr::MemberId(36) << data.first_power_on()
-        << eprosima::fastcdr::MemberId(37) << data.storage()
-        << eprosima::fastcdr::MemberId(38) << data.working_current()
-        << eprosima::fastcdr::MemberId(39) << data.working_voltage()
-        << eprosima::fastcdr::MemberId(40) << data.humidity()
-        << eprosima::fastcdr::MemberId(41) << data.temperature()
-        << eprosima::fastcdr::MemberId(42) << data.environment_temperature()
-        << eprosima::fastcdr::MemberId(43) << data.wind_speed()
-        << eprosima::fastcdr::MemberId(44) << data.rainfall()
-        << eprosima::fastcdr::MemberId(45) << data.live_capacity()
-        << eprosima::fastcdr::MemberId(46) << data.live_status()
-        << eprosima::fastcdr::MemberId(47) << data.wireless_link()
-        << eprosima::fastcdr::MemberId(48) << data.media_file_detail()
-        << eprosima::fastcdr::MemberId(49) << data.job_number()
-        << eprosima::fastcdr::MemberId(50) << data.drone_in_dock()
-        << eprosima::fastcdr::MemberId(51) << data.network_state()
-        << eprosima::fastcdr::MemberId(52) << data.supplement_light_state()
-        << eprosima::fastcdr::MemberId(53) << data.cover_state()
-        << eprosima::fastcdr::MemberId(54) << data.sub_device()
-        << eprosima::fastcdr::MemberId(55) << data.flighttask_step_code()
-        << eprosima::fastcdr::MemberId(56) << data.mode_code()
-        << eprosima::fastcdr::MemberId(57) << data.firmware_upgrade_status()
-        << eprosima::fastcdr::MemberId(58) << data.firmware_version()
-        << eprosima::fastcdr::MemberId(59) << data.latitude()
-        << eprosima::fastcdr::MemberId(60) << data.longitude()
-        << eprosima::fastcdr::MemberId(61) << data.dock_sn()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.home_position_is_valid()
+        << eprosima::fastcdr::MemberId(16) << data.heading()
+        << eprosima::fastcdr::MemberId(17) << data.rtcm_info()
+        << eprosima::fastcdr::MemberId(18) << data.wireless_link_topo()
+        << eprosima::fastcdr::MemberId(19) << data.air_conditioner()
+        << eprosima::fastcdr::MemberId(20) << data.air_transfer_enable()
+        << eprosima::fastcdr::MemberId(21) << data.silent_mode()
+        << eprosima::fastcdr::MemberId(22) << data.user_experience_improvement()
+        << eprosima::fastcdr::MemberId(23) << data.dongle_infos()
+        << eprosima::fastcdr::MemberId(24) << data.drone_battery_maintenance_info()
+        << eprosima::fastcdr::MemberId(25) << data.maintain_status()
+        << eprosima::fastcdr::MemberId(26) << data.position_state()
+        << eprosima::fastcdr::MemberId(27) << data.emergency_stop_state()
+        << eprosima::fastcdr::MemberId(28) << data.drone_charge_state()
+        << eprosima::fastcdr::MemberId(29) << data.backup_battery()
+        << eprosima::fastcdr::MemberId(30) << data.alarm_state()
+        << eprosima::fastcdr::MemberId(31) << data.battery_store_mode()
+        << eprosima::fastcdr::MemberId(32) << data.activation_time()
+        << eprosima::fastcdr::MemberId(33) << data.height()
+        << eprosima::fastcdr::MemberId(34) << data.alternate_land_point()
+        << eprosima::fastcdr::MemberId(35) << data.compatible_status()
+        << eprosima::fastcdr::MemberId(36) << data.acc_time()
+        << eprosima::fastcdr::MemberId(37) << data.first_power_on()
+        << eprosima::fastcdr::MemberId(38) << data.storage()
+        << eprosima::fastcdr::MemberId(39) << data.working_current()
+        << eprosima::fastcdr::MemberId(40) << data.working_voltage()
+        << eprosima::fastcdr::MemberId(41) << data.humidity()
+        << eprosima::fastcdr::MemberId(42) << data.temperature()
+        << eprosima::fastcdr::MemberId(43) << data.environment_temperature()
+        << eprosima::fastcdr::MemberId(44) << data.wind_speed()
+        << eprosima::fastcdr::MemberId(45) << data.rainfall()
+        << eprosima::fastcdr::MemberId(46) << data.live_capacity()
+        << eprosima::fastcdr::MemberId(47) << data.live_status()
+        << eprosima::fastcdr::MemberId(48) << data.wireless_link()
+        << eprosima::fastcdr::MemberId(49) << data.media_file_detail()
+        << eprosima::fastcdr::MemberId(50) << data.job_number()
+        << eprosima::fastcdr::MemberId(51) << data.drone_in_dock()
+        << eprosima::fastcdr::MemberId(52) << data.network_state()
+        << eprosima::fastcdr::MemberId(53) << data.supplement_light_state()
+        << eprosima::fastcdr::MemberId(54) << data.cover_state()
+        << eprosima::fastcdr::MemberId(55) << data.sub_device()
+        << eprosima::fastcdr::MemberId(56) << data.flighttask_step_code()
+        << eprosima::fastcdr::MemberId(57) << data.mode_code()
+        << eprosima::fastcdr::MemberId(58) << data.firmware_upgrade_status()
+        << eprosima::fastcdr::MemberId(59) << data.firmware_version()
+        << eprosima::fastcdr::MemberId(60) << data.latitude()
+        << eprosima::fastcdr::MemberId(61) << data.longitude()
+        << eprosima::fastcdr::MemberId(62) << data.dock_sn()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -4913,194 +4952,198 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.home_position_is_valid();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.heading();
+                                                dcdr >> data.home_position_is_valid();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.rtcm_info();
+                                                dcdr >> data.heading();
                                             break;
 
                                         case 17:
-                                                dcdr >> data.wireless_link_topo();
+                                                dcdr >> data.rtcm_info();
                                             break;
 
                                         case 18:
-                                                dcdr >> data.air_conditioner();
+                                                dcdr >> data.wireless_link_topo();
                                             break;
 
                                         case 19:
-                                                dcdr >> data.air_transfer_enable();
+                                                dcdr >> data.air_conditioner();
                                             break;
 
                                         case 20:
-                                                dcdr >> data.silent_mode();
+                                                dcdr >> data.air_transfer_enable();
                                             break;
 
                                         case 21:
-                                                dcdr >> data.user_experience_improvement();
+                                                dcdr >> data.silent_mode();
                                             break;
 
                                         case 22:
-                                                dcdr >> data.dongle_infos();
+                                                dcdr >> data.user_experience_improvement();
                                             break;
 
                                         case 23:
-                                                dcdr >> data.drone_battery_maintenance_info();
+                                                dcdr >> data.dongle_infos();
                                             break;
 
                                         case 24:
-                                                dcdr >> data.maintain_status();
+                                                dcdr >> data.drone_battery_maintenance_info();
                                             break;
 
                                         case 25:
-                                                dcdr >> data.position_state();
+                                                dcdr >> data.maintain_status();
                                             break;
 
                                         case 26:
-                                                dcdr >> data.emergency_stop_state();
+                                                dcdr >> data.position_state();
                                             break;
 
                                         case 27:
-                                                dcdr >> data.drone_charge_state();
+                                                dcdr >> data.emergency_stop_state();
                                             break;
 
                                         case 28:
-                                                dcdr >> data.backup_battery();
+                                                dcdr >> data.drone_charge_state();
                                             break;
 
                                         case 29:
-                                                dcdr >> data.alarm_state();
+                                                dcdr >> data.backup_battery();
                                             break;
 
                                         case 30:
-                                                dcdr >> data.battery_store_mode();
+                                                dcdr >> data.alarm_state();
                                             break;
 
                                         case 31:
-                                                dcdr >> data.activation_time();
+                                                dcdr >> data.battery_store_mode();
                                             break;
 
                                         case 32:
-                                                dcdr >> data.height();
+                                                dcdr >> data.activation_time();
                                             break;
 
                                         case 33:
-                                                dcdr >> data.alternate_land_point();
+                                                dcdr >> data.height();
                                             break;
 
                                         case 34:
-                                                dcdr >> data.compatible_status();
+                                                dcdr >> data.alternate_land_point();
                                             break;
 
                                         case 35:
-                                                dcdr >> data.acc_time();
+                                                dcdr >> data.compatible_status();
                                             break;
 
                                         case 36:
-                                                dcdr >> data.first_power_on();
+                                                dcdr >> data.acc_time();
                                             break;
 
                                         case 37:
-                                                dcdr >> data.storage();
+                                                dcdr >> data.first_power_on();
                                             break;
 
                                         case 38:
-                                                dcdr >> data.working_current();
+                                                dcdr >> data.storage();
                                             break;
 
                                         case 39:
-                                                dcdr >> data.working_voltage();
+                                                dcdr >> data.working_current();
                                             break;
 
                                         case 40:
-                                                dcdr >> data.humidity();
+                                                dcdr >> data.working_voltage();
                                             break;
 
                                         case 41:
-                                                dcdr >> data.temperature();
+                                                dcdr >> data.humidity();
                                             break;
 
                                         case 42:
-                                                dcdr >> data.environment_temperature();
+                                                dcdr >> data.temperature();
                                             break;
 
                                         case 43:
-                                                dcdr >> data.wind_speed();
+                                                dcdr >> data.environment_temperature();
                                             break;
 
                                         case 44:
-                                                dcdr >> data.rainfall();
+                                                dcdr >> data.wind_speed();
                                             break;
 
                                         case 45:
-                                                dcdr >> data.live_capacity();
+                                                dcdr >> data.rainfall();
                                             break;
 
                                         case 46:
-                                                dcdr >> data.live_status();
+                                                dcdr >> data.live_capacity();
                                             break;
 
                                         case 47:
-                                                dcdr >> data.wireless_link();
+                                                dcdr >> data.live_status();
                                             break;
 
                                         case 48:
-                                                dcdr >> data.media_file_detail();
+                                                dcdr >> data.wireless_link();
                                             break;
 
                                         case 49:
-                                                dcdr >> data.job_number();
+                                                dcdr >> data.media_file_detail();
                                             break;
 
                                         case 50:
-                                                dcdr >> data.drone_in_dock();
+                                                dcdr >> data.job_number();
                                             break;
 
                                         case 51:
-                                                dcdr >> data.network_state();
+                                                dcdr >> data.drone_in_dock();
                                             break;
 
                                         case 52:
-                                                dcdr >> data.supplement_light_state();
+                                                dcdr >> data.network_state();
                                             break;
 
                                         case 53:
-                                                dcdr >> data.cover_state();
+                                                dcdr >> data.supplement_light_state();
                                             break;
 
                                         case 54:
-                                                dcdr >> data.sub_device();
+                                                dcdr >> data.cover_state();
                                             break;
 
                                         case 55:
-                                                dcdr >> data.flighttask_step_code();
+                                                dcdr >> data.sub_device();
                                             break;
 
                                         case 56:
-                                                dcdr >> data.mode_code();
+                                                dcdr >> data.flighttask_step_code();
                                             break;
 
                                         case 57:
-                                                dcdr >> data.firmware_upgrade_status();
+                                                dcdr >> data.mode_code();
                                             break;
 
                                         case 58:
-                                                dcdr >> data.firmware_version();
+                                                dcdr >> data.firmware_upgrade_status();
                                             break;
 
                                         case 59:
-                                                dcdr >> data.latitude();
+                                                dcdr >> data.firmware_version();
                                             break;
 
                                         case 60:
-                                                dcdr >> data.longitude();
+                                                dcdr >> data.latitude();
                                             break;
 
                                         case 61:
+                                                dcdr >> data.longitude();
+                                            break;
+
+                                        case 62:
                                                 dcdr >> data.dock_sn();
                                             break;
 
@@ -6285,21 +6328,24 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.current_wayline(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.current_SearchArea(), current_alignment);
+                data.current_wayline(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.current_GenerateArea(), current_alignment);
+                data.current_SearchArea(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
-                data.drone_state(), current_alignment);
+                data.current_GenerateArea(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
-                data.drone_task_action(), current_alignment);
+                data.drone_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(19),
+                data.drone_task_action(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(20),
                 data.drone_task_targetID(), current_alignment);
 
 
@@ -6336,12 +6382,13 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.current_wayline()
-        << eprosima::fastcdr::MemberId(15) << data.current_SearchArea()
-        << eprosima::fastcdr::MemberId(16) << data.current_GenerateArea()
-        << eprosima::fastcdr::MemberId(17) << data.drone_state()
-        << eprosima::fastcdr::MemberId(18) << data.drone_task_action()
-        << eprosima::fastcdr::MemberId(19) << data.drone_task_targetID()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.current_wayline()
+        << eprosima::fastcdr::MemberId(16) << data.current_SearchArea()
+        << eprosima::fastcdr::MemberId(17) << data.current_GenerateArea()
+        << eprosima::fastcdr::MemberId(18) << data.drone_state()
+        << eprosima::fastcdr::MemberId(19) << data.drone_task_action()
+        << eprosima::fastcdr::MemberId(20) << data.drone_task_targetID()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -6418,26 +6465,30 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.current_wayline();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.current_SearchArea();
+                                                dcdr >> data.current_wayline();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.current_GenerateArea();
+                                                dcdr >> data.current_SearchArea();
                                             break;
 
                                         case 17:
-                                                dcdr >> data.drone_state();
+                                                dcdr >> data.current_GenerateArea();
                                             break;
 
                                         case 18:
-                                                dcdr >> data.drone_task_action();
+                                                dcdr >> data.drone_state();
                                             break;
 
                                         case 19:
+                                                dcdr >> data.drone_task_action();
+                                            break;
+
+                                        case 20:
                                                 dcdr >> data.drone_task_targetID();
                                             break;
 
@@ -9112,156 +9163,159 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.best_link_gateway(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.wireless_link_topo(), current_alignment);
+                data.best_link_gateway(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.cameras(), current_alignment);
+                data.wireless_link_topo(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
-                data.flysafe_database_version(), current_alignment);
+                data.cameras(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
-                data.offline_map_enable(), current_alignment);
+                data.flysafe_database_version(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(19),
-                data.dongle_infos(), current_alignment);
+                data.offline_map_enable(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(20),
-                data.current_rth_mode(), current_alignment);
+                data.dongle_infos(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(21),
-                data.rth_mode(), current_alignment);
+                data.current_rth_mode(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(22),
-                data.obstacle_avoidance(), current_alignment);
+                data.rth_mode(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(23),
-                data.is_near_area_limit(), current_alignment);
+                data.obstacle_avoidance(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(24),
-                data.is_near_height_limit(), current_alignment);
+                data.is_near_area_limit(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(25),
-                data.height_limit(), current_alignment);
+                data.is_near_height_limit(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(26),
-                data.night_lights_state(), current_alignment);
+                data.height_limit(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(27),
-                data.activation_time(), current_alignment);
+                data.night_lights_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(28),
-                data.maintain_status(), current_alignment);
+                data.activation_time(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(29),
-                data.total_flight_sorties(), current_alignment);
+                data.maintain_status(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(30),
-                data.type_subtype_gimbalindex(), current_alignment);
+                data.total_flight_sorties(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(31),
-                data.track_id(), current_alignment);
+                data.type_subtype_gimbalindex(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(32),
-                data.position_state(), current_alignment);
+                data.track_id(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(33),
-                data.storage(), current_alignment);
+                data.position_state(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(34),
-                data.battery(), current_alignment);
+                data.storage(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(35),
-                data.total_flight_distance(), current_alignment);
+                data.battery(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(36),
-                data.total_flight_time(), current_alignment);
+                data.total_flight_distance(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(37),
-                data.serious_low_battery_warning_threshold(), current_alignment);
+                data.total_flight_time(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(38),
-                data.low_battery_warning_threshold(), current_alignment);
+                data.serious_low_battery_warning_threshold(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(39),
-                data.control_source(), current_alignment);
+                data.low_battery_warning_threshold(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(40),
-                data.wind_direction(), current_alignment);
+                data.control_source(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(41),
-                data.wind_speed(), current_alignment);
+                data.wind_direction(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(42),
-                data.home_distance(), current_alignment);
+                data.wind_speed(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(43),
-                data.home_latitude(), current_alignment);
+                data.home_distance(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(44),
-                data.home_longitude(), current_alignment);
+                data.home_latitude(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(45),
-                data.attitude_head(), current_alignment);
+                data.home_longitude(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(46),
-                data.attitude_roll(), current_alignment);
+                data.attitude_head(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(47),
-                data.attitude_pitch(), current_alignment);
+                data.attitude_roll(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(48),
-                data.elevation(), current_alignment);
+                data.attitude_pitch(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(49),
-                data.height(), current_alignment);
+                data.elevation(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(50),
-                data.latitude(), current_alignment);
+                data.height(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(51),
-                data.longitude(), current_alignment);
+                data.latitude(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(52),
-                data.vertical_speed(), current_alignment);
+                data.longitude(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(53),
-                data.horizontal_speed(), current_alignment);
+                data.vertical_speed(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(54),
-                data.firmware_upgrade_status(), current_alignment);
+                data.horizontal_speed(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(55),
-                data.compatible_status(), current_alignment);
+                data.firmware_upgrade_status(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(56),
-                data.firmware_version(), current_alignment);
+                data.compatible_status(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(57),
-                data.gear(), current_alignment);
+                data.firmware_version(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(58),
-                data.mode_code_reason(), current_alignment);
+                data.gear(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(59),
-                data.commander_flight_height(), current_alignment);
+                data.mode_code_reason(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(60),
-                data.commander_flight_mode(), current_alignment);
+                data.commander_flight_height(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(61),
-                data.commander_mode_lost_action(), current_alignment);
+                data.commander_flight_mode(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(62),
-                data.camera_watermark_settings(), current_alignment);
+                data.commander_mode_lost_action(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(63),
-                data.mode_code(), current_alignment);
+                data.camera_watermark_settings(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(64),
+                data.mode_code(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(65),
                 data.drone_sn(), current_alignment);
 
 
@@ -9298,57 +9352,58 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.best_link_gateway()
-        << eprosima::fastcdr::MemberId(15) << data.wireless_link_topo()
-        << eprosima::fastcdr::MemberId(16) << data.cameras()
-        << eprosima::fastcdr::MemberId(17) << data.flysafe_database_version()
-        << eprosima::fastcdr::MemberId(18) << data.offline_map_enable()
-        << eprosima::fastcdr::MemberId(19) << data.dongle_infos()
-        << eprosima::fastcdr::MemberId(20) << data.current_rth_mode()
-        << eprosima::fastcdr::MemberId(21) << data.rth_mode()
-        << eprosima::fastcdr::MemberId(22) << data.obstacle_avoidance()
-        << eprosima::fastcdr::MemberId(23) << data.is_near_area_limit()
-        << eprosima::fastcdr::MemberId(24) << data.is_near_height_limit()
-        << eprosima::fastcdr::MemberId(25) << data.height_limit()
-        << eprosima::fastcdr::MemberId(26) << data.night_lights_state()
-        << eprosima::fastcdr::MemberId(27) << data.activation_time()
-        << eprosima::fastcdr::MemberId(28) << data.maintain_status()
-        << eprosima::fastcdr::MemberId(29) << data.total_flight_sorties()
-        << eprosima::fastcdr::MemberId(30) << data.type_subtype_gimbalindex()
-        << eprosima::fastcdr::MemberId(31) << data.track_id()
-        << eprosima::fastcdr::MemberId(32) << data.position_state()
-        << eprosima::fastcdr::MemberId(33) << data.storage()
-        << eprosima::fastcdr::MemberId(34) << data.battery()
-        << eprosima::fastcdr::MemberId(35) << data.total_flight_distance()
-        << eprosima::fastcdr::MemberId(36) << data.total_flight_time()
-        << eprosima::fastcdr::MemberId(37) << data.serious_low_battery_warning_threshold()
-        << eprosima::fastcdr::MemberId(38) << data.low_battery_warning_threshold()
-        << eprosima::fastcdr::MemberId(39) << data.control_source()
-        << eprosima::fastcdr::MemberId(40) << data.wind_direction()
-        << eprosima::fastcdr::MemberId(41) << data.wind_speed()
-        << eprosima::fastcdr::MemberId(42) << data.home_distance()
-        << eprosima::fastcdr::MemberId(43) << data.home_latitude()
-        << eprosima::fastcdr::MemberId(44) << data.home_longitude()
-        << eprosima::fastcdr::MemberId(45) << data.attitude_head()
-        << eprosima::fastcdr::MemberId(46) << data.attitude_roll()
-        << eprosima::fastcdr::MemberId(47) << data.attitude_pitch()
-        << eprosima::fastcdr::MemberId(48) << data.elevation()
-        << eprosima::fastcdr::MemberId(49) << data.height()
-        << eprosima::fastcdr::MemberId(50) << data.latitude()
-        << eprosima::fastcdr::MemberId(51) << data.longitude()
-        << eprosima::fastcdr::MemberId(52) << data.vertical_speed()
-        << eprosima::fastcdr::MemberId(53) << data.horizontal_speed()
-        << eprosima::fastcdr::MemberId(54) << data.firmware_upgrade_status()
-        << eprosima::fastcdr::MemberId(55) << data.compatible_status()
-        << eprosima::fastcdr::MemberId(56) << data.firmware_version()
-        << eprosima::fastcdr::MemberId(57) << data.gear()
-        << eprosima::fastcdr::MemberId(58) << data.mode_code_reason()
-        << eprosima::fastcdr::MemberId(59) << data.commander_flight_height()
-        << eprosima::fastcdr::MemberId(60) << data.commander_flight_mode()
-        << eprosima::fastcdr::MemberId(61) << data.commander_mode_lost_action()
-        << eprosima::fastcdr::MemberId(62) << data.camera_watermark_settings()
-        << eprosima::fastcdr::MemberId(63) << data.mode_code()
-        << eprosima::fastcdr::MemberId(64) << data.drone_sn()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.best_link_gateway()
+        << eprosima::fastcdr::MemberId(16) << data.wireless_link_topo()
+        << eprosima::fastcdr::MemberId(17) << data.cameras()
+        << eprosima::fastcdr::MemberId(18) << data.flysafe_database_version()
+        << eprosima::fastcdr::MemberId(19) << data.offline_map_enable()
+        << eprosima::fastcdr::MemberId(20) << data.dongle_infos()
+        << eprosima::fastcdr::MemberId(21) << data.current_rth_mode()
+        << eprosima::fastcdr::MemberId(22) << data.rth_mode()
+        << eprosima::fastcdr::MemberId(23) << data.obstacle_avoidance()
+        << eprosima::fastcdr::MemberId(24) << data.is_near_area_limit()
+        << eprosima::fastcdr::MemberId(25) << data.is_near_height_limit()
+        << eprosima::fastcdr::MemberId(26) << data.height_limit()
+        << eprosima::fastcdr::MemberId(27) << data.night_lights_state()
+        << eprosima::fastcdr::MemberId(28) << data.activation_time()
+        << eprosima::fastcdr::MemberId(29) << data.maintain_status()
+        << eprosima::fastcdr::MemberId(30) << data.total_flight_sorties()
+        << eprosima::fastcdr::MemberId(31) << data.type_subtype_gimbalindex()
+        << eprosima::fastcdr::MemberId(32) << data.track_id()
+        << eprosima::fastcdr::MemberId(33) << data.position_state()
+        << eprosima::fastcdr::MemberId(34) << data.storage()
+        << eprosima::fastcdr::MemberId(35) << data.battery()
+        << eprosima::fastcdr::MemberId(36) << data.total_flight_distance()
+        << eprosima::fastcdr::MemberId(37) << data.total_flight_time()
+        << eprosima::fastcdr::MemberId(38) << data.serious_low_battery_warning_threshold()
+        << eprosima::fastcdr::MemberId(39) << data.low_battery_warning_threshold()
+        << eprosima::fastcdr::MemberId(40) << data.control_source()
+        << eprosima::fastcdr::MemberId(41) << data.wind_direction()
+        << eprosima::fastcdr::MemberId(42) << data.wind_speed()
+        << eprosima::fastcdr::MemberId(43) << data.home_distance()
+        << eprosima::fastcdr::MemberId(44) << data.home_latitude()
+        << eprosima::fastcdr::MemberId(45) << data.home_longitude()
+        << eprosima::fastcdr::MemberId(46) << data.attitude_head()
+        << eprosima::fastcdr::MemberId(47) << data.attitude_roll()
+        << eprosima::fastcdr::MemberId(48) << data.attitude_pitch()
+        << eprosima::fastcdr::MemberId(49) << data.elevation()
+        << eprosima::fastcdr::MemberId(50) << data.height()
+        << eprosima::fastcdr::MemberId(51) << data.latitude()
+        << eprosima::fastcdr::MemberId(52) << data.longitude()
+        << eprosima::fastcdr::MemberId(53) << data.vertical_speed()
+        << eprosima::fastcdr::MemberId(54) << data.horizontal_speed()
+        << eprosima::fastcdr::MemberId(55) << data.firmware_upgrade_status()
+        << eprosima::fastcdr::MemberId(56) << data.compatible_status()
+        << eprosima::fastcdr::MemberId(57) << data.firmware_version()
+        << eprosima::fastcdr::MemberId(58) << data.gear()
+        << eprosima::fastcdr::MemberId(59) << data.mode_code_reason()
+        << eprosima::fastcdr::MemberId(60) << data.commander_flight_height()
+        << eprosima::fastcdr::MemberId(61) << data.commander_flight_mode()
+        << eprosima::fastcdr::MemberId(62) << data.commander_mode_lost_action()
+        << eprosima::fastcdr::MemberId(63) << data.camera_watermark_settings()
+        << eprosima::fastcdr::MemberId(64) << data.mode_code()
+        << eprosima::fastcdr::MemberId(65) << data.drone_sn()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -9425,206 +9480,210 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.best_link_gateway();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.wireless_link_topo();
+                                                dcdr >> data.best_link_gateway();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.cameras();
+                                                dcdr >> data.wireless_link_topo();
                                             break;
 
                                         case 17:
-                                                dcdr >> data.flysafe_database_version();
+                                                dcdr >> data.cameras();
                                             break;
 
                                         case 18:
-                                                dcdr >> data.offline_map_enable();
+                                                dcdr >> data.flysafe_database_version();
                                             break;
 
                                         case 19:
-                                                dcdr >> data.dongle_infos();
+                                                dcdr >> data.offline_map_enable();
                                             break;
 
                                         case 20:
-                                                dcdr >> data.current_rth_mode();
+                                                dcdr >> data.dongle_infos();
                                             break;
 
                                         case 21:
-                                                dcdr >> data.rth_mode();
+                                                dcdr >> data.current_rth_mode();
                                             break;
 
                                         case 22:
-                                                dcdr >> data.obstacle_avoidance();
+                                                dcdr >> data.rth_mode();
                                             break;
 
                                         case 23:
-                                                dcdr >> data.is_near_area_limit();
+                                                dcdr >> data.obstacle_avoidance();
                                             break;
 
                                         case 24:
-                                                dcdr >> data.is_near_height_limit();
+                                                dcdr >> data.is_near_area_limit();
                                             break;
 
                                         case 25:
-                                                dcdr >> data.height_limit();
+                                                dcdr >> data.is_near_height_limit();
                                             break;
 
                                         case 26:
-                                                dcdr >> data.night_lights_state();
+                                                dcdr >> data.height_limit();
                                             break;
 
                                         case 27:
-                                                dcdr >> data.activation_time();
+                                                dcdr >> data.night_lights_state();
                                             break;
 
                                         case 28:
-                                                dcdr >> data.maintain_status();
+                                                dcdr >> data.activation_time();
                                             break;
 
                                         case 29:
-                                                dcdr >> data.total_flight_sorties();
+                                                dcdr >> data.maintain_status();
                                             break;
 
                                         case 30:
-                                                dcdr >> data.type_subtype_gimbalindex();
+                                                dcdr >> data.total_flight_sorties();
                                             break;
 
                                         case 31:
-                                                dcdr >> data.track_id();
+                                                dcdr >> data.type_subtype_gimbalindex();
                                             break;
 
                                         case 32:
-                                                dcdr >> data.position_state();
+                                                dcdr >> data.track_id();
                                             break;
 
                                         case 33:
-                                                dcdr >> data.storage();
+                                                dcdr >> data.position_state();
                                             break;
 
                                         case 34:
-                                                dcdr >> data.battery();
+                                                dcdr >> data.storage();
                                             break;
 
                                         case 35:
-                                                dcdr >> data.total_flight_distance();
+                                                dcdr >> data.battery();
                                             break;
 
                                         case 36:
-                                                dcdr >> data.total_flight_time();
+                                                dcdr >> data.total_flight_distance();
                                             break;
 
                                         case 37:
-                                                dcdr >> data.serious_low_battery_warning_threshold();
+                                                dcdr >> data.total_flight_time();
                                             break;
 
                                         case 38:
-                                                dcdr >> data.low_battery_warning_threshold();
+                                                dcdr >> data.serious_low_battery_warning_threshold();
                                             break;
 
                                         case 39:
-                                                dcdr >> data.control_source();
+                                                dcdr >> data.low_battery_warning_threshold();
                                             break;
 
                                         case 40:
-                                                dcdr >> data.wind_direction();
+                                                dcdr >> data.control_source();
                                             break;
 
                                         case 41:
-                                                dcdr >> data.wind_speed();
+                                                dcdr >> data.wind_direction();
                                             break;
 
                                         case 42:
-                                                dcdr >> data.home_distance();
+                                                dcdr >> data.wind_speed();
                                             break;
 
                                         case 43:
-                                                dcdr >> data.home_latitude();
+                                                dcdr >> data.home_distance();
                                             break;
 
                                         case 44:
-                                                dcdr >> data.home_longitude();
+                                                dcdr >> data.home_latitude();
                                             break;
 
                                         case 45:
-                                                dcdr >> data.attitude_head();
+                                                dcdr >> data.home_longitude();
                                             break;
 
                                         case 46:
-                                                dcdr >> data.attitude_roll();
+                                                dcdr >> data.attitude_head();
                                             break;
 
                                         case 47:
-                                                dcdr >> data.attitude_pitch();
+                                                dcdr >> data.attitude_roll();
                                             break;
 
                                         case 48:
-                                                dcdr >> data.elevation();
+                                                dcdr >> data.attitude_pitch();
                                             break;
 
                                         case 49:
-                                                dcdr >> data.height();
+                                                dcdr >> data.elevation();
                                             break;
 
                                         case 50:
-                                                dcdr >> data.latitude();
+                                                dcdr >> data.height();
                                             break;
 
                                         case 51:
-                                                dcdr >> data.longitude();
+                                                dcdr >> data.latitude();
                                             break;
 
                                         case 52:
-                                                dcdr >> data.vertical_speed();
+                                                dcdr >> data.longitude();
                                             break;
 
                                         case 53:
-                                                dcdr >> data.horizontal_speed();
+                                                dcdr >> data.vertical_speed();
                                             break;
 
                                         case 54:
-                                                dcdr >> data.firmware_upgrade_status();
+                                                dcdr >> data.horizontal_speed();
                                             break;
 
                                         case 55:
-                                                dcdr >> data.compatible_status();
+                                                dcdr >> data.firmware_upgrade_status();
                                             break;
 
                                         case 56:
-                                                dcdr >> data.firmware_version();
+                                                dcdr >> data.compatible_status();
                                             break;
 
                                         case 57:
-                                                dcdr >> data.gear();
+                                                dcdr >> data.firmware_version();
                                             break;
 
                                         case 58:
-                                                dcdr >> data.mode_code_reason();
+                                                dcdr >> data.gear();
                                             break;
 
                                         case 59:
-                                                dcdr >> data.commander_flight_height();
+                                                dcdr >> data.mode_code_reason();
                                             break;
 
                                         case 60:
-                                                dcdr >> data.commander_flight_mode();
+                                                dcdr >> data.commander_flight_height();
                                             break;
 
                                         case 61:
-                                                dcdr >> data.commander_mode_lost_action();
+                                                dcdr >> data.commander_flight_mode();
                                             break;
 
                                         case 62:
-                                                dcdr >> data.camera_watermark_settings();
+                                                dcdr >> data.commander_mode_lost_action();
                                             break;
 
                                         case 63:
-                                                dcdr >> data.mode_code();
+                                                dcdr >> data.camera_watermark_settings();
                                             break;
 
                                         case 64:
+                                                dcdr >> data.mode_code();
+                                            break;
+
+                                        case 65:
                                                 dcdr >> data.drone_sn();
                                             break;
 
@@ -9708,39 +9767,42 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.attitude_head(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.latitude(), current_alignment);
+                data.attitude_head(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.longitude(), current_alignment);
+                data.latitude(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
-                data.height(), current_alignment);
+                data.longitude(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
-                data.speed_x(), current_alignment);
+                data.height(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(19),
-                data.speed_y(), current_alignment);
+                data.speed_x(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(20),
-                data.speed_z(), current_alignment);
+                data.speed_y(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(21),
-                data.gimbal_pitch(), current_alignment);
+                data.speed_z(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(22),
-                data.gimbal_roll(), current_alignment);
+                data.gimbal_pitch(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(23),
-                data.gimbal_yaw(), current_alignment);
+                data.gimbal_roll(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(24),
-                data.drone_sn(), current_alignment);
+                data.gimbal_yaw(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(25),
+                data.drone_sn(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(26),
                 data.dock_sn(), current_alignment);
 
 
@@ -9777,18 +9839,19 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.attitude_head()
-        << eprosima::fastcdr::MemberId(15) << data.latitude()
-        << eprosima::fastcdr::MemberId(16) << data.longitude()
-        << eprosima::fastcdr::MemberId(17) << data.height()
-        << eprosima::fastcdr::MemberId(18) << data.speed_x()
-        << eprosima::fastcdr::MemberId(19) << data.speed_y()
-        << eprosima::fastcdr::MemberId(20) << data.speed_z()
-        << eprosima::fastcdr::MemberId(21) << data.gimbal_pitch()
-        << eprosima::fastcdr::MemberId(22) << data.gimbal_roll()
-        << eprosima::fastcdr::MemberId(23) << data.gimbal_yaw()
-        << eprosima::fastcdr::MemberId(24) << data.drone_sn()
-        << eprosima::fastcdr::MemberId(25) << data.dock_sn()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.attitude_head()
+        << eprosima::fastcdr::MemberId(16) << data.latitude()
+        << eprosima::fastcdr::MemberId(17) << data.longitude()
+        << eprosima::fastcdr::MemberId(18) << data.height()
+        << eprosima::fastcdr::MemberId(19) << data.speed_x()
+        << eprosima::fastcdr::MemberId(20) << data.speed_y()
+        << eprosima::fastcdr::MemberId(21) << data.speed_z()
+        << eprosima::fastcdr::MemberId(22) << data.gimbal_pitch()
+        << eprosima::fastcdr::MemberId(23) << data.gimbal_roll()
+        << eprosima::fastcdr::MemberId(24) << data.gimbal_yaw()
+        << eprosima::fastcdr::MemberId(25) << data.drone_sn()
+        << eprosima::fastcdr::MemberId(26) << data.dock_sn()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -9865,50 +9928,54 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.attitude_head();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.latitude();
+                                                dcdr >> data.attitude_head();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.longitude();
+                                                dcdr >> data.latitude();
                                             break;
 
                                         case 17:
-                                                dcdr >> data.height();
+                                                dcdr >> data.longitude();
                                             break;
 
                                         case 18:
-                                                dcdr >> data.speed_x();
+                                                dcdr >> data.height();
                                             break;
 
                                         case 19:
-                                                dcdr >> data.speed_y();
+                                                dcdr >> data.speed_x();
                                             break;
 
                                         case 20:
-                                                dcdr >> data.speed_z();
+                                                dcdr >> data.speed_y();
                                             break;
 
                                         case 21:
-                                                dcdr >> data.gimbal_pitch();
+                                                dcdr >> data.speed_z();
                                             break;
 
                                         case 22:
-                                                dcdr >> data.gimbal_roll();
+                                                dcdr >> data.gimbal_pitch();
                                             break;
 
                                         case 23:
-                                                dcdr >> data.gimbal_yaw();
+                                                dcdr >> data.gimbal_roll();
                                             break;
 
                                         case 24:
-                                                dcdr >> data.drone_sn();
+                                                dcdr >> data.gimbal_yaw();
                                             break;
 
                                         case 25:
+                                                dcdr >> data.drone_sn();
+                                            break;
+
+                                        case 26:
                                                 dcdr >> data.dock_sn();
                                             break;
 
@@ -10254,27 +10321,30 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.ptz(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.ptz1(), current_alignment);
+                data.ptz(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.ptz2(), current_alignment);
+                data.ptz1(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
-                data.ptz3(), current_alignment);
+                data.ptz2(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
-                data.ptz4(), current_alignment);
+                data.ptz3(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(19),
-                data.ptz5(), current_alignment);
+                data.ptz4(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(20),
-                data.usv_info(), current_alignment);
+                data.ptz5(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(21),
+                data.usv_info(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(22),
                 data.strikeState(), current_alignment);
 
 
@@ -10311,14 +10381,15 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.ptz()
-        << eprosima::fastcdr::MemberId(15) << data.ptz1()
-        << eprosima::fastcdr::MemberId(16) << data.ptz2()
-        << eprosima::fastcdr::MemberId(17) << data.ptz3()
-        << eprosima::fastcdr::MemberId(18) << data.ptz4()
-        << eprosima::fastcdr::MemberId(19) << data.ptz5()
-        << eprosima::fastcdr::MemberId(20) << data.usv_info()
-        << eprosima::fastcdr::MemberId(21) << data.strikeState()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.ptz()
+        << eprosima::fastcdr::MemberId(16) << data.ptz1()
+        << eprosima::fastcdr::MemberId(17) << data.ptz2()
+        << eprosima::fastcdr::MemberId(18) << data.ptz3()
+        << eprosima::fastcdr::MemberId(19) << data.ptz4()
+        << eprosima::fastcdr::MemberId(20) << data.ptz5()
+        << eprosima::fastcdr::MemberId(21) << data.usv_info()
+        << eprosima::fastcdr::MemberId(22) << data.strikeState()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -10395,34 +10466,38 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.ptz();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.ptz1();
+                                                dcdr >> data.ptz();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.ptz2();
+                                                dcdr >> data.ptz1();
                                             break;
 
                                         case 17:
-                                                dcdr >> data.ptz3();
+                                                dcdr >> data.ptz2();
                                             break;
 
                                         case 18:
-                                                dcdr >> data.ptz4();
+                                                dcdr >> data.ptz3();
                                             break;
 
                                         case 19:
-                                                dcdr >> data.ptz5();
+                                                dcdr >> data.ptz4();
                                             break;
 
                                         case 20:
-                                                dcdr >> data.usv_info();
+                                                dcdr >> data.ptz5();
                                             break;
 
                                         case 21:
+                                                dcdr >> data.usv_info();
+                                            break;
+
+                                        case 22:
                                                 dcdr >> data.strikeState();
                                             break;
 
@@ -10506,15 +10581,18 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.jammerState(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.hitPoint(), current_alignment);
+                data.jammerState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.jammerType(), current_alignment);
+                data.hitPoint(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
+                data.jammerType(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
                 data.jammerAbility(), current_alignment);
 
 
@@ -10551,10 +10629,11 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.jammerState()
-        << eprosima::fastcdr::MemberId(15) << data.hitPoint()
-        << eprosima::fastcdr::MemberId(16) << data.jammerType()
-        << eprosima::fastcdr::MemberId(17) << data.jammerAbility()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.jammerState()
+        << eprosima::fastcdr::MemberId(16) << data.hitPoint()
+        << eprosima::fastcdr::MemberId(17) << data.jammerType()
+        << eprosima::fastcdr::MemberId(18) << data.jammerAbility()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -10631,18 +10710,22 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.jammerState();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.hitPoint();
+                                                dcdr >> data.jammerState();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.jammerType();
+                                                dcdr >> data.hitPoint();
                                             break;
 
                                         case 17:
+                                                dcdr >> data.jammerType();
+                                            break;
+
+                                        case 18:
                                                 dcdr >> data.jammerAbility();
                                             break;
 
@@ -10726,9 +10809,12 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.laserState(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
+                data.laserState(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
                 data.hitPoint(), current_alignment);
 
 
@@ -10765,8 +10851,9 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.laserState()
-        << eprosima::fastcdr::MemberId(15) << data.hitPoint()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.laserState()
+        << eprosima::fastcdr::MemberId(16) << data.hitPoint()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -10843,10 +10930,14 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.laserState();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
+                                                dcdr >> data.laserState();
+                                            break;
+
+                                        case 16:
                                                 dcdr >> data.hitPoint();
                                             break;
 
@@ -10930,9 +11021,12 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.munitionState(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
+                data.munitionState(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
                 data.hitPoint(), current_alignment);
 
 
@@ -10969,8 +11063,9 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.munitionState()
-        << eprosima::fastcdr::MemberId(15) << data.hitPoint()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.munitionState()
+        << eprosima::fastcdr::MemberId(16) << data.hitPoint()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -11047,10 +11142,14 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.munitionState();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
+                                                dcdr >> data.munitionState();
+                                            break;
+
+                                        case 16:
                                                 dcdr >> data.hitPoint();
                                             break;
 
@@ -11134,24 +11233,27 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.timestamp(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.weaponState(), current_alignment);
+                data.deviceState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.hitPoint(), current_alignment);
+                data.weaponState(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.launchPlatformID(), current_alignment);
+                data.hitPoint(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
-                data.launchPlatformName(), current_alignment);
+                data.launchPlatformID(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
-                data.attackAngle(), current_alignment);
+                data.launchPlatformName(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(19),
-                data.missDistance(), current_alignment);
+                data.attackAngle(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(20),
+                data.missDistance(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(21),
                 data.moveStep(), current_alignment);
 
 
@@ -11188,13 +11290,14 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(11) << data.position()
         << eprosima::fastcdr::MemberId(12) << data.elec()
         << eprosima::fastcdr::MemberId(13) << data.timestamp()
-        << eprosima::fastcdr::MemberId(14) << data.weaponState()
-        << eprosima::fastcdr::MemberId(15) << data.hitPoint()
-        << eprosima::fastcdr::MemberId(16) << data.launchPlatformID()
-        << eprosima::fastcdr::MemberId(17) << data.launchPlatformName()
-        << eprosima::fastcdr::MemberId(18) << data.attackAngle()
-        << eprosima::fastcdr::MemberId(19) << data.missDistance()
-        << eprosima::fastcdr::MemberId(20) << data.moveStep()
+        << eprosima::fastcdr::MemberId(14) << data.deviceState()
+        << eprosima::fastcdr::MemberId(15) << data.weaponState()
+        << eprosima::fastcdr::MemberId(16) << data.hitPoint()
+        << eprosima::fastcdr::MemberId(17) << data.launchPlatformID()
+        << eprosima::fastcdr::MemberId(18) << data.launchPlatformName()
+        << eprosima::fastcdr::MemberId(19) << data.attackAngle()
+        << eprosima::fastcdr::MemberId(20) << data.missDistance()
+        << eprosima::fastcdr::MemberId(21) << data.moveStep()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -11271,30 +11374,34 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 14:
-                                                dcdr >> data.weaponState();
+                                                dcdr >> data.deviceState();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.hitPoint();
+                                                dcdr >> data.weaponState();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.launchPlatformID();
+                                                dcdr >> data.hitPoint();
                                             break;
 
                                         case 17:
-                                                dcdr >> data.launchPlatformName();
+                                                dcdr >> data.launchPlatformID();
                                             break;
 
                                         case 18:
-                                                dcdr >> data.attackAngle();
+                                                dcdr >> data.launchPlatformName();
                                             break;
 
                                         case 19:
-                                                dcdr >> data.missDistance();
+                                                dcdr >> data.attackAngle();
                                             break;
 
                                         case 20:
+                                                dcdr >> data.missDistance();
+                                            break;
+
+                                        case 21:
                                                 dcdr >> data.moveStep();
                                             break;
 

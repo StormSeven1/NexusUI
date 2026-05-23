@@ -87,11 +87,17 @@ fi
 
 echo "启动 Custombackend（端口 ${BACKEND_PORT}）..."
 cd /workspace/Custombackend
-echo "安装/更新后端依赖（requirements.txt）..."
-if [[ "${NEXUS_PY_UPGRADE:-0}" == "1" ]]; then
-    python3 -m pip install -q --upgrade -r requirements.txt
+PIP_PID=""
+if [[ "${NEXUS_PY_SKIP_INSTALL:-0}" == "1" ]]; then
+    echo "跳过 pip install（NEXUS_PY_SKIP_INSTALL=1）"
+elif [[ "${NEXUS_PY_UPGRADE:-0}" == "1" ]]; then
+    echo "安装/更新后端依赖（requirements.txt，后台，不阻塞 uvicorn）..."
+    python3 -m pip install -q --upgrade -r requirements.txt &
+    PIP_PID=$!
 else
-    python3 -m pip install -q -r requirements.txt
+    echo "安装/更新后端依赖（requirements.txt，后台，不阻塞 uvicorn）..."
+    python3 -m pip install -q -r requirements.txt &
+    PIP_PID=$!
 fi
 cd /workspace/Custombackend/app
 # 与 c2 / trackmanager 等同镜像一致：镜像内已装 Fast DDS，但须设置下面变量才能 `import fastdds`。

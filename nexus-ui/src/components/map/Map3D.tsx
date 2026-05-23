@@ -13,11 +13,19 @@ import {
 import { trimHistoryTrailForDisplay, velocityVectorEndLngLat } from "@/lib/track-display-trail";
 import {
   LYR_DB_AREAS,
+  LYR_OPTO_FOV,
   LYR_TRACKS,
   type Asset,
   type RestrictedZone,
   type Track,
 } from "@/lib/map-entity-model";
+import {
+  shouldRenderOptoCameraFov,
+  shouldRenderOptoCameraIcon,
+  type OptoDeviceVisibilityMap,
+} from "@/lib/opto-device-layer-visibility";
+import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
+import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import { mergeZoneFillColor } from "@/components/map/modules/polygon-draw-maplibre";
 import { useZoneStore } from "@/stores/zone-store";
 import { useDbAreaStore } from "@/stores/db-area-store";
@@ -36,7 +44,7 @@ import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import { trackMapDrawHistoryTrails } from "@/components/map/modules/tracks-maplibre";
 import {
   filterTracksForMapRender,
-  isRadarTrackLayerKey,
+  isDotTrackLayerKey,
   resolveTrackLayerKey,
 } from "@/lib/track-layer-visibility";
 import {
@@ -259,11 +267,49 @@ function syncCesiumDbAreas(
  * 光电/机场/无人机等**非雷达**覆盖扇区：与 Map2D `OptoelectronicFovModule.setFromAssets` 一样需随 asset-store 刷新。
  * 初始化只跑一次会在长时间 `await` 后仍停留在首帧朝向；故 init 末尾与 `useAssetStore.subscribe` 都要调用。
  */
+function cameraFovMapEligible(
+  asset: Asset,
+  perDevice: Readonly<OptoDeviceVisibilityMap>,
+  panelIds: ReadonlySet<string> | null,
+): boolean {
+  if (asset.type !== "camera") return true;
+  if (asset.showFov === false) return false;
+  if (!asset.range || asset.range <= 0) return false;
+  return shouldRenderOptoCameraFov(asset.id, perDevice, panelIds);
+}
+
+function resolveOptoPanelCameraIds(): ReadonlySet<string> | null {
+  const cam = useMapGisCameraMenuStore.getState();
+  return cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
+}
+
+function applyCesiumOptoPerDeviceShow(
+  groups: { optoFov: CesiumEntity[]; assets: CesiumEntity[] },
+  layerMasterOn: boolean,
+  perDevice: Readonly<OptoDeviceVisibilityMap>,
+  panelIds: ReadonlySet<string> | null,
+) {
+  for (const ent of groups.optoFov) {
+    const aid = ent.properties?.assetId?.getValue() as string | undefined;
+    ent.show =
+      layerMasterOn && (aid ? shouldRenderOptoCameraFov(aid, perDevice, panelIds) : true);
+  }
+  for (const ent of groups.assets) {
+    const at = ent.properties?.assetType?.getValue() as string | undefined;
+    if (at !== "camera") continue;
+    const aid = ent.properties?.assetId?.getValue() as string | undefined;
+    ent.show =
+      layerMasterOn && (aid ? shouldRenderOptoCameraIcon(aid, perDevice, panelIds) : true);
+  }
+}
+
 function syncCesiumNonRadarCoverageFov(
   viewer: CesiumViewer,
   C: CesiumModule,
   groups: { optoFov: CesiumEntity[]; airportFov: CesiumEntity[]; droneFov: CesiumEntity[] },
   assets: Asset[],
+  perDevice: Readonly<OptoDeviceVisibilityMap> = {},
+  panelIds: ReadonlySet<string> | null = null,
 ) {
   const rgba = (c: RGBA) => new C.Color(c[0], c[1], c[2], c[3]);
   for (const ent of groups.optoFov) viewer.entities.remove(ent);
@@ -276,6 +322,7 @@ function syncCesiumNonRadarCoverageFov(
   for (const asset of assets) {
     if (asset.type === "radar") continue;
     if (!asset.range || asset.range <= 0) continue;
+    if (!cameraFovMapEligible(asset, perDevice, panelIds)) continue;
     const covStyle = COVERAGE_STYLES[asset.type] ?? COVERAGE_STYLES["tower"];
     const isSector = asset.fovAngle !== undefined && asset.fovAngle < 360 && asset.heading !== undefined;
     const coords = isSector
@@ -341,7 +388,7 @@ async function syncCesiumTrackBillboards(
       viewer.entities.remove(ent);
       continue;
     }
-    const wantDot = isRadarTrackLayerKey(resolveTrackLayerKey(tr));
+    const wantDot = isDotTrackLayerKey(resolveTrackLayerKey(tr));
     const hasDot = Boolean(ent.point);
     if (wantDot !== hasDot) {
       viewer.entities.remove(ent);
@@ -365,7 +412,7 @@ async function syncCesiumTrackBillboards(
     const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
     const fusionTint =
       eff === "neutral" ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor) : undefined;
-    const wantDot = isRadarTrackLayerKey(resolveTrackLayerKey(track));
+    const wantDot = isDotTrackLayerKey(resolveTrackLayerKey(track));
     const labelCommon = {
       text: track.name,
       font: '11px Roboto, "Noto Sans SC", sans-serif',
@@ -605,6 +652,8 @@ export function Map3D() {
 
         /* 2) 雷达覆盖（圆/扫描）与光电 FOV（扇形/圆）分开展示，与 2D 图层面板两项一致 */
         const _assets = adaptAssetsForMap(useAssetStore.getState().assets);
+        const optoPerDevice = useOptoDeviceLayerStore.getState().deviceVisibility;
+        const optoPanelIds = resolveOptoPanelCameraIds();
         for (const asset of _assets) {
           if (!asset.range || asset.range <= 0) continue;
           const sweepColor = STATUS_RGBA[asset.status] ?? STATUS_RGBA["online"];
@@ -643,7 +692,7 @@ export function Map3D() {
               groups.radarCoverage.push(sweepEnt);
               radarSweepRef.current.push(sweepEnt);
             }
-          } else {
+          } else if (cameraFovMapEligible(asset, optoPerDevice, optoPanelIds)) {
             const isSector = asset.fovAngle !== undefined && asset.fovAngle < 360 && asset.heading !== undefined;
             const coords = isSector
               ? geoSectorCoords(asset.lng, asset.lat, asset.range, asset.heading!, asset.fovAngle!)
@@ -671,6 +720,13 @@ export function Map3D() {
         /* 4) 资产 billboard（无人机名称样式与 2D 一致：`drones.label` → `laserLabelStyleFromBundle`） */
         const defaultAssetLabelFont = '10px Roboto, "Noto Sans SC", sans-serif';
         for (const asset of _assets) {
+          if (
+            asset.type === "camera" &&
+            (asset.centerIconVisible === false ||
+              !shouldRenderOptoCameraIcon(asset.id, optoPerDevice, optoPanelIds))
+          ) {
+            continue;
+          }
           const disp = asset.disposition ?? "friendly";
           const isDrone = asset.type === "drone";
           const labelHex = assetMapLabelTextColor(
@@ -761,13 +817,21 @@ export function Map3D() {
         }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
         /* init 内有 await：用最新 asset-store 再刷一遍扇区，避免仍停在配置/首帧朝向 */
-        syncCesiumNonRadarCoverageFov(v, Cesium, groups, adaptAssetsForMap(useAssetStore.getState().assets));
+        syncCesiumNonRadarCoverageFov(
+          v,
+          Cesium,
+          groups,
+          adaptAssetsForMap(useAssetStore.getState().assets),
+          optoPerDevice,
+          optoPanelIds,
+        );
 
         viewerRef.current = v;
 
         /* 按 layerVisibility 设置各组 entity 显隐（资产 billboard 按 `assetType` 分键，与 Map2D 一致） */
         const layerVis = useAppStore.getState().layerVisibility;
         const layerOn = (k: string) => layerVis[k] !== false;
+        const optoMasterOn = layerOn(LYR_OPTO_FOV);
         for (const ent of groups.tracks) ent.show = layerOn("lyr-tracks");
         for (const ent of groups.trackTrails) ent.show = layerOn("lyr-tracks");
         for (const ent of groups.radarCoverage) ent.show = layerOn("lyr-radar-coverage");
@@ -790,6 +854,7 @@ export function Map3D() {
                       : "lyr-opto-fov";
           ent.show = layerOn(layerKey);
         }
+        applyCesiumOptoPerDeviceShow(groups, optoMasterOn, optoPerDevice, optoPanelIds);
 
         /* 雷达扫描扇动画 */
         let sweepAngle = 0;
@@ -995,8 +1060,47 @@ export function Map3D() {
                     : "lyr-opto-fov";
         ent.show = layerOn(layerKey);
       }
+      applyCesiumOptoPerDeviceShow(
+        g,
+        layerOn(LYR_OPTO_FOV),
+        useOptoDeviceLayerStore.getState().deviceVisibility,
+        resolveOptoPanelCameraIds(),
+      );
     });
     return unsub;
+  }, []);
+
+  /* 光电装备：按设备视场 / GIS 图标 + 面板白名单 */
+  useEffect(() => {
+    const flush = () => {
+      const v = viewerRef.current;
+      const C = cesiumRef.current;
+      if (!v || !C || v.isDestroyed()) return;
+      const perDevice = useOptoDeviceLayerStore.getState().deviceVisibility;
+      const panelIds = resolveOptoPanelCameraIds();
+      const layerOn = useAppStore.getState().layerVisibility[LYR_OPTO_FOV] !== false;
+      syncCesiumNonRadarCoverageFov(
+        v,
+        C,
+        entityGroupsRef.current,
+        adaptAssetsForMap(useAssetStore.getState().assets),
+        perDevice,
+        panelIds,
+      );
+      applyCesiumOptoPerDeviceShow(entityGroupsRef.current, layerOn, perDevice, panelIds);
+    };
+    const unsubVis = useOptoDeviceLayerStore.subscribe(flush);
+    const unsubCam = useMapGisCameraMenuStore.subscribe(flush);
+    const unsubMaster = useAppStore.subscribe((s, p) => {
+      if ((s.layerVisibility[LYR_OPTO_FOV] ?? true) === (p.layerVisibility[LYR_OPTO_FOV] ?? true)) return;
+      flush();
+    });
+    void useMapGisCameraMenuStore.getState().ensureLoaded();
+    return () => {
+      unsubVis();
+      unsubCam();
+      unsubMaster();
+    };
   }, []);
 
   /* 选中放大：selectedAssetId */

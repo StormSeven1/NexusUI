@@ -117,6 +117,21 @@ class DDSReceiverService:
             f"模块: {self.dds_module_path} | 结构类型: {self.structure_type}"
         )
     
+    def _list_all_so_preload_order(self) -> list[str]:
+        """其它 DDS 模块：保持原行为，目录内全部 .so（先 lib 后 wrapper）。"""
+        so_files = [f for f in os.listdir(self.dds_module_path) if f.endswith(".so")]
+        lib_files = sorted(f for f in so_files if f.startswith("lib"))
+        wrapper_files = sorted(f for f in so_files if not f.startswith("lib"))
+        return lib_files + wrapper_files
+
+    def _resolve_dds_so_preload_list(self, python_module_name: str) -> list[str]:
+        """按 Python 绑定模块选择 .so，避免 Camera 目录新旧 IDL 混载导致收不到样本。"""
+        if python_module_name == "EntityRealTimeStatus":
+            return ["libEntityRealTimeStatus.so", "_EntityRealTimeStatusWrapper.so"]
+        if python_module_name == "CameraRealTimeStatus":
+            return ["libCameraRealTimeStatus.so", "_CameraRealTimeStatusWrapper.so"]
+        return self._list_all_so_preload_order()
+
     def _load_dds_module(self):
         """根据dds_module_path动态加载DDS模块"""
         if not DDS_AVAILABLE:
@@ -147,27 +162,13 @@ class DDSReceiverService:
             sys.path.insert(0, self.dds_module_path)
             logger.info(f"✅ 添加模块路径到sys.path: {self.dds_module_path}")
         
-        # 查找并预加载所有.so文件（按依赖顺序：先lib后wrapper）
-        so_files = [f for f in os.listdir(self.dds_module_path) if f.endswith('.so')]
-        # 先加载lib开头的基础库
-        lib_files = [f for f in so_files if f.startswith('lib')]
-        wrapper_files = [f for f in so_files if not f.startswith('lib')]
-        
-        for so_filename in lib_files + wrapper_files:
-            so_file = os.path.join(self.dds_module_path, so_filename)
-            try:
-                ctypes.CDLL(so_file, mode=ctypes.RTLD_GLOBAL)
-                logger.info(f"✅ 预加载共享库: {so_file}")
-            except Exception as e:
-                logger.debug(f"⚠️ 预加载共享库失败 [{so_filename}]: {e}")
-        
         # 查找Python模块文件（通常是TrackRealTimeStatus.py或类似名称）
-        py_files = [f[:-3] for f in os.listdir(self.dds_module_path) 
+        py_files = [f[:-3] for f in os.listdir(self.dds_module_path)
                    if f.endswith('.py') and not f.startswith('_')]
-        
+
         if not py_files:
             raise ImportError(f"在 {self.dds_module_path} 中未找到Python模块文件")
-        
+
         # 优先使用配置的 Python 模块名；否则与 data_class_name 同名的 .py；再否则第一个 .py
         if self.dds_python_module:
             module_name = self.dds_python_module
@@ -175,6 +176,20 @@ class DDSReceiverService:
             module_name = self.data_class_name
         else:
             module_name = py_files[0]  # 否则使用第一个找到的.py文件
+
+        # 预加载 .so：Camera 目录同时含新旧两套绑定，全量 RTLD_GLOBAL 会符号冲突 → 匹配发布者但收不到样本
+        so_preload = self._resolve_dds_so_preload_list(module_name)
+        for so_filename in so_preload:
+            so_file = os.path.join(self.dds_module_path, so_filename)
+            if not os.path.isfile(so_file):
+                logger.debug(f"⚠️ 跳过不存在的共享库: {so_file}")
+                continue
+            try:
+                ctypes.CDLL(so_file, mode=ctypes.RTLD_GLOBAL)
+                logger.info(f"✅ 预加载共享库: {so_file}")
+            except Exception as e:
+                logger.debug(f"⚠️ 预加载共享库失败 [{so_filename}]: {e}")
+
         logger.info(f"🔍 尝试导入模块: {module_name} (可用模块: {py_files})")
         
         try:

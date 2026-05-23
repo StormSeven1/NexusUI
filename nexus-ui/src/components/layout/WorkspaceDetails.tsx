@@ -1,14 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
 import { useAlertStore } from "@/stores/alert-store";
 import { cn } from "@/lib/utils";
-import { buildDataLayerPanelRows, LYR_DB_AREAS } from "@/lib/map-entity-model";
+import { buildDataLayerPanelRows, LYR_DB_AREAS, LYR_OPTO_FOV } from "@/lib/map-entity-model";
 import { useDbAreaStore } from "@/stores/db-area-store";
+import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
+import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
 import { countDbAreaPanelUiRows, countVisibleDbAreaLeaves } from "@/lib/db-area-panel-helpers";
+import { countOptoDevicePanelUiRows, countVisibleOptoDeviceLeaves } from "@/lib/opto-device-layer-visibility";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { getMapMeasureHandlers, useMapMeasureUi } from "@/stores/map-measure-bridge";
 import { AreaDrawSetupDialog } from "@/components/map/AreaDrawDialogs";
@@ -42,12 +45,14 @@ type StatRow = { label: string; value: string; icon: LucideIcon; color: string }
  */
 function countLayerPanelEnabled(
   assets: ReadonlyArray<{ asset_type: string }>,
+  cameraMenuIds: ReadonlyArray<string>,
   layerVisibility: Record<string, boolean>,
   basemapGroupVisible: boolean,
   basemapVectorLayers: ReadonlyArray<{ id: string }>,
   basemapVectorVisibility: Record<string, boolean>,
   dbAreaRows: ReadonlyArray<AreaTableRow>,
   dbAreaVisibility: Readonly<Record<string, boolean>>,
+  optoDeviceVisibility: Readonly<Record<string, { fov?: boolean; icon?: boolean }>>,
 ): number {
   const rows = buildDataLayerPanelRows(assets);
   let n = rows.filter((r) => layerVisibility[r.id] !== false).length;
@@ -56,6 +61,11 @@ function countLayerPanelEnabled(
     n += basemapVectorLayers.filter((l) => basemapVectorVisibility[l.id] !== false).length;
   }
   n += countVisibleDbAreaLeaves(dbAreaRows, dbAreaVisibility, layerVisibility[LYR_DB_AREAS] !== false);
+  n += countVisibleOptoDeviceLeaves(
+    cameraMenuIds,
+    optoDeviceVisibility,
+    layerVisibility[LYR_OPTO_FOV] !== false,
+  );
   return n;
 }
 
@@ -64,10 +74,14 @@ function countLayerPanelLoaded(
   assets: ReadonlyArray<{ asset_type: string }>,
   basemapVectorLayers: ReadonlyArray<{ id: string }>,
   dbAreaRows: ReadonlyArray<AreaTableRow>,
+  cameraMenuIds: ReadonlyArray<string>,
 ): number {
   const rows = buildDataLayerPanelRows(assets);
   const dbUi = countDbAreaPanelUiRows(dbAreaRows);
-  return 1 + basemapVectorLayers.length + rows.length + dbUi;
+  const optoUi = rows.some((r) => r.id === LYR_OPTO_FOV)
+    ? countOptoDevicePanelUiRows(cameraMenuIds.length)
+    : 0;
+  return 1 + basemapVectorLayers.length + rows.length + dbUi + optoUi;
 }
 
 // 工作区详情配置
@@ -207,6 +221,15 @@ export function WorkspaceDetails() {
   const routeLines = useAppStore((s) => s.routeLines);
   const dbAreaRows = useDbAreaStore((s) => s.rows);
   const dbAreaVisibility = useDbAreaStore((s) => s.areaVisibility);
+  const optoDeviceVisibility = useOptoDeviceLayerStore((s) => s.deviceVisibility);
+  const cameraMenuRows = useMapGisCameraMenuStore((s) => s.rows);
+  const ensureCameraMenuRows = useMapGisCameraMenuStore((s) => s.ensureLoaded);
+  const cameraMenuIds = useMemo(() => cameraMenuRows.map((r) => r.entityId), [cameraMenuRows]);
+
+  useEffect(() => {
+    if (!buildDataLayerPanelRows(assets).some((r) => r.id === LYR_OPTO_FOV)) return;
+    void ensureCameraMenuRows();
+  }, [assets, ensureCameraMenuRows]);
 
   /** 快捷工作流弹窗状态 */
   const [quickWorkflowOpen, setQuickWorkflowOpen] = useState(false);
@@ -215,12 +238,14 @@ export function WorkspaceDetails() {
   const situationLiveStats = useMemo((): StatRow[] => {
     const layerN = countLayerPanelEnabled(
       assets,
+      cameraMenuIds,
       layerVisibility,
       basemapGroupVisible,
       basemapVectorLayers,
       basemapVectorVisibility,
       dbAreaRows,
       dbAreaVisibility,
+      optoDeviceVisibility,
     );
     return [
       { label: "监控目标", value: String(assets.length), icon: MapPin, color: "text-blue-400" },
@@ -238,6 +263,8 @@ export function WorkspaceDetails() {
     basemapVectorVisibility,
     dbAreaRows,
     dbAreaVisibility,
+    optoDeviceVisibility,
+    cameraMenuIds,
   ]);
 
   const assetsLiveStats = useMemo((): StatRow[] => {
@@ -262,15 +289,17 @@ export function WorkspaceDetails() {
   }, [assets]);
 
   const layersLiveStats = useMemo((): StatRow[] => {
-    const loaded = countLayerPanelLoaded(assets, basemapVectorLayers, dbAreaRows);
+    const loaded = countLayerPanelLoaded(assets, basemapVectorLayers, dbAreaRows, cameraMenuIds);
     const visible = countLayerPanelEnabled(
       assets,
+      cameraMenuIds,
       layerVisibility,
       basemapGroupVisible,
       basemapVectorLayers,
       basemapVectorVisibility,
       dbAreaRows,
       dbAreaVisibility,
+      optoDeviceVisibility,
     );
     const markers = tracks.length + assets.length;
     const drawings = drawnAreas.length + routeLines.length;
@@ -291,6 +320,8 @@ export function WorkspaceDetails() {
     routeLines,
     dbAreaRows,
     dbAreaVisibility,
+    optoDeviceVisibility,
+    cameraMenuIds,
   ]);
 
   const config = WORKSPACE_CONFIGS[topTab];

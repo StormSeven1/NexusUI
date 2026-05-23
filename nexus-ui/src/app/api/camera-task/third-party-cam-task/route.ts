@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const TASK_KINDS = new Set(["SEARCH", "TRACK", "FOCUS", "STOP"]);
+const TASK_KINDS = new Set(["SEARCH", "TRACK", "CATCH", "AUTO1", "AUTO2", "AUTO3", "STOP"]);
 
 function createTaskId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -22,9 +22,7 @@ function validEntityId(raw: string): boolean {
   return /^[\w.-]+$/.test(t);
 }
 
-/**
- * 第三方相机：`ThirdPartyCamCamTask`（SEARCH/TRACK/FOCUS）或 `ThirdPartyCamStopTask`（STOP）→ `POST …/api/v1/tasks`
- */
+/** 第三方相机：`ThirdPartyCamCamTask`，`STOP` 走 `ThirdPartyCamStopTask` → `POST …/api/v1/tasks` */
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {

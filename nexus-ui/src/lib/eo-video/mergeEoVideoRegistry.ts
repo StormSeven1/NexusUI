@@ -4,6 +4,23 @@ import { isCameraEntityId } from "./mapEntitiesToCameraDevices";
 import { getThirdPartyCameraMulticastUdp } from "./thirdPartyCameraMulticast";
 import type { EoVideoStreamEntry, EoVideoStreamsConfig } from "./types";
 
+export type ThirdPartyCamerasRegistryInput = {
+  udp: EoCameraRegistryRow[];
+  webrtc: Array<EoCameraRegistryRow & { signalingUrl?: string }>;
+};
+
+function normalizeThirdPartyRegistryInput(
+  thirdPartyCameras: EoCameraRegistryRow[] | ThirdPartyCamerasRegistryInput = [],
+): Required<ThirdPartyCamerasRegistryInput> {
+  if (Array.isArray(thirdPartyCameras)) {
+    return { udp: thirdPartyCameras, webrtc: [] };
+  }
+  return {
+    udp: thirdPartyCameras.udp ?? [],
+    webrtc: thirdPartyCameras.webrtc ?? [],
+  };
+}
+
 /** 去掉从注册表合并的相机/无人机流（保留 JSON 静态流） */
 export function stripRegistryStreams(c: EoVideoStreamsConfig): EoVideoStreamsConfig {
   const streams = c.streams.filter(
@@ -39,30 +56,53 @@ export async function fetchDroneDevicesFromPublic(): Promise<EoDroneDeviceRow[]>
 }
 
 /** 服务端走 `NEXUS_ENTITIES_LIST_URL`（见 `/api/nexus-entities/third-party-cameras`） */
-export async function fetchThirdPartyCamerasFromApi(): Promise<EoCameraRegistryRow[]> {
+export async function fetchThirdPartyCamerasFromApi(): Promise<Required<ThirdPartyCamerasRegistryInput>> {
   try {
     const r = await fetch("/api/nexus-entities/third-party-cameras", { cache: "no-store" });
-    if (!r.ok) return [];
-    const j = (await r.json()) as { ok?: boolean; cameras?: EoCameraRegistryRow[] };
-    if (j.ok !== true || !Array.isArray(j.cameras)) return [];
-    return j.cameras;
+    if (!r.ok) return { udp: [], webrtc: [] };
+    const j = (await r.json()) as {
+      ok?: boolean;
+      cameras?: EoCameraRegistryRow[];
+      udpCameras?: EoCameraRegistryRow[];
+      webrtcCameras?: Array<EoCameraRegistryRow & { signalingUrl?: string }>;
+    };
+    if (j.ok !== true) return { udp: [], webrtc: [] };
+    if (Array.isArray(j.udpCameras) || Array.isArray(j.webrtcCameras)) {
+      return {
+        udp: Array.isArray(j.udpCameras) ? j.udpCameras : [],
+        webrtc: Array.isArray(j.webrtcCameras) ? j.webrtcCameras : [],
+      };
+    }
+    if (Array.isArray(j.cameras)) {
+      return { udp: j.cameras, webrtc: [] };
+    }
+    return { udp: [], webrtc: [] };
   } catch {
-    return [];
+    return { udp: [], webrtc: [] };
   }
+}
+
+/** 地图光电子菜单 / 标签合并：UDP + WebRTC 第三方相机 */
+export async function fetchThirdPartyCameraMenuRowsFromApi(): Promise<EoCameraRegistryRow[]> {
+  const split = await fetchThirdPartyCamerasFromApi();
+  return [...split.udp, ...split.webrtc];
 }
 
 /**
  * 光电：API 相机 + 静态配置里非注册表流（如 eo-main）；
  * 无人机：API 无人机；
- * 第三方相机：`specificType === ThirdPartyCamera`，YUV 栈占位；组播 `host:port` 见 `NEXT_PUBLIC_EO_THIRD_PARTY_CAMERA_MULTICAST_UDP`；
+ * 第三方相机（8090 `ontology.specificType`）：
+ * - `ThirdPartyUdpCameraImage`：YUV 栈 + 组播中继；
+ * - `ThirdPartyUdpCameraVideo`：`sensorParameters.url` WebRTC。
  * 右键菜单为两级：hover 展开子项（见 contextMenu.menuLayout）。
  */
 export function mergeRegistryStreams(
   base: EoVideoStreamsConfig,
   apiCameras: EoCameraRegistryRow[],
   apiDrones: EoDroneDeviceRow[],
-  thirdPartyCameras: EoCameraRegistryRow[] = [],
+  thirdPartyCameras: EoCameraRegistryRow[] | ThirdPartyCamerasRegistryInput = [],
 ): EoVideoStreamsConfig {
+  const thirdParty = normalizeThirdPartyRegistryInput(thirdPartyCameras);
   const apiCameraIdSet = new Set(apiCameras.map((c) => c.entityId));
 
   const stripped = stripRegistryStreams(base);
@@ -89,13 +129,21 @@ export function mergeRegistryStreams(
   });
 
   const thirdPartyMulticast = getThirdPartyCameraMulticastUdp();
-  const apiThirdPartyStreams: EoVideoStreamEntry[] = thirdPartyCameras.map((c) => ({
+  const apiThirdPartyUdpStreams: EoVideoStreamEntry[] = thirdParty.udp.map((c) => ({
     id: c.entityId,
     label: c.label,
     signalingUrl: "",
     registrySource: "thirdPartyCamera",
     ...(thirdPartyMulticast ? { multicastUdp: thirdPartyMulticast } : {}),
   }));
+  const apiThirdPartyWebrtcStreams: EoVideoStreamEntry[] = thirdParty.webrtc.map((c) => ({
+    id: c.entityId,
+    label: c.label,
+    signalingUrl: c.signalingUrl?.trim() || "about:blank",
+    registrySource: "thirdPartyCamera",
+    playbackKind: "webrtc" as const,
+  }));
+  const apiThirdPartyStreams = [...apiThirdPartyUdpStreams, ...apiThirdPartyWebrtcStreams];
 
   const apiUavStreams: EoVideoStreamEntry[] = apiDrones.map((d) => ({
     id: `uav:${d.entityId}`,

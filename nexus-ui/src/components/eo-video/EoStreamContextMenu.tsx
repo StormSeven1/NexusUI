@@ -21,10 +21,24 @@ export interface EoStreamContextMenuProps {
   config: EoVideoStreamsConfig;
   activeStreamId: string;
   onSelectStream: (streamId: string) => void;
+  extraItems?: Array<{
+    key: string;
+    label: string;
+    disabled?: boolean;
+    onSelect: () => void;
+  }>;
+  isStreamDisabled?: (streamId: string) => boolean;
   children: React.ReactNode;
 }
 
-export function EoStreamContextMenu({ config, activeStreamId, onSelectStream, children }: EoStreamContextMenuProps) {
+export function EoStreamContextMenu({
+  config,
+  activeStreamId,
+  onSelectStream,
+  extraItems,
+  isStreamDisabled,
+  children,
+}: EoStreamContextMenuProps) {
   const streamById = useMemo(() => new Map(config.streams.map((s) => [s.id, s])), [config.streams]);
   const groups = config.contextMenu.groups;
   const nested = config.contextMenu.menuLayout === "nested";
@@ -36,7 +50,7 @@ export function EoStreamContextMenu({ config, activeStreamId, onSelectStream, ch
       return (
         <ContextMenuItem
           key={id}
-          disabled={id === activeStreamId}
+          disabled={id === activeStreamId || Boolean(isStreamDisabled?.(id))}
           onSelect={() => onSelectStream(id)}
         >
           {s.label}
@@ -54,6 +68,22 @@ export function EoStreamContextMenu({ config, activeStreamId, onSelectStream, ch
         >
           {config.contextMenu.title ? (
             <ContextMenuLabel className="text-nexus-accent">{config.contextMenu.title}</ContextMenuLabel>
+          ) : null}
+          {extraItems?.length ? (
+            <>
+              {extraItems.map((item) => (
+                <ContextMenuItem
+                  key={item.key}
+                  disabled={item.disabled}
+                  onSelect={() => {
+                    item.onSelect();
+                  }}
+                >
+                  {item.label}
+                </ContextMenuItem>
+              ))}
+              <ContextMenuSeparator />
+            </>
           ) : null}
           {nested
             ? groups.map((g, gi) => (

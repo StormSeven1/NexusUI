@@ -23,7 +23,7 @@ import { trimHistoryTrailForDisplay, velocityVectorEndLngLat } from "@/lib/track
 import { useAppStore } from "@/stores/app-store";
 import {
   filterTracksForMapRender,
-  isRadarTrackLayerKey,
+  isDotTrackLayerKey,
   resolveTrackLayerKey,
   trackMapVisibilitySignature,
 } from "@/lib/track-layer-visibility";
@@ -34,7 +34,7 @@ export const TRACK_SOURCE = "tracks-source";
 /** 融合航迹（对海/对空）点要素：军标 symbol，与高亮环同源 */
 export const TRACK_FUSION_PTS_SOURCE = "tracks-fusion-pts";
 
-/** 三类雷达航迹点要素：圆点 circle，与高亮环同源 */
+/** 雷达 + AIS 航迹点要素：圆点 circle，与高亮环同源 */
 export const TRACK_RADAR_PTS_SOURCE = "tracks-radar-pts";
 
 /** 多选高亮环：`insertBeforeLayerId` 指向本层时，雷达/光电等专题层会插在其下（由下至上绘制，高亮环盖在专题层之上） */
@@ -197,7 +197,7 @@ export function buildTrackFusionPointsGeoJSON(
   const features: GeoJSON.Feature[] = [];
   for (const t of trackList) {
     const layerKey = resolveTrackLayerKey(t);
-    if (isRadarTrackLayerKey(layerKey)) continue;
+    if (isDotTrackLayerKey(layerKey)) continue;
     const { pointFill, disp, neutralFusion, style } = trackPointFillAndStyle(t, accent);
     const friendlyFill = disp === "friendly" ? style.idColor : undefined;
     const v = t.isVirtual === true;
@@ -248,7 +248,7 @@ export function buildTrackFusionPointsGeoJSON(
 }
 
 /**
- * 雷达航迹点 → GeoJSON：**Point**（圆点层用 `color`），供 `TRACK_RADAR_PTS_SOURCE`。
+ * 雷达 / AIS 航迹点 → GeoJSON：**Point**（圆点层用 `color`），供 `TRACK_RADAR_PTS_SOURCE`。
  */
 export function buildTrackRadarPointsGeoJSON(
   trackList: Track[],
@@ -257,7 +257,7 @@ export function buildTrackRadarPointsGeoJSON(
   const features: GeoJSON.Feature[] = [];
   for (const t of trackList) {
     const layerKey = resolveTrackLayerKey(t);
-    if (!isRadarTrackLayerKey(layerKey)) continue;
+    if (!isDotTrackLayerKey(layerKey)) continue;
     const { pointFill, disp, style } = trackPointFillAndStyle(t, accent);
     const baseProps: Record<string, unknown> = {
       id: t.id,
@@ -356,7 +356,7 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
     h ^= isAirTrackBirdGlyph(t) ? 1 : 0;
     h = Math.imul(h, 16777619) >>> 0;
     const lk = resolveTrackLayerKey(t);
-    const mapDot = isRadarTrackLayerKey(lk);
+    const mapDot = isDotTrackLayerKey(lk);
     h ^= mapDot ? 1 : 0;
     h = Math.imul(h, 16777619) >>> 0;
     for (let i = 0; i < lk.length; i++) {
@@ -713,7 +713,7 @@ export class TracksMaplibre {
     const accent = this.dispositionAccent;
     const seen = new Set<string>();
     for (const t of tracks) {
-      if (isRadarTrackLayerKey(resolveTrackLayerKey(t))) continue;
+      if (isDotTrackLayerKey(resolveTrackLayerKey(t))) continue;
       const disp = getTrackDispositionForRendering(t);
       if (disp !== "neutral") continue;
       const tint = neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor);

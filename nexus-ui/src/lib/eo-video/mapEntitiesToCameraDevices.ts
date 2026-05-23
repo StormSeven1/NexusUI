@@ -1,5 +1,11 @@
 import type { EoCameraRegistryFile, EoCameraRegistryRow } from "./cameraRegistryTypes";
 import { extractEntityRecords } from "./mapEntitiesToDroneDevices";
+import {
+  classifyThirdPartyPlaybackFromOntology,
+  isThirdPartyCameraOntologyRow,
+  isThirdPartyOntologySpecificType,
+  readOntologySpecificType,
+} from "./thirdPartyCamCtrlType";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -28,48 +34,74 @@ function cameraLabel(raw: Record<string, unknown>, entityId: string): string {
 }
 
 function isCameraOntology(raw: Record<string, unknown>): boolean {
+  const st = readOntologySpecificType(raw);
+  if (isThirdPartyOntologySpecificType(st)) return false;
   const o = raw.ontology;
   if (!isRecord(o)) return false;
-  const st = String(o.specificType ?? "").toUpperCase();
-  /** 第三方相机单独进「第三方相机」菜单，不走光电 WebRTC */
-  if (st === "THIRDPARTYCAMERA") return false;
+  const stu = st.toUpperCase();
   const tpl = String(o.template ?? "").toUpperCase();
-  if (st.includes("CAMERA") || st === "EO" || st === "IR") return true;
+  if (stu.includes("CAMERA") || stu === "EO" || stu === "IR") return true;
   if (tpl.includes("CAMERA") || tpl.includes("SENSOR")) return true;
   return false;
 }
 
-function isThirdPartyCameraRow(raw: Record<string, unknown>): boolean {
-  const o = raw.ontology;
-  if (!isRecord(o)) return false;
-  const st = String(o.specificType ?? "").trim();
-  return st.toUpperCase() === "THIRDPARTYCAMERA";
-}
-
 function mapThirdPartyCameraOne(raw: unknown): EoCameraRegistryRow | null {
   if (!isRecord(raw)) return null;
-  if (!isThirdPartyCameraRow(raw)) return null;
+  if (!isThirdPartyCameraOntologyRow(raw)) return null;
   const entityId = pickStr(raw, ["entityId", "entity_id", "id"]);
   if (!entityId) return null;
+  const playback = classifyThirdPartyPlaybackFromOntology(raw);
+  if (!playback) return null;
+  const ontologySpecificType = readOntologySpecificType(raw);
   return {
     entityId,
     label: cameraLabel(raw, entityId),
+    ontologySpecificType,
+    thirdPartyPlayback: playback,
   };
 }
 
-/** `ontology.specificType === ThirdPartyCamera`（大小写不敏感），与在线状态无关 */
-export function mapEntitiesPayloadToThirdPartyCameras(payload: unknown): EoCameraRegistryRow[] {
+export type ThirdPartyCamerasByCtrlType = {
+  /** `ThirdPartyUdpCameraImage`（及旧 `ThirdPartyCamera`）→ UDP/YUV */
+  udp: EoCameraRegistryRow[];
+  /** `ThirdPartyUdpCameraVideo` → WebRTC */
+  webrtc: EoCameraRegistryRow[];
+};
+
+/**
+ * 8090 列表（`NEXUS_ENTITIES_LIST_URL`）：
+ * - `ontology.specificType === ThirdPartyUdpCameraImage` → UDP
+ * - `ontology.specificType === ThirdPartyUdpCameraVideo` → WebRTC
+ * - 旧 `ThirdPartyCamera` 仍支持（默认 UDP，`camCtrlType=8` 时 WebRTC）
+ */
+export function mapEntitiesPayloadToThirdPartyCamerasSplit(payload: unknown): ThirdPartyCamerasByCtrlType {
   const rows = extractEntityRecords(payload);
-  const out: EoCameraRegistryRow[] = [];
-  const seen = new Set<string>();
+  const udp: EoCameraRegistryRow[] = [];
+  const webrtc: EoCameraRegistryRow[] = [];
+  const seenUdp = new Set<string>();
+  const seenWeb = new Set<string>();
   for (const r of rows) {
     const c = mapThirdPartyCameraOne(r);
     if (!c) continue;
-    if (seen.has(c.entityId)) continue;
-    seen.add(c.entityId);
-    out.push(c);
+    if (c.thirdPartyPlayback === "webrtc") {
+      if (seenWeb.has(c.entityId)) continue;
+      seenWeb.add(c.entityId);
+      webrtc.push(c);
+    } else {
+      if (seenUdp.has(c.entityId)) continue;
+      seenUdp.add(c.entityId);
+      udp.push(c);
+    }
   }
-  return out.sort((a, b) => a.entityId.localeCompare(b.entityId, undefined, { numeric: true }));
+  const sort = (a: EoCameraRegistryRow, b: EoCameraRegistryRow) =>
+    a.entityId.localeCompare(b.entityId, undefined, { numeric: true });
+  return { udp: udp.sort(sort), webrtc: webrtc.sort(sort) };
+}
+
+/** 右键「第三方相机」菜单展示用：UDP + WebRTC 合并列表 */
+export function mapEntitiesPayloadToThirdPartyCameras(payload: unknown): EoCameraRegistryRow[] {
+  const { udp, webrtc } = mapEntitiesPayloadToThirdPartyCamerasSplit(payload);
+  return [...udp, ...webrtc];
 }
 
 function mapCameraOne(raw: unknown): EoCameraRegistryRow | null {
@@ -78,7 +110,6 @@ function mapCameraOne(raw: unknown): EoCameraRegistryRow | null {
   if (!entityId) return null;
   if (!isCameraEntityId(entityId) && !isCameraOntology(raw)) return null;
   if (!isCameraEntityId(entityId) && isCameraOntology(raw)) {
-    // ontology 像相机但 id 非 camera_xxx 时仍跳过，避免误把 UAV 当相机
     return null;
   }
   return {

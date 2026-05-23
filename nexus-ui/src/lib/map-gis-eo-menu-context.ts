@@ -4,7 +4,7 @@ import type { MapGisDroneRow } from "@/lib/map-gis-drone-rows";
 import {
   fetchCameraRegistryFromPublic,
   fetchDroneDevicesFromPublic,
-  fetchThirdPartyCamerasFromApi,
+  fetchThirdPartyCameraMenuRowsFromApi,
 } from "@/lib/eo-video/mergeEoVideoRegistry";
 
 /**
@@ -16,7 +16,7 @@ export type MapGisEoMenuContext = {
   cameraLabelByEntityId: Map<string, string>;
   droneLabelByDeviceSn: Map<string, string>;
   registryDroneRows: MapGisDroneRow[];
-  /** 与 eo-video 同源：`ontology.specificType === ThirdPartyCamera`（地图光电子菜单需单独合并，实体快照不含此类 id） */
+  /** 与 eo-video 同源：8090 第三方 ontology（UdpCameraImage / UdpCameraVideo 等） */
   thirdPartyCameras: EoCameraRegistryRow[];
 };
 
@@ -44,7 +44,7 @@ export async function fetchMapGisEoMenuContext(): Promise<MapGisEoMenuContext> {
     fetchStreamsStaticById(),
     fetchCameraRegistryFromPublic(),
     fetchDroneDevicesFromPublic(),
-    fetchThirdPartyCamerasFromApi(),
+    fetchThirdPartyCameraMenuRowsFromApi(),
   ]);
 
   const regByCanon = new Map<string, string>();

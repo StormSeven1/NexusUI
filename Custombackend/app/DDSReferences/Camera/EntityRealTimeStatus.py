@@ -4453,6 +4453,10 @@ DispositionType_DISPOSITION_FRIENDLY = _EntityRealTimeStatusWrapper.DispositionT
 DispositionType_DISPOSITION_HOSTILE = _EntityRealTimeStatusWrapper.DispositionType_DISPOSITION_HOSTILE
 DispositionType_DISPOSITION_NEUTRAL = _EntityRealTimeStatusWrapper.DispositionType_DISPOSITION_NEUTRAL
 DispositionType_DISPOSITION_UNKNOWN = _EntityRealTimeStatusWrapper.DispositionType_DISPOSITION_UNKNOWN
+DeviceState_DEVICE_STATE_STANDBY = _EntityRealTimeStatusWrapper.DeviceState_DEVICE_STATE_STANDBY
+DeviceState_DEVICE_STATE_POWERED = _EntityRealTimeStatusWrapper.DeviceState_DEVICE_STATE_POWERED
+DeviceState_DEVICE_STATE_EXECUTING = _EntityRealTimeStatusWrapper.DeviceState_DEVICE_STATE_EXECUTING
+DeviceState_DEVICE_STATE_UNKNOWN = _EntityRealTimeStatusWrapper.DeviceState_DEVICE_STATE_UNKNOWN
 class BaseDeviceStatus(object):
     thisown = property(lambda x: x.this.own(), lambda x, v: x.this.own(v), doc="The membership flag")
     __repr__ = _swig_repr
@@ -4508,6 +4512,9 @@ class BaseDeviceStatus(object):
 
     def timestamp(self, *args):
         return _EntityRealTimeStatusWrapper.BaseDeviceStatus_timestamp(self, *args)
+
+    def deviceState(self, *args):
+        return _EntityRealTimeStatusWrapper.BaseDeviceStatus_deviceState(self, *args)
 
 # Register BaseDeviceStatus in _EntityRealTimeStatusWrapper:
 _EntityRealTimeStatusWrapper.BaseDeviceStatus_swigregister(BaseDeviceStatus)

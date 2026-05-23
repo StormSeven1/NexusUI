@@ -37,6 +37,7 @@ export interface EoCameraDdsStatusRow {
   executionState?: unknown;
   online?: boolean;
   trackID?: unknown;
+  targetID?: unknown;
   /** DDS 目标别名（与 Qt 标牌/DrawCircleTag 目标名同源字段，键名常见 trackAlias / track_alias） */
   trackAlias?: unknown;
   /** 方位角 °（DDS / Camera WS 常见 `azimuth`） */
@@ -82,8 +83,22 @@ export const useEoCameraDdsStatusStore = create<EoCameraDdsStatusState>((set, ge
         ? d.executionState
         : d.execution_state !== undefined
           ? d.execution_state
+          : d.excute_state !== undefined
+            ? d.excute_state
+            : d.excuteState !== undefined
+              ? d.excuteState
           : undefined;
-    const trackPick = pickFromCameraPayload(d, ["trackID", "trackId", "track_id", "m_nTrackID", "rectTrackID"]);
+    const trackPick = pickFromCameraPayload(d, [
+      "trackID",
+      "trackId",
+      "track_id",
+      "trackid",
+      "targetID",
+      "targetId",
+      "target_id",
+      "m_nTrackID",
+      "rectTrackID",
+    ]);
     const trackIn =
       trackPick !== undefined
         ? trackPick
@@ -93,6 +108,12 @@ export const useEoCameraDdsStatusStore = create<EoCameraDdsStatusState>((set, ge
             ? d.trackId
             : d.track_id !== undefined
               ? d.track_id
+              : d.targetID !== undefined
+                ? d.targetID
+                : d.targetId !== undefined
+                  ? d.targetId
+                  : d.target_id !== undefined
+                    ? d.target_id
               : undefined;
     /** 勿用根上的 `name`：多为相机名称/状态文案（如「dds相机实时状态」），会误当航迹别名 */
     const aliasPick = pickFromCameraPayload(d, ["trackAlias", "track_alias"]);
@@ -128,6 +149,14 @@ export const useEoCameraDdsStatusStore = create<EoCameraDdsStatusState>((set, ge
       executionState: execIn !== undefined ? execIn : prev?.executionState,
       online: d.online !== undefined ? Boolean(d.online) : prev?.online,
       trackID: trackIn !== undefined ? trackIn : prev?.trackID,
+      targetID:
+        d.targetID !== undefined
+          ? d.targetID
+          : d.targetId !== undefined
+            ? d.targetId
+            : d.target_id !== undefined
+              ? d.target_id
+              : prev?.targetID,
       trackAlias: aliasIn !== undefined ? aliasIn : prev?.trackAlias,
       azimuth: azIn !== undefined ? azIn : prev?.azimuth,
       course: courseIn !== undefined ? courseIn : prev?.course,

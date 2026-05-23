@@ -20,41 +20,39 @@ function defaultTrackSubtypeVisible(): Record<TrackLayerKey, boolean> {
   ) as Record<TrackLayerKey, boolean>;
 }
 
+function defaultSecondsByLayer(defaultSec: number): Record<TrackLayerKey, number> {
+  return Object.fromEntries(
+    TRACK_LAYER_KEYS_ORDERED.map((k) => [k, defaultSec]),
+  ) as Record<TrackLayerKey, number>;
+}
+
+function layerUsesAirDisplayDefaults(key: TrackLayerKey): boolean {
+  return key === "fuse_air" || key === "bird_radar";
+}
+
 /** 尾迹长度（秒）换算为保留点数时，假定相邻采样间隔（秒）；仅前端展示裁剪，不改动 track-store */
 export const TRACK_TRAIL_SAMPLE_INTERVAL_SEC = 2;
 
-const STORAGE_KEY = "nexus-ui-track-display-v1";
+const STORAGE_KEY = "nexus-ui-track-display-v2";
 
 export type TrackFusionKindUi = "sea" | "air";
 export type AirFusionSubtypeKey = "uav" | "bird";
 
 export interface TrackDisplayState {
-  /** 对海融合航迹（中立态）颜色 */
   seaFusionColor: string;
-  /** 对空融合航迹（中立态）颜色 */
   airFusionColor: string;
-  /** 对海/水下矢量线长度（秒 × 速度），1–300 */
-  vectorLengthSecondsSea: number;
-  /** 对空矢量线长度（秒 × 速度），1–300 */
-  vectorLengthSecondsAir: number;
-  /** 对海/水下尾迹展示长度（秒），按采样间隔换算为最多点数；1–1800 */
-  trailLengthSecondsSea: number;
-  /** 对空尾迹展示长度（秒），按采样间隔换算为最多点数；1–1800 */
-  trailLengthSecondsAir: number;
-  /**
-   * 目标侧边栏：按 DDS 来源控制地图上是否绘制该类航迹（与图层「目标」总开关独立）。
-   * `false` 隐藏；缺省键视为 `true`。
-   */
+  /** 各 DDS 航迹类型矢量长度（秒 × 速度），1–300 */
+  vectorLengthSecondsByLayer: Record<TrackLayerKey, number>;
+  /** 各 DDS 航迹类型尾迹长度（秒），1–1800 */
+  trailLengthSecondsByLayer: Record<TrackLayerKey, number>;
   trackSubtypeVisible: Record<TrackLayerKey, boolean>;
-  /** 对空融合(`fuse_air`)子类显隐：无人机 / 鸟 */
   airFusionSubtypeVisible: AirFusionSubtypeVisibility;
-  /** 渲染指纹：配色/矢量/尾迹/分类显隐变化时递增，供地图跳过错误缓存 */
   displayRevision: number;
 
   setSeaFusionColor: (c: string) => void;
   setAirFusionColor: (c: string) => void;
-  setVectorLengthSeconds: (kind: TrackFusionKindUi, s: number) => void;
-  setTrailLengthSeconds: (kind: TrackFusionKindUi, s: number) => void;
+  setVectorLengthSecondsForLayer: (key: TrackLayerKey, s: number) => void;
+  setTrailLengthSecondsForLayer: (key: TrackLayerKey, s: number) => void;
   toggleTrackSubtype: (key: TrackLayerKey) => void;
   toggleAirFusionSubtype: (key: AirFusionSubtypeKey) => void;
 }
@@ -63,15 +61,56 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
+function coerceVec(v: number | undefined, fallback: number): number {
+  if (v == null) return fallback;
+  let n = Math.round(v);
+  if (n === 0) n = 60;
+  return clamp(n, 1, 300);
+}
+
+function coerceTrail(v: number | undefined, fallback: number): number {
+  if (v == null) return fallback;
+  return clamp(Math.round(v), 1, 1800);
+}
+
+function migrateSecondsByLayer(
+  p: Record<string, unknown>,
+  byLayerKey: "vectorLengthSecondsByLayer" | "trailLengthSecondsByLayer",
+  legacySeaKey: "vectorLengthSecondsSea" | "trailLengthSecondsSea",
+  legacyAirKey: "vectorLengthSecondsAir" | "trailLengthSecondsAir",
+  legacySingleKey: "vectorLengthSeconds" | "trailLengthSeconds",
+  fallbackByLayer: Record<TrackLayerKey, number>,
+  coerce: (v: number | undefined, fb: number) => number,
+): Record<TrackLayerKey, number> {
+  const next = { ...fallbackByLayer };
+  const legacy =
+    p[legacySingleKey] != null
+      ? coerce(Number(p[legacySingleKey]), fallbackByLayer.fuse_sea)
+      : undefined;
+  const seaVal =
+    p[legacySeaKey] != null ? coerce(Number(p[legacySeaKey]), fallbackByLayer.fuse_sea) : legacy;
+  const airVal =
+    p[legacyAirKey] != null ? coerce(Number(p[legacyAirKey]), fallbackByLayer.fuse_air) : legacy;
+  const byRaw = p[byLayerKey];
+  const by =
+    byRaw && typeof byRaw === "object" ? (byRaw as Record<string, number>) : null;
+  for (const k of TRACK_LAYER_KEYS_ORDERED) {
+    if (by && by[k] != null) {
+      next[k] = coerce(Number(by[k]), next[k]);
+      continue;
+    }
+    next[k] = layerUsesAirDisplayDefaults(k) ? (airVal ?? next[k]) : (seaVal ?? next[k]);
+  }
+  return next;
+}
+
 export const useTrackDisplayStore = create<TrackDisplayState>()(
   persist(
     (set) => ({
       seaFusionColor: FUSION_TRACK_NEUTRAL_SEA,
       airFusionColor: FUSION_TRACK_NEUTRAL_AIR,
-      vectorLengthSecondsSea: 60,
-      vectorLengthSecondsAir: 60,
-      trailLengthSecondsSea: 600,
-      trailLengthSecondsAir: 600,
+      vectorLengthSecondsByLayer: defaultSecondsByLayer(60),
+      trailLengthSecondsByLayer: defaultSecondsByLayer(600),
       trackSubtypeVisible: defaultTrackSubtypeVisible(),
       airFusionSubtypeVisible: { ...DEFAULT_AIR_FUSION_SUBTYPE_VISIBLE },
       displayRevision: 0,
@@ -86,20 +125,20 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
           airFusionColor: c,
           displayRevision: s.displayRevision + 1,
         })),
-      setVectorLengthSeconds: (kind, sec) =>
+      setVectorLengthSecondsForLayer: (key, sec) =>
         set((s) => ({
-          vectorLengthSecondsSea:
-            kind === "sea" ? clamp(Math.round(sec), 1, 300) : s.vectorLengthSecondsSea,
-          vectorLengthSecondsAir:
-            kind === "air" ? clamp(Math.round(sec), 1, 300) : s.vectorLengthSecondsAir,
+          vectorLengthSecondsByLayer: {
+            ...s.vectorLengthSecondsByLayer,
+            [key]: clamp(Math.round(sec), 1, 300),
+          },
           displayRevision: s.displayRevision + 1,
         })),
-      setTrailLengthSeconds: (kind, sec) =>
+      setTrailLengthSecondsForLayer: (key, sec) =>
         set((s) => ({
-          trailLengthSecondsSea:
-            kind === "sea" ? clamp(Math.round(sec), 1, 1800) : s.trailLengthSecondsSea,
-          trailLengthSecondsAir:
-            kind === "air" ? clamp(Math.round(sec), 1, 1800) : s.trailLengthSecondsAir,
+          trailLengthSecondsByLayer: {
+            ...s.trailLengthSecondsByLayer,
+            [key]: clamp(Math.round(sec), 1, 1800),
+          },
           displayRevision: s.displayRevision + 1,
         })),
       toggleTrackSubtype: (key) =>
@@ -133,69 +172,47 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
       partialize: (s) => ({
         seaFusionColor: s.seaFusionColor,
         airFusionColor: s.airFusionColor,
-        vectorLengthSecondsSea: s.vectorLengthSecondsSea,
-        vectorLengthSecondsAir: s.vectorLengthSecondsAir,
-        trailLengthSecondsSea: s.trailLengthSecondsSea,
-        trailLengthSecondsAir: s.trailLengthSecondsAir,
+        vectorLengthSecondsByLayer: s.vectorLengthSecondsByLayer,
+        trailLengthSecondsByLayer: s.trailLengthSecondsByLayer,
         trackSubtypeVisible: s.trackSubtypeVisible,
         airFusionSubtypeVisible: s.airFusionSubtypeVisible,
       }),
       merge: (persisted, current) => {
-        const p = (persisted ?? {}) as (Partial<
-          Pick<
-            TrackDisplayState,
-            | "seaFusionColor"
-            | "airFusionColor"
-            | "vectorLengthSecondsSea"
-            | "vectorLengthSecondsAir"
-            | "trailLengthSecondsSea"
-            | "trailLengthSecondsAir"
-            | "trackSubtypeVisible"
-            | "airFusionSubtypeVisible"
-          >
-        > & {
-          /** v1 历史字段：单套矢量时长，迁移到空/海两套 */
-          vectorLengthSeconds?: number;
-          /** v1 历史字段：单套尾迹时长，迁移到空/海两套 */
-          trailLengthSeconds?: number;
-        });
-        const mergedSub = { ...defaultTrackSubtypeVisible(), ...(p.trackSubtypeVisible ?? {}) };
+        const p = (persisted ?? {}) as Record<string, unknown>;
+        const mergedSub = {
+          ...defaultTrackSubtypeVisible(),
+          ...((p.trackSubtypeVisible as Record<TrackLayerKey, boolean>) ?? {}),
+        };
         const mergedAirSub = {
           ...DEFAULT_AIR_FUSION_SUBTYPE_VISIBLE,
-          ...(p.airFusionSubtypeVisible ?? {}),
+          ...((p.airFusionSubtypeVisible as AirFusionSubtypeVisibility) ?? {}),
         };
-        const legacyVec = p.vectorLengthSeconds != null
-          ? clamp(Math.round(p.vectorLengthSeconds), 1, 300)
-          : undefined;
-        const legacyTrail = p.trailLengthSeconds != null
-          ? clamp(Math.round(p.trailLengthSeconds), 1, 1800)
-          : undefined;
-        const coerceVec = (v: number | undefined, fallback: number): number => {
-          if (v == null) return fallback;
-          let n = Math.round(v);
-          if (n === 0) n = 60;
-          return clamp(n, 1, 300);
-        };
+        const defaultVec = defaultSecondsByLayer(60);
+        const defaultTrail = defaultSecondsByLayer(600);
+        const vectorLengthSecondsByLayer = migrateSecondsByLayer(
+          p,
+          "vectorLengthSecondsByLayer",
+          "vectorLengthSecondsSea",
+          "vectorLengthSecondsAir",
+          "vectorLengthSeconds",
+          defaultVec,
+          coerceVec,
+        );
+        const trailLengthSecondsByLayer = migrateSecondsByLayer(
+          p,
+          "trailLengthSecondsByLayer",
+          "trailLengthSecondsSea",
+          "trailLengthSecondsAir",
+          "trailLengthSeconds",
+          defaultTrail,
+          coerceTrail,
+        );
         return {
           ...current,
-          seaFusionColor: p.seaFusionColor ?? current.seaFusionColor,
-          airFusionColor: p.airFusionColor ?? current.airFusionColor,
-          vectorLengthSecondsSea: coerceVec(
-            p.vectorLengthSecondsSea,
-            legacyVec ?? current.vectorLengthSecondsSea,
-          ),
-          vectorLengthSecondsAir: coerceVec(
-            p.vectorLengthSecondsAir,
-            legacyVec ?? current.vectorLengthSecondsAir,
-          ),
-          trailLengthSecondsSea:
-            p.trailLengthSecondsSea != null
-              ? clamp(Math.round(p.trailLengthSecondsSea), 1, 1800)
-              : (legacyTrail ?? current.trailLengthSecondsSea),
-          trailLengthSecondsAir:
-            p.trailLengthSecondsAir != null
-              ? clamp(Math.round(p.trailLengthSecondsAir), 1, 1800)
-              : (legacyTrail ?? current.trailLengthSecondsAir),
+          seaFusionColor: (p.seaFusionColor as string) ?? current.seaFusionColor,
+          airFusionColor: (p.airFusionColor as string) ?? current.airFusionColor,
+          vectorLengthSecondsByLayer,
+          trailLengthSecondsByLayer,
           trackSubtypeVisible: mergedSub,
           airFusionSubtypeVisible: mergedAirSub,
         };
@@ -204,7 +221,6 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
   ),
 );
 
-/** 中立融合航迹：按对空/对海选用面板颜色；雷达三类与对应融合色一致（见 `resolveTrackLayerKey`） */
 export function neutralFusionColorForTrack(
   track: Pick<
     Track,
@@ -223,22 +239,44 @@ export function neutralFusionColorForTrack(
   if (track.type === "underwater") return sea;
   const lk = resolveTrackLayerKey(track);
   if (lk === "fuse_air" || lk === "bird_radar") return air;
-  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi") return sea;
+  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track") {
+    return sea;
+  }
   return track.isAirTrack === true ? air : sea;
 }
 
-/** 航迹矢量时长：对空/对海（含水下）分开读取 */
 export function vectorLengthSecondsForTrack(
-  track: Pick<Track, "type">,
-  state: Pick<TrackDisplayState, "vectorLengthSecondsSea" | "vectorLengthSecondsAir">,
+  track: Pick<
+    Track,
+    | "type"
+    | "trackLayerKey"
+    | "ddsSourceId"
+    | "dataSourceId"
+    | "sensor"
+    | "targetType"
+    | "name"
+    | "isAirTrack"
+  >,
+  state: Pick<TrackDisplayState, "vectorLengthSecondsByLayer">,
 ): number {
-  return track.type === "air" ? state.vectorLengthSecondsAir : state.vectorLengthSecondsSea;
+  const lk = resolveTrackLayerKey(track);
+  return state.vectorLengthSecondsByLayer[lk] ?? 60;
 }
 
-/** 航迹尾迹时长：对空/对海（含水下）分开读取 */
 export function trailLengthSecondsForTrack(
-  track: Pick<Track, "type">,
-  state: Pick<TrackDisplayState, "trailLengthSecondsSea" | "trailLengthSecondsAir">,
+  track: Pick<
+    Track,
+    | "type"
+    | "trackLayerKey"
+    | "ddsSourceId"
+    | "dataSourceId"
+    | "sensor"
+    | "targetType"
+    | "name"
+    | "isAirTrack"
+  >,
+  state: Pick<TrackDisplayState, "trailLengthSecondsByLayer">,
 ): number {
-  return track.type === "air" ? state.trailLengthSecondsAir : state.trailLengthSecondsSea;
+  const lk = resolveTrackLayerKey(track);
+  return state.trailLengthSecondsByLayer[lk] ?? 600;
 }

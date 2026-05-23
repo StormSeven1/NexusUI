@@ -40,11 +40,17 @@ function pickRectRowFifthFromRecord(r: Record<string, unknown>): unknown {
   return r.rectID ?? r.rectId ?? r.trackID ?? r.trackId;
 }
 
-/** 仅海/空二分类（与 Qt 船矶浮 ↔ 海、鸟机 ↔ 空 一致）；无法识别时默认「海」（海面光电常见） */
-function inferTypeShortFromRecord(r: Record<string, unknown>): string {
+/** 仅海/空二分类（与 Qt 船矶浮 ↔ 海、鸟机 ↔ 空 一致）；无法识别返回 undefined。 */
+function inferTypeShortFromRecord(r: Record<string, unknown>): string | undefined {
   const rt =
     r.rectType ??
     r.rect_type ??
+    r.rectTypeId ??
+    r.rect_type_id ??
+    r.shipType ??
+    r.ship_type ??
+    r.targetTypeId ??
+    r.target_type_id ??
     r.type ??
     r.targetType ??
     r.target_type ??
@@ -63,15 +69,17 @@ function inferTypeShortFromRecord(r: Record<string, unknown>): string {
     if (t === 1 || t === 2) return "空";
     if (t === 3 || t === 4 || t === 5) return "海";
   }
-  return "海";
+  return undefined;
 }
 
 /** 从 singleRect.videoRect 首条对象解析目标名与类型字（纯数组几何时返回 undefined） */
 function parseSingleRectDisplayMetaFromPayload(
   layer: EoRectLayerPayload | null | undefined,
+  parentData?: EoCameraWsPayload | null,
 ): NonNullable<BufferedDetectionEntry["singleDisplayMeta"]> | undefined {
   if (!layer) return undefined;
   const baseRec = layer as unknown as Record<string, unknown>;
+  const parentRec = (parentData ?? null) as unknown as Record<string, unknown> | null;
   const vr = layer.videoRect as unknown;
   let firstRowRec: Record<string, unknown> | null = null;
   if (Array.isArray(vr) && vr.length > 0) {
@@ -83,6 +91,10 @@ function parseSingleRectDisplayMetaFromPayload(
     firstRowRec = vr as Record<string, unknown>;
   }
   const rec = firstRowRec ?? baseRec;
+  const typeShort =
+    inferTypeShortFromRecord(rec) ??
+    inferTypeShortFromRecord(baseRec) ??
+    (parentRec ? inferTypeShortFromRecord(parentRec) : undefined);
   const trackName = pickStrFromRecord(rec, [
     "trackAlias",
     "track_alias",
@@ -93,7 +105,6 @@ function parseSingleRectDisplayMetaFromPayload(
     "target_name",
     "track_name",
   ]);
-  const typeShort = inferTypeShortFromRecord(rec);
   const azimuthDeg = pickFiniteNumberFromRecord(rec, [
     "azimuth",
     "azi",
@@ -115,7 +126,7 @@ function parseSingleRectDisplayMetaFromPayload(
   const courseDeg = pickFiniteNumberFromRecord(rec, ["trackCourse", "course", "cog", "COG", "bearing", "headingDeg"]);
   const out: NonNullable<BufferedDetectionEntry["singleDisplayMeta"]> = {
     trackName: trackName || undefined,
-    typeShort,
+    ...(typeShort ? { typeShort } : {}),
   };
   if (azimuthDeg !== undefined) out.azimuthDeg = azimuthDeg;
   if (distanceM !== undefined) out.distanceM = distanceM;
@@ -350,7 +361,8 @@ export function ingestEntityDetectionPayload(
         captureTs: toFiniteNumber(data.singleRect.captureTs) ?? topCaptureTs,
         encodeTs: toFiniteNumber(data.singleRect.encodeTs) ?? topEncodeTs,
         receivedAt: Date.now(),
-        singleDisplayMeta: rects.length > 0 ? parseSingleRectDisplayMetaFromPayload(data.singleRect) : undefined,
+        singleDisplayMeta:
+          rects.length > 0 ? parseSingleRectDisplayMetaFromPayload(data.singleRect, data) : undefined,
       });
     }
   }

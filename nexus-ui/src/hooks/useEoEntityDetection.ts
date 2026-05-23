@@ -9,6 +9,7 @@ import { getEoDetectionWebSocketManager } from "@/lib/eo-video/eoDetectionWebSoc
 import { ingestEntityDetectionPayload } from "@/lib/eo-video/entityDetectionIngest";
 import { parsePositiveTrackId } from "@/lib/eo-video/formatEoDdsTaskOverlay";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
+import { useTrackStore } from "@/stores/track-store";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 
 const RENDER_MS = 40;
@@ -148,6 +149,8 @@ export function useEoEntityDetection({
 
   const syncDiagRef = useRef({ headerOk: 0, headerFail: 0, wallMs: 0, freshest: 0 });
   const headerDiagRef = useRef("");
+  /** 对齐 C++ `m_lastSingleRectType`：当前帧缺类型时沿用最近一次可判定类型 */
+  const lastSingleTypeRef = useRef<"空" | "海" | null>(null);
   /**
    * 检测延迟 D（ms）= 最新检测包 receivedAt - 编码帧环最新帧 wallMs。
    * 后端先推编码帧（wallMs），经过检测算法后才推检测结果（receivedAt），差值就是 D。
@@ -199,6 +202,7 @@ export function useEoEntityDetection({
     headerEverMatchedRef.current = false;
     syncDiagRef.current = { headerOk: 0, headerFail: 0, wallMs: 0, freshest: 0 };
     headerDiagRef.current = "";
+    lastSingleTypeRef.current = null;
     lastDiagEmitMsRef.current = 0;
     lastDiagLineRef.current = "";
     setBoxes([]);
@@ -272,8 +276,34 @@ export function useEoEntityDetection({
             singleBoxesRaw.length > 0
               ? singleBoxesRaw.map((b) => {
                   const meta = singleEntry?.singleDisplayMeta;
-                  const rawT = ((meta?.typeShort ?? "海").trim().slice(0, 1) || "海").slice(0, 1);
-                  const ts = rawT === "空" ? "空" : "海";
+                  const inferTypeFromTracks = (trackId: number | null | undefined): "空" | "海" | null => {
+                    if (trackId == null || !Number.isFinite(trackId)) return null;
+                    const tid = String(Math.trunc(trackId));
+                    const all = useTrackStore.getState().tracks;
+                    const hit = all.find((t) => t.showID === tid || t.trackId === tid || t.uniqueID === tid);
+                    if (!hit) return null;
+                    if (hit.isAirTrack || hit.type === "air") return "空";
+                    if (hit.type === "sea" || hit.type === "underwater") return "海";
+                    return null;
+                  };
+                  const nameTypeHint = (() => {
+                    const nm = String(meta?.trackName ?? "").toLowerCase();
+                    if (/plane|air|bird|uav|drone|空|机|鸟|aircraft/.test(nm)) return "空";
+                    if (/ship|boat|vessel|buoy|海|船|浮|surface/.test(nm)) return "海";
+                    return "";
+                  })();
+                  const rawT = (String(meta?.typeShort ?? nameTypeHint).trim().slice(0, 1) || "").slice(0, 1);
+                  const byTrack =
+                    inferTypeFromTracks(ddsTrackIdForUi) ??
+                    inferTypeFromTracks(b.ddsTrackId) ??
+                    inferTypeFromTracks(b.trackId);
+                  const ts: "空" | "海" =
+                    rawT === "空"
+                      ? "空"
+                      : rawT === "海"
+                        ? "海"
+                        : byTrack ?? lastSingleTypeRef.current ?? "海";
+                  lastSingleTypeRef.current = ts;
                   const nmWs = (meta?.trackName ?? "").trim();
                   const displayName = ddsAliasStrMemo || nmWs;
                   const wsTid = b.trackId;

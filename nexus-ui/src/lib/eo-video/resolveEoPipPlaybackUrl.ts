@@ -149,8 +149,11 @@ export async function resolveEoPipPlaybackUrl(
     return opts.mainPlaySignalingUrl;
   }
 
-  if (entry.playbackKind === "image" || entry.registrySource === "thirdPartyCamera") {
-    throw new Error("第三方相机为图片模式，画中画暂不可用");
+  if (entry.playbackKind === "image") {
+    throw new Error("图片模式视频源，画中画暂不可用");
+  }
+  if (entry.registrySource === "thirdPartyCamera" && entry.playbackKind !== "webrtc") {
+    throw new Error("第三方相机（UDP/YUV）画中画暂不可用");
   }
 
   if (!entry.uav) {

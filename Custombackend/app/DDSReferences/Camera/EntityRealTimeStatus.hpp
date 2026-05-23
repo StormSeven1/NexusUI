@@ -300,6 +300,17 @@ enum class DispositionType : int32_t
     DISPOSITION_UNKNOWN
 };
 /*!
+ * @brief This class represents the enumeration DeviceState defined by the user in the IDL file.
+ * @ingroup EntityRealTimeStatus
+ */
+enum class DeviceState : int32_t
+{
+    DEVICE_STATE_STANDBY,
+    DEVICE_STATE_POWERED,
+    DEVICE_STATE_EXECUTING,
+    DEVICE_STATE_UNKNOWN
+};
+/*!
  * @brief This class represents the structure BaseDeviceStatus defined by the user in the IDL file.
  * @ingroup EntityRealTimeStatus
  */
@@ -356,6 +367,8 @@ public:
 
                     m_timestamp = x.m_timestamp;
 
+                    m_deviceState = x.m_deviceState;
+
     }
 
     /*!
@@ -379,6 +392,7 @@ public:
         m_position = std::move(x.m_position);
         m_elec = x.m_elec;
         m_timestamp = std::move(x.m_timestamp);
+        m_deviceState = x.m_deviceState;
     }
 
     /*!
@@ -417,6 +431,8 @@ public:
 
                     m_timestamp = x.m_timestamp;
 
+                    m_deviceState = x.m_deviceState;
+
         return *this;
     }
 
@@ -442,6 +458,7 @@ public:
         m_position = std::move(x.m_position);
         m_elec = x.m_elec;
         m_timestamp = std::move(x.m_timestamp);
+        m_deviceState = x.m_deviceState;
         return *this;
     }
 
@@ -465,7 +482,8 @@ public:
            m_online == x.m_online &&
            m_position == x.m_position &&
            m_elec == x.m_elec &&
-           m_timestamp == x.m_timestamp);
+           m_timestamp == x.m_timestamp &&
+           m_deviceState == x.m_deviceState);
     }
 
     /*!
@@ -934,6 +952,35 @@ public:
     }
 
 
+    /*!
+     * @brief This function sets a value in member deviceState
+     * @param _deviceState New value for member deviceState
+     */
+    eProsima_user_DllExport void deviceState(
+            DeviceState _deviceState)
+    {
+        m_deviceState = _deviceState;
+    }
+
+    /*!
+     * @brief This function returns the value of member deviceState
+     * @return Value of member deviceState
+     */
+    eProsima_user_DllExport DeviceState deviceState() const
+    {
+        return m_deviceState;
+    }
+
+    /*!
+     * @brief This function returns a reference to member deviceState
+     * @return Reference to member deviceState
+     */
+    eProsima_user_DllExport DeviceState& deviceState()
+    {
+        return m_deviceState;
+    }
+
+
 
 private:
 
@@ -951,6 +998,7 @@ private:
     GeoPosition m_position;
     double m_elec{0.0};
     std::string m_timestamp;
+    DeviceState m_deviceState{DeviceState::DEVICE_STATE_STANDBY};
 
 };
 

@@ -1,44 +1,42 @@
 "use client";
 
 /**
- * 航迹显示：对海/对空融合配色、速度矢量时长、尾迹展示时长（与 GIS 航迹层联动，见 track-display-store + tracks-maplibre）。
+ * 航迹显示：6 类 DDS 航迹各自矢量/尾迹时长；对海/对空融合中立色单独配置。
  */
 
 import { cn } from "@/lib/utils";
-import {
-  useTrackDisplayStore,
-  type TrackFusionKindUi,
-} from "@/stores/track-display-store";
+import { TRACK_LAYER_KEYS_ORDERED, type TrackLayerKey } from "@/lib/map-entity-model";
+import { TRACK_SUBTYPE_LABELS } from "@/lib/track-layer-visibility";
+import { useTrackDisplayStore } from "@/stores/track-display-store";
 import { Route } from "lucide-react";
 import { useMemo, useState } from "react";
 
 export function TrackDisplayPanel() {
   const seaFusionColor = useTrackDisplayStore((s) => s.seaFusionColor);
   const airFusionColor = useTrackDisplayStore((s) => s.airFusionColor);
-  const vectorLengthSecondsSea = useTrackDisplayStore((s) => s.vectorLengthSecondsSea);
-  const vectorLengthSecondsAir = useTrackDisplayStore((s) => s.vectorLengthSecondsAir);
-  const trailLengthSecondsSea = useTrackDisplayStore((s) => s.trailLengthSecondsSea);
-  const trailLengthSecondsAir = useTrackDisplayStore((s) => s.trailLengthSecondsAir);
+  const vectorLengthSecondsByLayer = useTrackDisplayStore((s) => s.vectorLengthSecondsByLayer);
+  const trailLengthSecondsByLayer = useTrackDisplayStore((s) => s.trailLengthSecondsByLayer);
   const setSeaFusionColor = useTrackDisplayStore((s) => s.setSeaFusionColor);
   const setAirFusionColor = useTrackDisplayStore((s) => s.setAirFusionColor);
-  const setVectorLengthSeconds = useTrackDisplayStore((s) => s.setVectorLengthSeconds);
-  const setTrailLengthSeconds = useTrackDisplayStore((s) => s.setTrailLengthSeconds);
+  const setVectorLengthSecondsForLayer = useTrackDisplayStore((s) => s.setVectorLengthSecondsForLayer);
+  const setTrailLengthSecondsForLayer = useTrackDisplayStore((s) => s.setTrailLengthSecondsForLayer);
 
-  const [fusionKind, setFusionKind] = useState<TrackFusionKindUi>("sea");
+  const [selectedLayer, setSelectedLayer] = useState<TrackLayerKey>("fuse_sea");
 
-  const currentColor = fusionKind === "sea" ? seaFusionColor : airFusionColor;
-  const setCurrentColor = fusionKind === "sea" ? setSeaFusionColor : setAirFusionColor;
-  const currentVectorLengthSeconds = fusionKind === "sea" ? vectorLengthSecondsSea : vectorLengthSecondsAir;
-  const currentTrailLengthSeconds = fusionKind === "sea" ? trailLengthSecondsSea : trailLengthSecondsAir;
-
-  const fusionTabs = useMemo(
+  const layerTabs = useMemo(
     () =>
-      [
-        { id: "sea" as const, label: "对海融合航迹" },
-        { id: "air" as const, label: "对空融合航迹" },
-      ] as const,
+      TRACK_LAYER_KEYS_ORDERED.map((id) => ({
+        id,
+        label: TRACK_SUBTYPE_LABELS[id],
+      })),
     [],
   );
+
+  const currentVectorLengthSeconds = vectorLengthSecondsByLayer[selectedLayer] ?? 60;
+  const currentTrailLengthSeconds = trailLengthSecondsByLayer[selectedLayer] ?? 600;
+  const showFusionColor = selectedLayer === "fuse_sea" || selectedLayer === "fuse_air";
+  const currentColor = selectedLayer === "fuse_air" ? airFusionColor : seaFusionColor;
+  const setCurrentColor = selectedLayer === "fuse_air" ? setAirFusionColor : setSeaFusionColor;
 
   return (
     <div className="flex h-full flex-col">
@@ -50,7 +48,7 @@ export function TrackDisplayPanel() {
           </span>
         </div>
         <p className="mt-1 text-[10px] leading-snug text-nexus-text-muted">
-          选择融合类型后调整颜色；矢量长度为速度 × 时间；尾迹长度按采样间隔折算展示点数。
+          选择航迹类型后分别调整矢量与尾迹；融合航迹可改中立色。
         </p>
       </div>
 
@@ -59,15 +57,15 @@ export function TrackDisplayPanel() {
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
             航迹类型
           </div>
-          <div className="flex flex-col gap-1">
-            {fusionTabs.map((tab) => (
+          <div className="flex max-h-[220px] flex-col gap-1 overflow-y-auto pr-0.5">
+            {layerTabs.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setFusionKind(tab.id)}
+                onClick={() => setSelectedLayer(tab.id)}
                 className={cn(
                   "rounded-md border px-3 py-2 text-left text-xs transition-colors",
-                  fusionKind === tab.id
+                  selectedLayer === tab.id
                     ? "border-nexus-border-accent bg-nexus-accent-glow/15 text-nexus-text-primary"
                     : "border-nexus-border bg-nexus-bg-surface/80 text-nexus-text-muted hover:bg-nexus-bg-elevated/60",
                 )}
@@ -78,34 +76,38 @@ export function TrackDisplayPanel() {
           </div>
         </div>
 
-        <div>
-          <label className="mb-2 block text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
-            航迹颜色（{fusionKind === "sea" ? "对海融合" : "对空融合"}）
-          </label>
-          <div className="flex items-center gap-3">
-            <input
-              type="color"
-              value={currentColor}
-              onChange={(e) => setCurrentColor(e.target.value)}
-              className="h-9 w-14 cursor-pointer rounded border border-nexus-border bg-nexus-bg-surface"
-              aria-label="航迹颜色"
-            />
-            <input
-              type="text"
-              value={currentColor}
-              onChange={(e) => setCurrentColor(e.target.value)}
-              className="min-w-0 flex-1 rounded-md border border-nexus-border bg-nexus-bg-base px-2 py-1.5 font-mono text-[11px] text-nexus-text-primary"
-              spellCheck={false}
-            />
+        {showFusionColor ? (
+          <div>
+            <label className="mb-2 block text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
+              融合中立色（{TRACK_SUBTYPE_LABELS[selectedLayer]}）
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={currentColor}
+                onChange={(e) => setCurrentColor(e.target.value)}
+                className="h-9 w-14 cursor-pointer rounded border border-nexus-border bg-nexus-bg-surface"
+                aria-label="航迹颜色"
+              />
+              <input
+                type="text"
+                value={currentColor}
+                onChange={(e) => setCurrentColor(e.target.value)}
+                className="min-w-0 flex-1 rounded-md border border-nexus-border bg-nexus-bg-base px-2 py-1.5 font-mono text-[11px] text-nexus-text-primary"
+                spellCheck={false}
+              />
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <div>
           <div className="mb-1 flex items-center justify-between gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
               矢量长度
             </span>
-            <span className="text-[11px] tabular-nums text-nexus-text-secondary">{currentVectorLengthSeconds}s</span>
+            <span className="text-[11px] tabular-nums text-nexus-text-secondary">
+              {currentVectorLengthSeconds}s
+            </span>
           </div>
           <input
             type="range"
@@ -113,7 +115,7 @@ export function TrackDisplayPanel() {
             max={300}
             step={1}
             value={currentVectorLengthSeconds}
-            onChange={(e) => setVectorLengthSeconds(fusionKind, Number(e.target.value))}
+            onChange={(e) => setVectorLengthSecondsForLayer(selectedLayer, Number(e.target.value))}
             className="w-full accent-indigo-500"
           />
           <div className="mt-0.5 flex justify-between text-[9px] text-nexus-text-muted">
@@ -127,7 +129,9 @@ export function TrackDisplayPanel() {
             <span className="text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
               尾迹长度
             </span>
-            <span className="text-[11px] tabular-nums text-nexus-text-secondary">{currentTrailLengthSeconds}s</span>
+            <span className="text-[11px] tabular-nums text-nexus-text-secondary">
+              {currentTrailLengthSeconds}s
+            </span>
           </div>
           <input
             type="range"
@@ -135,7 +139,7 @@ export function TrackDisplayPanel() {
             max={1800}
             step={1}
             value={currentTrailLengthSeconds}
-            onChange={(e) => setTrailLengthSeconds(fusionKind, Number(e.target.value))}
+            onChange={(e) => setTrailLengthSecondsForLayer(selectedLayer, Number(e.target.value))}
             className="w-full accent-indigo-500"
           />
           <div className="mt-0.5 flex justify-between text-[9px] text-nexus-text-muted">

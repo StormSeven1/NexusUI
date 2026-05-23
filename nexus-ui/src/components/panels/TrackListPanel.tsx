@@ -5,29 +5,26 @@
  * 【数据流】WS(useUnifiedWsFeed) setTracks `useTrackStore(s => s.tracks)` 列表渲染 */
 
 import { useState, useMemo } from "react";
-import { Search, Star, Filter, ChevronDown, ChevronRight, Eye, EyeOff } from "lucide-react";
+import { Search, Star, Filter, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  PanelTreeGroup,
+  PanelTreeToggleRow,
+} from "@/components/panels/PanelVisibilityTree";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore, getTrackDispositionForRendering, isTrackAlarmLinked } from "@/stores/track-store";
 import { getFusionTrackMarkerFill, resolveTrackPointFill, isAirTrackBirdGlyph } from "@/lib/map-icons";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
-import { LYR_TRACKS, TRACK_LAYER_KEYS_ORDERED, type Track, type TrackLayerKey } from "@/lib/map-entity-model";
+import { LYR_TRACKS, TRACK_LAYER_KEYS_ORDERED, type Track } from "@/lib/map-entity-model";
 import { useTrackDisplayStore, neutralFusionColorForTrack } from "@/stores/track-display-store";
 import {
   effectiveTrackLayerKey,
-  isRadarTrackLayerKey,
+  isDotTrackLayerKey,
   isTrackVisibleBySubtype,
+  TRACK_SUBTYPE_LABELS,
 } from "@/lib/track-layer-visibility";
-
-const TRACK_SUBTYPE_LABELS: Record<TrackLayerKey, string> = {
-  fuse_sea: "对海融合航迹",
-  fuse_air: "对空融合航迹",
-  bird_radar: "探鸟雷达航迹",
-  radar_wharf: "远遥码头雷达航迹",
-  radar_jingzi: "靖子头雷达航迹",
-};
 
 /** 根据航迹 ID 模式返回列表显示的标识：18.141 显示 trackId，28.9 对空显示 showID，对海显示 trackId */
 function trackDisplayId(track: { showID: string; trackId?: string; type: string }): string {
@@ -60,7 +57,7 @@ function TrackListRow({
   const disp = getTrackDispositionForRendering(track);
   const td = useTrackDisplayStore();
   const layerKey = effectiveTrackLayerKey(track);
-  const radarRow = isRadarTrackLayerKey(layerKey);
+  const dotRow = isDotTrackLayerKey(layerKey);
   const dotFill =
     disp === "neutral"
       ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor)
@@ -76,7 +73,7 @@ function TrackListRow({
           : "hover:bg-nexus-bg-elevated"
       )}
     >
-      {radarRow ? (
+      {dotRow ? (
         <span
           className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-black/35"
           style={{ backgroundColor: dotFill }}
@@ -203,103 +200,41 @@ export function TrackListPanel() {
             </span>
           </button>
           {openSubtypeSection ? (
-            <div className="mt-1.5 space-y-0.5 border border-nexus-border/40 rounded-md overflow-hidden">
+            <PanelTreeGroup className="mt-1.5">
               {TRACK_LAYER_KEYS_ORDERED.map((key) => {
                 const on = trackSubtypeVisible[key] !== false;
                 const showAirChildren = key === "fuse_air";
-                const childUavOn = airFusionSubtypeVisible.uav !== false;
-                const childBirdOn = airFusionSubtypeVisible.bird !== false;
-                const childBaseCls = tracksMasterOn
-                  ? "hover:bg-nexus-bg-elevated/40"
-                  : "cursor-not-allowed opacity-45";
                 return (
-                  <div key={key} className="border-b border-nexus-border/30 last:border-b-0">
-                    <button
-                      type="button"
-                      onClick={() => toggleTrackSubtype(key)}
+                  <div key={key}>
+                    <PanelTreeToggleRow
+                      depth={0}
+                      visible={on}
+                      onToggle={() => toggleTrackSubtype(key)}
+                      label={TRACK_SUBTYPE_LABELS[key]}
                       disabled={!tracksMasterOn}
-                      className={cn(
-                        "flex w-full items-center gap-2 px-2 py-1.5 text-left",
-                        tracksMasterOn ? "hover:bg-nexus-bg-elevated/50" : "cursor-not-allowed opacity-45",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                          on
-                            ? "border-nexus-border-accent bg-nexus-accent-glow/15 text-nexus-text-primary"
-                            : "border-nexus-border bg-nexus-bg-sidebar text-nexus-text-muted",
-                        )}
-                      >
-                        {on ? <Eye size={9} /> : <EyeOff size={9} />}
-                      </span>
-                      <span
-                        className={cn(
-                          "min-w-0 flex-1 truncate text-[10px]",
-                          on ? "text-nexus-text-primary" : "text-nexus-text-muted",
-                        )}
-                      >
-                        {TRACK_SUBTYPE_LABELS[key]}
-                      </span>
-                    </button>
+                    />
                     {showAirChildren ? (
-                      <div className={cn("pb-1", !on && "opacity-75")}>
-                        <button
-                          type="button"
-                          onClick={() => toggleAirFusionSubtype("uav")}
+                      <div className={cn(!on && "opacity-75")}>
+                        <PanelTreeToggleRow
+                          depth={1}
+                          visible={airFusionSubtypeVisible.uav !== false}
+                          onToggle={() => toggleAirFusionSubtype("uav")}
+                          label="无人机"
                           disabled={!tracksMasterOn}
-                          className={cn("ml-6 flex w-[calc(100%-1.5rem)] items-center gap-2 rounded px-2 py-1 text-left", childBaseCls)}
-                        >
-                          <span
-                            className={cn(
-                              "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                              childUavOn
-                                ? "border-nexus-border-accent bg-nexus-accent-glow/15 text-nexus-text-primary"
-                                : "border-nexus-border bg-nexus-bg-sidebar text-nexus-text-muted",
-                            )}
-                          >
-                            {childUavOn ? <Eye size={9} /> : <EyeOff size={9} />}
-                          </span>
-                          <span
-                            className={cn(
-                              "min-w-0 flex-1 truncate text-[10px]",
-                              childUavOn ? "text-nexus-text-primary" : "text-nexus-text-muted",
-                            )}
-                          >
-                            无人机
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => toggleAirFusionSubtype("bird")}
+                        />
+                        <PanelTreeToggleRow
+                          depth={1}
+                          visible={airFusionSubtypeVisible.bird !== false}
+                          onToggle={() => toggleAirFusionSubtype("bird")}
+                          label="鸟"
                           disabled={!tracksMasterOn}
-                          className={cn("ml-6 flex w-[calc(100%-1.5rem)] items-center gap-2 rounded px-2 py-1 text-left", childBaseCls)}
-                        >
-                          <span
-                            className={cn(
-                              "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                              childBirdOn
-                                ? "border-nexus-border-accent bg-nexus-accent-glow/15 text-nexus-text-primary"
-                                : "border-nexus-border bg-nexus-bg-sidebar text-nexus-text-muted",
-                            )}
-                          >
-                            {childBirdOn ? <Eye size={9} /> : <EyeOff size={9} />}
-                          </span>
-                          <span
-                            className={cn(
-                              "min-w-0 flex-1 truncate text-[10px]",
-                              childBirdOn ? "text-nexus-text-primary" : "text-nexus-text-muted",
-                            )}
-                          >
-                            鸟
-                          </span>
-                        </button>
+                        />
                       </div>
                     ) : null}
                   </div>
                 );
               })}
-            </div>
+            </PanelTreeGroup>
           ) : null}
           {!tracksMasterOn ? (
             <p className="mt-1.5 text-[9px] leading-snug text-amber-500/90">

@@ -310,6 +310,7 @@ def _parse_camera_status(dds_object) -> Optional[Dict]:
             'targetID': dds_object.targetID() if hasattr(dds_object, 'targetID') else None,
             'targetName': dds_object.targetName() if hasattr(dds_object, 'targetName') else None,
             'targetType': dds_object.targetType() if hasattr(dds_object, 'targetType') else None,
+            'deviceState': dds_object.deviceState() if hasattr(dds_object, 'deviceState') else None,
             # 相机扩展
             'focus': dds_object.focus() if hasattr(dds_object, 'focus') else None,
             'panoOffset': dds_object.panoOffset() if hasattr(dds_object, 'panoOffset') else None,
@@ -375,6 +376,33 @@ def _parse_camera_status(dds_object) -> Optional[Dict]:
         return None
 
 
+def _pick_box_rect_type(box) -> Optional[int]:
+    """
+    单/多目标框统一提取类型：
+    - 优先 rectType / rect_type / type（与 Qt `rectType` 语义一致）
+    - 兼容 classId 作为兜底
+    """
+    candidates = []
+    if hasattr(box, 'rectType'):
+        candidates.append(box.rectType())
+    if hasattr(box, 'rect_type'):
+        candidates.append(box.rect_type())
+    if hasattr(box, 'type'):
+        candidates.append(box.type())
+    if hasattr(box, 'classId'):
+        candidates.append(box.classId())
+
+    for v in candidates:
+        if v is None:
+            continue
+        try:
+            n = int(v)
+            return n
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _parse_multi_track_result(dds_object) -> Optional[Dict]:
     """解析多目标检测框"""
     try:
@@ -398,6 +426,10 @@ def _parse_multi_track_result(dds_object) -> Optional[Dict]:
                     'boxId': box.boxId() if hasattr(box, 'boxId') else None,
                     'classId': box.classId() if hasattr(box, 'classId') else None,
                 }
+                rect_type = _pick_box_rect_type(box)
+                if rect_type is not None:
+                    box_data['rectType'] = rect_type
+                    box_data['rect_type'] = rect_type
                 result['boxes'].append(box_data)
         
         return result
@@ -420,6 +452,7 @@ def _parse_single_track_result(dds_object) -> Optional[Dict]:
         # 单个检测框信息
         if hasattr(dds_object, 'box'):
             box = dds_object.box()
+            rect_type = _pick_box_rect_type(box)
             result['box'] = {
                 'x': box.x() if hasattr(box, 'x') else None,
                 'y': box.y() if hasattr(box, 'y') else None,
@@ -427,7 +460,15 @@ def _parse_single_track_result(dds_object) -> Optional[Dict]:
                 'height': box.height() if hasattr(box, 'height') else None,
                 'boxId': box.boxId() if hasattr(box, 'boxId') else None,
                 'classId': box.classId() if hasattr(box, 'classId') else None,
+                # 明确透传类型（前端按此判空/海，不再猜）
+                'rectType': rect_type,
+                'rect_type': rect_type,
             }
+            # 顶层也透传一份，便于不同前端链路直读
+            result['rectType'] = rect_type
+            result['rect_type'] = rect_type
+            result['singleRectType'] = rect_type
+            result['single_rect_type'] = rect_type
         
         return result
     except Exception as e:

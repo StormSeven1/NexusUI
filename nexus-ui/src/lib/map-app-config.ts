@@ -112,8 +112,14 @@ function wsEntityTypeRaw(r: Record<string, unknown>): string {
     stu === "CAMERA" || stu === "OPTOELECTRONIC" || stu === "OPTICAL" ||
     stu === "光电" || stu === "摄像头"
   ) return "camera";
-  // 第三方相机（实体服务 ontology.specificType，如 camera-hs-001）：地图资产仍用 camera，与 mergeEoVideoRegistry / 第三方光电菜单一致
-  if (stu === "THIRDPARTYCAMERA" || stu === "THIRD_PARTY_CAMERA" || stu === "THIRDPARTY_CAMERA") {
+  // 第三方相机（8090 ontology.specificType）：地图资产仍用 camera 图标
+  if (
+    stu === "THIRDPARTYCAMERA" ||
+    stu === "THIRDPARTYUDPCAMERAIMAGE" ||
+    stu === "THIRDPARTYUDPCAMERAVIDEO" ||
+    stu === "THIRD_PARTY_CAMERA" ||
+    stu === "THIRDPARTY_CAMERA"
+  ) {
     return "camera";
   }
   // 电侦（电子侦察）：与光电（camera）为不同类型，图标使用 电侦.svg
@@ -584,7 +590,7 @@ export type AppConfigTrackRendering = {
      * 融合侧常按区域轮询推送，同一区域目标长时间不进包；阈值应 ≥ 单区最长静默间隔。
      */
     fusionSeconds: number;
-    /** 对空融合 DDS 航迹（`fuse_air`）专用超时秒数；缺省建议更短（如 2s） */
+    /** 对空融合 DDS 航迹（`fuse_air`）专用超时秒数；默认 6s */
     fusionAirSeconds: number;
     uavSeconds: number;
     /** 无新 WS 包时仍定时按「上次摄入时间」从 store 剔除航迹的轮询间隔（毫秒） */
@@ -650,7 +656,7 @@ export const DEFAULT_TRACK_RENDERING: AppConfigTrackRendering = {
     enabled: true,
     seconds: 30,
     fusionSeconds: 120,
-    fusionAirSeconds: 2,
+    fusionAirSeconds: 6,
     uavSeconds: 60,
     checkIntervalMs: 2000,
   },

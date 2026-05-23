@@ -15,6 +15,7 @@ import { canonicalEntityId } from "@/lib/camera-entity-id";
 import { buildImportantTrackTargetFromTrack, numericTrackIdForCameraTask } from "@/lib/map-gis-camera-task";
 import { uavFlightTaskTargetSourceId } from "@/lib/map-gis-uav-track-task";
 import { fetchMapGisEoMenuContext, type MapGisEoMenuContext } from "@/lib/map-gis-eo-menu-context";
+import { buildMapGisCameraMenuRows } from "@/lib/map-gis-camera-menu-rows";
 import {
   collectMapGisDroneRowsSync,
   mapGisDroneEoFallbackLabel,
@@ -267,22 +268,13 @@ export function MapGisContextMenu({
 
   const cameras = useMemo(() => {
     void trackOwnersEpoch;
-    const ptz = listTrackTaskOwnerRows();
-    const seen = new Set(ptz.map((r) => canonicalEntityId(r.entityId)));
-    const out: EntityTaskRow[] = [...ptz];
-    for (const tp of eoMenuCtx?.thirdPartyCameras ?? []) {
-      const id = canonicalEntityId(String(tp.entityId ?? "").trim());
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      out.push({
-        entityId: id,
-        label: String(tp.label ?? "").trim() || id,
-        hasPtz: true,
-        parentDeviceId: "",
-      });
-    }
-    return out.sort((a, b) => a.entityId.localeCompare(b.entityId, undefined, { numeric: true }));
-  }, [trackOwnersEpoch, eoMenuCtx?.thirdPartyCameras]);
+    return buildMapGisCameraMenuRows(listTrackTaskOwnerRows(), eoMenuCtx).map((r) => ({
+      entityId: r.entityId,
+      label: r.label,
+      hasPtz: true,
+      parentDeviceId: "",
+    }));
+  }, [trackOwnersEpoch, eoMenuCtx]);
 
   const toggleCascade = (key: SubKey, el: HTMLElement) => {
     setCascade((prev) => {

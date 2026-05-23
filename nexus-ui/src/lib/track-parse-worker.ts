@@ -22,7 +22,7 @@ type ForceDisposition = "friendly" | "hostile" | "neutral";
 type TrackKind = "air" | "sea" | "underwater";
 
 /** 与主线程 `TRACK_LAYER_KEY_BY_DDS_SOURCE_ID` / Custombackend 接收器 id 一致（Worker 不能 import 带 @/ 的模块） */
-type LayerKey = "fuse_sea" | "fuse_air" | "bird_radar" | "radar_wharf" | "radar_jingzi";
+type LayerKey = "fuse_sea" | "fuse_air" | "bird_radar" | "radar_wharf" | "radar_jingzi" | "ais_track";
 
 const DDS_TO_LAYER: Record<string, LayerKey> = {
   dds_forward_fuse_track: "fuse_sea",
@@ -30,6 +30,7 @@ const DDS_TO_LAYER: Record<string, LayerKey> = {
   dds_forward_bird_radar_track: "bird_radar",
   dds_forward_radar_track1: "radar_wharf",
   dds_forward_radar_track2: "radar_jingzi",
+  dds_forward_ais_track: "ais_track",
 };
 
 const VALID_LAYER_KEYS = new Set<string>(Object.values(DDS_TO_LAYER));
@@ -57,7 +58,9 @@ function _surfaceKindFromDdsOrLayer(rec: Record<string, unknown>): TrackKind | u
   const dds = _ddsSourceStr(rec)?.toLowerCase();
   const lk = _layerKeyFromDds(dds) ?? _readTrackLayerKeyFromRec(rec);
   if (lk === "fuse_air" || lk === "bird_radar") return "air";
-  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi") return "sea";
+  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track") {
+    return "sea";
+  }
   return undefined;
 }
 

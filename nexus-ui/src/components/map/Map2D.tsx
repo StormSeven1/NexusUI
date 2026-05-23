@@ -92,6 +92,8 @@ import {
   AIRPORT_LABEL_LAYER,
 } from "@/components/map/modules/airport-maplibre";
 import { OptoelectronicFovModule, FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER } from "@/components/map/modules/optoelectronic-fov-maplibre";
+import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
+import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import { TowerMaplibre, TOWER_LAYER_IDS, TOWER_ICON_LAYER } from "@/components/map/modules/tower-maplibre";
 import { DistanceMeasureMaplibre, DIST_MEASURE_LAYER_IDS } from "@/components/map/modules/distance-measure-maplibre";
 import { AngleMeasureMaplibre, ANGLE_LAYER_IDS } from "@/components/map/modules/angle-measure-maplibre";
@@ -1453,6 +1455,24 @@ export function Map2D() {
     };
   }, []);
 
+  /* 光电装备：按设备视场 / GIS 图标 + 面板白名单 → GeoJSON */
+  useEffect(() => {
+    const flushOptoPerDevice = () => {
+      const vis = useOptoDeviceLayerStore.getState().deviceVisibility;
+      const cam = useMapGisCameraMenuStore.getState();
+      const panelIds = cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
+      optoFovRef.current?.setPerDeviceVisibility(vis, panelIds);
+    };
+    const unsubVis = useOptoDeviceLayerStore.subscribe(flushOptoPerDevice);
+    const unsubCam = useMapGisCameraMenuStore.subscribe(flushOptoPerDevice);
+    flushOptoPerDevice();
+    void useMapGisCameraMenuStore.getState().ensureLoaded();
+    return () => {
+      unsubVis();
+      unsubCam();
+    };
+  }, []);
+
   /* zone-store / asset-store → 地图：光电 FOV 扇区朝向/开角来自 `adaptAssetsForMap` 的 `heading`/`fovAngle`（静态+动态已在资产入口统一合并） */
   useEffect(() => {
     let pendingAssetFlush = false;
@@ -1501,6 +1521,14 @@ export function Map2D() {
 
       try {
         radarCovRef.current?.setFromAssets(adapted, assetSnap);
+        {
+          const cam = useMapGisCameraMenuStore.getState();
+          const panelIds = cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
+          optoFovRef.current?.setPerDeviceVisibility(
+            useOptoDeviceLayerStore.getState().deviceVisibility,
+            panelIds,
+          );
+        }
         optoFovRef.current?.setFromAssets(adapted);
         towerModRef.current?.setFromAssets(adapted);
         airportStaticRef.current?.setFromAssets(adapted);

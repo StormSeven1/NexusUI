@@ -45,7 +45,19 @@ export function EoPipFloatingPlayer({
       aria-label="画中画"
       data-eo-pip="1"
     >
-      <EoStreamContextMenu config={config} activeStreamId={pipStreamId} onSelectStream={onSelectPipStream}>
+      <EoStreamContextMenu
+        config={config}
+        activeStreamId={pipStreamId}
+        onSelectStream={onSelectPipStream}
+        isStreamDisabled={(streamId) => {
+          const entry = config.streams.find((s) => s.id === streamId);
+          if (!entry) return true;
+          return (
+            entry.playbackKind === "image" ||
+            (entry.registrySource === "thirdPartyCamera" && entry.playbackKind !== "webrtc")
+          );
+        }}
+      >
         <div
           role="presentation"
           title="右键切换画中画视频流 · 双击与主画面对调"

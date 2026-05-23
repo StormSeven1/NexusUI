@@ -50,6 +50,16 @@ module BaseStatus {
 		DISPOSITION_NEUTRAL,	//中立
 		DISPOSITION_UNKNOWN
 	};
+
+	/**
+	 * 设备状态枚举
+	 */
+	enum DeviceState {
+		DEVICE_STATE_STANDBY,         	//待机
+		DEVICE_STATE_POWERED,         	//上电
+		DEVICE_STATE_EXECUTING,			//执行
+		DEVICE_STATE_UNKNOWN          	//未知
+	};
 	
 	
 	/**
@@ -71,6 +81,7 @@ module BaseStatus {
 		GeoPosition position;             // 地理位置
 		double elec;                      // 电量百分比
 		string timestamp;                 // 数据采集时间戳
+		DeviceState deviceState;          // 设备状态
 	};
 };
 

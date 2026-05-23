@@ -60,7 +60,7 @@ export interface EoVideoFloatingToolsProps {
   /** 无人机：true = 关闭检测订阅与对齐，仅裸播 WebRTC（排查卡顿） */
   uavVideoOnly?: boolean;
   onToggleUavVideoOnly?: () => void;
-  /** 第三方相机：CAMTASK（搜索 / 跟踪 / 聚焦）与停止任务 */
+  /** 第三方相机：CAMTASK（SEARCH/TRACK/CATCH/AUTO1/AUTO2/AUTO3）与 STOP */
   thirdPartyCamControls?: boolean;
   onThirdPartyCamKind?: (kind: ThirdPartyCamTaskKind) => void;
   thirdPartyCamBusy?: boolean;
@@ -94,7 +94,7 @@ const popPanelClass =
   "absolute right-[calc(100%+8px)] top-0 z-[100] w-[220px] rounded-md border border-white/15 bg-[rgb(22,27,34)] p-2.5 shadow-[0_8px_20px_rgba(0,0,0,0.45)]";
 
 const popBtnClass =
-  "rounded border border-white/15 bg-[#1E2329] px-2 py-1 text-[10px] text-white/90 hover:bg-[#2D3339] active:bg-[#4A4F55] data-[on=1]:border-sky-500/60 data-[on=1]:bg-sky-950/40 disabled:opacity-45";
+  "rounded border border-white/15 bg-[#1E2329] px-1.5 py-1 text-[10px] text-white/90 hover:bg-[#2D3339] active:bg-[#4A4F55] data-[on=1]:border-sky-500/60 data-[on=1]:bg-sky-950/40 disabled:opacity-45";
 
 /**
  * 叠在视频右侧的悬浮工具列：相机含录屏/截图/PTZ/画中画；无人机含控制台与画中画及喊话/探照等。
@@ -391,7 +391,7 @@ export function EoVideoFloatingTools({
               "border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
               thirdPartyModePopOpen ? "border-sky-400/45 bg-sky-950/50 text-sky-300" : "",
             )}
-            title="第三方相机（搜索 / 跟踪 / 聚焦 / 停止）"
+            title="Third-party camera tasks"
             aria-label="第三方相机任务"
             aria-expanded={thirdPartyModePopOpen}
             onClick={() => setThirdPartyModePopOpen((v) => !v)}
@@ -405,20 +405,23 @@ export function EoVideoFloatingTools({
               className={popPanelClass}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              <p className="mb-2 text-[10px] font-medium text-white/55">第三方相机</p>
-              <div className="flex flex-col gap-1.5">
+              <p className="mb-2 text-[10px] font-medium text-white/55">Third-party camera</p>
+              <div className="grid grid-cols-2 gap-1.5">
                 {(
                   [
-                    ["SEARCH", "ThirdPartyCamCamTask · SEARCH", "搜索"] as const,
-                    ["TRACK", "ThirdPartyCamCamTask · TRACK", "跟踪"] as const,
-                    ["FOCUS", "ThirdPartyCamCamTask · FOCUS", "聚焦"] as const,
-                    ["STOP", "ThirdPartyCamStopTask · params.entityId", "停止"] as const,
+                    ["SEARCH", "ThirdPartyCamCamTask · SEARCH", "SEARCH"] as const,
+                    ["TRACK", "ThirdPartyCamCamTask · TRACK", "TRACK"] as const,
+                    ["CATCH", "ThirdPartyCamCamTask · CATCH", "CATCH"] as const,
+                    ["AUTO1", "ThirdPartyCamCamTask · AUTO1", "AUTO1"] as const,
+                    ["AUTO2", "ThirdPartyCamCamTask · AUTO2", "AUTO2"] as const,
+                    ["AUTO3", "ThirdPartyCamCamTask · AUTO3", "AUTO3"] as const,
+                    ["STOP", "ThirdPartyCamStopTask · params.entityId", "STOP"] as const,
                   ] as const
                 ).map(([k, title, label]) => (
                   <button
                     key={k}
                     type="button"
-                    className={popBtnClass}
+                    className={cn(popBtnClass, "h-6 min-w-[58px]")}
                     disabled={thirdPartyCamBusy}
                     title={title}
                     onClick={() => {

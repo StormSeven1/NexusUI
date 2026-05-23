@@ -194,8 +194,8 @@ function drawSingleTrackOverlay(
   const corner = Math.max(8, Math.min(22, Math.min(cornerBase, Math.min(bw, bh) / 2.4)));
   const mainStroke = isSelected ? "rgba(250,204,21,0.98)" : "rgba(147,253,255,0.95)";
   const cornerStroke = isSelected ? "rgba(254,240,138,0.95)" : "rgba(255,255,255,0.92)";
-  const mainLw = isSelected ? 3 : 2.25;
-  const cornerLw = isSelected ? 2.25 : 1.85;
+  const mainLw = isSelected ? 2 : 1.4;
+  const cornerLw = isSelected ? 1.6 : 1.2;
 
   ctx.save();
   ctx.lineJoin = "miter";
@@ -308,7 +308,7 @@ export function EoDetectionOverlay({
 
       const stroke = isSelected ? "rgba(250,204,21,1)" : COLORS[b.colorToken ?? "accent"];
       ctx.strokeStyle = stroke;
-      ctx.lineWidth = isSelected ? 2.5 : 1.5;
+      ctx.lineWidth = isSelected ? 1.8 : 1.1;
       ctx.strokeRect(x, y, bw, bh);
       ctx.fillStyle = isSelected ? "rgba(250,204,21,0.18)" : stroke.replace("0.9", "0.12");
       ctx.fillRect(x, y, bw, bh);
