@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import {
   useTrackEvaluationStore,
   type QualityMetricTabId,
@@ -292,7 +293,10 @@ export function QualityMetricContent() {
 
   if (metricsComputing) {
     return (
-      <EmptyState icon="⏳" title="正在计算质量指标…" />
+      <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-center">
+        <Loader2 className="h-6 w-6 animate-spin text-nexus-accent" aria-hidden />
+        <p className="text-[13px] font-medium text-nexus-accent">正在分析...</p>
+      </div>
     );
   }
 

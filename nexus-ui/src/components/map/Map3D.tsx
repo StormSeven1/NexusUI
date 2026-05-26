@@ -40,9 +40,18 @@ import { mergeZoneFillColor } from "@/components/map/modules/polygon-draw-maplib
 import { useZoneStore } from "@/stores/zone-store";
 import { useDbAreaStore } from "@/stores/db-area-store";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
-import { areaRowToPolygonRing, dbAreaFeatureId, dbAreaVisibilityKey } from "@/lib/area-table-geometry";
+import {
+  areaRowToPolygonRing,
+  circleLabelLngLatNorth,
+  dbAreaFeatureId,
+  dbAreaVisibilityKey,
+  parseAreaLineColor,
+} from "@/lib/area-table-geometry";
 import { ringSouthEastLabelLngLat } from "@/lib/build-db-areas-geojson";
-import { pickSituationAreaLayerStyle } from "@/lib/distance-ring-settings";
+import {
+  DEFAULT_AREA_LAYER_LINE_COLOR,
+  pickSituationAreaLayerStyle,
+} from "@/lib/distance-ring-settings";
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
 import { useAssetStore } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
@@ -236,10 +245,13 @@ function syncCesiumDbAreas(
       : ring;
     const positions = coords.map(([lng, lat]) => C.Cartesian3.fromDegrees(lng, lat));
     const ringClosed: [number, number][] = [...coords.map(([lng, lat]) => [lng, lat] as [number, number]), coords[0]];
-    const [labelLng, labelLat] = ringSouthEastLabelLngLat(ringClosed);
+    const northLbl =
+      row.area_type === 2 ? circleLabelLngLatNorth(row.start_point, row.end_point) : null;
+    const [labelLng, labelLat] = northLbl ?? ringSouthEastLabelLngLat(ringClosed);
 
-    const outlineCol = C.Color.fromCssColorString(areaStyle.lineColor).withAlpha(areaStyle.lineOpacity);
-    const labelFill = C.Color.fromCssColorString(areaStyle.lineColor).withAlpha(areaStyle.labelOpacity);
+    const lineCss = parseAreaLineColor(row.line_color, areaStyle.lineColor || DEFAULT_AREA_LAYER_LINE_COLOR);
+    const outlineCol = C.Color.fromCssColorString(lineCss).withAlpha(areaStyle.lineOpacity);
+    const labelFill = C.Color.fromCssColorString(lineCss).withAlpha(areaStyle.labelOpacity);
     const outlineW = areaStyle.lineWidth;
 
     const name =

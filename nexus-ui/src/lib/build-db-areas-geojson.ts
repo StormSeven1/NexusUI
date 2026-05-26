@@ -1,5 +1,11 @@
 import type { AreaTableRow } from "@/lib/area-table-geometry";
-import { areaRowToPolygonRing, dbAreaFeatureId, lineFromAreaRoute } from "@/lib/area-table-geometry";
+import {
+  areaRowToPolygonRing,
+  circleLabelLngLatNorth,
+  dbAreaFeatureId,
+  lineFromAreaRoute,
+  parseAreaLineColor,
+} from "@/lib/area-table-geometry";
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
 import {
   DEFAULT_AREA_LAYER_LINE_COLOR,
@@ -38,7 +44,9 @@ export function buildDbAreasFeatureCollection(
   includeRow: (row: AreaTableRow) => boolean = () => true,
   style?: SituationAreaLayerStyle,
 ): GeoJSON.FeatureCollection {
-  const lineColor = style?.lineColor?.trim() || DEFAULT_AREA_LAYER_LINE_COLOR;
+  const lineColor =
+    style?.lineColor?.trim() ||
+    DEFAULT_AREA_LAYER_LINE_COLOR;
   const lineOpacity = style?.lineOpacity ?? 1;
   const labelOpacity = style?.labelOpacity ?? 0.95;
   const features: GeoJSON.Feature[] = [];
@@ -52,6 +60,8 @@ export function buildDbAreasFeatureCollection(
     const id = dbAreaFeatureId(row);
     const lineWidth = style?.lineWidth ?? DEFAULT_AREA_LAYER_LINE_WIDTH;
     const lineStyle = style?.lineStyle ?? "solid";
+    const rowLineColor = parseAreaLineColor(row.line_color, lineColor);
+    const featureLineColor = style?.lineColor?.trim() ? lineColor : rowLineColor;
 
     if (row.area_type === 4) {
       const line = lineFromAreaRoute(row);
@@ -65,7 +75,7 @@ export function buildDbAreasFeatureCollection(
           _kind: "route",
           id,
           name,
-          lineColor,
+          lineColor: featureLineColor,
           lineOpacity,
           lineWidth,
           lineStyle,
@@ -78,14 +88,21 @@ export function buildDbAreasFeatureCollection(
         type: "Feature",
         id: `${id}-lbl`,
         geometry: { type: "Point", coordinates: [lx, ly] },
-        properties: { _kind: "lbl", labelText: name, lineColor, labelOpacity },
+        properties: {
+          _kind: "lbl",
+          labelText: name,
+          lineColor: featureLineColor,
+          labelOpacity,
+        },
       });
       continue;
     }
 
     const ring = areaRowToPolygonRing(row);
     if (!ring || ring.length < 4) continue;
-    const [lx, ly] = ringSouthEastLabelLngLat(ring);
+    const northLbl =
+      row.area_type === 2 ? circleLabelLngLatNorth(row.start_point, row.end_point) : null;
+    const [lx, ly] = northLbl ?? ringSouthEastLabelLngLat(ring);
 
     features.push({
       type: "Feature",
@@ -95,7 +112,7 @@ export function buildDbAreasFeatureCollection(
         _kind: "poly",
         id,
         name,
-        lineColor,
+        lineColor: featureLineColor,
         lineOpacity,
         lineWidth,
         lineStyle,
@@ -109,7 +126,13 @@ export function buildDbAreasFeatureCollection(
       type: "Feature",
       id: `${id}-lbl`,
       geometry: { type: "Point", coordinates: [lx, ly] },
-      properties: { _kind: "lbl", labelText: name, lineColor, labelOpacity },
+      properties: {
+        _kind: "lbl",
+        labelText: name,
+        lineColor: featureLineColor,
+        labelOpacity,
+        labelAnchor: row.area_type === 2 ? "north" : "se",
+      },
     });
   }
 

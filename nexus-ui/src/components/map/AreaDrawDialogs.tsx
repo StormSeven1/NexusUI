@@ -6,11 +6,13 @@ import { useAreaDrawStore } from "@/stores/area-draw-store";
 import { getMapMeasureHandlers, useMapMeasureUi } from "@/stores/map-measure-bridge";
 import type { AreaDrawShape } from "@/lib/area-table-serialize";
 import {
+  CIRCLE_AREA_LINE_COLOR,
   defaultAreaDisplayName,
   nextAreaIdForGroup,
   nextGroupId,
   ROUTE_AREA_GROUP_ID,
 } from "@/lib/area-table-serialize";
+import { parseAreaLineColor } from "@/lib/area-table-geometry";
 import { refetchDbAreas } from "@/lib/refetch-db-areas";
 import { publishDrawnMapEntity, toastEntityPublishResult } from "@/lib/area-entity-client";
 import { toast } from "sonner";
@@ -255,10 +257,12 @@ export function AreaDrawSaveDialog() {
     setError(null);
     const areaName = name.trim() || defaultName;
     try {
+      const isCircle = pending.shape === "circle";
+      const circleLineCss = parseAreaLineColor(CIRCLE_AREA_LINE_COLOR, "#ffff00");
       const body: Record<string, unknown> = {
         area_name: areaName,
         ...geometry,
-        line_color: "#3b82f6",
+        line_color: isCircle ? CIRCLE_AREA_LINE_COLOR : "#3b82f6",
         line_width: 2,
       };
       if (session.isNewGroup) body.new_group_name = session.groupName;
@@ -292,7 +296,7 @@ export function AreaDrawSaveDialog() {
           name: areaName,
           shape: pending.shape,
           points: pending.points,
-          lineColor: "#3b82f6",
+          lineColor: isCircle ? circleLineCss : "#3b82f6",
           lineWidth: 2,
         });
         toastEntityPublishResult(pub, entityKind);

@@ -25,6 +25,12 @@ export function shapeToAreaType(shape: AreaDrawShape): 1 | 2 | 3 | 4 {
 /** 航线固定分组 */
 export const ROUTE_AREA_GROUP_ID = 0;
 
+/** 圆形存库：area_rect / area_points 固定占位（与桌面端约定一致） */
+export const CIRCLE_AREA_RECT_ZEROS = "0.00000,0.00000,0.00000,0.00000";
+export const CIRCLE_AREA_POINTS_ZERO = "0";
+/** 圆形默认边色（RGB，写入 line_color 列） */
+export const CIRCLE_AREA_LINE_COLOR = "255,255,0";
+
 function fmt(n: number): string {
   return Number(n.toFixed(8)).toString();
 }
@@ -63,7 +69,13 @@ export function serializeRoute(points: LngLat[]): { start_point: string; area_po
 
 export type AreaGeometryPayload =
   | { area_type: 1; area_rect: string }
-  | { area_type: 2; start_point: string; end_point: string }
+  | {
+      area_type: 2;
+      start_point: string;
+      end_point: string;
+      area_rect: string;
+      area_points: string;
+    }
   | { area_type: 3; area_points: string }
   | { area_type: 4; start_point: string; area_points: string };
 
@@ -77,7 +89,13 @@ export function buildAreaGeometryPayload(shape: AreaDrawShape, points: LngLat[])
   if (shape === "circle") {
     if (points.length < 2) return null;
     const { start_point, end_point } = serializeCircle(points[0]!, points[1]!);
-    return { area_type: 2, start_point, end_point };
+    return {
+      area_type: 2,
+      start_point,
+      end_point,
+      area_rect: CIRCLE_AREA_RECT_ZEROS,
+      area_points: CIRCLE_AREA_POINTS_ZERO,
+    };
   }
   if (shape === "route") {
     if (points.length < 2) return null;

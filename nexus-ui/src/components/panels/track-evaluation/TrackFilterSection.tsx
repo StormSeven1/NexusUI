@@ -19,7 +19,6 @@ export function TrackFilterSection() {
   const queryStatus = useTrackEvaluationStore((s) => s.queryStatus);
   const queryStats = useTrackEvaluationStore((s) => s.queryStats);
   const connectionState = useTrackEvaluationStore((s) => s.connectionState);
-  const wsUrl = useTrackEvaluationStore((s) => s.wsUrl);
   const regionType = useTrackEvaluationStore((s) => s.regionType);
   const regionInfo = useTrackEvaluationStore((s) => s.regionInfo);
   const regionDrawing = useTrackEvaluationStore((s) => s.regionDrawing);
@@ -33,7 +32,6 @@ export function TrackFilterSection() {
   const cancelQuery = useTrackEvaluationStore((s) => s.cancelQuery);
   const toggleRealtime = useTrackEvaluationStore((s) => s.toggleRealtime);
   const requestReevaluate = useTrackEvaluationStore((s) => s.requestReevaluate);
-  const connectWs = useTrackEvaluationStore((s) => s.connectWs);
   const selectRegionType = useTrackEvaluationStore((s) => s.selectRegionType);
   const clearRegion = useTrackEvaluationStore((s) => s.clearRegion);
 
@@ -43,44 +41,6 @@ export function TrackFilterSection() {
 
   return (
     <div className="space-y-3 overflow-y-auto pr-1">
-      <section className="rounded-md border border-nexus-border bg-nexus-bg-surface/50 p-2.5">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
-            数据服务连接
-          </span>
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
-              wsConnected
-                ? "bg-emerald-500/15 text-emerald-400"
-                : connectionState === "connecting"
-                  ? "bg-amber-500/15 text-amber-400"
-                  : "bg-nexus-bg-elevated text-nexus-text-muted",
-            )}
-          >
-            <span
-              className={cn(
-                "h-1.5 w-1.5 rounded-full",
-                wsConnected ? "bg-emerald-400" : "bg-zinc-500",
-              )}
-            />
-            {wsConnected ? "已连接" : connectionState === "connecting" ? "连接中" : "未连接"}
-          </span>
-        </div>
-        <p className="break-all font-mono text-[9px] leading-snug text-nexus-text-muted" title={wsUrl}>
-          {wsUrl}
-        </p>
-        {!wsConnected ? (
-          <button
-            type="button"
-            onClick={() => connectWs()}
-            className="mt-2 w-full rounded-md border border-nexus-border-accent bg-nexus-accent-glow/10 px-2 py-1.5 text-xs text-nexus-accent hover:bg-nexus-accent-glow/20"
-          >
-            连接航迹评估服务
-          </button>
-        ) : null}
-      </section>
-
       <section>
         <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
           数据库筛选

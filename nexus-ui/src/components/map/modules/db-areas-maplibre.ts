@@ -53,7 +53,13 @@ export function installDbAreasLayers(map: maplibregl.Map, beforeId?: string): vo
           "text-font": ["Open Sans Regular"],
           "text-size": 11,
           /** 锚点 Geometries 在外侧东南角：字块朝西北铺开，避免 `right`+`justify` 叠字 */
-          "text-anchor": "bottom-right",
+          "text-anchor": [
+            "match",
+            ["get", "labelAnchor"],
+            "north",
+            "bottom",
+            "bottom-right",
+          ],
           "text-max-width": 24,
           "text-line-height": 1.15,
           "text-allow-overlap": false,

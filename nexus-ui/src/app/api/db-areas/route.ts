@@ -148,8 +148,12 @@ export async function POST(req: NextRequest) {
         areaType,
         areaType === 2 || areaType === 4 ? String(body.start_point ?? "") : "",
         areaType === 2 ? String(body.end_point ?? "") : "",
-        areaType === 1 ? String(body.area_rect ?? "") : "",
-        areaType === 3 || areaType === 4 ? String(body.area_points ?? "") : "",
+        areaType === 1 || areaType === 2 ? String(body.area_rect ?? "") : "",
+        areaType === 2
+          ? String(body.area_points ?? "0")
+          : areaType === 3 || areaType === 4
+            ? String(body.area_points ?? "")
+            : "",
         lineWidth,
         lineColor,
       ],

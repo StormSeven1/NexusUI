@@ -6,6 +6,7 @@
  * - area_type 4：航线折线；start_point = 首点 lat,lng；area_points = N,lat1,lng1,...（不闭合）
  */
 
+import { pointAtBearingMeters } from "@/components/map/modules/radar-range-rings-maplibre";
 import { geoCircleCoords } from "@/lib/map-icons";
 
 export type AreaTableRow = {
@@ -77,6 +78,35 @@ export function ringFromAreaRect(areaRect: string | null | undefined): [number, 
     [maxLng, maxLat],
     [minLng, maxLat],
   ]);
+}
+
+/** `line_color` 列：支持 `#rrggbb` 或 `255,255,0` */
+export function parseAreaLineColor(raw: string | null | undefined, fallback: string): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return fallback;
+  const rgb = /^(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})$/.exec(s);
+  if (rgb) {
+    const hex = (n: string) =>
+      Math.min(255, Math.max(0, Number(n)))
+        .toString(16)
+        .padStart(2, "0");
+    return `#${hex(rgb[1]!)}${hex(rgb[2]!)}${hex(rgb[3]!)}`;
+  }
+  if (s.startsWith("#")) return s;
+  return s;
+}
+
+/** 圆形区域名称标注：圆心沿真北 0° 的圆周点 */
+export function circleLabelLngLatNorth(
+  startPoint: string | null | undefined,
+  endPoint: string | null | undefined,
+): [number, number] | null {
+  const c = parseLatLngPair(startPoint);
+  const e = parseLatLngPair(endPoint);
+  if (!c || !e) return null;
+  const radiusM = haversineKm(c.lat, c.lng, e.lat, e.lng) * 1000;
+  if (!(radiusM > 0)) return [c.lng, c.lat];
+  return pointAtBearingMeters(c.lng, c.lat, radiusM, 0);
 }
 
 /** 圆：圆心 + 边缘一点 → 近似圆（64 段） */
