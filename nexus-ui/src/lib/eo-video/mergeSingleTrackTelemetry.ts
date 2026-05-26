@@ -40,7 +40,7 @@ export function findTrackByDdsTrackId(tracks: readonly Track[], ddsNum: number):
 
 /**
  * 单目标标牌四元组：DDS 相机行 → 检测 WS meta → GIS 航迹（与 TargetPlacard / track-store 同源）。
- * 航迹 `speed` 与地图标牌一致按节 kn，此处换算为 m/s 供画布 `SPD … m/s`。
+ * 航迹 `speed` 与地图标牌一致为 m/s，供画布 `SPD … m/s`。
  */
 export function mergeSingleTrackTelemetry(
   box: EoDetectionBox,
@@ -61,9 +61,7 @@ export function mergeSingleTrackTelemetry(
 
   let speedMps = pickFirstFinite(meta.speedMps, finiteNum(ddsRow?.speed));
   if (speedMps == null && tr != null && Number.isFinite(tr.speed)) {
-    const sp = tr.speed;
-    /** 与 TargetPlacard 一致：track-store 中 speed 为节（kn） */
-    speedMps = sp > 0 && sp <= 200 ? sp * 0.514444 : sp;
+    speedMps = tr.speed;
   }
 
   const out: NonNullable<EoDetectionBox["singleTrackDetail"]> = {};

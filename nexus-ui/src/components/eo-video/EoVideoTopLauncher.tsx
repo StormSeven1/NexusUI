@@ -5,18 +5,14 @@ import { createPortal } from "react-dom";
 import { ChevronDown, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDockStore } from "@/stores/dock-store";
-import type { PanelId } from "@/stores/dock-store";
+import {
+  EO_ELECTRO_OPTICAL_INSTANCE_COUNT,
+  EO_ELECTRO_OPTICAL_PANEL_IDS,
+} from "@/lib/eo-video/eoElectroOpticalDockPool";
 import { DroneSettingsDialog, type DroneSettingsPanelAnchor } from "@/components/layout/DroneSettingsDialog";
 import { stopAllPtzCameraTasks } from "@/lib/stop-all-ptz-camera-tasks";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import { toast } from "sonner";
-
-const EO_WINDOW_POOL: PanelId[] = [
-  "electro-optical-1",
-  "electro-optical-2",
-  "electro-optical-3",
-  "electro-optical-4",
-];
 
 export function openElectroOpticalDockPopup() {
   if (typeof window === "undefined") return;
@@ -25,13 +21,21 @@ export function openElectroOpticalDockPopup() {
   const h = window.innerHeight;
   const pw = Math.min(960, w - 48);
   const ph = Math.min(540, h - 100);
-  const x = Math.max(16, (w - pw) / 2);
-  const y = Math.max(56, (h - ph) / 2);
 
   const panelStates = dock.panels;
-  const targetPanelId =
-    EO_WINDOW_POOL.find((id) => panelStates.find((p) => p.id === id)?.mode === "hidden") ??
-    EO_WINDOW_POOL[0];
+  const targetPanelId = EO_ELECTRO_OPTICAL_PANEL_IDS.find(
+    (id) => panelStates.find((p) => p.id === id)?.mode === "hidden",
+  );
+  if (!targetPanelId) {
+    toast.message("光电窗口已满", {
+      description: `最多同时打开 ${EO_ELECTRO_OPTICAL_INSTANCE_COUNT} 个光电窗口，请先关闭其中一个再新建`,
+    });
+    return;
+  }
+
+  const slotIndex = Math.max(0, EO_ELECTRO_OPTICAL_PANEL_IDS.indexOf(targetPanelId));
+  const x = Math.max(16, (w - pw) / 2 + slotIndex * 28);
+  const y = Math.max(56, (h - ph) / 2 + slotIndex * 28);
 
   dock.updatePanelState(targetPanelId, {
     mode: "popup",

@@ -3,6 +3,7 @@
  */
 
 import type { AlertData } from "@/stores/alert-store";
+import { parseAlarmFuseTypeFromRaw } from "@/lib/alarm-track-match";
 
 const NM_PER_METRE = 1 / 1852;
 
@@ -258,9 +259,21 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     }
   }
 
-  const uniqueIDRaw = o.uniqueID ?? o.uniqueId ?? o.showID;
-  const uniqueID =
-    typeof uniqueIDRaw === "string" && uniqueIDRaw.trim() ? uniqueIDRaw.trim() : undefined;
+  const uniqueIDRaw = o.uniqueID ?? o.uniqueId ?? o.unique_id ?? o.showID;
+  let uniqueID: string | undefined;
+  if (typeof uniqueIDRaw === "string" && uniqueIDRaw.trim()) {
+    uniqueID = uniqueIDRaw.trim();
+  } else if (typeof uniqueIDRaw === "number" && Number.isFinite(uniqueIDRaw) && uniqueIDRaw > 0) {
+    uniqueID = String(uniqueIDRaw);
+  }
+
+  const fuseTypeRaw = o.fuseType ?? o.fuse_type;
+  const fuseType =
+    fuseTypeRaw === 0 || fuseTypeRaw === 1
+      ? fuseTypeRaw
+      : fuseTypeRaw === "0" || fuseTypeRaw === "1"
+        ? (Number(fuseTypeRaw) as 0 | 1)
+        : parseAlarmFuseTypeFromRaw(o);
 
   const detail =
     typeof o.detail === "string"
@@ -292,6 +305,7 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     ...(areaName ? { areaName } : {}),
     ...(areaJudge ? { areaJudge } : {}),
     ...(uniqueID ? { uniqueID } : {}),
+    ...(fuseType === 0 || fuseType === 1 ? { fuseType } : {}),
     ...(detail ? { detail } : {}),
     ...(distanceNm != null ? { distanceNm } : {}),
     ...(bearingDeg != null ? { bearingDeg } : {}),

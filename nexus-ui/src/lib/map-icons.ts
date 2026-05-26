@@ -2,6 +2,7 @@ import type { ExpressionSpecification } from "maplibre-gl";
 import { VERIFIED_TRACK_MAP_COLOR } from "./verified-track-constants.ts";
 import { FORCE_COLORS, type ForceDisposition } from "./theme-colors.ts";
 import type { Track, PublicMapAssetType, AssetStatus } from "./map-entity-model.ts";
+import { isAirTrackBirdGlyphFromClassification } from "./track-category-id-parse.ts";
 import { PUBLIC_MAP_ASSET_TYPES } from "./map-entity-model.ts";
 
 /** 资产中心图标默认 zoom→size 插值 stops */
@@ -120,16 +121,13 @@ const AIR_FUSE_TRACK_ICON: TrackIconDef = {
 };
 
 /**
- * 对空航迹图标语义：**DDS `trackCategoryId === 3` 为无人机**（战机剪影）；**其余 category 为鸟**。
- * 报文未带 `trackCategoryId` 时：与 `isUav` 对齐（非无人机则显示鸟形），避免旧数据全无分类。
+ * 对空航迹图标：**classified_type / trackType 为 DRONE(1)** 或旧 **trackCategoryId===3** → 战机剪影；其余 → 鸟。
  */
-export function isAirTrackBirdGlyph(t: Pick<Track, "type" | "trackCategoryId" | "isUav">): boolean {
+export function isAirTrackBirdGlyph(
+  t: Pick<Track, "type" | "trackCategoryId" | "classifiedType" | "isUav">,
+): boolean {
   if (t.type !== "air") return false;
-  const c = t.trackCategoryId;
-  if (c != null && Number.isFinite(Number(c))) {
-    return Number(c) !== 3;
-  }
-  return t.isUav !== true;
+  return isAirTrackBirdGlyphFromClassification(t.classifiedType, t.trackCategoryId, t.isUav);
 }
 
 /**
@@ -229,9 +227,10 @@ export function buildMarkerSymbolSvg(
     ? (airFuseGlyph ? AIR_FUSE_TRACK_ICON : (airBirdGlyph ? AIR_BIRD_TRACK_ICON : TRACK_SVG_ICONS.air))
     : TRACK_SVG_ICONS[type];
   const innerBody = `<path d="${icon.pathD}" fill="${color}"/>`;
-  const virtualFrame =
+  /** 虚兵：画在军标本体之上，避免被 fill 遮住 */
+  const virtualBottomDash =
     virtual
-      ? `<rect x="1" y="1" width="62" height="62" rx="10" fill="none" stroke="${color}" stroke-width="1.8" stroke-dasharray="5 4" opacity="0.92"/>`
+      ? `<line x1="8" y1="61" x2="56" y2="61" stroke="${color}" stroke-width="3" stroke-dasharray="6 4" stroke-linecap="round" opacity="1"/>`
       : "";
 
   return [
@@ -241,10 +240,10 @@ export function buildMarkerSymbolSvg(
     `<feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#000" flood-opacity="0.85"/>`,
     `</filter>`,
     `</defs>`,
-    virtualFrame,
     `<svg x="4" y="6" width="56" height="54" viewBox="${icon.viewBox}" filter="url(#sh)">`,
     innerBody,
     `</svg>`,
+    virtualBottomDash,
     `<path d="M32 2 L32 7" stroke="${color}" stroke-width="2.2" stroke-linecap="round" opacity="0.9"/>`,
     `</svg>`,
   ].join("");

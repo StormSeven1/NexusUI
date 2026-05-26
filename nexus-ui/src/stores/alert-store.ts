@@ -25,6 +25,8 @@
  */
 
 import { create } from "zustand";
+import type { AlarmFilterFuseType } from "@/lib/alarm-filter-api";
+import { buildAlarmMatchKeysFromAlerts } from "@/lib/alarm-track-match";
 import { useDisposedStore } from "@/stores/disposed-store";
 
 export interface AlertData {
@@ -66,6 +68,8 @@ export interface AlertData {
   detail?: string;
   /** uniqueID（与 track-store showID 对应） */
   uniqueID?: string;
+  /** 0=对海融合，1=对空融合（AlarmSys 规则 / DDS track.trackType） */
+  fuseType?: AlarmFilterFuseType;
   /** 查证图片 URL */
   imageUrl?: string;
   /** 相对本舰/参考点距离（海里），WS 或航迹补齐 */
@@ -101,7 +105,10 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
 
 interface AlertState {
   alerts: AlertData[];
-  /** 当前有效告警的 trackId 集合（航迹匹配用） */
+  /**
+   * 告警匹配键集合（航迹提升/着色用）。
+   * 见 `alarm-track-match.ts`（`u:` / `t:0:` / `t:1:` / `t:*:` 前缀，非裸 trackId）。
+   */
   alarmTrackIds: Set<string>;
   /** 仅在 alarmTrackIds Set 真正变化时递增 */
   alarmTrackRevision: number;
@@ -247,11 +254,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 function applyRevision<T extends { alerts: AlertData[]; alarmTrackIds: Set<string>; alarmTrackRevision: number }>(
   state: T,
 ): T {
-  const newIds = new Set<string>();
-  for (const a of state.alerts) {
-    const tid = getAlarmTrackId(a);
-    if (tid) newIds.add(tid);
-  }
+  const newIds = buildAlarmMatchKeysFromAlerts(state.alerts);
   if (setsEqual(newIds, state.alarmTrackIds)) return state;
   return { ...state, alarmTrackIds: newIds, alarmTrackRevision: state.alarmTrackRevision + 1 };
 }

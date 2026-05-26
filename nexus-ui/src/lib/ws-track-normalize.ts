@@ -24,10 +24,15 @@
  */
 
 import { isVirtualFromProperties, type Track } from "@/lib/map-entity-model";
+import { readRealityTypeFromRecord, resolveTrackIsVirtual } from "@/lib/track-reality-type";
 import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { transformCoordinate } from "@/lib/coordinate-transform";
-import { readTrackCategoryFromRecord } from "@/lib/track-category-id-parse";
+import {
+  readTrackCategoryFromRecord,
+  readClassifiedTypeFromRecord,
+  resolveAirTrackIsUav,
+} from "@/lib/track-category-id-parse";
 import type { TrackLayerKey } from "@/lib/map-entity-model";
 import { TRACK_LAYER_KEY_BY_DDS_SOURCE_ID } from "@/lib/track-layer-visibility";
 import { resolveTrackLastUpdateString } from "@/lib/track-last-update-resolve";
@@ -133,16 +138,28 @@ export function trackIconHeadingDeg(kind: Track["type"], courseDeg: number): num
 export function mergeIncomingTrackWithStickyAirClassification(incoming: Track, prev: Track | undefined): Track {
   let out: Track = incoming;
   if (incoming.type === "air" && prev != null && incoming.trackCategoryId === undefined && prev.trackCategoryId !== undefined) {
-    const tc = prev.trackCategoryId;
-    out = { ...incoming, trackCategoryId: tc };
-    if (tc === 3) out.isUav = true;
-    else delete out.isUav;
+    out = { ...incoming, trackCategoryId: prev.trackCategoryId };
+  }
+  if (prev != null && out.classifiedType === undefined && prev.classifiedType !== undefined) {
+    out = { ...out, classifiedType: prev.classifiedType };
   }
   if (prev != null && out.trackLayerKey === undefined && prev.trackLayerKey !== undefined) {
     out = { ...out, trackLayerKey: prev.trackLayerKey };
   }
   if (prev != null && out.ddsSourceId === undefined && prev.ddsSourceId !== undefined) {
     out = { ...out, ddsSourceId: prev.ddsSourceId };
+  }
+  if (prev != null && out.realityType === undefined && prev.realityType !== undefined) {
+    out = { ...out, realityType: prev.realityType };
+  }
+  if (prev != null && out.isVirtual === undefined && prev.isVirtual === true) {
+    out = { ...out, isVirtual: true };
+  }
+  if (out.realityType === 2) {
+    out = { ...out, isVirtual: true };
+  } else if (out.realityType === 1 && out.isVirtual === true) {
+    const { isVirtual: _drop, ...rest } = out;
+    out = rest as Track;
   }
   /** 有 dds 时以接收器为准写回 layer key（覆盖 prev 上可能错误的粘性 fuse_*） */
   if (out.ddsSourceId) {
@@ -177,6 +194,15 @@ export function mergeIncomingTrackWithStickyAirClassification(incoming: Track, p
       out = { ...out, isAirTrack: true };
     } else if ("isAirTrack" in out) {
       const { isAirTrack: _drop, ...rest } = out;
+      out = rest as Track;
+    }
+  }
+  if (out.type === "air") {
+    const drone = resolveAirTrackIsUav(out.classifiedType, out.trackCategoryId, out.isUav);
+    if (drone) {
+      out = { ...out, isUav: true };
+    } else if (out.isUav && (out.classifiedType !== undefined || out.trackCategoryId !== undefined)) {
+      const { isUav: _drop, ...rest } = out;
       out = rest as Track;
     }
   }
@@ -277,7 +303,13 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const propBag: Record<string, unknown> = { ...(asRecord(rec.properties) ?? {}) };
   if (rec.virtualTroop !== undefined) propBag.virtualTroop = rec.virtualTroop;
   if (rec.virtual_troop !== undefined) propBag.virtual_troop = rec.virtual_troop;
-  const isVirtual = isVirtualFromProperties(propBag);
+  const realityType = readRealityTypeFromRecord(rec);
+  const rootVirtualRaw = rec.is_virtual ?? rec.isVirtual ?? rec.virtual_troop ?? rec.virtualTroop;
+  const rootVirtual =
+    rootVirtualRaw === true ||
+    rootVirtualRaw === 1 ||
+    (typeof rootVirtualRaw === "string" && /^(1|true|yes|virtual)$/i.test(String(rootVirtualRaw).trim()));
+  const isVirtual = resolveTrackIsVirtual(realityType, propBag, rootVirtual);
   const rawUav = rec.is_uav ?? rec.isUav ?? rec.uav;
   let isUav =
     rawUav === true ||
@@ -285,8 +317,13 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     (typeof rawUav === "string" && /^(1|true|yes|uav)$/i.test(rawUav.trim()));
 
   const trackCategoryId = readTrackCategoryFromRecord(rec);
-  if (kind === "air" && trackCategoryId !== undefined) {
-    isUav = trackCategoryId === 3;
+  const classifiedType = readClassifiedTypeFromRecord(rec);
+  if (kind === "air") {
+    isUav = resolveAirTrackIsUav(
+      classifiedType,
+      trackCategoryId,
+      isUav,
+    );
   }
 
   const isAirTrack = kind === "air";
@@ -365,9 +402,11 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     ...(dataSourceIdStr ? { dataSourceId: dataSourceIdStr } : {}),
     ...(ddsSourceIdStr ? { ddsSourceId: ddsSourceIdStr } : {}),
     ...(resolvedTrackLayerKey ? { trackLayerKey: resolvedTrackLayerKey } : {}),
+    ...(realityType !== undefined ? { realityType } : {}),
     ...(isVirtual ? { isVirtual: true } : {}),
     ...(isUav ? { isUav: true } : {}),
     ...(trackCategoryId !== undefined ? { trackCategoryId } : {}),
+    ...(classifiedType !== undefined ? { classifiedType } : {}),
   };
 }
 

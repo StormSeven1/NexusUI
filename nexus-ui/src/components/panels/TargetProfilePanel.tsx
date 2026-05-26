@@ -12,6 +12,7 @@ import type { Track } from "@/lib/map-entity-model";
 import { useTrackStore } from "@/stores/track-store";
 import { useTargetProfileStore } from "@/stores/target-profile-store";
 import { resolveTrackLayerKey, TRACK_SUBTYPE_LABELS } from "@/lib/track-layer-visibility";
+import { formatTrackSpeed } from "@/lib/track-speed-format";
 
 const PROFILE_POLL_MS = 5000;
 
@@ -239,7 +240,7 @@ export function TargetProfilePanel() {
 
   const t = displayTrack;
   const brg = t.course ?? t.heading;
-  const spd = Number.isFinite(t.speed) ? `${t.speed.toFixed(1)} kn` : "—";
+  const spd = formatTrackSpeed(t.speed);
 
   return (
     <div

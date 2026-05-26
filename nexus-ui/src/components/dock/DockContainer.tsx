@@ -57,10 +57,12 @@ export function DockContainer() {
   return (
     <>
       {sortedPanels.map((panel) => {
+        const config = getWindowConfig(panel.id);
         const PanelComponent = getPanelComponent(panel.id);
         const Icon = getPanelIcon(panel.id) ?? Square;
         const title = getPanelTitle(panel.id);
         const isHighlighted = highlightedPanelId === panel.id;
+        const resizable = config?.resizable !== false;
 
         const dockWindow = (
           <DockWindow
@@ -72,6 +74,7 @@ export function DockContainer() {
             onStateChange={(newState) => updatePanelState(panel.id, newState)}
             onClose={() => closePanel(panel.id)}
             highlight={isHighlighted}
+            resizable={resizable}
           >
             <PanelComponent />
           </DockWindow>

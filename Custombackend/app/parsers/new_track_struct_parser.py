@@ -94,6 +94,8 @@ def target_object_to_track(obj) -> Dict[str, Any]:
     if ts <= 0:
         ts = float(obj.created_time())
 
+    reality_type = _read_reality_type(obj)
+
     result: Dict[str, Any] = {
         'trackId': int(obj.external_target_id()) if str(obj.external_target_id()).strip().isdigit() else obj.external_target_id(),
         'uniqueId': int(obj.target_id()) if str(obj.target_id()).strip().isdigit() else obj.target_id(),
@@ -110,14 +112,21 @@ def target_object_to_track(obj) -> Dict[str, Any]:
         'range': float(obj.fused_range_m()),
         'timestamp': ts,
         'trackType': track_type,
+        'classified_type': track_type,
         'trackCategoryName': track_category_name,
         'trackAlias': str(obj.name()),
         'confidence': float(obj.type_confidence()),
-        'reality_type': _read_reality_type(obj),
+        'reality_type': reality_type,
         'source': 'DDS',
         'data_type': 'fusion_track',
         'structure_type': 'new_track_struct',
     }
+    if reality_type == 2:
+        result['is_virtual'] = True
+        result['virtualTroop'] = True
+    if track_type == 1:
+        result['is_uav'] = True
+        result['isUav'] = True
 
     fusion_sources = _extract_fusion_sources(obj)
     if fusion_sources:
@@ -127,9 +136,6 @@ def target_object_to_track(obj) -> Dict[str, Any]:
             if str(fs.get('dataSourceId', '')).lower() == 'ais':
                 result['mmsi'] = fs.get('trackId')
                 break
-
-    if(_read_reality_type(obj) == 2):
-        print("target_object_to_track:",result)
 
     return result
 

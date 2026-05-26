@@ -10,7 +10,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useAlertStore, type AlertData } from "@/stores/alert-store";
 import { useTrackStore, getRenderCache } from "@/stores/track-store";
 import { cn } from "@/lib/utils";
-import { formatAlertSummaryLine } from "@/lib/format-alert-summary";
+import { buildAlertSummaryParts } from "@/lib/format-alert-summary";
 import {
   resolveShowIdFromAlarmTrackId,
   resolveTrackFromAlarmTrackId,
@@ -19,8 +19,10 @@ import {
 import {
   fuseTypeFromTrackKind,
   sendAlarmTrackFilterRequest,
+  type AlarmFilterFuseType,
 } from "@/lib/alarm-filter-api";
-import { AlertTriangle, AlertCircle, Info, ScanSearch, Trash2, Video } from "lucide-react";
+import { resolveAlertFuseType } from "@/lib/alarm-track-match";
+import { AlertTriangle, AlertCircle, Info, Plane, ScanSearch, Ship, Trash2, Video } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { THIRD_PARTY_DETECT_ALERT_TYPE } from "@/lib/third-party-ptz-fov";
@@ -73,6 +75,23 @@ function isTrackAlarmItem(alert: AlertData): boolean {
   return Boolean(alert.trackId?.trim()) && alert.type !== THIRD_PARTY_DETECT_ALERT_TYPE;
 }
 
+/** 航迹告警目标 ID 前的对海/对空小标（与目标档案面板一致） */
+function AlertTrackFuseIcon({ fuseType }: { fuseType: 0 | 1 }) {
+  const cls = "inline size-[11px] shrink-0 align-[-1px] opacity-95";
+  if (fuseType === 1) {
+    return (
+      <span title="对空" className="inline-flex shrink-0">
+        <Plane className={cn(cls, "text-sky-300")} strokeWidth={2} aria-hidden />
+      </span>
+    );
+  }
+  return (
+    <span title="对海" className="inline-flex shrink-0">
+      <Ship className={cn(cls, "text-teal-300")} strokeWidth={2} aria-hidden />
+    </span>
+  );
+}
+
 export function AlertPanel() {
   const { selectTrack, requestFlyTo } = useAppStore();
   const alerts = useAlertStore((s) => s.alerts);
@@ -113,23 +132,24 @@ export function AlertPanel() {
         return;
       }
 
-      let isAirTrack = false;
-      for (const [, t] of getRenderCache()) {
-        if (t.trackId === trackId) {
-          isAirTrack = t.type === "air";
-          break;
+      let fuseType: AlarmFilterFuseType | undefined = alert.fuseType;
+      if (fuseType !== 0 && fuseType !== 1) {
+        let isAirTrack = false;
+        for (const [, t] of getRenderCache()) {
+          if (t.trackId === trackId) {
+            isAirTrack = t.isAirTrack === true;
+            break;
+          }
         }
-      }
-      if (!isAirTrack) {
-        const shadow = resolveTrackFromAlarmTrackId(trackId, shadowTracks);
-        if (shadow) isAirTrack = shadow.type === "air";
+        if (!isAirTrack) {
+          const shadow = resolveTrackFromAlarmTrackId(trackId, shadowTracks, alert);
+          if (shadow) isAirTrack = shadow.isAirTrack === true;
+        }
+        fuseType = fuseTypeFromTrackKind(isAirTrack);
       }
 
       try {
-        const result = await sendAlarmTrackFilterRequest(
-          trackId,
-          fuseTypeFromTrackKind(isAirTrack),
-        );
+        const result = await sendAlarmTrackFilterRequest(trackId, fuseType);
         if (!result.ok) {
           toast.error("删除告警失败", { description: result.message ?? "告警服务无响应" });
           return;
@@ -184,7 +204,11 @@ export function AlertPanel() {
         {allAlerts.map((alert) => {
           const style = resolveAlertVisualStyle(alert);
           const Icon = style.icon;
-          const summaryLine = formatAlertSummaryLine(alert, shadowTracks);
+          const summary = buildAlertSummaryParts(alert, shadowTracks);
+          const fuseType = isTrackAlarmItem(alert)
+            ? resolveAlertFuseType(alert, shadowTracks)
+            : undefined;
+          const summaryLine = `目标：${summary.target}, 位置：${summary.position}, 区域：${summary.area}, 等级：${summary.level}`;
 
           return (
             <div
@@ -245,7 +269,14 @@ export function AlertPanel() {
                     className="mt-0.5 break-words text-[10px] leading-snug text-nexus-text-primary"
                     title={summaryLine}
                   >
-                    {summaryLine}
+                    <span className="inline-flex flex-wrap items-center gap-0.5">
+                      目标：
+                      {fuseType === 0 || fuseType === 1 ? (
+                        <AlertTrackFuseIcon fuseType={fuseType} />
+                      ) : null}
+                      <span>{summary.target}</span>
+                    </span>
+                    , 位置：{summary.position}, 区域：{summary.area}, 等级：{summary.level}
                   </p>
 
                   {alert.detail && (

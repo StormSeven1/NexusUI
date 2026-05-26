@@ -1,5 +1,5 @@
 {
-  "syncedAt": "2026-05-26T01:32:53.337Z",
+  "syncedAt": "2026-05-26T04:23:38.248Z",
   "sourceUrl": "http://192.168.18.141:8090/api/v1/entities?page=1&size=100",
   "devices": [
     {
@@ -54,18 +54,6 @@
       "entityId": "uav-011",
       "deviceSN": "1581F6QAD241200BWX4E",
       "airportSN": "7CTDM4T00BG5D7",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-101",
-      "deviceSN": "DroneAABBCCDD101",
-      "airportSN": "DockAABBCCDD101",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-102",
-      "deviceSN": "DroneAABBCCDD102",
-      "airportSN": "DockAABBCCDD102",
       "vendor": "dji"
     },
     {

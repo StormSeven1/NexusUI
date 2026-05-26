@@ -1,7 +1,7 @@
 import type { AlertData } from "@/stores/alert-store";
 import type { Track } from "@/lib/map-entity-model";
 import { getRenderCache } from "@/stores/track-store";
-import { resolveShowIdFromAlarmTrackId } from "@/lib/run-gis-track-verification";
+import { resolveShowIdFromAlarm } from "@/lib/alarm-track-match";
 import { THIRD_PARTY_DETECT_ALERT_TYPE } from "@/lib/third-party-ptz-fov";
 
 /** 告警 WS 中 `alarmLevel` 在 AlarmSys 侧实为 `threatScore`（威胁度） */
@@ -19,14 +19,7 @@ function resolveShowIdForAlarm(
   alert: AlertData,
   shadowTracks: ReadonlyMap<string, Track>,
 ): string | null {
-  const tid = alert.trackId?.trim();
-  if (tid) {
-    const fromTrack = resolveShowIdFromAlarmTrackId(tid, shadowTracks);
-    if (fromTrack) return fromTrack;
-  }
-  const uid = alert.uniqueID?.trim();
-  if (uid && (getRenderCache().has(uid) || shadowTracks.has(uid))) return uid;
-  return null;
+  return resolveShowIdFromAlarm(alert, shadowTracks);
 }
 
 /**

@@ -20,6 +20,8 @@ import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
 import { LYR_TRACKS, TRACK_LAYER_KEYS_ORDERED, type Track } from "@/lib/map-entity-model";
 import { useTrackDisplayStore, neutralFusionColorForTrack } from "@/stores/track-display-store";
+import { isTrackVirtualTroop } from "@/lib/track-reality-type";
+import { formatTrackSpeed } from "@/lib/track-speed-format";
 import {
   effectiveTrackLayerKey,
   isDotTrackLayerKey,
@@ -86,7 +88,7 @@ function TrackListRow({
         <MilSymbol
           type={track.type}
           disposition={disp}
-          virtual={track.isVirtual === true}
+          virtual={isTrackVirtualTroop(track)}
           neutralFusionFill={disp === "neutral" ? getFusionTrackMarkerFill(track) : undefined}
           opticallyVerified={shouldApplyVerifiedTrackGreen(track)}
           size="sm"
@@ -115,7 +117,7 @@ function TrackListRow({
           </span>
         </div>
         <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
-          {typeof track.speed === "number" ? track.speed.toFixed(1) : track.speed} kn · 航向{" "}
+          {formatTrackSpeed(track.speed)} · 航向{" "}
           {formatHeading2(track.course ?? track.heading)}°
           {track.type === "air" && track.altitude ? ` · 高度 ${track.altitude.toFixed(1)}ft` : ""}
           {track.type === "underwater" ? ` · 深度 ${track.altitude || 0}m` : ""}

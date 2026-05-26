@@ -1,7 +1,13 @@
 /**
- * DDS / WS 航迹 `trackCategoryId`（octet，3=无人机）统一解析。
- * 网关与 TrackParser 可能把字段放在根、`raw_data`、`data`、嵌套对象或 `reserved6` JSON 中。
+ * DDS / WS 航迹分类字段统一解析。
+ * - 旧 fusion：`trackCategoryId === 3` 为无人机
+ * - NewTrackStruct `classified_type` / `trackType`（UnitType）：`1 = DRONE` 为无人机，其余对空显示为鸟
  */
+
+/** 与 NewTrackRealTimeStatus.idl `UnitType` 一致 */
+export const UNIT_TYPE_UNKNOWN = 0;
+export const UNIT_TYPE_DRONE = 1;
+export const UNIT_TYPE_BIRD = 2;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -148,4 +154,73 @@ export function readTrackCategoryFromRecord(rec: Record<string, unknown>): numbe
   }
 
   return undefined;
+}
+
+const CLASSIFIED_TYPE_KEYS = [
+  "classified_type",
+  "classifiedType",
+  "trackType",
+  "track_type",
+] as const;
+
+function pickClassifiedTypeValue(obj: Record<string, unknown>): unknown {
+  for (const k of CLASSIFIED_TYPE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== null && obj[k] !== undefined) {
+      return obj[k];
+    }
+  }
+  return undefined;
+}
+
+/** 解析 NewStruct `classified_type`（后端常写作 `trackType` 整型枚举） */
+export function readClassifiedTypeFromRecord(rec: Record<string, unknown>): number | undefined {
+  const bags: unknown[] = [rec, rec.properties, rec.dds, rec.data, rec.raw_data];
+  for (const b of bags) {
+    const o = asRecord(b);
+    if (!o) continue;
+    const v = pickClassifiedTypeValue(o);
+    if (v !== undefined) {
+      const n = coerceTrackCategoryIdValue(v);
+      if (n !== undefined) return n;
+    }
+  }
+  const name = rec.trackCategoryName ?? rec.track_category_name;
+  if (typeof name === "string") {
+    const s = name.trim().toLowerCase();
+    if (s === "drone" || s === "uav") return UNIT_TYPE_DRONE;
+    if (s === "bird") return UNIT_TYPE_BIRD;
+  }
+  return undefined;
+}
+
+/**
+ * 对空航迹是否按无人机图标显示。
+ * 优先 NewStruct `classified_type`（DRONE=1）；否则旧 `trackCategoryId===3`。
+ */
+export function resolveAirTrackIsUav(
+  classifiedType: number | undefined,
+  trackCategoryId: number | undefined,
+  legacyIsUav?: boolean,
+): boolean {
+  if (classifiedType !== undefined) {
+    return classifiedType === UNIT_TYPE_DRONE;
+  }
+  if (trackCategoryId !== undefined) {
+    return trackCategoryId === 3;
+  }
+  return legacyIsUav === true;
+}
+
+export function isAirTrackBirdGlyphFromClassification(
+  classifiedType: number | undefined,
+  trackCategoryId: number | undefined,
+  isUav?: boolean,
+): boolean {
+  if (classifiedType !== undefined) {
+    return classifiedType !== UNIT_TYPE_DRONE;
+  }
+  if (trackCategoryId != null && Number.isFinite(Number(trackCategoryId))) {
+    return Number(trackCategoryId) !== 3;
+  }
+  return isUav !== true;
 }

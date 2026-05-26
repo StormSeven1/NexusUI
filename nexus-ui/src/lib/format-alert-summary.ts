@@ -57,6 +57,39 @@ function pickLevel(alert: AlertData): string {
   return SEVERITY_LEVEL_LABEL[alert.severity] ?? "-";
 }
 
+export type AlertSummaryParts = {
+  target: string;
+  position: string;
+  area: string;
+  level: string;
+};
+
+function resolveAlertTrack(
+  alert: AlertData,
+  shadowTracks: ReadonlyMap<string, Track>,
+): Track | null {
+  return (
+    (alert.trackId ? resolveTrackFromAlarmTrackId(alert.trackId, shadowTracks, alert) : null) ??
+    (alert.uniqueID
+      ? getRenderCache().get(alert.uniqueID) ?? shadowTracks.get(alert.uniqueID) ?? null
+      : null)
+  );
+}
+
+/** 告警摘要各字段（供列表带海/空图标渲染） */
+export function buildAlertSummaryParts(
+  alert: AlertData,
+  shadowTracks: ReadonlyMap<string, Track>,
+): AlertSummaryParts {
+  const track = resolveAlertTrack(alert, shadowTracks);
+  return {
+    target: pickTargetId(alert, track),
+    position: pickPosition(alert, track),
+    area: pickArea(alert),
+    level: pickLevel(alert),
+  };
+}
+
 /**
  * 告警单行摘要：`目标：x, 位置：x, 区域：x, 等级：x`（逗号分隔，对齐 Qt 列表语义）
  */
@@ -64,16 +97,6 @@ export function formatAlertSummaryLine(
   alert: AlertData,
   shadowTracks: ReadonlyMap<string, Track>,
 ): string {
-  const track =
-    (alert.trackId ? resolveTrackFromAlarmTrackId(alert.trackId, shadowTracks) : null) ??
-    (alert.uniqueID
-      ? getRenderCache().get(alert.uniqueID) ?? shadowTracks.get(alert.uniqueID) ?? null
-      : null);
-
-  const target = pickTargetId(alert, track);
-  const position = pickPosition(alert, track);
-  const area = pickArea(alert);
-  const level = pickLevel(alert);
-
+  const { target, position, area, level } = buildAlertSummaryParts(alert, shadowTracks);
   return `目标：${target}, 位置：${position}, 区域：${area}, 等级：${level}`;
 }

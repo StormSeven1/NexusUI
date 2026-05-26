@@ -13,7 +13,9 @@ import {
 } from "@/lib/map-gis-camera-task";
 import { postThirdPartyPosTask } from "@/lib/eo-video/thirdPartyPosTaskClient";
 import { evaluateThirdPartyTaskHttpResponse } from "@/lib/thirdPartyTaskServiceResponse";
+import { resolveShowIdFromAlarm } from "@/lib/alarm-track-match";
 import { getDefaultEoCameraTaskBackendBaseUrl, getTrackIdModeConfig } from "@/lib/map-app-config";
+import type { AlertData } from "@/stores/alert-store";
 import { getRenderCache } from "@/stores/track-store";
 import { useTargetProfileStore } from "@/stores/target-profile-store";
 import { useDockStore } from "@/stores/dock-store";
@@ -25,15 +27,13 @@ import { useAppConfigStore } from "@/stores/app-config-store";
 export function resolveShowIdFromAlarmTrackId(
   alarmTrackId: string,
   shadowTracks: ReadonlyMap<string, Track>,
+  alertHint?: Pick<AlertData, "uniqueID" | "fuseType">,
 ): string | null {
+  if (alertHint?.uniqueID || alertHint?.fuseType === 0 || alertHint?.fuseType === 1) {
+    return resolveShowIdFromAlarm({ trackId: alarmTrackId, ...alertHint }, shadowTracks);
+  }
   if (!getTrackIdModeConfig().distinguishSeaAir) {
-    for (const [, t] of getRenderCache()) {
-      if (t.trackId === alarmTrackId) return t.showID;
-    }
-    for (const [, t] of shadowTracks) {
-      if (t.trackId === alarmTrackId) return t.showID;
-    }
-    return null;
+    return resolveShowIdFromAlarm({ trackId: alarmTrackId }, shadowTracks);
   }
   if (getRenderCache().has(alarmTrackId)) return alarmTrackId;
   if (shadowTracks.has(alarmTrackId)) return alarmTrackId;
@@ -50,8 +50,9 @@ export function resolveShowIdFromAlarmTrackId(
 export function resolveTrackFromAlarmTrackId(
   alarmTrackId: string,
   shadowTracks: ReadonlyMap<string, Track>,
+  alertHint?: Pick<AlertData, "uniqueID" | "fuseType">,
 ): Track | null {
-  const showId = resolveShowIdFromAlarmTrackId(alarmTrackId, shadowTracks);
+  const showId = resolveShowIdFromAlarmTrackId(alarmTrackId, shadowTracks, alertHint);
   if (!showId) return null;
   return getRenderCache().get(showId) ?? shadowTracks.get(showId) ?? null;
 }

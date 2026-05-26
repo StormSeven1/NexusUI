@@ -43,6 +43,7 @@ import { ChatPanel } from "@/components/panels/ChatPanel";
 import { KnowledgeBasePanel } from "@/components/panels/KnowledgeBasePanel";
 import { TargetProfilePanel } from "@/components/panels/TargetProfilePanel";
 import { EoVideoDockPanel } from "@/components/eo-video/EoVideoDockPanel";
+import { EO_ELECTRO_OPTICAL_PANEL_IDS } from "@/lib/eo-video/eoElectroOpticalDockPool";
 
 /** 独立面板文件尚未提供时，与「岸基相机」等一致的占位 */
 function dockPlaceholder(label: string) {
@@ -141,66 +142,24 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
     resizable: true,
     description: "多路光电设备视频显示",
   },
-  {
-    id: "electro-optical-1",
-    title: "多光电显示 1",
-    capability: "dockable",
-    category: "electro-optical",
-    menuLabel: "多光电显示 1",
-    icon: Eye,
-    component: eoDockPanel("electro-optical-1"),
-    defaultLocation: null,
-    defaultSize: { width: 360, height: 400 },
-    closable: true,
-    draggable: true,
-    resizable: true,
-    description: "多路光电设备视频显示（实例1）",
-  },
-  {
-    id: "electro-optical-2",
-    title: "多光电显示 2",
-    capability: "dockable",
-    category: "electro-optical",
-    menuLabel: "多光电显示 2",
-    icon: Eye,
-    component: eoDockPanel("electro-optical-2"),
-    defaultLocation: null,
-    defaultSize: { width: 360, height: 400 },
-    closable: true,
-    draggable: true,
-    resizable: true,
-    description: "多路光电设备视频显示（实例2）",
-  },
-  {
-    id: "electro-optical-3",
-    title: "多光电显示 3",
-    capability: "dockable",
-    category: "electro-optical",
-    menuLabel: "多光电显示 3",
-    icon: Eye,
-    component: eoDockPanel("electro-optical-3"),
-    defaultLocation: null,
-    defaultSize: { width: 360, height: 400 },
-    closable: true,
-    draggable: true,
-    resizable: true,
-    description: "多路光电设备视频显示（实例3）",
-  },
-  {
-    id: "electro-optical-4",
-    title: "多光电显示 4",
-    capability: "dockable",
-    category: "electro-optical",
-    menuLabel: "多光电显示 4",
-    icon: Eye,
-    component: eoDockPanel("electro-optical-4"),
-    defaultLocation: null,
-    defaultSize: { width: 360, height: 400 },
-    closable: true,
-    draggable: true,
-    resizable: true,
-    description: "多路光电设备视频显示（实例4）",
-  },
+  ...EO_ELECTRO_OPTICAL_PANEL_IDS.map((id, index) => {
+    const n = index + 1;
+    return {
+      id,
+      title: `多光电显示 ${n}`,
+      capability: "dockable" as const,
+      category: "electro-optical" as const,
+      menuLabel: `多光电显示 ${n}`,
+      icon: Eye,
+      component: eoDockPanel(id),
+      defaultLocation: null,
+      defaultSize: { width: 360, height: 400 },
+      closable: true,
+      draggable: true,
+      resizable: true,
+      description: `多路光电设备视频显示（实例${n}）`,
+    };
+  }),
   {
     id: "shore-camera",
     title: "岸基相机",

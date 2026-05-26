@@ -118,7 +118,7 @@ export interface DisposalInputParams {
   schemeId?: string;
   /** 识别依据 */
   identificationBasis?: unknown;
-  /** 目标航速（kn） */
+  /** 目标航速（m/s） */
   speed?: number;
   /** 目标航向（°） */
   course?: number;
@@ -161,7 +161,7 @@ export interface OneClickDisposalPayload {
     longitude: number;
     /** 目标纬度 */
     latitude: number;
-    /** 目标航速（kn） */
+    /** 目标航速（m/s） */
     speed: number;
     /** 目标航向（°） */
     course: number;

@@ -23,17 +23,13 @@ export function trimHistoryTrailForDisplay(
 /** 缺速时用假定地速（m/s）画示意矢量，避免滑块无效 */
 const VECTOR_FALLBACK_SPEED_MS = 20;
 
-/** 1 kn（节）→ m/s，与 `eo-video/mergeSingleTrackTelemetry` 航迹速度语义一致 */
-const KNOTS_TO_METERS_PER_SEC = 0.514444;
-
 type VectorSpeedResolved = {
   speedMs: number;
   isFallback: boolean;
 };
 
 /**
- * 航迹 store 中 `speed` 多为 **节（kn）**；`destinationLngLat` 距离为 **米**。
- * 典型海面目标小于 200 kn 视为节并换算；否则视为已是 m/s（兼容少数来源）。
+ * 航迹 store 中 `speed` 为 **m/s**（与 DDS 一致）；`destinationLngLat` 距离为 **米**。
  * 仅在速度缺失/非法时才使用兜底值；真实 0 速保持 0（不画矢量）。
  */
 function speedMetersPerSecondForVector(speed: number): VectorSpeedResolved {
@@ -41,7 +37,6 @@ function speedMetersPerSecondForVector(speed: number): VectorSpeedResolved {
     return { speedMs: VECTOR_FALLBACK_SPEED_MS, isFallback: true };
   }
   if (speed <= 0) return { speedMs: 0, isFallback: false };
-  if (speed <= 200) return { speedMs: speed * KNOTS_TO_METERS_PER_SEC, isFallback: false };
   return { speedMs: speed, isFallback: false };
 }
 
@@ -88,7 +83,7 @@ const VECTOR_MIN_GROUND_METERS = 120;
 /**
  * 速度矢量终点 [lng, lat]。
  * - **方位**：course → azimuth；对空可反推；再无则 **historyTrail 末段 → 当前点**。
- * - **距离**：节→m/s × 秒；仅在速度缺失时才施加最小地面距离，避免低速目标被拉成长线。
+ * - **距离**：m/s × 秒；仅在速度缺失时才施加最小地面距离，避免低速目标被拉成长线。
  * - **秒数**：持久化曾为 0 导致不画线；此处小于 1 时按 60s 算（与 store 迁移一致）。
  */
 export function velocityVectorEndLngLat(t: Track, vectorLengthSeconds: number): [number, number] | null {

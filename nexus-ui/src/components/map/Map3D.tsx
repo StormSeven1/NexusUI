@@ -58,6 +58,7 @@ import {
   isDotTrackLayerKey,
   resolveTrackLayerKey,
 } from "@/lib/track-layer-visibility";
+import { isTrackVirtualTroop } from "@/lib/track-reality-type";
 import {
   assetMapLabelTextColor,
   buildMarkerSymbolDataUrl,
@@ -462,7 +463,7 @@ async function syncCesiumTrackBillboards(
               track.type,
               eff,
               accent,
-              track.isVirtual === true,
+              isTrackVirtualTroop(track),
               friendlyFill,
               fusionTint,
               isAirTrackBirdGlyph(track),
@@ -507,7 +508,7 @@ async function syncCesiumTrackBillboards(
         t.type,
         eff,
         accent,
-        t.isVirtual === true,
+        isTrackVirtualTroop(t),
         friendlyFill,
         fusionTint,
         isAirTrackBirdGlyph(t),

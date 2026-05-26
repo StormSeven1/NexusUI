@@ -754,7 +754,7 @@
     }
   },
   "websocket": {
-    "url": "ws://192.168.18.141:27003/ws",
+    "url": "ws://192.168.18.141:27004/ws",
     "reconnectInterval": 3000,
     "heartbeatInterval": 25000,
     "maxReconnectAttempts": 12,
@@ -765,7 +765,7 @@
     "enabled": false
   },
   "http": {
-    "backendUrl": "http://192.168.18.141:27003",
+    "backendUrl": "http://192.168.18.141:27004",
     "imagePollIntervalMs": 3000,
     "imageFetchTimeoutMs": 1000,
     "chat": {

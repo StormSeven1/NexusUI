@@ -271,6 +271,7 @@ def _parse_alarm_event(dds_object) -> Optional[Dict]:
                 # 航迹信息
                 if hasattr(alarm, 'track'):
                     track = alarm.track()
+                    tt_raw = track.trackType() if hasattr(track, 'trackType') else None
                     alarm_data['track'] = {
                         'trackId': track.trackId() if hasattr(track, 'trackId') else None,
                         'mmsi': track.mmsi() if hasattr(track, 'mmsi') else None,
@@ -280,8 +281,14 @@ def _parse_alarm_event(dds_object) -> Optional[Dict]:
                         'speed': track.speed() if hasattr(track, 'speed') else None,
                         'height': track.height() if hasattr(track, 'height') else None,
                         'timeStamp': track.timeStamp() if hasattr(track, 'timeStamp') else None,
-                        'trackType': track.trackType() if hasattr(track, 'trackType') else None,
+                        'trackType': tt_raw,
                     }
+                    # 0=对海 FUSE，1=对空 BIRD（与 AlarmSys / 前端 fuseType 一致）
+                    tt_name = str(tt_raw).split('::')[-1].upper() if tt_raw is not None else ''
+                    if tt_name == 'BIRD' or tt_raw == 1:
+                        alarm_data['fuse_type'] = 1
+                    elif tt_name == 'FUSE' or tt_raw == 0:
+                        alarm_data['fuse_type'] = 0
                 
                 result['alarms'].append(alarm_data)
         

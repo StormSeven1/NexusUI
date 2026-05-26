@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Circle, X, Maximize2 } from "lucide-react";
+import { Circle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   useDockStore,
@@ -17,6 +17,12 @@ import {
 import {
   SNAP_SIDEBAR_THRESHOLD,
 } from "@/components/dock/types";
+import {
+  type DockPopupResizeEdge,
+  DOCK_POPUP_RESIZE_EDGE_HIT,
+  DOCK_POPUP_RESIZE_HANDLE_CLASS,
+  resizeDockPopupRect,
+} from "@/lib/dock/dockPopupResize";
 
 // 分区吸附目标类型
 interface PartitionSnapTarget {
@@ -118,6 +124,8 @@ interface DockWindowProps {
   highlight?: boolean; // 是否显示高亮效果
   /** 无外框标题栏，内容区铺满（如光电视频）；顶部窄条可拖拽，右上角关闭 */
   chromeless?: boolean;
+  /** popup 模式下是否允许鼠标拖拽边缘/角调整大小（默认 true） */
+  resizable?: boolean;
 }
 
 export function DockWindow({
@@ -130,16 +138,17 @@ export function DockWindow({
   onClose,
   highlight = false,
   chromeless = false,
+  resizable = true,
 }: DockWindowProps) {
   const [position, setPosition] = useState(initialState.position);
   const [size, setSize] = useState(initialState.size);
   const [isDragging, setIsDragging] = useState(false);
-  const [isResizing, setIsResizing] = useState(false);
+  const [resizeEdge, setResizeEdge] = useState<DockPopupResizeEdge | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
   const containerRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
-  const resizeHandleRef = useRef<HTMLDivElement>(null);
+  const resizeStartRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
   const {
     bringToFront,
@@ -160,6 +169,33 @@ export function DockWindow({
   const showSnapIndicatorRef = useRef(false);
   const snapAreaRef = useRef<PanelLocation>(null);
   const partitionSnapTargetRef = useRef<PartitionSnapTarget | null>(null);
+
+  useEffect(() => {
+    if (isDragging || resizeEdge) return;
+    setPosition(initialState.position);
+    setSize(initialState.size);
+  }, [
+    initialState.position.x,
+    initialState.position.y,
+    initialState.size.width,
+    initialState.size.height,
+    isDragging,
+    resizeEdge,
+  ]);
+
+  const beginResize = (edge: DockPopupResizeEdge) => (e: React.MouseEvent) => {
+    if (!resizable) return;
+    e.preventDefault();
+    e.stopPropagation();
+    resizeStartRef.current = {
+      x: position.x,
+      y: position.y,
+      width: size.width,
+      height: size.height,
+    };
+    setResizeEdge(edge);
+    bringToFront(initialState.id);
+  };
 
   /**
    * 检测分区吸附目标
@@ -325,25 +361,19 @@ export function DockWindow({
         }
       }
 
-      if (isResizing) {
-        const container = containerRef.current;
-        if (!container) return;
-
-        const rect = container.getBoundingClientRect();
-        const newWidth = Math.max(300, e.clientX - rect.left);
-        const newHeight = Math.max(200, e.clientY - rect.top);
-
-        setSize({
-          width: Math.min(newWidth, 800),
-          height: Math.min(newHeight, 600)
-        });
+      if (resizeEdge && resizeStartRef.current) {
+        const next = resizeDockPopupRect(resizeStartRef.current, resizeEdge, e.clientX, e.clientY);
+        setPosition({ x: next.x, y: next.y });
+        setSize({ width: next.width, height: next.height });
       }
     };
 
     const handleMouseUp = (e: MouseEvent) => {
-      if (isDragging || isResizing) {
+      if (isDragging || resizeEdge) {
+        const wasResizing = !!resizeEdge;
         setIsDragging(false);
-        setIsResizing(false);
+        setResizeEdge(null);
+        resizeStartRef.current = null;
 
         // 释放瞬间再计算一次吸附目标，避免 state 异步导致判定落后
         let freshTarget: PartitionSnapTarget | null = null;
@@ -406,12 +436,21 @@ export function DockWindow({
           return;
         }
 
-        // 更新状态
-        onStateChange({
-          ...initialState,
-          position,
-          size
-        });
+        // 更新状态（拉伸结束用 DOM 矩形，避免闭包滞后）
+        if (wasResizing && containerRef.current) {
+          const rect = containerRef.current.getBoundingClientRect();
+          onStateChange({
+            ...initialState,
+            position: { x: rect.left, y: rect.top },
+            size: { width: rect.width, height: rect.height },
+          });
+        } else if (!wasResizing) {
+          onStateChange({
+            ...initialState,
+            position,
+            size,
+          });
+        }
 
         setShowSnapIndicator(false);
         setPartitionSnapTarget(null);
@@ -431,7 +470,21 @@ export function DockWindow({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDragging, isResizing, dragOffset, position, size, initialState, onStateChange, bringToFront]);
+  }, [
+    isDragging,
+    resizeEdge,
+    dragOffset,
+    position,
+    size,
+    initialState,
+    onStateChange,
+    bringToFront,
+    snapPanelToArea,
+    createPartition,
+    assignPanelToPartition,
+    leftPartitions,
+    rightPartitions,
+  ]);
 
   // 窗口激活时提升层级；光电多窗时点任意处即记入「当前选中」
   const handleFocus = () => {
@@ -574,17 +627,20 @@ export function DockWindow({
         </>
       )}
 
-      {/* 调整大小手柄 */}
-      <div
-        ref={resizeHandleRef}
-        className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-center justify-center hover:bg-nexus-bg-elevated rounded-tl"
-        onMouseDown={(e) => {
-          e.stopPropagation();
-          setIsResizing(true);
-        }}
-      >
-        <Maximize2 size={14} className="text-nexus-text-muted" />
-      </div>
+      {resizable
+        ? (Object.keys(DOCK_POPUP_RESIZE_EDGE_HIT) as DockPopupResizeEdge[]).map((edge) => (
+            <div
+              key={edge}
+              role="separator"
+              aria-orientation={
+                edge === "n" || edge === "s" ? "horizontal" : edge === "e" || edge === "w" ? "vertical" : undefined
+              }
+              aria-label="拖拽调整窗口大小"
+              className={cn(DOCK_POPUP_RESIZE_HANDLE_CLASS, DOCK_POPUP_RESIZE_EDGE_HIT[edge])}
+              onMouseDown={beginResize(edge)}
+            />
+          ))
+        : null}
     </div>
   );
 }

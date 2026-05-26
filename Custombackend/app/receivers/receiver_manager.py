@@ -20,12 +20,23 @@ from websocket_manager import ws_manager
 # DDS 航迹 receiver_id → 前端 track_layer_key（与 NexusUI map-entity-model / track-layer-visibility 一致）
 TRACK_LAYER_KEY_BY_RECEIVER = {
     "dds_forward_fuse_track": "fuse_sea",
+    "dds_forward_fuse_track_virtual": "fuse_sea",
     "dds_forward_fuse_bird_radar_track": "fuse_air",
+    "dds_forward_fuse_bird_radar_track_virtual": "fuse_air",
     "dds_forward_bird_radar_track": "bird_radar",
     "dds_forward_radar_track1": "radar_wharf",
     "dds_forward_radar_track2": "radar_jingzi",
     "dds_forward_ais_track": "ais_track",
 }
+
+
+def _mark_virtual_track_from_dds_topic(track: Dict[str, Any], topic_name: str) -> None:
+    """TrackManager 虚兵专用 topic（*_virtual）上的目标一律按虚兵下发。"""
+    if not topic_name or "_virtual" not in topic_name.lower():
+        return
+    track["reality_type"] = 2
+    track["is_virtual"] = True
+    track["virtualTroop"] = True
 
 
 def _annotate_track_receiver_metadata(track: Dict[str, Any], receiver_id: str, source_name: str) -> None:
@@ -229,6 +240,9 @@ class ReceiverManager:
                     })
                 else:
                     # 航迹数据（fusion_track, ais_track, radar_track 等），发送为 Track 类型
+                    dds_receiver = self.dds_receivers.get(receiver_id)
+                    topic_name = getattr(dds_receiver, "topic_name", "") if dds_receiver else ""
+                    _mark_virtual_track_from_dds_topic(parsed_data, topic_name)
                     _annotate_track_receiver_metadata(parsed_data, receiver_id, source_name)
                     ws_manager.queue_track_data(parsed_data)
             else:

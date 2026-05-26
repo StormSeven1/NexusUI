@@ -13,6 +13,7 @@ import {
 import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
 import { loadSvgImage } from "@/lib/map-image-loader";
 import { threatRankBadgeImageId } from "@/lib/map-icons";
+import { isTrackVirtualTroop } from "@/lib/track-reality-type";
 import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
 import { getTrackDispositionForRendering, useTrackStore } from "@/stores/track-store";
 import { useVerifiedTrackStore } from "@/stores/verified-track-store";
@@ -208,7 +209,7 @@ export function buildTrackFusionPointsGeoJSON(
     if (isDotTrackLayerKey(layerKey)) continue;
     const { pointFill, disp, neutralFusion, style } = trackPointFillAndStyle(t, accent);
     const friendlyFill = disp === "friendly" ? style.idColor : undefined;
-    const v = t.isVirtual === true;
+    const v = isTrackVirtualTroop(t);
     const iconScale = Math.max(0.55, Math.min(1.5, style.pointSize / 3.5));
     const airBirdGlyph = isAirTrackBirdGlyph(t);
     const isFuseAirTrack = resolveTrackLayerKey(t) === "fuse_air";
@@ -382,7 +383,7 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
       h ^= t.name.charCodeAt(i);
       h = Math.imul(h, 16777619) >>> 0;
     }
-    h ^= t.isVirtual === true ? 1 : 0;
+    h ^= isTrackVirtualTroop(t) ? 1 : 0;
     h = Math.imul(h, 16777619) >>> 0;
     h ^= t.isUav === true ? 1 : 0;
     h = Math.imul(h, 16777619) >>> 0;
@@ -818,7 +819,7 @@ export class TracksMaplibre {
       const id = getMarkerSymbolId(
         t.type,
         disp,
-        t.isVirtual === true,
+        isTrackVirtualTroop(t),
         friendlyFill,
         neutralFusion,
         airBirdGlyph,
@@ -832,7 +833,7 @@ export class TracksMaplibre {
         t.type,
         disp,
         accent,
-        t.isVirtual === true,
+        isTrackVirtualTroop(t),
         friendlyFill,
         neutralFusion,
         airBirdGlyph,

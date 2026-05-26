@@ -29,6 +29,7 @@ import {
   MAX_PARTITION_COUNT,
 } from "@/components/dock/types";
 import { getDockableWindows } from "@/components/dock/windowRegistry";
+import { createEoElectroOpticalDefaultPanelStates } from "@/lib/eo-video/eoElectroOpticalDockPool";
 
 const DOCK_LAYOUT_STORAGE_KEY = "nexus-dock-layout-v1";
 const DEFAULT_LEFT_SIDEBAR_WIDTH = 300;
@@ -142,46 +143,7 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     lastPopupPosition: null,
     displayOrder: 6,
   },
-  {
-    id: "electro-optical-1",
-    location: null,
-    mode: "hidden",
-    position: { x: 340, y: 320 },
-    size: { width: 360, height: 400 },
-    zIndex: DEFAULT_Z_INDEX,
-    lastPopupPosition: null,
-    displayOrder: 10,
-  },
-  {
-    id: "electro-optical-2",
-    location: null,
-    mode: "hidden",
-    position: { x: 380, y: 340 },
-    size: { width: 360, height: 400 },
-    zIndex: DEFAULT_Z_INDEX,
-    lastPopupPosition: null,
-    displayOrder: 11,
-  },
-  {
-    id: "electro-optical-3",
-    location: null,
-    mode: "hidden",
-    position: { x: 420, y: 360 },
-    size: { width: 360, height: 400 },
-    zIndex: DEFAULT_Z_INDEX,
-    lastPopupPosition: null,
-    displayOrder: 12,
-  },
-  {
-    id: "electro-optical-4",
-    location: null,
-    mode: "hidden",
-    position: { x: 460, y: 380 },
-    size: { width: 360, height: 400 },
-    zIndex: DEFAULT_Z_INDEX,
-    lastPopupPosition: null,
-    displayOrder: 13,
-  },
+  ...createEoElectroOpticalDefaultPanelStates(),
   {
     id: "target-profile",
     location: "right-0",

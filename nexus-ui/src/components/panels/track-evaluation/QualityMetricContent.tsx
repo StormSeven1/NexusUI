@@ -275,8 +275,8 @@ function renderTab(tab: QualityMetricTabId, m: TrackEvalMetricsResult) {
       return (
         <>
           <CalculationNote>{ERROR_DESC}</CalculationNote>
-          <MetricErrorChart title="对海 — 航速误差" items={m.seaSpeedError} unit=" kn" />
-          <MetricErrorChart title="对空 — 航速误差" items={m.airSpeedError} unit=" kn" />
+          <MetricErrorChart title="对海 — 航速误差" items={m.seaSpeedError} unit=" m/s" />
+          <MetricErrorChart title="对空 — 航速误差" items={m.airSpeedError} unit=" m/s" />
         </>
       );
     default:

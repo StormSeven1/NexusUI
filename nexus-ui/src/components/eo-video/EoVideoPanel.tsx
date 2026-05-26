@@ -833,6 +833,24 @@ export function EoVideoPanel({
     mqttPassword: mqttWsAuthPass ?? null,
   });
 
+  /** 底栏电量：在舱优先机场充电百分比，与 EoUavConsoleDock 一致 */
+  const uavBottomBatteryPct = useMemo(() => {
+    if (!activeStream?.uav) return null;
+    if (
+      mqttDroneInDock === true &&
+      mqttTelemetry?.airportDroneChargePercent != null &&
+      mqttTelemetry?.airportDroneChargePercent !== undefined
+    ) {
+      return mqttTelemetry.airportDroneChargePercent;
+    }
+    return mqttTelemetry?.batteryPercent ?? null;
+  }, [
+    activeStream?.uav,
+    mqttDroneInDock,
+    mqttTelemetry?.airportDroneChargePercent,
+    mqttTelemetry?.batteryPercent,
+  ]);
+
   const uavMqttFooterLine = useMemo(() => {
     if (!activeStream?.uav) return "";
     if (platformMqtt.status === "loading" && !mqttWsUrlFromEnv) {
@@ -2182,7 +2200,7 @@ export function EoVideoPanel({
                   />
                 )}
                 <div className="pointer-events-none absolute inset-0 z-30">
-                  <div className="pointer-events-none absolute right-2 top-1/2 flex max-h-[min(88vh,560px)] -translate-y-1/2 flex-col items-end justify-center gap-2">
+                  <div className="pointer-events-none absolute right-2 top-1/2 flex max-h-[min(88vh,560px)] -translate-y-1/2 flex-col items-center justify-center gap-1.5">
                     <Button
                       type="button"
                       variant="ghost"
@@ -2197,104 +2215,99 @@ export function EoVideoPanel({
                     >
                       {expandedMode ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
                     </Button>
-                    {/* 无人机控制授权 + 返航：纵向排列 */}
-                    <div className="pointer-events-auto flex flex-col items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={toggleUavAuth}
-                        disabled={uavCtrlAuth.busy || !mqttAirportSn}
-                        title={
-                          uavCtrlAuth.busy
-                            ? "处理中…"
-                            : uavCtrlAuth.hasAuth
-                              ? isControlling
-                                ? "控制中（点击退出控制）"
-                                : "退出控制"
-                              : "获取控制权"
-                        }
-                        aria-label={
-                          uavCtrlAuth.busy
-                            ? "处理中"
-                            : uavCtrlAuth.hasAuth
-                              ? isControlling
-                                ? "控制中，点击退出控制"
-                                : "退出控制"
-                              : "获取控制权"
-                        }
-                        aria-pressed={uavCtrlAuth.hasAuth}
-                        className={cn(
-                          "border bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
-                          uavCtrlAuth.hasAuth
-                            ? "border-sky-400/45 bg-sky-950/50 text-sky-200 hover:border-sky-400/55 hover:bg-sky-900/65 hover:text-sky-50"
-                            : "border-white/25 text-white/85",
-                          uavCtrlAuth.busy || !mqttAirportSn ? "cursor-not-allowed opacity-50" : "",
-                          isControlling ? "ring-2 ring-sky-400/45" : "",
-                        )}
-                      >
-                        {uavCtrlAuth.busy ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <Joystick className="size-3.5" />
-                        )}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        title="返航"
-                        aria-label="返航"
-                        disabled={!mqttAirportSn || Boolean(uavActionBusy?.back)}
-                        onClick={() => void triggerUavAction("back")}
-                        className={cn(
-                          "border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
-                          !mqttAirportSn || uavActionBusy?.back ? "cursor-not-allowed opacity-50" : "",
-                        )}
-                      >
-                        {uavActionBusy?.back ? (
-                          <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                        ) : (
-                          <Home className="size-3.5" aria-hidden />
-                        )}
-                      </Button>
-                    </div>
-                    <div className="pointer-events-auto flex flex-row items-center gap-2">
-                      {snapshotPreview ? (
-                        <EoSnapshotPreviewPopout
-                          key={snapshotPreview.objectUrl}
-                          preview={snapshotPreview}
-                          onDismiss={dismissSnapshotPreview}
-                          onOpen={onOpenCapturePath}
-                          onCollect={onSnapshotCollectStub}
-                          onAnalyze={onSnapshotAnalyze}
-                        />
-                      ) : null}
-                      <EoVideoFloatingTools
-                        className="pointer-events-auto"
-                        variant="uav"
-                        hideExpandButton
-                        expandedMode={expandedMode}
-                        onToggleExpand={toggleExpand}
-                        uavDockExpanded={uavDockExpanded}
-                        onToggleUavDock={() => setUavDockExpanded((v) => !v)}
-                        pipOpen={pipOpen}
-                        onTogglePip={togglePip}
-                        captureReady={captureReady}
-                        isRecording={isRecording}
-                        onSnapshot={handleSnapshot}
-                        onToggleRecord={handleToggleRecord}
-                        onUavClientLog={appendClientLog}
-                        onUavPsdkNotify={showUavBottomFeedback}
-                        onUavGimbalCenter={onUavGimbalCenter}
-                        onUavGimbalDown={onUavGimbalDown}
-                        uavGatewaySn={mqttAirportSn}
-                        uavPsdkDisabled={!mqttAirportSn?.trim() || !activeStream?.uav}
-                        uavGimbalDisabled={!mqttAirportSn?.trim() || !activeStream?.uav}
-                        uavVideoOnly={uavVideoOnly}
-                        onToggleUavVideoOnly={() => setUavVideoOnly((v) => !v)}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className={cn(
+                        "pointer-events-auto border bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+                        uavCtrlAuth.hasAuth
+                          ? "border-sky-400/45 bg-sky-950/50 text-sky-200 hover:border-sky-400/55 hover:bg-sky-900/65 hover:text-sky-50"
+                          : "border-white/25 text-white/85",
+                        uavCtrlAuth.busy || !mqttAirportSn ? "cursor-not-allowed opacity-50" : "",
+                        isControlling ? "ring-2 ring-sky-400/45" : "",
+                      )}
+                      onClick={toggleUavAuth}
+                      disabled={uavCtrlAuth.busy || !mqttAirportSn}
+                      title={
+                        uavCtrlAuth.busy
+                          ? "处理中…"
+                          : uavCtrlAuth.hasAuth
+                            ? isControlling
+                              ? "控制中（点击退出控制）"
+                              : "退出控制"
+                            : "获取控制权"
+                      }
+                      aria-label={
+                        uavCtrlAuth.busy
+                          ? "处理中"
+                          : uavCtrlAuth.hasAuth
+                            ? isControlling
+                              ? "控制中，点击退出控制"
+                              : "退出控制"
+                            : "获取控制权"
+                      }
+                      aria-pressed={uavCtrlAuth.hasAuth}
+                    >
+                      {uavCtrlAuth.busy ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Joystick className="size-3.5" />
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className={cn(
+                        "pointer-events-auto border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+                        !mqttAirportSn || uavActionBusy?.back ? "cursor-not-allowed opacity-50" : "",
+                      )}
+                      title="返航"
+                      aria-label="返航"
+                      disabled={!mqttAirportSn || Boolean(uavActionBusy?.back)}
+                      onClick={() => void triggerUavAction("back")}
+                    >
+                      {uavActionBusy?.back ? (
+                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                      ) : (
+                        <Home className="size-3.5" aria-hidden />
+                      )}
+                    </Button>
+                    <EoVideoFloatingTools
+                      className="pointer-events-auto"
+                      variant="uav"
+                      hideExpandButton
+                      expandedMode={expandedMode}
+                      onToggleExpand={toggleExpand}
+                      uavDockExpanded={uavDockExpanded}
+                      onToggleUavDock={() => setUavDockExpanded((v) => !v)}
+                      pipOpen={pipOpen}
+                      onTogglePip={togglePip}
+                      captureReady={captureReady}
+                      isRecording={isRecording}
+                      onSnapshot={handleSnapshot}
+                      onToggleRecord={handleToggleRecord}
+                      onUavClientLog={appendClientLog}
+                      onUavPsdkNotify={showUavBottomFeedback}
+                      onUavGimbalCenter={onUavGimbalCenter}
+                      onUavGimbalDown={onUavGimbalDown}
+                      uavGatewaySn={mqttAirportSn}
+                      uavPsdkDisabled={!mqttAirportSn?.trim() || !activeStream?.uav}
+                      uavGimbalDisabled={!mqttAirportSn?.trim() || !activeStream?.uav}
+                      uavVideoOnly={uavVideoOnly}
+                      onToggleUavVideoOnly={() => setUavVideoOnly((v) => !v)}
+                    />
+                    {snapshotPreview ? (
+                      <EoSnapshotPreviewPopout
+                        key={snapshotPreview.objectUrl}
+                        preview={snapshotPreview}
+                        onDismiss={dismissSnapshotPreview}
+                        onOpen={onOpenCapturePath}
+                        onCollect={onSnapshotCollectStub}
+                        onAnalyze={onSnapshotAnalyze}
                       />
-                    </div>
+                    ) : null}
                   </div>
                 </div>
                 {/* 控制台在上、状态条在下，叠在画面上；底栏 pb-0 贴容器底；手柄可收起罗盘/状态/控制台 */}
@@ -2323,6 +2336,7 @@ export function EoVideoPanel({
                     <EoVideoBottomFloater
                       variant="uav"
                       streamLabel={activeStream.label}
+                      batteryPercent={uavBottomBatteryPct}
                       taskLine={ddsBottomTaskLine}
                       centerLine={uavBottomFeedback?.text}
                       centerTone={uavBottomFeedback?.tone}

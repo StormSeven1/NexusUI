@@ -34,6 +34,7 @@ import {
 } from "@/lib/map-icons";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
+import { isTrackVirtualTroop } from "@/lib/track-reality-type";
 import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
 import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import { useAlertStore } from "@/stores/alert-store";
@@ -44,6 +45,7 @@ import {
   getTrackDispositionForRendering,
 } from "@/stores/track-store";
 import { shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
+import { formatTrackSpeed } from "@/lib/track-speed-format";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -125,12 +127,10 @@ export function TargetPlacard(props: TargetPlacardProps) {
   /** 构建告警 trackId 集合，复用 isTrackMatchedByAlarm 逻辑匹配 */
   const relatedAlerts = useMemo(() => {
     if (kind !== "track" || !track) return [];
-    const alarmTrackIds = new Set<string>();
-    for (const a of alerts) {
-      if (a.trackId) alarmTrackIds.add(a.trackId);
-    }
+    const alarmTrackIds = useAlertStore.getState().alarmTrackIds;
+    const shadow = useTrackStore.getState().shadowTracks;
     return alerts
-      .filter((a) => a.trackId && isTrackMatchedByAlarm(track, new Set([a.trackId])))
+      .filter((a) => a.trackId && isTrackMatchedByAlarm(track, alarmTrackIds, shadow))
       .slice(0, 5);
   }, [alerts, track, kind]);
 
@@ -157,7 +157,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
       track.type,
       eff,
       undefined,
-      track.isVirtual === true,
+      isTrackVirtualTroop(track),
       friendlyFill,
       eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
       isAirTrackBirdGlyph(track),
@@ -325,7 +325,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
           <SectionTitle>运动</SectionTitle>
           <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1.5">
-            <Row k="航速" v={track ? `${track.speed.toFixed(1)} kn` : "-"} />
+            <Row k="航速" v={track ? formatTrackSpeed(track.speed) : "-"} />
             <Row
               k="航向"
               v={

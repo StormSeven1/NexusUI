@@ -48,6 +48,12 @@ export type PanelId =
   | "electro-optical-2"
   | "electro-optical-3"
   | "electro-optical-4"
+  | "electro-optical-5"
+  | "electro-optical-6"
+  | "electro-optical-7"
+  | "electro-optical-8"
+  | "electro-optical-9"
+  | "electro-optical-10"
   | "chat"
   /** watchsystem 数据库自然语言问答 */
   | "knowledge-base"

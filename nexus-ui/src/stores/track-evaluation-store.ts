@@ -54,6 +54,8 @@ export const TRACK_EVAL_SENSOR_OPTIONS = [
 export const DEFAULT_TRACK_EVAL_SENSOR_IDS = [0, 1, 3, 4, 5, 6] as const;
 
 export const TRACK_EVAL_AUTO_QUERY_INTERVAL_MS = 3 * 60 * 1000;
+/** 定时查询时间窗：最近 3 分钟 */
+export const TRACK_EVAL_SCHEDULED_QUERY_WINDOW_MINUTES = 3;
 
 export const QUALITY_METRIC_TABS = [
   { id: "accuracy", label: "准确率" },
@@ -124,7 +126,11 @@ interface TrackEvaluationState {
 }
 
 function defaultDatetimeLocal(offsetHours: number): string {
-  const d = new Date(Date.now() + offsetHours * 3600_000);
+  return defaultDatetimeLocalFromMinutes(offsetHours * 60);
+}
+
+function defaultDatetimeLocalFromMinutes(offsetMinutes: number): string {
+  const d = new Date(Date.now() + offsetMinutes * 60_000);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
@@ -400,9 +406,10 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
     if (s.queryStatus.type === "loading" || s.metricsComputing) return;
     if (s.directDownload) return;
 
+    const windowMin = TRACK_EVAL_SCHEDULED_QUERY_WINDOW_MINUTES;
     set({
-      startTime: defaultDatetimeLocal(-1),
-      endTime: defaultDatetimeLocal(0),
+      startTime: defaultDatetimeLocalFromMinutes(-windowMin),
+      endTime: defaultDatetimeLocalFromMinutes(0),
       sensorIdsForQuery: [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
     });
     get().sendQuery();

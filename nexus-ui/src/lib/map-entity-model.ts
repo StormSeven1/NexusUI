@@ -49,6 +49,7 @@ export interface Track {
   lng: number;
   altitude?: number;
   heading: number;
+  /** 地速 m/s（与 DDS `speedMps` / `target_kinematics.speed` 一致） */
   speed: number;
   sensor: string;
   lastUpdate: string;
@@ -74,12 +75,20 @@ export interface Track {
   trackLayerKey?: TrackLayerKey;
   /** 虚兵：航迹符号外框为虚线样式（与资产 `virtual_troop` 一致） */
   isVirtual?: boolean;
+  /**
+   * DDS NewTrackStruct `reality_type`：0 未知、1 实兵、2 虚兵（见 `isTrackVirtualTroop`）。
+   */
+  realityType?: number;
   /** 无人机等目标：为 true 时超时阈值用 `trackRendering.trackTimeout.uavSeconds`（与融合分档 `fusionSeconds` 互斥优先 UAV） */
   isUav?: boolean;
   /**
-   * 对空航迹 DDS `trackCategoryId`：**3 = 无人机**，其余类别视为鸟（见 `isAirTrackBirdGlyph`）。
+   * 对空航迹 DDS `trackCategoryId`：**3 = 无人机**（旧 fusion），其余类别视为鸟。
    */
   trackCategoryId?: number;
+  /**
+   * NewTrackStruct `classified_type` / WS `trackType`（UnitType 枚举）：**1 = DRONE** 为无人机，其余对空为鸟。
+   */
+  classifiedType?: number;
   /**
    * 前端在相邻 WS 报文之间累积的**历史采样点** `[lng, lat]`（不含当前 `lng/lat`），存在 **`useTrackStore` 每条 `Track` 上**。
    * 条数上限由 `trackRendering.trackDisplay.maxHistoryPointsPerTrack` 控制；地图在 `maxViewportPoints` 全图顶点预算内才画折线，超预算时**仅不绘制**折线，**不**从本字段删除数据。

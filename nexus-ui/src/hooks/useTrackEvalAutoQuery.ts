@@ -6,7 +6,7 @@ import {
   useTrackEvaluationStore,
 } from "@/stores/track-evaluation-store";
 
-/** 页面启动后连接航迹评估 WS，并每 3 分钟自动发送一次查询以刷新质量指标 */
+/** 页面启动后连接航迹评估 WS，每 3 分钟查询最近 3 分钟航迹并刷新质量指标 */
 export function useTrackEvalAutoQuery() {
   const connectWs = useTrackEvaluationStore((s) => s.connectWs);
   const connectionState = useTrackEvaluationStore((s) => s.connectionState);

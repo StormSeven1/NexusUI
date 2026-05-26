@@ -33,8 +33,9 @@ import type { ForceDisposition } from "@/lib/theme-colors";
 
 /** 地图右键设置的演练方 / 判定：用于覆盖默认告警着色逻辑 */
 export type ManualTrackAffiliation = "unknown" | "red" | "blue" | "white";
+import { isTrackMatchedByAlarmKeys } from "@/lib/alarm-track-match";
 import { maxStoredTrailPointsPerTrack, mergeIncomingTrackWithStickyAirClassification } from "@/lib/ws-track-normalize";
-import { getTrackRenderingConfig, getTrackIdModeConfig, getTrackStaleTimeoutMs } from "@/lib/map-app-config";
+import { getTrackRenderingConfig, getTrackStaleTimeoutMs } from "@/lib/map-app-config";
 import { useDisposedStore } from "@/stores/disposed-store";
 
 /** 模块级渲染缓存 — 避免每次调用从 tracks 数组重建 Map */
@@ -175,7 +176,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
         // 已在渲染层 → 更新坐标并累积 historyTrail，不动影子
         _renderCache.set(t.showID, nextTrack);
         needsRenderUpdate = true;
-      } else if (isTrackMatchedByAlarm(t, alarmTrackIds)) {
+      } else if (isTrackMatchedByAlarm(t, alarmTrackIds, shadow)) {
         // 不在渲染层但匹配告警 → 提升到渲染层，从影子移除（保留 historyTrail）
         _renderCache.set(t.showID, nextTrack);
         if (shadow.delete(t.showID)) shadowMutated = true;
@@ -206,7 +207,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
 
     // 1. 渲染缓存优先：不匹配的降级到影子
     for (const [key, track] of _renderCache) {
-      if (!isTrackMatchedByAlarm(track, alarmTrackIds)) {
+      if (!isTrackMatchedByAlarm(track, alarmTrackIds, shadow)) {
         shadow.set(key, { ...track });
         _renderCache.delete(key);
         changed = true;
@@ -218,7 +219,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
       if (_renderCache.has(key)) continue;
       // 已处置的不提升
       if (disposedStore.isTrackDisposed(key)) continue;
-      if (isTrackMatchedByAlarm(shadowTrack, alarmTrackIds)) {
+      if (isTrackMatchedByAlarm(shadowTrack, alarmTrackIds, shadow)) {
         _renderCache.set(key, { ...shadowTrack });
         shadow.delete(key);
         changed = true;
@@ -307,17 +308,12 @@ function getCurrentAlarmTrackIds(): Set<string> {
 }
 
 /**
- * 告警匹配逻辑（对齐 V2 TrackManager.isTrackMatchedByAlarm）：
- *
- * - 18.141 模式：告警 trackId → 匹配航迹 trackId
- * - 28.9 对海：告警 trackId 实际值 = uniqueID → 用 showID 直查
- * - 28.9 对空：告警 trackId → 遍历航迹找 trackId 相同的
+ * 告警匹配逻辑：见 `alarm-track-match.ts`（按 fuseType / uniqueID 区分海空同号 trackId）。
  */
-export function isTrackMatchedByAlarm(track: Track, alarmTrackIds: Set<string>): boolean {
-  if (getTrackIdModeConfig().distinguishSeaAir) {
-    const isAir = track.isAirTrack === true;
-    const matchKey = isAir ? track.trackId : track.uniqueID;
-    return matchKey != null && alarmTrackIds.has(String(matchKey));
-  }
-  return !!track.trackId && alarmTrackIds.has(track.trackId);
+export function isTrackMatchedByAlarm(
+  track: Track,
+  alarmTrackIds: Set<string>,
+  shadowTracks?: Map<string, Track>,
+): boolean {
+  return isTrackMatchedByAlarmKeys(track, alarmTrackIds, shadowTracks);
 }

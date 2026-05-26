@@ -10,7 +10,12 @@
  */
 /* eslint-disable */
 
-import { readTrackCategoryFromRecord } from "./track-category-id-parse";
+import {
+  readTrackCategoryFromRecord,
+  readClassifiedTypeFromRecord,
+  resolveAirTrackIsUav,
+} from "./track-category-id-parse";
+import { readRealityTypeFromRecord, resolveTrackIsVirtual } from "./track-reality-type";
 import { resolveTrackLastUpdateString } from "./track-last-update-resolve";
 
 // 使 TypeScript 将本文件视为独立模块，避免与 DOM lib 中 Window.self 的类型冲突
@@ -79,6 +84,8 @@ interface WorkerTrack {
   dataSourceId?: string; ddsSourceId?: string; trackLayerKey?: LayerKey;
   isVirtual?: true; isUav?: true;
   trackCategoryId?: number;
+  classifiedType?: number;
+  realityType?: number;
 }
 
 export interface TrackWorkerResult {
@@ -256,8 +263,9 @@ function _normalize(raw: unknown): WorkerTrack | null {
     || (typeof rawUav === "string" && /^(1|true|yes|uav)$/i.test(rawUav.trim()));
 
   const trackCategoryId = readTrackCategoryFromRecord(rec);
-  if (kind === "air" && trackCategoryId !== undefined) {
-    isUav = trackCategoryId === 3;
+  const classifiedType = readClassifiedTypeFromRecord(rec);
+  if (kind === "air") {
+    isUav = resolveAirTrackIsUav(classifiedType, trackCategoryId, isUav);
   }
 
   const trackId    = rec.trackId ?? rec.track_id ?? rec.tracnID;
@@ -316,9 +324,21 @@ function _normalize(raw: unknown): WorkerTrack | null {
     ...(dsIdStr  ? { dataSourceId: dsIdStr } : {}),
     ...(ddsStr ? { ddsSourceId: ddsStr } : {}),
     ...(resolvedLayerKey ? { trackLayerKey: resolvedLayerKey } : {}),
-    ...(_isVirtual(propBag) ? { isVirtual: true as const } : {}),
+    ...((): Record<string, unknown> => {
+      const realityType = readRealityTypeFromRecord(rec);
+      const rv = rec.is_virtual ?? rec.isVirtual;
+      const rootVirtual =
+        rv === true || rv === 1
+        || (typeof rv === "string" && /^(1|true|yes|virtual)$/i.test(String(rv).trim()));
+      const isVirtual = resolveTrackIsVirtual(realityType, propBag, rootVirtual || _isVirtual(propBag));
+      return {
+        ...(realityType !== undefined ? { realityType } : {}),
+        ...(isVirtual ? { isVirtual: true as const } : {}),
+      };
+    })(),
     ...(isUav ? { isUav: true as const } : {}),
     ...(trackCategoryId !== undefined ? { trackCategoryId } : {}),
+    ...(classifiedType !== undefined ? { classifiedType } : {}),
   };
 }
 
