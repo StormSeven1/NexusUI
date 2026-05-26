@@ -389,6 +389,7 @@ class ReceiverManager:
                         'multicast_port': config['multicast_port'],
                         'dds_module_path': config['dds_module_path'],
                         'structure_type': config['structure_type'],
+                        'dds_module_name': config.get('dds_module_name', ''),
                         'data_class_name': config['data_class_name'],
                         'pubsub_type_class_name': config['pubsub_type_class_name'],
                         'type_name': config['type_name'],

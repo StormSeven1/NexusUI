@@ -1,0 +1,924 @@
+// 基于 NewTrackRealTimeStatus.idl，扩充告警域（融合 BaseEvent.idl / AlarmEvent.idl）
+module TargetFull {
+
+struct KeyValuePair {
+    string key;
+    string value;
+};
+
+// 目标状态：最终输出时目标当前所处的可理解状态。
+enum TargetState {
+    STABLE,     // 稳定目标
+    COASTING,   // 暂时无观测，依赖外推
+    LOST,       // 已丢失
+    MERGED,     // 由多个来源或多个目标合并表达
+    SPLIT       // 由群体或合并目标拆分表达
+};
+
+// 杀伤链状态：参考 Target Workbench 的目标板列状态，描述目标在作战流程中的阶段。
+enum KillChainState {
+    DRAFT,             // 待研判/已识别
+    PLAN_DEVELOPMENT,  // 规划中/优先级排序中
+    PLANNED,           // 已规划/已协同
+    EXECUTION,         // 执行中
+    CLOSED             // 已关闭/已完成
+};
+
+// 目标类型：描述系统当前对目标类别的判断。
+enum UnitType {
+    UNKNOWN,         // 未知类型
+    DRONE,           // 无人机
+    BIRD,            // 鸟类
+    HELICOPTER,      // 直升机
+    FIXED_WING,      // 固定翼飞行器
+    MISSILE,         // 导弹
+    BUOY,            // 浮标
+    SURFACE_SHIP,    // 水面舰艇
+    SUBMARINE,       // 潜艇或水下航行器
+    GROUND_VEHICLE,  // 地面车辆
+    PERSON,          // 人员
+    ANIMAL,          // 动物
+    OTHER            // 其他类型
+};
+
+// 威胁等级：用于目标优先级和交战规则计算。
+enum ThreatLevel {
+    LOW,      // 低威胁
+    MEDIUM,   // 中威胁
+    HIGH      // 高威胁
+};
+
+// 雷达运动状态：对齐 fusion_track_parser.py 的 motionStatus 数值语义。
+enum RadarMotionStatus {
+    UNKNOWN,      // 未知/未标注
+    MOVING,       // 机动或移动
+    HOVERING,     // 低速盘旋/悬停
+    STATIONARY,   // 近似静止
+    MANEUVERING   // 高机动/快速变向
+};
+
+// 雷达航迹状态：对齐最小包 status 语义。
+enum RadarTrackStatus {
+    TRACK_UNKNOWN,   // 未知状态
+    TRACK_ACTIVE,    // 有效跟踪
+    TRACK_COASTING,  // 失配滑行/外推保持
+    TRACK_LOST,      // 丢失
+    TRACK_DROPPED    // 删除/终止
+};
+
+// 期望打击效果：用于瞄准点或交战规划。
+enum DesiredEffect {
+    DESTROY,     // 摧毁
+    NEUTRALIZE,  // 失能/瘫痪
+    SUPPRESS,    // 压制
+    DENY         // 拒止
+};
+
+// 附带损伤风险：用于交战规划和瞄准点评估。
+enum CollateralRisk {
+    LOW,     // 低附带损伤风险
+    MEDIUM,  // 中附带损伤风险
+    HIGH     // 高附带损伤风险
+};
+
+// 检测或研判类型：用于 AI/人工/融合/情报推理记录。
+enum DetectionType {
+    AI_AUTO_DETECTION,  // AI 自动检测
+    HUMAN_CONFIRMED,    // 人工确认
+    SENSOR_FUSION,      // 多源融合
+    INTEL_REPORT        // 情报报告
+};
+
+// 安全密级：用于目标字段或对象级安全标记。
+enum ClassificationLevel {
+    UNCLASSIFIED,  // 非密
+    CONFIDENTIAL,  // 机密
+    SECRET,        // 秘密
+    TOP_SECRET     // 绝密
+};
+
+// 敌我属性：描述目标敌我归属。
+enum FriendFoeType {
+    FRIEND,        // 友方
+    FOE,           // 敌方
+    OWN,           // 我方
+    NEUTRAL,       // 中立方
+    UNKNOWN        // 未知
+};
+
+enum RealityType {
+    UNKNOWN_REALITY,   // 鏈煡
+    REAL,              // 瀹炲叺
+    VIRTUAL            // 铏氬叺
+};
+
+// 目标环境域：描述目标所处环境。
+enum EnvironmentType {
+    UNKNOWN,     // 未知环境
+    LAND,        // 陆地
+    AIR,         // 空中
+    SURFACE,     // 水面
+    SUBSURFACE,  // 水下
+    SPACE,       // 太空
+    MARITIME     // 海上
+};
+
+// 来源平台类型：描述来源所在平台的安装或载体形态。
+enum PlatformType {
+    UNKNOWN,          // 未知平台
+    FIXED_GROUND,     // 地面固定安装
+    FIXED_TOWER,      // 塔台固定安装
+    FIXED_BUILDING,   // 建筑物固定安装
+    MOBILE_VEHICLE,   // 车载平台
+    MOBILE_VESSEL,    // 船载平台
+    MOBILE_UAV,       // 无人机平台
+    MOBILE_USV,       // 无人船平台
+    MOBILE_PORTABLE   // 便携式平台
+};
+
+// 来源类别：用于来源归类和最终目标摘要表达，不限定具体目标必须具备哪类来源。
+enum SensorCategory {
+    GEOMETRIC,         // 几何类传感器
+    RADAR,             // 雷达
+    THERMAL,           // 热成像
+    EOPT,              // 光电云台
+    ESM,               // 电子侦察
+    IFF,               // 敌我识别
+    VISUAL,            // 通用视觉传感器
+    ACOUSTIC_ACTIVE,   // 主动声学
+    ACOUSTIC_PASSIVE,  // 被动声学
+    MAGNETIC,          // 磁传感器
+    LASER,             // 激光传感器
+    TDOA,              // 到达时间差传感器
+    INTELLIGENCE,      // 情报来源
+    ADSB,              // ADS-B 广播来源
+    AIS,               // AIS 广播来源
+    UAV,               // 无人机自身遥测来源
+    EXTERNAL_TRACK,    // 外部航迹来源
+    FUSION             // 融合来源
+};
+
+// 来源在线状态：要求来源全集常驻目标对象中，不因单周期缺失而删除。
+enum SourcePresenceStatus {
+    ACTIVE,        // 当前周期有直接更新
+    COASTING,      // 当前周期未更新，但仍处于保活或延续状态
+    INACTIVE,      // 当前不可用或已长时间无更新
+    LOST,          // 已确认丢失
+    DISABLED       // 人工或系统显式禁用
+};
+
+// 坐标海拔参考：用于位置来源和信号定位场景。
+enum AltitudeReference {
+    INVALID,              // 无效高度参考
+    HEIGHT_ABOVE_WGS84,   // 相对 WGS84 椭球高
+    HEIGHT_ABOVE_EGM96,   // 相对 EGM96 大地水准面高
+    UNKNOWN,              // 高度参考未知
+    BAROMETRIC,           // 气压高度
+    ABOVE_SEA_FLOOR,      // 海床以上高度
+    BELOW_SEA_SURFACE     // 海面以下深度
+};
+
+// 带标准差的标量测量：用于频率、距离等带不确定性的量。
+struct Measurement {
+    double value;                     // 测量值
+    double sigma;                     // 估计一个标准差在同一单位的值。
+};
+
+// 大地位置：用于信号定位、外部来源、转发位置等描述。
+struct GeoPosition {
+    double longitude;                 // 经度
+    double latitude;                  // 纬度
+    double altitude;                  // 高度
+    double altitude_agl_m;            // 相对地面高度
+    double altitude_afs_m;            // 高于海床高度
+    double pressure_depth_m;          // 压力深度
+    boolean is_2d;                       // 是否仅有二维位置
+    AltitudeReference altitude_ref;   // 高度参考类型
+};
+
+// 实体引用：用于跨对象引用，避免只有裸 ID 导致后续无法判断该去哪个对象域查询。
+struct EntityRef {
+    string entity_type;           // 被引用实体类型，如 target / source / weapon / rule / group
+    string entity_id;             // 被引用实体 ID
+    string entity_name;           // 被引用实体名称或显示名
+};
+
+// 替代标识：用于记录目标或来源的其他编号体系。
+struct AlternateId {
+    string type;                  // 标识符类型
+    string id;                    // 标识符值
+};
+
+// 姿态角：用于表达目标朝向。
+struct Orientation {
+    double yaw;                        // 偏航角，单位度
+    double pitch;                      // 俯仰角，单位度
+    double roll;                       // 横滚角，单位度
+};
+
+// ENU 三维向量：用于速度、加速度等东北天坐标系向量。东北天坐标系
+struct VectorEnu {
+    double e;                          // 东向分量
+    double n;                          // 北向分量
+    double u;                          // 天向分量
+};
+
+// ENU 姿态四元数：用于表达目标本体坐标系到 ENU 坐标系的旋转。
+struct AttitudeEnu {
+    double x;                          // 四元数向量部分 x
+    double y;                          // 四元数向量部分 y
+    double z;                          // 四元数向量部分 z
+    double w;                          // 四元数标量部分
+};
+
+// ENU 协方差：用于位置或速度三维协方差。
+struct EnuCovariance {
+    double mxx;                        // x-x 协方差
+    double mxy;                        // x-y 协方差
+    double mxz;                        // x-z 协方差
+    double myy;                        // y-y 协方差
+    double myz;                        // y-z 协方差
+    double mzz;                        // z-z 协方差
+};
+
+// 位置误差椭圆：用于描述水平位置误差边界。
+struct PositionErrorEllipse {
+    double probability;                // 目标位于椭圆内的概率
+    double semi_major_axis_m;          // 半长轴长度，单位米
+    double semi_minor_axis_m;          // 半短轴长度，单位米
+    double orientation_deg;            // 半长轴相对真北顺时针角度
+};
+
+// 安全标记：参考 Target Workbench 的 portion markings，描述目标可见范围和分发控制。
+struct SecurityMarking {
+    ClassificationLevel classification;             // 对象密级
+    sequence<string> portion_markings;      // 分段密级/部分标记，如 SECRET、NOFORN
+    sequence<string> dissemination_controls; // 分发控制，如 NOFORN、REL-XXX
+    sequence<string> releasable_to;         // 可发布对象或单位
+};
+
+// 瞄准点：描述目标上的具体打击或指向位置。
+struct Aimpoint {
+    string aimpoint_id;             // 瞄准点 ID
+    unsigned long number;                 // 瞄准点序号
+    string name;                    // 瞄准点名称
+    string description;             // 瞄准点描述
+    GeoPosition center;                  // 瞄准点中心位置
+    double radius_m;                     // 圆形瞄准点半径，非圆形可置 0
+    string shape;                   // 形状，如 circle / polygon / point
+    EntityRef geotime_track;             // 可选的时空轨迹引用
+    EntityRef entity;                    // 可选的实体引用
+    DesiredEffect desired_effect;        // 期望打击效果
+    ThreatLevel lethality;               // 杀伤强度等级
+    CollateralRisk collateral_risk;      // 附带损伤风险
+};
+
+// AI 推理详情：记录模型、输入和调试信息，用于审计和复盘。
+struct AIReasoningInfo {
+    string model;                   // 模型名称
+    string model_version;           // 模型版本
+    string system_prompt;           // 系统提示或任务约束
+    string task_prompt;             // 本次任务提示
+    EntityRef input_data;                // 输入数据引用
+    string debug_logs;              // 调试日志摘要
+    sequence<double> feature_vector;  // 特征向量摘要
+};
+
+// 检测推理记录：记录 AI、人工、融合或情报如何支撑目标判断。
+struct DetectionReasoning {
+    string reasoning_id;            // 推理记录 ID
+    string algorithm_name;          // 算法或规则名称
+    DetectionType detection_type;        // 检测或研判类型
+    double confidence;                   // 推理置信度
+    string reasoning;               // 推理说明
+    double timestamp;                    // 推理时间
+    string agent_version;           // 推理组件或智能体版本
+    AIReasoningInfo ai_reasoning;        // AI 推理详情
+    sequence<EntityRef> source_entities; // 输入来源引用
+    GeoPosition inferred_position;       // 推理得到的位置
+    double inferred_radius_m;            // 推理位置误差或覆盖半径
+};
+
+// 状态历史记录：记录目标杀伤链状态变化，便于审计和回放。
+struct StateHistoryRecord {
+    KillChainState from_state;           // 原杀伤链状态
+    KillChainState to_state;             // 新杀伤链状态
+    double timestamp;                    // 状态变更时间
+    EntityRef operator_ref;              // 操作员、系统或规则引擎引用
+    string reason;                  // 状态变更原因
+    sequence<EntityRef> assigned_weapons; // 该次状态变更关联的武器或资源引用
+    double pk_estimate;                  // 该次状态变更时的估计毁伤概率
+    sequence<KeyValuePair> details; // 状态变更补充信息
+};
+
+// 发射机标识：用于记录信号源型号或编号及其匹配置信度。
+struct EmitterNotation {
+    string emitter_notation;     // 发射机标识或型号
+    double confidence;                // 该标识匹配置信度
+};
+
+// 信号特征：保留最终目标需要输出的信号相关特征。
+struct SignalInfo {
+    Measurement frequency_center_hz;                  // 中心频率
+    Measurement minimum_frequency_hz;                 // 最小频率
+    Measurement maximum_frequency_hz;                 // 最大频率
+    double bandwidth_hz;                              // 带宽
+    double signal_to_noise_ratio;                     // 信噪比
+    GeoPosition observer_position;                    // 观测该信号的参考位置
+    double bearing_deg;                               // 信号到达方位角
+    double elevation_deg;                             // 信号到达俯仰角
+    double bearing_sigma_rad;                         // 方位角标准差
+    double elevation_sigma_rad;                       // 俯仰角标准差
+    Measurement range_estimate_m;                     // 估计距离
+    Measurement max_range_m;                          // 最大可达距离
+    boolean is_fixed_emitter;                            // 是否固定信号源
+    sequence<EmitterNotation> emitter_notations;   // 信号源标识列表
+    double pulse_width_s;                             // 脉冲宽度
+    Measurement pulse_repetition_interval_s;          // 脉冲重复间隔
+    double scan_period_s;                             // 扫描周期
+};
+
+// 雷达静态结构：来自设备台账、部署配置或固定能力数据库，不作为纯动态参数来源。
+struct RadarStaticProfile {
+    string profile_id;                           // 雷达静态档案 ID
+    string sensor_model;                         // 雷达型号
+    string manufacturer;                         // 生产厂商
+    PlatformType platform_type;                       // 平台类型
+    string deployment_site_id;                   // 部署点位 ID
+    string deployment_site_name;                 // 部署点位名称
+    GeoPosition fixed_position;                       // 固定部署位置
+    double install_height_m;                          // 安装高度
+    string radar_band;                           // 工作频段，如 X / S / L
+    string radar_mode;                           // 典型工作模式，如 TWS / STT / MTI
+    double detection_range_min_m;                     // 最小探测距离
+    double detection_range_max_m;                     // 最大探测距离
+    double azimuth_coverage_start_deg;                // 方位覆盖起始角
+    double azimuth_coverage_end_deg;                  // 方位覆盖终止角
+    double elevation_coverage_min_deg;                // 俯仰覆盖下限
+    double elevation_coverage_max_deg;                // 俯仰覆盖上限
+    double range_accuracy_m;                          // 距离标称精度
+    double azimuth_accuracy_deg;                      // 方位标称精度
+    double elevation_accuracy_deg;                    // 俯仰标称精度
+    double radial_velocity_accuracy_mps;              // 径向速度标称精度
+    sequence<AlternateId> alternate_ids;           // 静态编号体系
+};
+
+// 光电静态结构：来自设备台账、部署配置或固定能力数据库。
+// 雷达观测上下文：从实时状态抽象出的工作参数，不直接照搬设备接口。
+struct RadarObservationContext {
+    unsigned long radar_runtime_id;                   // 运行时雷达编号
+    string radar_name;                                // 雷达名称或台站呼号
+    string radar_role;                                // 雷达任务角色
+    boolean is_transmitting;                          // 当前是否发射
+    double working_range_m;                           // 当前工作量程
+    double pulse_width_us;                            // 当前脉宽
+    double azimuth_offset_deg;                        // 方位零偏修正值
+    double range_offset_m;                            // 距离零偏修正值
+    double sample_rate_hz;                            // 当前采样率
+    double receiver_gain_db;                          // 当前接收增益
+    double sea_clutter_suppression_level;             // 海杂波抑制等级
+    double rain_clutter_suppression_level;            // 雨杂波抑制等级
+    boolean inhibit_zone_1_enabled;                   // 禁止扇区 1 是否启用
+    double inhibit_zone_1_start_azi_deg;              // 禁止扇区 1 起始方位
+    double inhibit_zone_1_end_azi_deg;                // 禁止扇区 1 结束方位
+    boolean inhibit_zone_2_enabled;                   // 禁止扇区 2 是否启用
+    double inhibit_zone_2_start_azi_deg;              // 禁止扇区 2 起始方位
+    double inhibit_zone_2_end_azi_deg;                // 禁止扇区 2 结束方位
+};
+
+struct EOStaticProfile {
+    string profile_id;                           // 光电静态档案 ID
+    string sensor_model;                         // 光电型号
+    string manufacturer;                         // 生产厂商
+    PlatformType platform_type;                       // 平台类型
+    string deployment_site_id;                   // 部署点位 ID
+    string deployment_site_name;                 // 部署点位名称
+    GeoPosition fixed_position;                       // 固定部署位置，机动平台可填当前基准位
+    double install_height_m;                          // 安装高度
+    string optical_band;                         // 主工作波段，如 VIS / SWIR / MWIR / LWIR
+    double fov_horizontal_min_deg;                    // 最小水平视场角
+    double fov_horizontal_max_deg;                    // 最大水平视场角
+    double fov_vertical_min_deg;                      // 最小垂直视场角
+    double fov_vertical_max_deg;                      // 最大垂直视场角
+    double pan_left_limit_deg;                        // 水平左限位
+    double pan_right_limit_deg;                       // 水平右限位
+    double tilt_down_limit_deg;                       // 俯仰下限位
+    double tilt_up_limit_deg;                         // 俯仰上限位
+    double angle_accuracy_deg;                        // 角度标称精度
+    sequence<AlternateId> alternate_ids;           // 静态编号体系
+};
+
+// 电侦静态结构：来自设备台账、部署配置或固定能力数据库。
+struct ESMStaticProfile {
+    string profile_id;                           // 电侦静态档案 ID
+    string sensor_model;                         // 电侦型号
+    string manufacturer;                         // 生产厂商
+    PlatformType platform_type;                       // 平台类型
+    string deployment_site_id;                   // 部署点位 ID
+    string deployment_site_name;                 // 部署点位名称
+    GeoPosition fixed_position;                       // 固定部署位置，机动平台可填当前基准位
+    double install_height_m;                          // 安装高度
+    Measurement frequency_min_hz;                     // 最小工作频率
+    Measurement frequency_max_hz;                     // 最大工作频率
+    Measurement bandwidth_max_hz;                     // 最大处理带宽
+    double azimuth_accuracy_deg;                      // 方位标称精度
+    double elevation_accuracy_deg;                    // 俯仰标称精度
+    boolean supports_tdoa;                               // 是否支持 TDOA 协同
+    boolean supports_fdoa;                               // 是否支持 FDOA 协同
+    sequence<string> emitter_libraries;       // 支持的辐射源库或规则库版本
+    sequence<AlternateId> alternate_ids;           // 静态编号体系
+};
+
+// 雷达点迹属性：描述来源当前点迹级别的原始目标属性。
+struct RadarPlotObservedProfile {
+    double plot_range_m;                              // 点迹斜距
+    double plot_azimuth_deg;                          // 点迹方位角
+    double start_range_m;                             // 点迹包围盒起始距离
+    double end_range_m;                               // 点迹包围盒终止距离
+    double start_azimuth_deg;                         // 点迹包围盒起始方位
+    double end_azimuth_deg;                           // 点迹包围盒终止方位
+    unsigned long weight;                              // 点迹权重
+    unsigned long strength;                            // 点迹强度
+    unsigned long component_count;                     // 合成子点迹数量
+    double radial_speed_mps;                          // 点迹径向速度
+    double confidence;                                // 点迹置信度
+    sequence<KeyValuePair> attributes;    // 其他点迹属性
+};
+
+// 融合来源项：对齐 fusion_track_parser.py 的 fusionSources 列表项。
+struct FusionSourceItem {
+    string sourceName;                           // 来源名称
+    string dataSourceId;                         // 来源数据源ID，如 ais / jing_zi_tou / yuan_yao
+    unsigned long trackId;                            // 该来源对应的原始航迹ID
+};
+
+// 雷达来源看到的目标属性：这是目标属性，不是雷达硬件属性。
+struct RadarObservedTargetProfile {
+    unsigned long track_id;                           // 雷达航迹 ID，对应 trackId
+    unsigned long unique_id;                          // 雷达侧唯一目标 ID，对应 uniqueId
+    double longDegs;                                  // 目标经度（WGS84），对齐 fusion_track_parser.py 的 longDegs
+    double latDegs;                                   // 目标纬度（WGS84），对齐 fusion_track_parser.py 的 latDegs
+    double altitudeMetres;                            // 目标高度（米），对齐 fusion_track_parser.py 的 altitudeMetres
+    double range_m;                                   // 目标斜距
+    double azimuth_deg;                               // 目标方位角
+    double elevation_deg;                             // 目标俯仰角
+    double range_rate_mps;                            // 径向速度
+    double range_rate_sigma_mps;                      // 径向速度误差
+    double rcs_sqm;                                   // 雷达散射截面积
+    double rcs_length_m;                              // RCS 等效长度
+    double snr_db;                                    // 信噪比
+    double range_accuracy_m;                          // 距离测量精度
+    double azimuth_accuracy_deg;                      // 方位测量精度
+    double elevation_accuracy_deg;                    // 俯仰测量精度
+    EnvironmentType reported_environment;             // 雷达来源对目标环境域的本地判断
+    UnitType reported_target_type;                    // 雷达来源对目标类型的本地判断
+    double reported_target_type_confidence;           // 雷达来源目标类型判断置信度
+    FriendFoeType reported_friend_foe;                // 雷达来源对敌我属性的本地判断
+    RealityType reported_reality_type;                // 雷达来源对实兵/虚兵属性的本地判断
+    unsigned long coast_count;                         // 漏探/滑行次数
+    double accel_mps2;                                // 加速度
+    double turn_rate_dps;                             // 转弯率
+    RadarMotionStatus motionStatus;                   // 运动状态，枚举见 RadarMotionStatus
+    RadarTrackStatus status;                          // 航迹状态，枚举见 RadarTrackStatus
+    unsigned long numCoasts;                           // 漏检计数，对齐最小包 numCoasts
+    sequence<FusionSourceItem> fusionSources;      // 解析后的融合来源明细
+    double cpa_m;                                     // 最近会遇距离（CPA）
+    double tcpa_s;                                    // 到最近会遇时间（TCPA）
+    ThreatLevel threat_level;                         // 威胁等级
+    string threat;                               // 威胁文本，对齐扩展字段 threat
+    string description;                          // 航迹描述
+    string trackAlias;                           // 航迹别名，对海融合可由 AIS 船名填充
+    double first_detect_time;                         // 首次发现时间
+    double last_active_time;                          // 最近 ACTIVE 时间
+    RadarPlotObservedProfile plot_profile;            // 雷达点迹属性
+    sequence<KeyValuePair> attributes;    // 其他雷达目标属性
+};
+
+// 光电观测上下文：描述光电设备在本次观测时的动态状态，不属于目标属性。
+struct PTZStatus {
+    double pan_deg;                                   // 云台水平转角
+    double tilt_deg;                                  // 云台俯仰角
+    double zoom;                                      // 变倍倍数
+};
+
+struct FOVStatus {
+    double horizontal_deg;                            // 当前水平视场角
+    double vertical_deg;                              // 当前垂直视场角
+};
+
+struct EOObservationContext {
+    PTZStatus ptz;                                    // 当前云台状态，对应 CameraStatus.ptz
+    PTZStatus origin_ptz;                             // 叠加偏移前的原始云台状态，对应 CameraStatus.originPtz
+    double focus_value;                               // 当前聚焦值，对应 CameraStatus.focus
+    FOVStatus fov;                                    // 当前视场角状态，对应 CameraStatus.fov
+    string optical_band;                              // 当前工作波段
+    double pano_offset_deg;                           // 全景扫描或拼扫偏移角，对应 CameraStatus.panoOffset
+    unsigned long bound_track_id;                     // 当前云台绑定的跟踪目标 ID，对应 CameraStatus.trackID，没有则填 0
+    double visibility_level;                          // 当前能见度，对应 CameraStatus.visibility
+    double speed_param;                               // 光电侧速度参数，对应 CameraStatus.speedParam
+    double root_pos;                                  // 光电侧权限/根位参数，对应 CameraStatus.rootPos
+};
+
+// 光电目标检测框：来自单目标/多目标检测结果，描述图像平面上的目标框。
+struct EODetectionBox {
+    string camera_id;                            // 相机或光电通道 ID
+    unsigned long sync_header;                        // 同步头或帧同步编号
+    unsigned long box_id;                             // 检测框 ID
+    unsigned long track_id;                           // 光电跟踪 ID
+    long class_id;                                     // 检测类别 ID
+    long behavior_id;                                  // 行为类别 ID，没有则填 0
+    double x;                                         // 检测框左上角 X
+    double y;                                         // 检测框左上角 Y
+    double width;                                     // 检测框宽度
+    double height;                                    // 检测框高度
+    double center_x;                                  // 检测框中心 X
+    double center_y;                                  // 检测框中心 Y
+    double confidence;                                // 检测框置信度
+};
+
+// 光电来源看到的目标属性：这是光电目标画像，不是光电硬件或设备状态。
+struct EOObservedTargetProfile {
+    unsigned long eo_track_id;                        // 光电目标/跟踪 ID
+    unsigned long primary_detection_box_id;           // 主检测框 ID，用于指向当前主框
+    sequence<EODetectionBox> detection_boxes;      // 目标检测框集合，可包含主框、候选框或多算法输出框
+    Measurement range_estimate_min_m;                 // 目标估算距离下界
+    Measurement range_estimate_max_m;                 // 目标估算距离上界
+    double pixel_x;                                   // 像素中心 X
+    double pixel_y;                                   // 像素中心 Y
+    double pixel_span_x;                              // 像素宽度
+    double pixel_span_y;                              // 像素高度
+    string classified_type;                      // 图像分类结果
+    EnvironmentType reported_environment;             // 光电来源对目标环境域的本地判断
+    UnitType reported_target_type;                    // 光电来源归一化后的目标类型
+    double classification_confidence;                 // 图像分类置信度
+    FriendFoeType reported_friend_foe;                // 光电来源对敌我属性的本地判断
+    RealityType reported_reality_type;                // 光电来源对实兵/虚兵属性的本地判断
+    string visual_description;                   // 目标可视化描述，存放照片或者视频链接
+    sequence<KeyValuePair> attributes;    // 其他光电目标属性
+};
+
+// 电侦来源看到的目标属性：这是辐射源/电侦目标画像，不是电侦硬件属性。
+struct ESMObservedTargetProfile {
+    double azimuth_deg;                               // 来波方位角
+    double elevation_deg;                             // 来波俯仰角
+    double azimuth_accuracy_deg;                      // 方位精度
+    Measurement frequency_hz;                         // 载频
+    Measurement pri_s;                                // 脉冲重复间隔
+    Measurement pulse_width_s;                        // 脉冲宽度
+    double signal_strength_dbm;                       // 信号强度
+    double bandwidth_hz;                              // 带宽
+    string emitter_type;                         // 辐射源类型
+    string emitter_identification;               // 辐射源识别结果
+    double emitter_match_confidence;                  // 辐射源匹配置信度
+    RealityType reported_reality_type;                // 电侦来源对实兵/虚兵属性的本地判断
+    string platform_inference;                   // 平台类型推断
+    double platform_inference_confidence;             // 平台推断置信度
+    boolean has_tdoa_value;                              // 是否有 TDOA 观测
+    double tdoa_value_ns;                             // TDOA 数值
+    boolean has_fdoa_value;                              // 是否有 FDOA 观测
+    double fdoa_value_hz;                             // FDOA 数值
+    GeoPosition tdoa_position_estimate;               // TDOA 位置估计
+    sequence<KeyValuePair> attributes;    // 其他电侦目标属性
+};
+
+// AIS 看到的目标属性：这是 AIS 报文对应的目标属性画像。
+struct AISObservedTargetProfile {
+    string mmsi;                                 // 海上移动业务标识
+    unsigned long msg_type;                            // AIS 消息类型
+    string vessel_name;                          // 船名
+    string call_sign;                            // 呼号
+    string imo_number;                           // IMO 编号
+    GeoPosition reported_position;                    // 自报位置
+    double heading_deg;                               // 航向
+    double speed_knots;                               // 对地航速
+    double turn_rate_deg_per_min;                     // 转向率
+    double course_over_ground_deg;                    // 对地航向
+    string navigation_status;                    // 航行状态
+    string vessel_type;                          // 船型
+    RealityType reported_reality_type;                // AIS 来源对实兵/虚兵属性的本地判断
+    double length_m;                                  // 船长
+    double beam_m;                                    // 船宽
+    string flag_country;                         // 船旗国
+    string destination;                          // 目的港
+    double draught_m;                                 // 吃水深度
+};
+
+// 自报位目标属性：对齐 TrackManager 的 SelfReportTrack / SelfPoseTrack 解析结果。
+struct SelfReportedObservedTargetProfile {
+    string report_id;                            // 自报位对象编号，对应 SelfPoseTrack.id / trackId / unique_id
+    string sn;                                   // 无人机 SN，对应 SelfPoseTrack.sn
+    string device_name;                          // 无人机名称，对应 SelfPoseTrack.device_name
+    GeoPosition reported_position;                    // 报告位置
+    VectorEnu reported_velocity_enu;                  // 报告速度
+    double reported_speed;                            // 报告标量速度，对应 SelfPoseTrack.speed
+    double reported_heading_deg;                      // 报告航向，对应 SelfPoseTrack.course
+    double reported_climb_rate_mps;                   // 报告爬升率，对应 SelfPoseTrack.speed_v
+    Orientation attitude;                             // 机体姿态：attitude_head / attitude_pitch / attitude_roll
+    Orientation gimbal_attitude;                      // 云台姿态：gimbal_yaw / gimbal_pitch / gimbal_roll
+    double height_m;                                  // 高度，对应 SelfPoseTrack.altitude / height
+    long reported_type_code;                           // 上报类型编码：0 海面，1 空中
+    long reported_side_code;                           // 上报阵营编码：0 红方，1 蓝方，2 白方
+    FriendFoeType reported_friend_foe;                // 报告敌我属性，由 side 映射或上层补充
+    RealityType reported_reality_type;                // 自报来源对实兵/虚兵属性的本地判断
+    string reported_type;                        // 报告类型，如 sea_surface / air / drone
+    string callsign;                             // 呼号
+    string registration_id;                      // 注册号
+    string source_system_name;                   // 来源系统名，如 SelfReportTrack
+    long report_time_sec;                              // 原始上报时间秒，对应 timesec
+    long report_time_usec;                             // 原始上报时间微秒，对应 timeusec
+    sequence<KeyValuePair> attributes;    // 其他自报位目标属性
+};
+
+// 雷达来源整体画像：有雷达目标属性时，必须同时携带对应雷达硬件/部署档案。
+struct RadarSourceProfile {
+    RadarStaticProfile hardware_profile;              // 雷达硬件/部署静态档案
+    RadarObservationContext observation_context;      // 雷达本次工作参数上下文
+    RadarObservedTargetProfile target_profile;        // 雷达看到的目标属性
+};
+
+// 光电来源整体画像：有光电目标属性时，必须同时携带对应光电硬件/部署档案。
+struct EOSourceProfile {
+    EOStaticProfile hardware_profile;                 // 光电硬件/部署静态档案
+    EOObservationContext observation_context;         // 光电设备本次观测状态
+    EOObservedTargetProfile target_profile;           // 光电看到的目标属性
+};
+
+// 电侦来源整体画像：有电侦目标属性时，必须同时携带对应电侦硬件/部署档案。
+struct ESMSourceProfile {
+    ESMStaticProfile hardware_profile;                // 电侦硬件/部署静态档案
+    ESMObservedTargetProfile target_profile;          // 电侦看到的目标属性
+};
+
+// 来源专有画像：只承载来源专有结构；has_xxx 显式标识该来源携带哪类画像，不重复平台、型号和状态字段。
+struct SourceProfile {
+    boolean has_radar_source;                            // 是否携带雷达来源整体画像
+    boolean has_eo_source;                               // 是否携带光电来源整体画像
+    boolean has_esm_source;                              // 是否携带电侦来源整体画像
+    boolean has_ais_source;                              // 是否携带 AIS 目标属性
+    boolean has_self_reported_source;                    // 是否携带自报位目标属性
+    RadarSourceProfile radar_source;                  // 雷达来源整体画像
+    EOSourceProfile eo_source;                        // 光电来源整体画像
+    ESMSourceProfile esm_source;                      // 电侦来源整体画像
+    AISObservedTargetProfile ais_target_profile;      // AIS 目标属性；AIS 无硬件档案，不再额外包单字段结构体
+    SelfReportedObservedTargetProfile self_reported_target_profile; // 自报位目标属性；自报位无硬件档案
+};
+
+// 关联元数据：描述一次关联、成员关系或解关联动作的来源和语义。
+struct CorrelationMetadata {
+    EntityRef source;                             // 关联信息来源引用，如融合模块、操作员或外部系统
+    string correlation_type;                 // 关联类型，如 same_target / group_member / duplicate
+    string copy_mode;                        // 复制或同步模式，按上游约定填写
+    double update_time;                           // 关联元数据更新时间
+    sequence<KeyValuePair> details;   // 关联补充信息
+};
+
+// 解关联对象：记录明确不应再自动关联到当前目标的实体。
+struct DecorrelatedEntity {
+    EntityRef entity;                      // 被解关联的实体引用
+    CorrelationMetadata metadata;          // 解关联元数据
+};
+
+// 目标关联关系：描述该目标与其他实体的主从、成员和解关联关系。
+struct TargetCorrelationInfo {
+    boolean is_primary;                               // 当前目标是否是关联集主实体
+    sequence<EntityRef> secondary_entities;     // 当自身为主实体时，记录次实体引用列表
+    boolean is_secondary;                             // 当前目标是否是某个主实体的次实体
+    EntityRef primary_entity;                      // 当自身为次实体时，对应主实体引用
+    string correlation_set_id;                // 所属关联集 ID
+    boolean is_primary_member;                        // 当前目标在关联集中是否为主成员
+    CorrelationMetadata metadata;                  // 当前关联关系元数据
+    boolean decorrelate_all;                          // 是否明确与所有其他实体解关联
+    sequence<DecorrelatedEntity> decorrelated_entities; // 明确解关联的单个实体列表
+};
+
+// 威胁判定结果
+struct ThreatAssessment {
+    boolean is_threat;                    // 是否被确定为威胁
+    ThreatLevel threat_level;          // 威胁等级
+    double confidence;                 // 威胁判断置信度
+    string reason;                // 威胁判断原因摘要
+};
+
+// 高价值目标匹配项：记录命中的高价值目标列表和描述项。
+struct HighValueTargetMatch {
+    string high_value_target_list_id;         // 高价值目标列表 ID
+    string high_value_target_description_id;  // 高价值目标描述 ID
+};
+
+// 高价值目标信息：记录该目标是否命中高价值目标或高收益目标定义。
+struct HighValueTargetInfo {
+    boolean is_high_value_target;                         // 是否命中高价值目标列表
+    unsigned long target_priority;                      // 高价值目标优先级，1 最高，0 表示无优先级
+    sequence<HighValueTargetMatch> target_matches;  // 具体命中的高价值目标描述项
+    boolean is_high_payoff_target;                        // 是否为高收益目标
+};
+
+// 目标优先级：统一收纳高价值目标、威胁和交战排序相关信息。
+struct TargetPriorityInfo {
+    HighValueTargetInfo high_value_target;  // 高价值目标信息
+    ThreatAssessment threat;                // 威胁信息
+    double engagement_priority;             // 用于交战排序的综合优先级
+};
+
+// 运动学结构：描述目标的最终运动状态及其不确定性。
+struct Kinematics {
+    GeoPosition position;              // 目标位置，直接复用大地坐标结构
+    Orientation target_orientation;    // 目标朝向，偏航/俯仰/横滚
+    VectorEnu velocity_enu;            // ENU 速度向量
+    double speed;                      // 速度标量
+    VectorEnu acceleration_enu;        // ENU 加速度向量
+    AttitudeEnu attitude_enu;          // ENU 姿态四元数
+    EnuCovariance position_enu_cov;    // ENU 位置协方差
+    EnuCovariance velocity_enu_cov;    // ENU 速度协方差
+    PositionErrorEllipse position_error_ellipse; // 水平位置误差椭圆
+};
+
+
+// 目标来源项：只保留最终目标需要输出和追溯的来源摘要，不保留中间融合过程结构。
+struct TargetSourceItem {
+    string entity_id;                         // 探测平台实体 ID
+    string source_track_id;                   // 该来源侧目标/航迹/报文对象编号
+    double first_detect_time;                      // 该来源首次支撑该目标的时间
+    double last_active_time;                       // 该来源最后一次处于 active 状态的时间
+    double confidence;                             // 该来源当前可信度
+    SourcePresenceStatus status;                   // 来源状态，如 active / coasting / inactive / lost
+    SourceProfile source_profile;                  // 来源专有画像：不重复来源类别、平台、状态等通用字段
+    sequence<KeyValuePair> identity_attributes; // 来源侧携带的身份/应答/协同识别信息，如 mode3、mode_s、iff、callsign
+};
+
+// 证据事件类型：用于统一标识证据链里的关键事件。
+enum EvidenceEventType {
+    DETECTED,              // 首次发现
+    ASSOCIATED,            // 关联成功
+    ASSOCIATION_REJECTED,  // 关联拒绝
+    STATE_CHANGED,         // 状态跳变
+    GROUP_CHANGED,         // 群关系变化
+    RECLASSIFIED,          // 类型重判
+    THREAT_EVALUATED,      // 威胁评估更新
+    ENGAGE_ASSIGNED,       // 已分配交战资源
+    ENGAGE_UPDATED,        // 交战状态更新
+    LOST,                  // 丢失或终止
+    MANUAL_OVERRIDE        // 人工干预
+};
+
+// 证据链事件：记录目标生命周期中的关键决策和状态变化。
+struct EvidenceEvent {
+    double timestamp;                              // 事件时间戳
+    EntityRef source;                              // 证据来源引用，如来源、操作员、规则引擎或系统模块
+    EvidenceEventType event_type;                  // 事件类型
+    string summary;                           // 人可读摘要，便于日志、界面和复盘
+    double confidence;                             // 该条证据自身置信度
+    sequence<EntityRef> related_entities;       // 关联实体引用，如来源、武器、规则、群目标、其他目标
+    sequence<KeyValuePair> details;    // 细节参数，如 mahalanobis、angle_residual、assigned_weapon
+};
+
+// 编队类型：描述群目标当前的空间组织形态。
+enum FormationType {
+    UNKNOWN,   // 未知编队
+    LINE,      // 一字形或线形编队
+    TRIANGLE,  // 三角编队
+    V_SHAPE,   // V 字编队
+    CLUSTER    // 簇状聚集编队
+};
+
+// 群状态：描述群目标当前是否稳定、分裂、合并等。
+enum GroupState {
+    STABLE,            // 群状态稳定
+    SPLITTING,         // 群正在分裂
+    MERGING,           // 群正在合并
+    PARTIAL_OBSERVED,  // 群仅部分可见或部分可观测
+    LOST               // 群已丢失
+};
+
+// 群目标实体：用于表达无人机群或编队目标及其拓扑关系。
+struct GroupObject {
+    // 身份标识
+    string group_id;                          // 群目标稳定 ID
+    EntityRef leader_target;                       // 群领头目标引用，无法确定时指向置信度最高或主成员
+    sequence<EntityRef> member_targets;        // 群成员目标引用列表
+
+    // 运动学与空间形态
+    Kinematics group_center_kinematics;           // 群中心运动学状态，来源无法稳定分辨个体时尤其重要
+    double spatial_extent_major;                  // 群包络长轴，表达群体空间范围
+    double spatial_extent_minor;                  // 群包络短轴，表达群体空间范围
+    double formation_heading;                     // 编队主方向
+    FormationType formation_type;                 // 编队类型：line / triangle / V / cluster / unknown
+
+    // 群状态
+    GroupState group_state;                       // 群状态：stable / splitting / merging / partial_observed / lost
+    sequence<string> split_merge_hypotheses; // 分裂或合并假设描述，也可替换成关联假设 ID
+};
+
+// ── 告警域：融合 casia.event.alarm，复用本模块 GeoPosition、EODetectionBox、ThreatLevel ──
+
+// 告警类别：对齐 AlarmEvent.AlarmType，CUSTOM_TYPE 简化为 CUSTOM
+enum AlarmCategory {
+    TRACK_AREA,       // 航迹区域告警
+    TARGET_BEHAVIOR,  // 目标行为告警
+    TARGET_ATTR,      // 目标属性告警
+    DEVICE,           // 设备告警
+    CUSTOM1            // 自定义告警
+};
+
+// 告警生命周期：对齐 AlarmEvent.AlarmStatus
+enum AlarmLifecycleStatus {
+    ACTIVE,         // 活跃
+    CANCELED,       // 已取消
+    DELETED,        // 已删除
+    FOCUS,          // 重点关注
+    AUTO_RESOLVED   // 自动取消
+};
+
+// 告警处置状态：对齐 AlarmEvent.AlarmTaskStatus
+enum AlarmDispositionStatus {
+    UNASSIGNED,     // 未分配资源
+    ASSIGNED,       // 已分配资源查证中
+    VERIFY_FAILED,  // 查证失败
+    VERIFY_SUCCESS  // 查证成功
+};
+
+// 告警关联区域：从 AlarmInfo 拆出，便于复用
+struct AlarmAreaRef {
+    string area_id;                       // 区域 ID
+    string area_name;                     // 区域名称
+};
+
+// 单条目标告警：挂载于 TargetObject.alarms，每条告警必须有唯一 alarm_id
+struct TargetAlarmItem {
+    string alarm_id;                              // 告警唯一 ID（必填）
+    sequence<AlarmCategory> categories;           // 告警类别，可多种
+    AlarmLifecycleStatus status;                  // 告警生命周期状态
+    AlarmDispositionStatus disposition;           // 告警处置状态
+    string content;                               // 告警内容
+    ThreatLevel level;                            // 告警级别
+    AlarmAreaRef area;                            // 关联区域
+    long class_id;                                // 目标类型 ID（光电 classId，无则填 0）
+    long behavior_id;                             // 行为 ID（无则填 0）
+    GeoPosition position;                         // 告警发生位置
+    double raised_time;                           // 告警产生时间
+    double updated_time;                          // 告警更新时间
+    double resolved_time;                         // 解决时间（未解决填 0）
+    string resolved_by;                           // 解决用户 ID
+    string resolution_details;                    // 解决详情
+    sequence<string> rule_ids;                    // 触发规则 ID 列表
+    boolean has_detection_box;                    // 是否携带检测框
+    EODetectionBox detection_box;                 // 检测框
+};
+
+// 单目标实体：最终输出的目标对象，只保留目标属性、来源、证据链和决策相关关键字段。
+struct TargetObject {
+    // 身份标识
+    string target_id;                         // 系统内部稳定目标 ID，不随传感器轨迹号变化
+    string name;                              // 目标显示名称
+    string description;                       // 目标描述
+    sequence<AlternateId> alternate_ids;        // 目标替代标识符列表
+    string external_target_id;                // 外部系统或上游系统给出的目标 ID，没有则为空
+    EntityRef target_board;                        // 所属目标板或任务看板引用
+    string group_id;                          // 所属群目标 ID，没有则为空
+
+    // 状态信息
+    TargetState state;                             // 跟踪融合状态
+    KillChainState kill_chain_state;               // 杀伤链流程状态，对应目标工作台列状态
+    double existence_confidence;                   // 目标存在置信度，用于区分真实目标与虚警
+    long lost_frame_count;                          // 连续丢失帧数，用于控制 coasting 到 lost
+    double created_time;                           // 目标创建时间
+    double last_update_time;                       // 最后一次有效更新的时间戳
+
+    // 基础属性
+    UnitType classified_type;                      // 目标类型，如 drone / bird / helicopter
+    double type_confidence;                        // 类型识别置信度
+    FriendFoeType friend_foe;                      // 敌我属性
+    RealityType reality_type;                      // 融合后的实兵/虚兵属性
+    EnvironmentType environment;                   // 目标所处环境域，如空中、陆地、水面、水下
+    double fused_azimuth_deg;                      // 融合后的目标方位角
+    double fused_elevation_deg;                    // 融合后的目标俯仰角
+    double fused_range_m;                          // 融合后的目标距离/斜距
+
+    // 运动学
+    Kinematics target_kinematics;                  // 位置、速度、加速度及不确定性
+
+    // 优先级与扩展特征
+    TargetPriorityInfo priority;                   // 高价值目标、威胁和综合优先级信息
+    sequence<SignalInfo> signals;               // 该目标可归纳出的信号特征集合，没有相关特征时可为空
+    sequence<Aimpoint> aimpoints;               // 该目标的瞄准点列表
+    sequence<DetectionReasoning> detection_reasonings; // 该目标的检测、融合、AI 或人工推理记录
+
+    // 来源与溯源
+    sequence<TargetSourceItem> sources;         // 目标来源全集。一个目标挂全量来源，每个来源长期保留，只更新状态不删除
+    TargetCorrelationInfo correlation;             // 该目标与其他实体的关联、成员和解关联关系
+    SecurityMarking security;                      // 目标安全标记和分发控制
+    sequence<StateHistoryRecord> state_history; // 杀伤链状态变更历史
+
+    // 证据链
+    sequence<EvidenceEvent> evidence_chain;     // 关键证据链，只记录关键决策事件，不记录每帧原始观测
+
+    // 告警（随目标输出，不在顶层单独批次）
+    sequence<TargetAlarmItem> alarms;           // 该目标关联的告警列表，每条含 alarm_id
+};
+
+// 目标批量输出包：支持一次传输多单目标与多群目标，避免只能逐条发送。
+struct TargetOutputSet {
+    sequence<TargetObject> targets;              // 单目标批量
+    sequence<GroupObject> groups;                // 群目标批量
+};
+}; // module TargetFull

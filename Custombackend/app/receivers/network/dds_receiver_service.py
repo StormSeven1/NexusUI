@@ -73,6 +73,7 @@ class DDSReceiverService:
         
         # DDS数据类名（支持动态配置，其他类名自动推导）
         self.data_class_name = self.dds_config.get('data_class_name', 'TrackDataClass')
+        self.dds_module_name = (self.dds_config.get('dds_module_name') or '').strip()
         # 自动推导PubSubType类名和类型名
         self.pubsub_type_class_name = self.dds_config.get('pubsub_type_class_name', f'{self.data_class_name}PubSubType')
         self.type_name = self.dds_config.get('type_name', self.data_class_name)
@@ -169,13 +170,20 @@ class DDSReceiverService:
         if not py_files:
             raise ImportError(f"在 {self.dds_module_path} 中未找到Python模块文件")
 
-        # 优先使用配置的 Python 模块名；否则与 data_class_name 同名的 .py；再否则第一个 .py
-        if self.dds_python_module:
+        # 优先 dds_module_name / dds_python_module；否则与 data_class_name 同名的 .py；再否则第一个 .py
+        if self.dds_module_name and self.dds_module_name in py_files:
+            module_name = self.dds_module_name
+        elif self.dds_python_module:
             module_name = self.dds_python_module
         elif self.data_class_name in py_files:
             module_name = self.data_class_name
         else:
-            module_name = py_files[0]  # 否则使用第一个找到的.py文件
+            module_name = py_files[0]
+            if len(py_files) > 1:
+                logger.warning(
+                    f"⚠️ [{self.source_id}] 未匹配 data_class_name={self.data_class_name!r}，"
+                    f"回退模块 {module_name!r}，建议配置 dds_module_name"
+                )
 
         # 预加载 .so：Camera 目录同时含新旧两套绑定，全量 RTLD_GLOBAL 会符号冲突 → 匹配发布者但收不到样本
         so_preload = self._resolve_dds_so_preload_list(module_name)
@@ -406,34 +414,28 @@ class DDSReaderListener(fastdds.DataReaderListener if DDS_AVAILABLE else object)
         
         try:
             info = fastdds.SampleInfo()
-            
-            # 动态获取数据类
             data_class = getattr(self.dds_module, self.data_class_name)
             data = data_class()
-            reader.take_next_sample(data, info)
-            self.num += 1
-            
-            # 检查数据是否有效
-            if info.valid_data:
-                # logger.info(f"📥 收到DDS数据 #{self.num}, structure_type={self.structure_type}")
-                
-                # 使用统一的解析器根据结构类型解析
-                if self.data_callback:
-                    try:
-                        from parsers.dds_parser import parse_dds_data
-                        parsed_data = parse_dds_data(data, self.structure_type)
-                        if parsed_data:
-                            parsed_data['name']=self.name
-                            # logger.info(f"✅ 数据解析成功，准备回调")
-                            self.data_callback(parsed_data)
-                        else:
-                            logger.warning(f"⚠️ 数据解析返回None")
-                    except Exception as e:
-                        logger.error(f"❌ DDS数据回调执行失败: {e}", exc_info=True)
-                else:
-                    logger.warning(f"⚠️ 没有配置data_callback")
-            else:
-                logger.debug(f"⚠️ 收到无效数据样本")
+
+            while reader.take_next_sample(data, info) == fastdds.RETCODE_OK:
+                if not info.valid_data:
+                    continue
+                self.num += 1
+                if not self.data_callback:
+                    continue
+                try:
+                    from parsers.dds_parser import parse_dds_data
+                    parsed = parse_dds_data(data, self.structure_type)
+                    if not parsed:
+                        continue
+                    items = parsed if isinstance(parsed, list) else [parsed]
+                    for parsed_data in items:
+                        if not isinstance(parsed_data, dict):
+                            continue
+                        parsed_data['name'] = self.name
+                        self.data_callback(parsed_data)
+                except Exception as e:
+                    logger.error(f"❌ DDS数据回调执行失败: {e}", exc_info=True)
         
         except Exception as e:
             logger.error(f"❌ DDS数据接收失败: {e}", exc_info=True)

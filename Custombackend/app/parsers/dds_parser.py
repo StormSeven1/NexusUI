@@ -35,9 +35,12 @@ def parse_dds_data(dds_object, structure_type: str) -> Optional[Dict[str, Any]]:
             - high_freq: 高频位置数据
         
     Returns:
-        解析后的字典，失败返回None
+        解析后的字典，或字典列表（new_track_struct 多目标），失败返回 None
     """
     try:
+        if structure_type == 'new_track_struct':
+            from parsers.new_track_struct_parser import parse_target_output_set
+            return parse_target_output_set(dds_object)
         # 根据结构类型选择解析函数
         if structure_type in ['fusion_track', 'track']:
             return _parse_fusion_track(dds_object)
