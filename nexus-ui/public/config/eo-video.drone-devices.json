@@ -1,7 +1,19 @@
 {
-  "syncedAt": "2026-05-26T04:23:38.248Z",
+  "syncedAt": "2026-05-26T05:48:37.251Z",
   "sourceUrl": "http://192.168.18.141:8090/api/v1/entities?page=1&size=100",
   "devices": [
+    {
+      "entityId": "system-DockAABBCCDD201",
+      "deviceSN": "1581F6Q8D248X00G7SDL",
+      "airportSN": "7CTXM8G00B0088",
+      "vendor": "dji"
+    },
+    {
+      "entityId": "system-DockAABBCCDD202",
+      "deviceSN": "1581F6Q8D248X00G7SDL",
+      "airportSN": "7CTXM8G00B0088",
+      "vendor": "dji"
+    },
     {
       "entityId": "uav-001",
       "deviceSN": "1581F6Q8D246S00G94B3",
@@ -54,6 +66,42 @@
       "entityId": "uav-011",
       "deviceSN": "1581F6QAD241200BWX4E",
       "airportSN": "7CTDM4T00BG5D7",
+      "vendor": "dji"
+    },
+    {
+      "entityId": "uav-201",
+      "deviceSN": "DroneAABBCCDD201",
+      "airportSN": "DockAABBCCDD201",
+      "vendor": "dji"
+    },
+    {
+      "entityId": "uav-202",
+      "deviceSN": "DroneAABBCCDD202",
+      "airportSN": "DockAABBCCDD202",
+      "vendor": "dji"
+    },
+    {
+      "entityId": "uav-203",
+      "deviceSN": "DroneAABBCCDD203",
+      "airportSN": "DockAABBCCDD203",
+      "vendor": "dji"
+    },
+    {
+      "entityId": "uav-204",
+      "deviceSN": "DroneAABBCCDD204",
+      "airportSN": "DockAABBCCDD204",
+      "vendor": "dji"
+    },
+    {
+      "entityId": "uav-205",
+      "deviceSN": "DroneAABBCCDD205",
+      "airportSN": "DockAABBCCDD205",
+      "vendor": "dji"
+    },
+    {
+      "entityId": "uav-206",
+      "deviceSN": "DroneAABBCCDD206",
+      "airportSN": "DockAABBCCDD206",
       "vendor": "dji"
     },
     {
