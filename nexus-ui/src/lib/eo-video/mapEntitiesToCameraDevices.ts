@@ -108,10 +108,9 @@ function mapCameraOne(raw: unknown): EoCameraRegistryRow | null {
   if (!isRecord(raw)) return null;
   const entityId = pickStr(raw, ["entityId", "entity_id", "id"]);
   if (!entityId) return null;
+  /** 第三方 ontology 归「第三方相机」菜单，不进光电 */
+  if (isThirdPartyCameraOntologyRow(raw)) return null;
   if (!isCameraEntityId(entityId) && !isCameraOntology(raw)) return null;
-  if (!isCameraEntityId(entityId) && isCameraOntology(raw)) {
-    return null;
-  }
   return {
     entityId,
     label: cameraLabel(raw, entityId),

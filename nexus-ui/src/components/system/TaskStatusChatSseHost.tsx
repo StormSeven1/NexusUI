@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { publishTaskStatusChatPayload, resolveTaskStatusSseUrl } from "@/lib/task-status-chat-feed-bus";
 import type { TaskStatusChatPayload } from "@/lib/task-status-types";
+import { recordTaskStatusSseReceived } from "@/stores/network-stats-store";
 
 /**
  * 在布局根常驻一条 EventSource，与右侧是否挂载 ChatPanel 无关。
@@ -45,6 +46,7 @@ export function TaskStatusChatSseHost() {
             | { type: "connected"; t: number }
             | { type: "task_status"; payload: TaskStatusChatPayload };
           if (msg.type !== "task_status" || !msg.payload) return;
+          recordTaskStatusSseReceived();
           publishTaskStatusChatPayload(msg.payload);
         } catch (e) {
           if (process.env.NODE_ENV === "development") {

@@ -9,14 +9,21 @@
 import { useAppStore } from "@/stores/app-store";
 import { useAlertStore, type AlertData } from "@/stores/alert-store";
 import { useTrackStore, getRenderCache } from "@/stores/track-store";
-import { useDisposedStore } from "@/stores/disposed-store";
-import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
-import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { cn } from "@/lib/utils";
-import { sendDisposalEndRequest } from "@/lib/disposal/disposal-api";
-import { AlertTriangle, AlertCircle, Info, X } from "lucide-react";
+import { formatAlertSummaryLine } from "@/lib/format-alert-summary";
+import {
+  resolveShowIdFromAlarmTrackId,
+  resolveTrackFromAlarmTrackId,
+  runGisTrackVerification,
+} from "@/lib/run-gis-track-verification";
+import {
+  fuseTypeFromTrackKind,
+  sendAlarmTrackFilterRequest,
+} from "@/lib/alarm-filter-api";
+import { AlertTriangle, AlertCircle, Info, ScanSearch, Trash2, Video } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
+import { THIRD_PARTY_DETECT_ALERT_TYPE } from "@/lib/third-party-ptz-fov";
 
 const SEVERITY_STYLES = {
   critical: {
@@ -45,54 +52,35 @@ const SEVERITY_STYLES = {
   },
 };
 
+const THIRD_PARTY_CAMERA_ALERT_STYLE = {
+  icon: Video,
+  border: "border-l-fuchsia-500",
+  bg: "bg-fuchsia-500/8",
+  iconColor: "text-fuchsia-400",
+  label: "相机",
+  labelColor: "text-fuchsia-400",
+};
+
 type SeverityKey = keyof typeof SEVERITY_STYLES;
 
-/**
- * 告警面板 — 消费 alert-store 的实时数据。
- *
- * 【数据流】`useUnifiedWsFeed`（`alert_batch` / `map_command` alert / `alert`）经 `ws-alert-normalize` 归一化 → `addAlerts` → 本列表。
- *
- * 【消灭按钮逻辑】（对齐 V2 LeftPanel.handleFinishDisposalClick + TaskProgress.endDisposalByTarget）
- * 1. 调用 sendDisposalEndRequest(trackid, isAirTrack) → PUT disposalEndUrl+disposalEndPath?type=&trackid=
- * 2. 标记已处置：disposedStore.addDisposedTrack(uniqueID, businessTrackId)
- * 3. 清除告警：alertStore.removeAlarmItemsByTrackId(trackId)
- * 4. 清除选中/高亮：appStore.selectTrack(null)（若当前选中的是该航迹）
- * 5. 清除处置方案连接线与激光/TDOA 激活：disposalPlanStore.cleanupEffectsForMissingTargets()
- * 6. 清除航迹渲染缓存：trackStore.syncWithAlarms 更新后自动过滤已处置航迹
- */
+function resolveAlertVisualStyle(alert: AlertData) {
+  if (alert.type === THIRD_PARTY_DETECT_ALERT_TYPE) return THIRD_PARTY_CAMERA_ALERT_STYLE;
+  const severity = (alert.severity in SEVERITY_STYLES ? alert.severity : "info") as SeverityKey;
+  return SEVERITY_STYLES[severity];
+}
+
+function isTrackAlarmItem(alert: AlertData): boolean {
+  return Boolean(alert.trackId?.trim()) && alert.type !== THIRD_PARTY_DETECT_ALERT_TYPE;
+}
+
 export function AlertPanel() {
-  const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
+  const { selectTrack, requestFlyTo } = useAppStore();
   const alerts = useAlertStore((s) => s.alerts);
   const removeAlarmItemsByTrackId = useAlertStore((s) => s.removeAlarmItemsByTrackId);
   const shadowTracks = useTrackStore((s) => s.shadowTracks);
-  const addDisposedTrack = useDisposedStore((s) => s.addDisposedTrack);
-  const cleanupEffectsForMissingTargets = useDisposalPlanStore((s) => s.cleanupEffectsForMissingTargets);
 
-  /** 告警 trackId → 航迹 showID（用于 selectTrack） */
-  const resolveShowIdFromAlarmTrackId = useCallback(
-    (alarmTrackId: string): string | null => {
-      if (!getTrackIdModeConfig().distinguishSeaAir) {
-        // 18.141：先查渲染层，再查影子层
-        for (const [, t] of getRenderCache()) {
-          if (t.trackId === alarmTrackId) return t.showID;
-        }
-        for (const [, t] of shadowTracks) {
-          if (t.trackId === alarmTrackId) return t.showID;
-        }
-        return null;
-      }
-      // 28.9：对海 trackId 就是 uniqueID/showID，直接用
-      // 但也可能是对空的业务 trackId，先直查再遍历
-      if (getRenderCache().has(alarmTrackId)) return alarmTrackId;
-      if (shadowTracks.has(alarmTrackId)) return alarmTrackId;
-      for (const [, t] of getRenderCache()) {
-        if (t.trackId === alarmTrackId) return t.showID;
-      }
-      for (const [, t] of shadowTracks) {
-        if (t.trackId === alarmTrackId) return t.showID;
-      }
-      return null;
-    },
+  const resolveShowId = useCallback(
+    (alarmTrackId: string) => resolveShowIdFromAlarmTrackId(alarmTrackId, shadowTracks),
     [shadowTracks],
   );
 
@@ -106,7 +94,7 @@ export function AlertPanel() {
       }
     }
     return map;
-  }, [alerts, shadowTracks]); // alerts/shadowTracks 变化时重算
+  }, [alerts, shadowTracks]);
 
   const allAlerts = alerts.map((a: AlertData) => ({
     ...a,
@@ -115,6 +103,69 @@ export function AlertPanel() {
   }));
 
   const criticalCount = allAlerts.filter((a) => a.severity === "critical").length;
+
+  const handleDelete = useCallback(
+    async (e: React.MouseEvent, alert: (typeof allAlerts)[number]) => {
+      e.stopPropagation();
+      const trackId = alert.trackId?.trim();
+      if (!trackId) {
+        toast.error("无法删除：告警缺少 track_id");
+        return;
+      }
+
+      let isAirTrack = false;
+      for (const [, t] of getRenderCache()) {
+        if (t.trackId === trackId) {
+          isAirTrack = t.type === "air";
+          break;
+        }
+      }
+      if (!isAirTrack) {
+        const shadow = resolveTrackFromAlarmTrackId(trackId, shadowTracks);
+        if (shadow) isAirTrack = shadow.type === "air";
+      }
+
+      try {
+        const result = await sendAlarmTrackFilterRequest(
+          trackId,
+          fuseTypeFromTrackKind(isAirTrack),
+        );
+        if (!result.ok) {
+          toast.error("删除告警失败", { description: result.message ?? "告警服务无响应" });
+          return;
+        }
+        removeAlarmItemsByTrackId(trackId);
+        toast.success(`已删除航迹告警 ${trackId}`);
+      } catch (err) {
+        console.error("[AlertPanel] 删除告警失败:", err);
+        toast.error(`删除失败: ${err instanceof Error ? err.message : "未知错误"}`);
+      }
+    },
+    [shadowTracks, removeAlarmItemsByTrackId],
+  );
+
+  const handleVerify = useCallback(
+    async (e: React.MouseEvent, alert: (typeof allAlerts)[number]) => {
+      e.stopPropagation();
+      if (!alert.trackId) {
+        toast.error("无法查证：告警缺少目标 ID");
+        return;
+      }
+      const track = resolveTrackFromAlarmTrackId(alert.trackId, shadowTracks);
+      if (!track) {
+        toast.error("无法查证：未找到对应航迹");
+        return;
+      }
+      try {
+        await runGisTrackVerification(track);
+        toast.message("已发起查证", { description: `目标 ${alert.trackId}` });
+      } catch (err) {
+        console.error("[AlertPanel] 查证失败:", err);
+        toast.error(`查证失败: ${err instanceof Error ? err.message : "未知错误"}`);
+      }
+    },
+    [shadowTracks],
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -131,148 +182,90 @@ export function AlertPanel() {
 
       <div className="flex-1 overflow-y-auto">
         {allAlerts.map((alert) => {
-          const style = SEVERITY_STYLES[alert.severity];
+          const style = resolveAlertVisualStyle(alert);
           const Icon = style.icon;
+          const summaryLine = formatAlertSummaryLine(alert, shadowTracks);
 
           return (
             <div
               key={alert.id}
               className={cn(
-                "border-b border-white/[0.03] border-l-2 px-3 py-3 cursor-pointer transition-colors hover:bg-white/[0.03]",
+                "cursor-pointer border-b border-white/[0.03] border-l-2 px-2.5 py-2 transition-colors hover:bg-white/[0.03]",
                 style.border,
-                style.bg
+                style.bg,
               )}
               onClick={() => {
+                if (alert.type === THIRD_PARTY_DETECT_ALERT_TYPE && alert.lat != null && alert.lng != null) {
+                  requestFlyTo(alert.lat, alert.lng, 14);
+                  return;
+                }
                 if (!alert.trackId) return;
-                const showId = resolveShowIdFromAlarmTrackId(alert.trackId);
+                const showId = resolveShowId(alert.trackId);
                 if (!showId) return;
                 selectTrack(showId);
-                /* 从渲染缓存获取航迹坐标，飞过去 */
                 const t = getRenderCache().get(showId);
                 if (t) requestFlyTo(t.lat, t.lng, 11);
               }}
             >
-              <div className="flex items-start gap-2">
-                <Icon size={14} className={cn("mt-0.5 shrink-0", style.iconColor)} />
+              <div className="flex items-start gap-1.5">
+                <Icon size={13} className={cn("mt-0.5 shrink-0", style.iconColor)} />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className={cn("text-[10px] font-bold", style.labelColor)}>
-                      {style.label}
-                    </span>
-                    <span className="font-mono text-[10px] text-nexus-text-muted">
-                      {alert.timestamp}
-                    </span>
-                  </div>
-                  {/* {alert.title && (
-                    <p className="mt-0.5 text-[11px] font-medium text-nexus-text-primary">{alert.title}</p>
-                  )} */}
-                  {/* <p className="mt-0.5 text-xs leading-relaxed text-nexus-text-primary">
-                    {alert.message}
-                  </p> */}
-                  <div className="mt-1 space-y-0.5 text-[10px] text-nexus-text-muted">
-                    {alert.trackId && (
-                      <div>
-                        <span className="text-nexus-text-secondary">目标 ID：</span>
-                        {alert.trackId}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className={cn("shrink-0 text-[10px] font-bold", style.labelColor)}>
+                        {style.label}
+                      </span>
+                      <span className="truncate font-mono text-[10px] text-nexus-text-muted">
+                        {alert.timestamp}
+                      </span>
+                    </div>
+                    {isTrackAlarmItem(alert) && (
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => void handleDelete(e, alert)}
+                          className="flex items-center gap-0.5 rounded border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-400 transition-colors hover:border-rose-500/60 hover:bg-rose-500/20"
+                        >
+                          <Trash2 size={10} />
+                          删除
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => void handleVerify(e, alert)}
+                          className="flex items-center gap-0.5 rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-400 transition-colors hover:border-sky-500/60 hover:bg-sky-500/20"
+                        >
+                          <ScanSearch size={10} />
+                          查证
+                        </button>
                       </div>
-                    )}
-                    {alert.uniqueID && alert.uniqueID !== alert.trackId && (
-                      <div>
-                        <span className="text-nexus-text-secondary">uniqueID：</span>
-                        {alert.uniqueID}
-                      </div>
-                    )}
-                    {alert.lat != null && alert.lng != null && Number.isFinite(alert.lat) && Number.isFinite(alert.lng) && (
-                      <div>
-                        <span className="text-nexus-text-secondary">坐标：</span>
-                        {alert.lng.toFixed(4)}, {alert.lat.toFixed(4)}
-                      </div>
-                    )}
-                    {alert.areaName && (
-                      <div>
-                        <span className="text-nexus-text-secondary">区域：</span>
-                        {alert.areaName}
-                      </div>
-                    )}
-                    {alert.source && (
-                      <div>
-                        <span className="text-nexus-text-secondary">来源：</span>
-                        {alert.source}
-                      </div>
-                    )}
-                    {alert.alarmLevel != null && Number.isFinite(alert.alarmLevel) && (
-                      <div>
-                        <span className="text-nexus-text-secondary">等级：</span>
-                        {alert.alarmLevel}
-                      </div>
-                    )}
-                    {alert.type && (
-                      <div>
-                        <span className="text-nexus-text-secondary">类型：</span>
-                        {alert.type}
-                      </div>
-                    )}
-                    {alert.detail && (
-                      <div className="text-nexus-text-secondary/90">{alert.detail}</div>
                     )}
                   </div>
+
+                  <p
+                    className="mt-0.5 break-words text-[10px] leading-snug text-nexus-text-primary"
+                    title={summaryLine}
+                  >
+                    {summaryLine}
+                  </p>
+
+                  {alert.detail && (
+                    <p
+                      className="mt-0.5 truncate text-[10px] text-nexus-text-secondary/80"
+                      title={alert.detail}
+                    >
+                      {alert.detail}
+                    </p>
+                  )}
+
                   {alert.imageUrl && (
-                    <div className="mt-1.5 overflow-hidden rounded border border-white/[0.06]">
+                    <div className="mt-1 overflow-hidden rounded border border-white/[0.06]">
                       <img
                         src={alert.imageUrl}
                         alt="查证图片"
-                        className="w-full object-cover"
+                        className="max-h-16 w-full object-cover"
                       />
                     </div>
                   )}
-                  <div className="mt-1.5 flex items-center gap-2">
-                    {alert.trackId && (
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const trackId = alert.trackId!;
-                          // 判断对空/对海：通过渲染缓存查找航迹类型
-                          let isAirTrack = false;
-                          for (const [, t] of getRenderCache()) {
-                            if (t.trackId === trackId) {
-                              isAirTrack = t.type === "air";
-                              break;
-                            }
-                          }
-
-                          try {
-                            // 1. 发送处置结束 HTTP 请求（PUT alarm_filter?type=&trackid=）
-                            const httpOk = await sendDisposalEndRequest(trackId, isAirTrack);
-
-                            // 2. 标记已处置（后续 WS 推送的该航迹点和告警都会被过滤）
-                            const showId = resolveShowIdFromAlarmTrackId(trackId);
-                            addDisposedTrack(showId ?? undefined, trackId);
-
-                            // 3. 清除告警列表中该 trackId 的条目
-                            removeAlarmItemsByTrackId(trackId);
-
-                            // 4. 若当前选中的是该航迹，取消选中/高亮
-                            if (selectedTrackId && selectedTrackId === showId) {
-                              selectTrack(null);
-                            }
-
-                            // 5. 清除处置方案连接线与激光/TDOA 激活状态
-                            cleanupEffectsForMissingTargets();
-
-                            const hint = httpOk ? "已通知后端" : "后端通知可能未送达";
-                            toast.success(`已消灭目标 ${trackId}（${hint}）`);
-                          } catch (err) {
-                            console.error("[AlertPanel] 消灭操作失败:", err);
-                            toast.error(`消灭失败: ${err instanceof Error ? err.message : "未知错误"}`);
-                          }
-                        }}
-                        className="flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 hover:border-emerald-500/60"
-                      >
-                        <X size={10} />
-                        消灭
-                      </button>
-                    )}
-                  </div>
                 </div>
               </div>
             </div>

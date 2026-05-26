@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { Boxes, Camera, ClipboardCheck, Home, Video, ChevronDown, Zap } from "lucide-react";
+import { Boxes, Camera, ClipboardCheck, Home, Video, ChevronDown, Zap, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
@@ -20,6 +20,8 @@ import {
   startTopNavScreenRecording,
   stopTopNavScreenRecording,
 } from "@/lib/top-nav-capture";
+import { SystemFunctionsMenu } from "@/components/eo-video/EoVideoTopLauncher";
+import { NetworkStatsDialog } from "@/components/layout/NetworkStatsDialog";
 
 function quickBtnClass(active?: boolean) {
   return cn(
@@ -52,6 +54,7 @@ export function TopNavQuickActions() {
   const [screenRecording, setScreenRecording] = useState(false);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [dailyVerifyBusy, setDailyVerifyBusy] = useState(false);
+  const [networkStatsOpen, setNetworkStatsOpen] = useState(false);
 
   useEffect(() => {
     void useAppConfigStore
@@ -333,6 +336,16 @@ export function TopNavQuickActions() {
     <div className="flex flex-wrap items-center gap-1.5">
       <button
         type="button"
+        className={quickBtnClass(networkStatsOpen)}
+        title="各数据源接收间隔（态势 WS、库表、光电检测、MQTT 等）"
+        onClick={() => setNetworkStatsOpen(true)}
+      >
+        <Activity size={13} />
+        <span className="hidden xl:inline">数据状态</span>
+      </button>
+
+      <button
+        type="button"
         className={quickBtnClass(dailyVerificationEnabled)}
         disabled={dailyVerifyBusy}
         title="与 Qt 一致：开启 POST http.chat.quickWorkflowUrl（自主值班查证工作流），关闭 POST …/workflows/{threadId}/terminate。需配置 dailyVerificationSchemaId。"
@@ -363,6 +376,8 @@ export function TopNavQuickActions() {
         <Zap size={13} />
         <span className="hidden xl:inline">一键热备</span>
       </button>
+
+      <SystemFunctionsMenu />
 
       <div className="relative flex items-center">
         <button
@@ -406,6 +421,8 @@ export function TopNavQuickActions() {
         <Video size={13} />
         <span className="hidden xl:inline">{screenRecording ? "录屏中" : "录屏"}</span>
       </button>
+
+      <NetworkStatsDialog open={networkStatsOpen} onClose={() => setNetworkStatsOpen(false)} />
     </div>
   );
 }

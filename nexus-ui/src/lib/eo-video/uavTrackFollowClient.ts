@@ -1,5 +1,7 @@
 "use client";
 
+import { getDroneTaskFlightParams } from "@/stores/drone-task-settings-store";
+
 export type UavTrackFollowResult = {
   ok: boolean;
   status?: number;
@@ -25,6 +27,7 @@ export async function postUavTrackFollowTask(args: {
   traceMode?: number;
 }): Promise<UavTrackFollowResult> {
   const PATH = "/api/uav-task/track-follow";
+  const { flightHeight } = getDroneTaskFlightParams();
   const clientBody = {
     airportSN: args.airportSN.trim(),
     trackId: args.trackId,
@@ -35,6 +38,7 @@ export async function postUavTrackFollowTask(args: {
     rectID: args.rectID ?? -1,
     rectType: args.rectType ?? -1,
     traceMode: args.traceMode ?? 0,
+    height: flightHeight,
   };
   const abs = typeof window !== "undefined" ? `${window.location.origin}${PATH}` : PATH;
   console.info("[uav-track-follow] 浏览器 → Next API\n  URL:", abs, "\n  Body:", JSON.stringify(clientBody));

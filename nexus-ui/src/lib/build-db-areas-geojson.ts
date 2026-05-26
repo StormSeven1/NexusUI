@@ -1,11 +1,14 @@
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { areaRowToPolygonRing, dbAreaFeatureId, lineFromAreaRoute } from "@/lib/area-table-geometry";
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
+import {
+  DEFAULT_AREA_LAYER_LINE_COLOR,
+  DEFAULT_AREA_LAYER_LINE_WIDTH,
+  type SituationAreaLayerStyle,
+} from "@/lib/distance-ring-settings";
 
-/**
- * 区域图层线框 + 标签字色（深底图用柔和浅灰蓝，避免纯白刺眼；与 DB `line_color` 解耦以保证可读一致）
- */
-export const DB_AREA_MAP_UI_COLOR = "#c8d1dd";
+/** @deprecated 请用态势显示中的区域图层配色；保留常量供旧引用 */
+export const DB_AREA_MAP_UI_COLOR = DEFAULT_AREA_LAYER_LINE_COLOR;
 
 /** 北朝上时包络框「右下」≈ 最大经度、最小纬度；再略向东南外偏一点，避免字压线 */
 export function ringSouthEastLabelLngLat(ring: [number, number][]): [number, number] {
@@ -28,21 +31,27 @@ export function ringSouthEastLabelLngLat(ring: [number, number][]): [number, num
 /**
  * 数据库区域 → MapLibre GeoJSON（Polygon + Point 标签）。
  * @param includeRow 总开关与子项显隐过滤后仍为 true 才入图。
+ * @param style 态势显示 · 区域图层边线/标注样式（覆盖固定浅色）
  */
 export function buildDbAreasFeatureCollection(
   rows: AreaTableRow[],
   includeRow: (row: AreaTableRow) => boolean = () => true,
+  style?: SituationAreaLayerStyle,
 ): GeoJSON.FeatureCollection {
+  const lineColor = style?.lineColor?.trim() || DEFAULT_AREA_LAYER_LINE_COLOR;
+  const lineOpacity = style?.lineOpacity ?? 1;
+  const labelOpacity = style?.labelOpacity ?? 0.95;
   const features: GeoJSON.Feature[] = [];
+
   for (const row of rows) {
     if (!includeRow(row)) continue;
 
-    const lineColor = DB_AREA_MAP_UI_COLOR;
     const name =
       (row.area_name && String(row.area_name).trim()) ||
       mapAreaFallbackLabel(row.group_id, row.area_id, row.area_type);
     const id = dbAreaFeatureId(row);
-    const lineWidth = Math.max(1.5, Math.min(6, Number(row.line_width) || 2));
+    const lineWidth = style?.lineWidth ?? DEFAULT_AREA_LAYER_LINE_WIDTH;
+    const lineStyle = style?.lineStyle ?? "solid";
 
     if (row.area_type === 4) {
       const line = lineFromAreaRoute(row);
@@ -57,7 +66,9 @@ export function buildDbAreasFeatureCollection(
           id,
           name,
           lineColor,
+          lineOpacity,
           lineWidth,
+          lineStyle,
           groupId: row.group_id,
           areaId: row.area_id,
           areaType: row.area_type,
@@ -67,7 +78,7 @@ export function buildDbAreasFeatureCollection(
         type: "Feature",
         id: `${id}-lbl`,
         geometry: { type: "Point", coordinates: [lx, ly] },
-        properties: { _kind: "lbl", labelText: name, lineColor },
+        properties: { _kind: "lbl", labelText: name, lineColor, labelOpacity },
       });
       continue;
     }
@@ -85,7 +96,9 @@ export function buildDbAreasFeatureCollection(
         id,
         name,
         lineColor,
+        lineOpacity,
         lineWidth,
+        lineStyle,
         groupId: row.group_id,
         areaId: row.area_id,
         areaType: row.area_type,
@@ -96,7 +109,7 @@ export function buildDbAreasFeatureCollection(
       type: "Feature",
       id: `${id}-lbl`,
       geometry: { type: "Point", coordinates: [lx, ly] },
-      properties: { _kind: "lbl", labelText: name, lineColor },
+      properties: { _kind: "lbl", labelText: name, lineColor, labelOpacity },
     });
   }
 

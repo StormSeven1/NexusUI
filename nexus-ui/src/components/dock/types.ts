@@ -49,6 +49,8 @@ export type PanelId =
   | "electro-optical-3"
   | "electro-optical-4"
   | "chat"
+  /** watchsystem 数据库自然语言问答 */
+  | "knowledge-base"
   /** 系统评估（含航迹/相机/算法等子 Tab） */
   | "system-evaluation"
   /** @deprecated 已更名为 system-evaluation，保留类型以兼容旧布局持久化 */

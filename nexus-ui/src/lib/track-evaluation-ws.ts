@@ -5,6 +5,8 @@
  * 环境变量：NEXT_PUBLIC_TRACK_EVAL_WS_URL
  */
 
+import { recordTrackEvalReceived } from "@/stores/network-stats-store";
+
 export const DEFAULT_TRACK_EVAL_WS_URL = "ws://127.0.0.1:12600/ws/test-client";
 
 export function getTrackEvalWsUrl(): string {
@@ -125,6 +127,7 @@ export class TrackEvaluationWsClient {
       };
       ws.onmessage = (ev) => {
         if (typeof ev.data !== "string") return;
+        recordTrackEvalReceived();
         const parsed = parseTrackEvalMessage(ev.data);
         if (parsed) this.callbacks.onMessage?.(parsed);
       };

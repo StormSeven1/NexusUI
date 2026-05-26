@@ -14,7 +14,7 @@ import {
 import {
   MapPin,
   Layers,
-  Route,
+  SlidersHorizontal,
   AlertTriangle,
   Crosshair,
   Eye,
@@ -38,8 +38,9 @@ import { SystemEvaluationPanel } from "@/components/panels/SystemEvaluationPanel
 import { LayerPanel } from "@/components/panels/LayerPanel";
 import { AssetPanel } from "@/components/panels/AssetPanel";
 import { AlertPanel } from "@/components/panels/AlertPanel";
-import { TrackDisplayPanel } from "@/components/panels/TrackDisplayPanel";
+import { DisplayControlPanel } from "@/components/panels/DisplayControlPanel";
 import { ChatPanel } from "@/components/panels/ChatPanel";
+import { KnowledgeBasePanel } from "@/components/panels/KnowledgeBasePanel";
 import { TargetProfilePanel } from "@/components/panels/TargetProfilePanel";
 import { EoVideoDockPanel } from "@/components/eo-video/EoVideoDockPanel";
 
@@ -95,18 +96,18 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
   },
   {
     id: "track-display",
-    title: "航迹显示",
+    title: "显示控制",
     capability: "dockable",
     category: "target",
-    menuLabel: "航迹显示",
-    icon: Route,
-    component: TrackDisplayPanel,
+    menuLabel: "显示控制",
+    icon: SlidersHorizontal,
+    component: DisplayControlPanel,
     defaultLocation: "left-top",
-    defaultSize: { width: 360, height: 400 },
+    defaultSize: { width: 360, height: 440 },
     closable: true,
     draggable: true,
     resizable: true,
-    description: "融合航迹配色、矢量与尾迹长度",
+    description: "航迹显示、态势圆环与区域等地图显示参数",
   },
   {
     id: "assets",
@@ -291,6 +292,21 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
     draggable: true,
     resizable: true,
     description: "AI智能助手对话面板",
+  },
+  {
+    id: "knowledge-base",
+    title: "知识库查询",
+    capability: "dockable",
+    category: "other",
+    menuLabel: "知识库查询",
+    icon: Database,
+    component: KnowledgeBasePanel,
+    defaultLocation: "right-bottom",
+    defaultSize: { width: 440, height: 400 },
+    closable: true,
+    draggable: true,
+    resizable: true,
+    description: "watchsystem 数据库自然语言问答",
   },
   {
     id: "overview",

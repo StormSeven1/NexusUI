@@ -34,7 +34,6 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QuickWorkflowModal } from "@/components/layout/QuickWorkflowModal";
-import { NetworkStatsDialog } from "@/components/layout/NetworkStatsDialog";
 
 type StatRow = { label: string; value: string; icon: LucideIcon; color: string };
 
@@ -162,7 +161,6 @@ const WORKSPACE_CONFIGS = {
       { label: "报表", value: "12", icon: Route, color: "text-purple-400" }
     ],
     tools: [
-      { id: "query", label: "查询", icon: Search },
       { id: "visualize", label: "可视化", icon: BarChart3 },
       { id: "model", label: "模型", icon: Layers },
       { id: "export", label: "导出", icon: Download },
@@ -233,7 +231,6 @@ export function WorkspaceDetails() {
 
   /** 快捷工作流弹窗状态 */
   const [quickWorkflowOpen, setQuickWorkflowOpen] = useState(false);
-  const [networkStatsOpen, setNetworkStatsOpen] = useState(false);
 
   const situationLiveStats = useMemo((): StatRow[] => {
     const layerN = countLayerPanelEnabled(
@@ -447,10 +444,6 @@ export function WorkspaceDetails() {
               if (topTab === "tasks" && tool.id === "plan") {
                 setQuickWorkflowOpen(true);
               }
-              // 分析→查询：点击打开网络数据统计弹窗
-              if (topTab === "analytics" && tool.id === "query") {
-                setNetworkStatsOpen(true);
-              }
             }}
           >
             <tool.icon size={14} />
@@ -465,8 +458,6 @@ export function WorkspaceDetails() {
 
       {/* 快捷工作流弹窗：任务→规划 点击时弹出 */}
       <QuickWorkflowModal open={quickWorkflowOpen} onClose={() => setQuickWorkflowOpen(false)} />
-      {/* 网络数据统计弹窗：分析→查询 点击时弹出 */}
-      <NetworkStatsDialog open={networkStatsOpen} onClose={() => setNetworkStatsOpen(false)} />
     </div>
   );
 }

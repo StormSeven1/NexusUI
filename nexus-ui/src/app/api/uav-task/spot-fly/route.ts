@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDronePlatformBaseUrl } from "@/lib/drone-platform-base-url";
 import {
+  resolveDroneFlightHeightFromBody,
+  resolveDroneFlightSpeedFromBody,
+} from "@/lib/drone-task-settings";
+import {
   fetchWithTimeout,
   getUavTaskApiBase,
   getUavTaskServiceFetchTimeoutMs,
@@ -65,8 +69,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const height = readEnvInt("NEXUS_UAV_SPOT_FLY_HEIGHT_M", 100);
-  const speed = readEnvInt("NEXUS_UAV_SPOT_FLY_SPEED", 15);
+  const height = resolveDroneFlightHeightFromBody(body, readEnvInt("NEXUS_UAV_SPOT_FLY_HEIGHT_M", 100));
+  const speed = resolveDroneFlightSpeedFromBody(body, readEnvInt("NEXUS_UAV_SPOT_FLY_SPEED", 15));
   const taskWorkMode = readEnvInt("NEXUS_UAV_SPOT_FLY_TASK_WORK_MODE", 0);
 
   const latR = Math.round(lat * 1e6) / 1e6;

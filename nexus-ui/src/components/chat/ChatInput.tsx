@@ -44,7 +44,7 @@
 import Image from "next/image";
 // Next 的图片组件；下面附件预览用 data URL 时加了 unoptimized。
 
-import { useState, useRef, useCallback, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 // useState：组件内会变的局部状态。
 // useRef：跨渲染保存同一个对象（常用：DOM 引用、定时器 id）。
 // useCallback：返回「记忆化」的函数，避免每次渲染都新建函数（见 handleSend 注释）。
@@ -52,12 +52,18 @@ import { useState, useRef, useCallback, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 // 小工具：把多个 class 名安全拼在一起（类似 clsx + tailwind-merge）。
 
-import { Send, Paperclip, X, Image as ImageIcon, Square } from "lucide-react";
+import { Send, Paperclip, X, Image as ImageIcon, Square, Mic } from "lucide-react";
 // 图标库；Image 和 next/image 重名，所以起别名 ImageIcon。
 
 import { NxIconButton } from "@/components/nexus";
 import type { FileUIPart } from "ai";
+import { toast } from "sonner";
 // AI SDK（Vercel ai）约定的「消息里的一块：文件」结构，供父组件塞进 sendMessage 的 parts。
+
+/** 父组件可通过 ref 调用，将快捷问题等文案填入输入框（不自动发送）。 */
+export interface ChatInputHandle {
+  setDraft: (text: string) => void;
+}
 
 /** 父组件 ChatPanel 传入的约定；本组件不负责实现「发到哪儿」，只负责调用这三个入参。 */
 interface ChatInputProps {
@@ -71,9 +77,19 @@ interface ChatInputProps {
    * 若提供，则替代左侧「上传文件」按钮及隐藏 file input（用于自定义左侧工具区的场景，如智能助手面板）。
    */
   leadingToolbar?: ReactNode;
+  /** 为 true 时在发送按钮后显示语音按钮（长按录音 → `/api/speech-to-text`） */
+  enableVoiceInput?: boolean;
 }
 
-export function ChatInput({ onSend, onStop, isLoading, leadingToolbar }: ChatInputProps) {
+function resizeTextarea(ta: HTMLTextAreaElement) {
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
+}
+
+export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
+  { onSend, onStop, isLoading, leadingToolbar, enableVoiceInput = false },
+  ref,
+) {
   // —— 下面两个是「受控输入」状态：UI 显示的值完全由 state 决定，类似 Vue v-model 拆开写 ——
 
   /** 文本框里的字；初始 ""；用户每敲一个字就会 setInput 更新这里 */
@@ -89,6 +105,171 @@ export function ChatInput({ onSend, onStop, isLoading, leadingToolbar }: ChatInp
 
   /** 绑定到隐藏的 <input type="file">；用代码 .click() 代替用户直接点到 file 控件 */
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [speechServiceReady, setSpeechServiceReady] = useState<boolean | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const inputBeforeVoiceRef = useRef("");
+
+  useEffect(() => {
+    return () => {
+      mediaRecorderRef.current?.stop();
+      mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  const probeSpeechService = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/speech-to-text/health", { cache: "no-store" });
+      const data = (await res.json()) as { ok?: boolean };
+      const ready = data.ok === true;
+      setSpeechServiceReady(ready);
+      return ready;
+    } catch {
+      setSpeechServiceReady(false);
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enableVoiceInput) {
+      setSpeechServiceReady(null);
+      return;
+    }
+    void probeSpeechService();
+    const timer = window.setInterval(() => void probeSpeechService(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [enableVoiceInput, probeSpeechService]);
+
+  const notifySpeechServiceNotReady = useCallback(() => {
+    toast.error("语音服务未就绪", {
+      id: "speech-service-not-ready",
+      description: "请检查 ASR 服务是否已启动（/asr）",
+    });
+  }, []);
+
+  const applyDraftText = useCallback((text: string) => {
+    setInput(text);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      resizeTextarea(ta);
+      ta.focus();
+      ta.setSelectionRange(text.length, text.length);
+    });
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    setDraft: applyDraftText,
+  }), [applyDraftText]);
+
+  const transcribeAudio = useCallback(
+    async (blob: Blob, mimeType: string) => {
+      setIsTranscribing(true);
+      applyDraftText("正在识别语音...");
+      const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("wav") ? "wav" : "audio";
+      const form = new FormData();
+      form.append("file", blob, `audio.${ext}`);
+      try {
+        const res = await fetch("/api/speech-to-text", { method: "POST", body: form });
+        const data = (await res.json()) as { text?: string; error?: string; detail?: string };
+        if (!res.ok) {
+          throw new Error(data.error || data.detail || `HTTP ${res.status}`);
+        }
+        const text = (data.text ?? "").trim();
+        if (!text) throw new Error("识别结果为空");
+        applyDraftText(text);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error("语音识别失败", { description: msg });
+        applyDraftText(inputBeforeVoiceRef.current);
+      } finally {
+        setIsTranscribing(false);
+      }
+    },
+    [applyDraftText],
+  );
+
+  const stopMediaCapture = useCallback(() => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+    } else {
+      mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+    }
+  }, []);
+
+  const startVoiceRecording = useCallback(async () => {
+    if (mediaRecorderRef.current?.state === "recording" || isTranscribing || isLoading) return;
+
+    const ready = speechServiceReady === true ? true : await probeSpeechService();
+    if (!ready) {
+      notifySpeechServiceNotReady();
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error("当前浏览器不支持录音");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "";
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0) audioChunksRef.current.push(ev.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        setIsRecording(false);
+        const chunks = audioChunksRef.current;
+        audioChunksRef.current = [];
+        if (chunks.length === 0) {
+          applyDraftText(inputBeforeVoiceRef.current);
+          return;
+        }
+        const type = recorder.mimeType || mimeType || "audio/webm";
+        void transcribeAudio(new Blob(chunks, { type }), type);
+      };
+      mediaRecorderRef.current = recorder;
+      inputBeforeVoiceRef.current = input;
+      setIsRecording(true);
+      applyDraftText("语音输入中...");
+      recorder.start();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error("无法访问麦克风", { description: msg });
+      setIsRecording(false);
+    }
+  }, [applyDraftText, input, isLoading, isTranscribing, notifySpeechServiceNotReady, probeSpeechService, speechServiceReady, transcribeAudio]);
+
+  const handleVoicePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!enableVoiceInput) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    if (mediaRecorderRef.current?.state === "recording") {
+      stopMediaCapture();
+    }
+  };
+
+  const handleVoicePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!enableVoiceInput || isTranscribing) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    void startVoiceRecording();
+  };
 
   /**
    * 点击发送按钮或 Enter 时执行。
@@ -155,9 +336,7 @@ export function ChatInput({ onSend, onStop, isLoading, leadingToolbar }: ChatInp
    */
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
-    const ta = e.target;
-    ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
+    resizeTextarea(e.target);
   };
 
   return (
@@ -262,10 +441,43 @@ export function ChatInput({ onSend, onStop, isLoading, leadingToolbar }: ChatInp
             <Send size={13} />
           </button>
         )}
+
+        {enableVoiceInput && (
+          <button
+            type="button"
+            disabled={isTranscribing}
+            onPointerDown={handleVoicePointerDown}
+            onPointerUp={handleVoicePointerUp}
+            onPointerCancel={handleVoicePointerUp}
+            onPointerLeave={handleVoicePointerUp}
+            onContextMenu={(e) => e.preventDefault()}
+            className={cn(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors select-none touch-none",
+              isRecording
+                ? "border border-red-500/40 bg-red-500/20 text-red-300 animate-pulse"
+                : isTranscribing
+                  ? "border border-amber-500/30 bg-amber-500/10 text-amber-300"
+                  : speechServiceReady === false
+                    ? "border border-white/[0.06] bg-white/[0.02] text-nexus-text-muted opacity-60"
+                    : "border border-white/[0.06] bg-white/[0.03] text-nexus-text-muted hover:border-sky-500/30 hover:bg-sky-500/10 hover:text-sky-300",
+            )}
+            title={
+              isRecording
+                ? "松开结束录音"
+                : isTranscribing
+                  ? "正在识别..."
+                  : speechServiceReady === false
+                    ? "语音服务未就绪"
+                    : "按住说话"
+            }
+          >
+            <Mic size={13} />
+          </button>
+        )}
       </div>
     </div>
   );
-}
+});
 
 /**
  * 浏览器 API：把用户选的 File 读成 data:...;base64,... 字符串，

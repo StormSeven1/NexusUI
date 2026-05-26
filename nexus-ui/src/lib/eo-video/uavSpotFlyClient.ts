@@ -1,5 +1,7 @@
 "use client";
 
+import { getDroneTaskFlightParams } from "@/stores/drone-task-settings-store";
+
 export type UavSpotFlyResult = {
   ok: boolean;
   status?: number;
@@ -19,10 +21,13 @@ export async function postUavSpotFlyToTask(args: {
   /** 机巢 / 机场 gateway SN（写入任务 JSON 的 `deviceSn` 字段） */
   airportSN: string;
 }): Promise<UavSpotFlyResult> {
+  const { flightSpeed, flightHeight } = getDroneTaskFlightParams();
   const clientBody = {
     latitude: args.latitude,
     longitude: args.longitude,
     airportSN: args.airportSN.trim(),
+    speed: flightSpeed,
+    height: flightHeight,
   };
   const abs = typeof window !== "undefined" ? `${window.location.origin}${SPOT_FLY_RELATIVE_PATH}` : SPOT_FLY_RELATIVE_PATH;
   console.info("[uav-spot-fly] 浏览器 → Next API\n  URL:", abs, "\n  Body:", JSON.stringify(clientBody));

@@ -10,9 +10,12 @@ import {
   isAirTrackBirdGlyph,
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
+import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
 import { loadSvgImage } from "@/lib/map-image-loader";
+import { threatRankBadgeImageId } from "@/lib/map-icons";
 import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
 import { getTrackDispositionForRendering, useTrackStore } from "@/stores/track-store";
+import { useVerifiedTrackStore } from "@/stores/verified-track-store";
 import {
   useTrackDisplayStore,
   neutralFusionColorForTrack,
@@ -51,6 +54,9 @@ export const TRACK_SYMBOL = "tracks-symbol";
 export const TRACK_DOT = "tracks-dot";
 export const TRACK_LABEL = "tracks-label";
 export const TRACK_LABEL_RADAR = "tracks-label-radar";
+/** 告警航迹威胁 Top5 序号（红底 1–5，叠在航迹符号上方） */
+export const TRACK_THREAT_RANK = "tracks-threat-rank";
+export const TRACK_THREAT_RANK_SOURCE = "tracks-threat-rank-source";
 /** 锁定圈：`setLockOnFilter` 更新 filter */
 export const LOCK_ON = "tracks-lock-on";
 export const LOCK_ON_RADAR = "tracks-lock-on-radar";
@@ -71,6 +77,7 @@ export const TRACK_LAYER_IDS = [
   TRACK_SYMBOL,
   TRACK_LABEL,
   TRACK_LABEL_RADAR,
+  TRACK_THREAT_RANK,
   HIGHLIGHT_LAYER,
   HIGHLIGHT_RADAR_LAYER,
   LOCK_ON,
@@ -130,7 +137,8 @@ function trackPointFillAndStyle(t: Track, accent: AssetDispositionIconAccent | n
   const neutralFusion = disp === "neutral" ? neutralFusionColorForTrack(t, seaCol, airCol) : undefined;
   const style = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
   const friendlyFill = disp === "friendly" ? style.idColor : undefined;
-  const pointFill = neutralFusion ?? resolveTrackPointFill(t, disp, accent ?? null, friendlyFill);
+  const baseFill = neutralFusion ?? resolveTrackPointFill(t, disp, accent ?? null, friendlyFill);
+  const pointFill = resolveVerifiedTrackPointFill(t, baseFill);
   return { pointFill, disp, neutralFusion, style };
 }
 
@@ -205,6 +213,7 @@ export function buildTrackFusionPointsGeoJSON(
     const airBirdGlyph = isAirTrackBirdGlyph(t);
     const isFuseAirTrack = resolveTrackLayerKey(t) === "fuse_air";
     const airFuseGlyph = isFuseAirTrack && airBirdGlyph;
+    const opticallyVerified = shouldApplyVerifiedTrackGreen(t);
     const baseProps: Record<string, unknown> = {
       id: t.id,
       showID: t.showID,
@@ -225,7 +234,7 @@ export function buildTrackFusionPointsGeoJSON(
       isAirBirdGlyph: airBirdGlyph,
       altitude: t.altitude ?? null,
       color: pointFill,
-      labelColor: disp === "neutral" ? pointFill : style.idColor,
+      labelColor: shouldApplyVerifiedTrackGreen(t) || disp === "neutral" ? pointFill : style.idColor,
       labelTextSize: Math.max(6, Math.min(22, style.idSize)),
       symbolId: getMarkerSymbolId(
         t.type,
@@ -235,6 +244,7 @@ export function buildTrackFusionPointsGeoJSON(
         neutralFusion,
         airBirdGlyph,
         airFuseGlyph,
+        opticallyVerified,
       ),
       iconScale,
     };
@@ -277,13 +287,36 @@ export function buildTrackRadarPointsGeoJSON(
       course: t.course ?? null,
       altitude: t.altitude ?? null,
       color: pointFill,
-      labelColor: disp === "neutral" ? pointFill : style.idColor,
+      labelColor: shouldApplyVerifiedTrackGreen(t) || disp === "neutral" ? pointFill : style.idColor,
       labelTextSize: Math.max(6, Math.min(22, style.idSize)),
     };
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [t.lng, t.lat] as [number, number] },
       properties: baseProps as GeoJSON.GeoJsonProperties,
+    });
+  }
+  return { type: "FeatureCollection", features };
+}
+
+/** 威胁 Top5：仅含需显示序号的点（融合 + 雷达点源合并） */
+export function buildThreatRankPointsGeoJSON(
+  trackList: Track[],
+  rankByShowId: ReadonlyMap<string, number>,
+): GeoJSON.FeatureCollection {
+  const features: GeoJSON.Feature[] = [];
+  for (const t of trackList) {
+    const rank = rankByShowId.get(t.showID);
+    if (rank == null || rank < 1 || rank > 5) continue;
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [t.lng, t.lat] as [number, number] },
+      properties: {
+        id: t.id,
+        showID: t.showID,
+        threatRank: rank,
+        threatRankBadgeId: threatRankBadgeImageId(rank),
+      },
     });
   }
   return { type: "FeatureCollection", features };
@@ -375,6 +408,8 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
     const azm = t.azimuth;
     h ^= azm != null && Number.isFinite(azm) ? Math.round((azm as number) * 100) : 0x71a2b33f;
     h = Math.imul(h, 16777619) >>> 0;
+    h ^= shouldApplyVerifiedTrackGreen(t) ? 1 : 0;
+    h = Math.imul(h, 16777619) >>> 0;
   }
   return h >>> 0;
 }
@@ -396,6 +431,10 @@ export class TracksMaplibre {
   private trackRenderRevision = 0;
   /** 上一帧写入三源的签名；与当前帧一致则跳过 `setData`（减轻 MapLibre 压力） */
   private lastSetDataKey = "";
+  /** 最近一次 `setTracks` 入参，供威胁序号单独刷新 */
+  private lastTracks: Track[] = [];
+  /** showID → 威胁序号 1–5（1 为最高威胁度） */
+  private threatRankByShowId = new Map<string, number>();
 
   constructor(map: maplibregl.Map) {
     this.map = map;
@@ -427,7 +466,15 @@ export class TracksMaplibre {
   /** 折线源 + 融合/雷达点源 + 双高亮层；供后续专题层插在 `HIGHLIGHT_LAYER` 下 */
   installSourceAndHighlight(initialTracks: Track[]) {
     const m = this.map;
-    if (m.getSource(TRACK_SOURCE)) return;
+    if (m.getSource(TRACK_SOURCE)) {
+      if (!m.getSource(TRACK_THREAT_RANK_SOURCE)) {
+        m.addSource(TRACK_THREAT_RANK_SOURCE, {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      return;
+    }
     const accent = this.dispositionAccent;
     m.addSource(TRACK_SOURCE, {
       type: "geojson",
@@ -440,6 +487,10 @@ export class TracksMaplibre {
     m.addSource(TRACK_RADAR_PTS_SOURCE, {
       type: "geojson",
       data: buildTrackRadarPointsGeoJSON(initialTracks, accent),
+    });
+    m.addSource(TRACK_THREAT_RANK_SOURCE, {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
     });
     if (!m.getLayer(HIGHLIGHT_LAYER)) {
       m.addLayer({
@@ -667,9 +718,36 @@ export class TracksMaplibre {
         },
       });
     }
+    if (!m.getLayer(TRACK_THREAT_RANK)) {
+      m.addLayer(
+        {
+          id: TRACK_THREAT_RANK,
+          type: "symbol",
+          source: TRACK_THREAT_RANK_SOURCE,
+          layout: {
+            "icon-image": ["get", "threatRankBadgeId"],
+            "icon-size": ["interpolate", ["linear"], ["zoom"], 8, 0.85, 12, 1, 16, 1.15],
+            "icon-anchor": "bottom",
+            "icon-offset": [0, -10],
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+          },
+          paint: { "icon-opacity": 1 },
+        },
+        TRACK_LABEL,
+      );
+    }
+  }
+
+  /** 更新告警航迹威胁 Top5 序号（1=最高威胁度） */
+  setThreatRankByShowId(rankByShowId: Map<string, number>) {
+    this.threatRankByShowId = rankByShowId;
+    this.lastSetDataKey = "";
+    void this.setTracksAsync(this.lastTracks);
   }
 
   setTracks(tracks: Track[]) {
+    this.lastTracks = tracks;
     void this.setTracksAsync(tracks);
   }
 
@@ -678,7 +756,8 @@ export class TracksMaplibre {
     const srcLines = this.map.getSource(TRACK_SOURCE) as maplibregl.GeoJSONSource | undefined;
     const srcFus = this.map.getSource(TRACK_FUSION_PTS_SOURCE) as maplibregl.GeoJSONSource | undefined;
     const srcRad = this.map.getSource(TRACK_RADAR_PTS_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (!srcLines || !srcFus || !srcRad) return;
+    const srcRank = this.map.getSource(TRACK_THREAT_RANK_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!srcLines || !srcFus || !srcRad || !srcRank) return;
     const gen = ++this.trackFlushGeneration;
     const vis = useAppStore.getState().layerVisibility;
     const sub = useTrackDisplayStore.getState().trackSubtypeVisible;
@@ -691,13 +770,18 @@ export class TracksMaplibre {
     const drawTrails = trackMapDrawHistoryTrails(filtered) ? 1 : 0;
     const tdRev = useTrackDisplayStore.getState().displayRevision;
     const affRev = useTrackStore.getState().mapManualAffiliationRev;
+    const verRev = useVerifiedTrackStore.getState().mapVerifiedRev;
     const fp = fnv1aTrackDataFingerprint(filtered);
-    const key = `${this.trackRenderRevision}:${maxVp}:${maxHist}:${drawTrails}:${tdRev}:${affRev}:${visSig}:${filtered.length}:${fp}`;
+    const rankSig = [...this.threatRankByShowId.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}:${v}`)
+      .join("|");
+    const key = `${this.trackRenderRevision}:${maxVp}:${maxHist}:${drawTrails}:${tdRev}:${affRev}:${verRev}:${visSig}:${filtered.length}:${fp}:${rankSig}`;
     if (key === this.lastSetDataKey) return;
     try {
-      await this.ensureNeutralFusionImages(filtered);
+      await this.ensureTrackSymbolImages(filtered);
     } catch (e) {
-      console.warn("[tracks-maplibre] ensureNeutralFusionImages:", e);
+      console.warn("[tracks-maplibre] ensureTrackSymbolImages:", e);
     }
     if (gen !== this.trackFlushGeneration) return;
     this.lastSetDataKey = key;
@@ -705,26 +789,41 @@ export class TracksMaplibre {
     srcLines.setData(buildTrackLinesGeoJSON(filtered, accent) as GeoJSON.FeatureCollection);
     srcFus.setData(buildTrackFusionPointsGeoJSON(filtered, accent) as GeoJSON.FeatureCollection);
     srcRad.setData(buildTrackRadarPointsGeoJSON(filtered, accent) as GeoJSON.FeatureCollection);
+    srcRank.setData(
+      buildThreatRankPointsGeoJSON(filtered, this.threatRankByShowId) as GeoJSON.FeatureCollection,
+    );
   }
 
-  private async ensureNeutralFusionImages(tracks: Track[]) {
+  /** 按需注册军标：中立融合自定义色 + 光电查证完成（`-ov` 绿色军标） */
+  private async ensureTrackSymbolImages(tracks: Track[]) {
     const m = this.map;
     const td = useTrackDisplayStore.getState();
     const accent = this.dispositionAccent;
+    const tr = getTrackRenderingConfig();
     const seen = new Set<string>();
     for (const t of tracks) {
       if (isDotTrackLayerKey(resolveTrackLayerKey(t))) continue;
       const disp = getTrackDispositionForRendering(t);
-      if (disp !== "neutral") continue;
-      const tint = neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor);
+      const style = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
+      const friendlyFill = disp === "friendly" ? style.idColor : undefined;
+      const neutralFusion =
+        disp === "neutral" ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor) : undefined;
+      const airBirdGlyph = isAirTrackBirdGlyph(t);
+      const airFuseGlyph = resolveTrackLayerKey(t) === "fuse_air" && airBirdGlyph;
+      const opticallyVerified = shouldApplyVerifiedTrackGreen(t);
+      const needsCustomNeutral = disp === "neutral" && !opticallyVerified;
+      const needsVerifiedIcon = opticallyVerified;
+      if (!needsCustomNeutral && !needsVerifiedIcon) continue;
+
       const id = getMarkerSymbolId(
         t.type,
         disp,
         t.isVirtual === true,
-        undefined,
-        tint,
-        isAirTrackBirdGlyph(t),
-        resolveTrackLayerKey(t) === "fuse_air" && isAirTrackBirdGlyph(t),
+        friendlyFill,
+        neutralFusion,
+        airBirdGlyph,
+        airFuseGlyph,
+        opticallyVerified,
       );
       if (seen.has(id)) continue;
       seen.add(id);
@@ -734,10 +833,11 @@ export class TracksMaplibre {
         disp,
         accent,
         t.isVirtual === true,
-        undefined,
-        tint,
-        isAirTrackBirdGlyph(t),
-        resolveTrackLayerKey(t) === "fuse_air" && isAirTrackBirdGlyph(t),
+        friendlyFill,
+        neutralFusion,
+        airBirdGlyph,
+        airFuseGlyph,
+        opticallyVerified,
       );
       m.addImage(id, await loadSvgImage(srcData, 64), { pixelRatio: 2 });
     }
@@ -762,6 +862,7 @@ export class TracksMaplibre {
   dispose() {
     const m = this.map;
     for (const id of [
+      TRACK_THREAT_RANK,
       TRACK_LABEL_RADAR,
       TRACK_LABEL,
       TRACK_VECTOR,
@@ -775,7 +876,12 @@ export class TracksMaplibre {
     ]) {
       if (m.getLayer(id)) m.removeLayer(id);
     }
-    for (const sid of [TRACK_RADAR_PTS_SOURCE, TRACK_FUSION_PTS_SOURCE, TRACK_SOURCE]) {
+    for (const sid of [
+      TRACK_THREAT_RANK_SOURCE,
+      TRACK_RADAR_PTS_SOURCE,
+      TRACK_FUSION_PTS_SOURCE,
+      TRACK_SOURCE,
+    ]) {
       if (m.getSource(sid)) m.removeSource(sid);
     }
   }

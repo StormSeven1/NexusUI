@@ -4,41 +4,19 @@ import {
   useTrackEvaluationStore,
   type QualityMetricTabId,
 } from "@/stores/track-evaluation-store";
-import type { TrackEvalMetricsResult, TrackErrorStatsItem } from "@/lib/track-evaluation-metrics";
-import { MetricRateChart } from "@/components/panels/track-evaluation/MetricRateChart";
+import type { TrackEvalMetricsResult } from "@/lib/track-evaluation-metrics";
+import { TrackEvalLineChart } from "@/components/panels/track-evaluation/TrackEvalLineChart";
+import { MetricErrorChart } from "@/components/panels/track-evaluation/MetricErrorChart";
 
-function ErrorStatsTable({
-  title,
-  items,
-}: {
-  title: string;
-  items: TrackErrorStatsItem[];
-}) {
-  if (items.length === 0) {
-    return (
-      <section className="mb-3">
-        <h4 className="text-xs font-semibold text-nexus-text-secondary">{title}</h4>
-        <p className="mt-1 text-[11px] text-nexus-text-muted">暂无数据</p>
-      </section>
-    );
-  }
+const ERROR_DESC =
+  "平均值 = Σ误差值 / 样本数量，RMSE = √(Σ(误差值²) / 样本数量)。对海以 AIS 为参考，对空以自报位为参考。";
+
+function CalculationNote({ children }: { children: React.ReactNode }) {
   return (
-    <section className="mb-3">
-      <h4 className="mb-1 text-xs font-semibold text-nexus-text-secondary">{title}</h4>
-      <ul className="max-h-40 space-y-1 overflow-y-auto">
-        {items.slice(0, 15).map((it) => (
-          <li
-            key={it.id}
-            className="rounded border border-nexus-border/50 bg-nexus-bg-base/30 px-2 py-1 font-mono text-[10px] text-nexus-text-muted"
-          >
-            <span className="text-nexus-text-secondary">AIS/自报 {it.id}</span>
-            <span className="ml-2">
-              融合 avg {it.fusionAvg?.toFixed(2) ?? "--"} rmse {it.fusionRmse?.toFixed(2) ?? "--"}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <p className="mb-4 rounded-md border-l-2 border-sky-500/60 bg-nexus-bg-base/50 px-3 py-2 text-[11px] leading-relaxed text-nexus-text-muted">
+      <span className="font-semibold text-sky-400">计算方式：</span>
+      {children}
+    </p>
   );
 }
 
@@ -46,308 +24,264 @@ function renderTab(tab: QualityMetricTabId, m: TrackEvalMetricsResult) {
   switch (tab) {
     case "accuracy":
       return (
-        <MetricRateChart
-          title="准确率"
-          description="准确率 = 融合中的航迹数量 / 该航迹 ID 在 1 小时窗口内的总航迹数量。"
-          series={[
-            {
-              label: "14s 对空",
-              color: "#3b82f6",
-              points: m.birdTrackAccuracy.map((x) => ({
-                id: x.id,
-                value: x.accuracy,
-              })),
-            },
-            {
-              label: "KU 雷达",
-              color: "#a855f7",
-              points: m.kuRadarAccuracy.map((x) => ({ id: x.id, value: x.accuracy })),
-            },
-          ]}
-        />
+        <>
+          <CalculationNote>
+            准确率 = 融合中的航迹数量 / 该航迹 ID 在 1 小时窗口内的总航迹数量。14s 对空与 KU 雷达分别统计。
+          </CalculationNote>
+          <TrackEvalLineChart
+            title="14s 对空航迹准确率"
+            points={m.birdTrackAccuracy.map((x) => ({ id: x.id, value: x.accuracy }))}
+            color="#3b82f6"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
+          />
+          <TrackEvalLineChart
+            title="KU 雷达航迹准确率"
+            points={m.kuRadarAccuracy.map((x) => ({ id: x.id, value: x.accuracy }))}
+            color="#ec4899"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
+          />
+        </>
       );
     case "recall":
       return (
-        <MetricRateChart
-          title="召回率"
-          description="按自报位 ID 分组，衡量融合航迹对源航迹的覆盖程度。"
-          series={[
-            {
-              label: "14s 对空召回",
-              color: "#3b82f6",
-              points: m.birdTrackRecall.map((x) => ({ id: x.id, value: x.recall })),
-            },
-            {
-              label: "KU 雷达召回",
-              color: "#a855f7",
-              points: m.kuRadarRecall.map((x) => ({ id: x.id, value: x.recall })),
-            },
-          ]}
-        />
+        <>
+          <CalculationNote>按自报位 ID 分组，衡量融合航迹对源航迹的覆盖程度。</CalculationNote>
+          <TrackEvalLineChart
+            title="14s 对空召回率"
+            points={m.birdTrackRecall.map((x) => ({ id: x.id, value: x.recall }))}
+            color="#3b82f6"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
+          />
+          <TrackEvalLineChart
+            title="KU 雷达召回率"
+            points={m.kuRadarRecall.map((x) => ({ id: x.id, value: x.recall }))}
+            color="#a855f7"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
+          />
+        </>
       );
     case "falseAlarm":
       return (
-        <MetricRateChart
-          title="虚警率"
-          description="虚警率 = 1 - 准确率（同源统计口径）。"
-          series={[
-            {
-              label: "14s 对空虚警",
-              color: "#f59e0b",
-              points: m.birdTrackFalseAlarm.map((x) => ({
-                id: x.id,
-                value: x.falseAlarm,
-              })),
-            },
-            {
-              label: "KU 雷达虚警",
-              color: "#ef4444",
-              points: m.kuRadarFalseAlarm.map((x) => ({
-                id: x.id,
-                value: x.falseAlarm,
-              })),
-            },
-          ]}
-        />
+        <>
+          <CalculationNote>虚警率 = 1 - 准确率（同源统计口径）。</CalculationNote>
+          <TrackEvalLineChart
+            title="14s 对空虚警率"
+            points={m.birdTrackFalseAlarm.map((x) => ({ id: x.id, value: x.falseAlarm }))}
+            color="#f59e0b"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
+          />
+          <TrackEvalLineChart
+            title="KU 雷达虚警率"
+            points={m.kuRadarFalseAlarm.map((x) => ({ id: x.id, value: x.falseAlarm }))}
+            color="#ef4444"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
+          />
+        </>
       );
     case "stability":
       return (
         <>
-          <MetricRateChart
+          <TrackEvalLineChart
             title="对海融合 — 跟踪稳定性（航迹点）"
-            series={[
-              {
-                label: `平均 ${m.seaFusionStabilityAvg != null ? (m.seaFusionStabilityAvg * 100).toFixed(1) : "--"}%`,
-                color: "#22c55e",
-                points: m.seaFusionStabilityByAis.map((x) => ({
-                  id: x.aisId,
-                  value: x.stability,
-                })),
-              },
-            ]}
+            description={
+              m.seaFusionStabilityAvg != null
+                ? `平均 ${(m.seaFusionStabilityAvg * 100).toFixed(1)}%`
+                : undefined
+            }
+            points={m.seaFusionStabilityByAis.map((x) => ({
+              id: x.aisId,
+              value: x.stability,
+            }))}
+            color="#22c55e"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
           />
-          <MetricRateChart
+          <TrackEvalLineChart
             title="对空融合 — 跟踪稳定性（航迹点）"
-            series={[
-              {
-                label: `平均 ${m.airFusionStabilityAvg != null ? (m.airFusionStabilityAvg * 100).toFixed(1) : "--"}%`,
-                color: "#06b6d4",
-                points: m.airFusionStabilityBySelfReport.map((x) => ({
-                  id: x.selfReportId,
-                  value: x.stability,
-                })),
-              },
-            ]}
+            description={
+              m.airFusionStabilityAvg != null
+                ? `平均 ${(m.airFusionStabilityAvg * 100).toFixed(1)}%`
+                : undefined
+            }
+            points={m.airFusionStabilityBySelfReport.map((x) => ({
+              id: x.selfReportId,
+              value: x.stability,
+            }))}
+            color="#06b6d4"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
           />
         </>
       );
     case "stabilityDuration":
       return (
         <>
-          <MetricRateChart
+          <TrackEvalLineChart
             title="对海 — 跟踪稳定性（时长）"
-            series={[
-              {
-                label: `平均 ${m.seaFusionStabilityDurationAvg != null ? (m.seaFusionStabilityDurationAvg * 100).toFixed(1) : "--"}%`,
-                color: "#22c55e",
-                points: m.seaFusionStabilityDurationByAis.map((x) => ({
-                  id: x.aisId,
-                  value: x.stability,
-                })),
-              },
-            ]}
+            description={
+              m.seaFusionStabilityDurationAvg != null
+                ? `平均 ${(m.seaFusionStabilityDurationAvg * 100).toFixed(1)}%`
+                : undefined
+            }
+            points={m.seaFusionStabilityDurationByAis.map((x) => ({
+              id: x.aisId,
+              value: x.stability,
+            }))}
+            color="#22c55e"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
           />
-          <MetricRateChart
+          <TrackEvalLineChart
             title="对空 — 跟踪稳定性（时长）"
-            series={[
-              {
-                label: `平均 ${m.airFusionStabilityDurationAvg != null ? (m.airFusionStabilityDurationAvg * 100).toFixed(1) : "--"}%`,
-                color: "#06b6d4",
-                points: m.airFusionStabilityDurationBySelfReport.map((x) => ({
-                  id: x.selfReportId,
-                  value: x.stability,
-                })),
-              },
-            ]}
+            description={
+              m.airFusionStabilityDurationAvg != null
+                ? `平均 ${(m.airFusionStabilityDurationAvg * 100).toFixed(1)}%`
+                : undefined
+            }
+            points={m.airFusionStabilityDurationBySelfReport.map((x) => ({
+              id: x.selfReportId,
+              value: x.stability,
+            }))}
+            color="#06b6d4"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
           />
         </>
       );
     case "maxTrackingDuration":
       return (
         <>
-          <DurationList
+          <TrackEvalLineChart
             title="对海最大跟踪时长"
-            rows={m.seaMaxTrackingDuration.map((x) => ({
+            description={
+              m.seaMaxTrackingDurationAvg != null
+                ? `平均 ${(m.seaMaxTrackingDurationAvg * 100).toFixed(1)}%`
+                : undefined
+            }
+            points={m.seaMaxTrackingDuration.map((x) => ({
               id: x.aisId,
-              value: (x.maxDuration * 100).toFixed(1) + "%",
+              value: x.maxDuration,
             }))}
-            avg={m.seaMaxTrackingDurationAvg}
+            color="#3b82f6"
+            formatValue={(v) => `${(v * 100).toFixed(1)}%`}
           />
-          <DurationList
+          <TrackEvalLineChart
             title="对空最大跟踪时长"
-            rows={m.airMaxTrackingDuration.map((x) => ({
+            description={
+              m.airMaxTrackingDurationAvg != null
+                ? `平均 ${(m.airMaxTrackingDurationAvg * 100).toFixed(1)}%`
+                : undefined
+            }
+            points={m.airMaxTrackingDuration.map((x) => ({
               id: x.selfReportId,
-              value: (x.maxDuration * 100).toFixed(1) + "%",
+              value: x.maxDuration,
             }))}
-            avg={m.airMaxTrackingDurationAvg}
+            color="#06b6d4"
+            formatValue={(v) => `${(v * 100).toFixed(1)}%`}
           />
         </>
       );
     case "breakCount":
       return (
         <>
-          <CountList
+          <CalculationNote>连续 5 次没有雷达航迹即记为一次断批，值越小越好。</CalculationNote>
+          <TrackEvalLineChart
             title="对海断批次数"
-            rows={m.seaBreakCount.map((x) => ({ id: x.aisId, value: String(x.breakCount) }))}
-            avg={m.seaBreakCountAvg}
+            description={
+              m.seaBreakCountAvg != null ? `平均 ${m.seaBreakCountAvg.toFixed(2)} 次` : undefined
+            }
+            points={m.seaBreakCount.map((x) => ({ id: x.aisId, value: x.breakCount }))}
+            color="#3b82f6"
+            formatValue={(v) => `${v.toFixed(0)} 次`}
           />
-          <CountList
+          <TrackEvalLineChart
             title="对空断批次数"
-            rows={m.airBreakCount.map((x) => ({
+            description={
+              m.airBreakCountAvg != null ? `平均 ${m.airBreakCountAvg.toFixed(2)} 次` : undefined
+            }
+            points={m.airBreakCount.map((x) => ({
               id: x.selfReportId,
-              value: String(x.breakCount),
+              value: x.breakCount,
             }))}
-            avg={m.airBreakCountAvg}
+            color="#06b6d4"
+            formatValue={(v) => `${v.toFixed(0)} 次`}
           />
         </>
       );
     case "changeBatchCount":
       return (
         <>
-          <CountList
+          <TrackEvalLineChart
             title="对海换批次数"
-            rows={m.seaChangeBatchCount.map((x) => ({
+            description={
+              m.seaChangeBatchCountAvg != null
+                ? `平均 ${m.seaChangeBatchCountAvg.toFixed(2)} 次`
+                : undefined
+            }
+            points={m.seaChangeBatchCount.map((x) => ({
               id: x.aisId,
-              value: String(x.changeBatchCount),
+              value: x.changeBatchCount,
             }))}
-            avg={m.seaChangeBatchCountAvg}
+            color="#3b82f6"
+            formatValue={(v) => `${v.toFixed(0)} 次`}
           />
-          <CountList
+          <TrackEvalLineChart
             title="对空换批次数"
-            rows={m.airChangeBatchCount.map((x) => ({
+            description={
+              m.airChangeBatchCountAvg != null
+                ? `平均 ${m.airChangeBatchCountAvg.toFixed(2)} 次`
+                : undefined
+            }
+            points={m.airChangeBatchCount.map((x) => ({
               id: x.selfReportId,
-              value: String(x.changeBatchCount),
+              value: x.changeBatchCount,
             }))}
-            avg={m.airChangeBatchCountAvg}
+            color="#06b6d4"
+            formatValue={(v) => `${v.toFixed(0)} 次`}
           />
         </>
       );
     case "distanceHeightError":
       return (
         <>
-          <ErrorStatsTable title="对海 — 距离误差" items={m.seaDistanceError} />
-          <ErrorStatsTable title="对海 — 高度误差" items={m.seaHeightError} />
-          <ErrorStatsTable title="对空 — 距离误差" items={m.airDistanceError} />
-          <ErrorStatsTable title="对空 — 高度误差" items={m.airHeightError} />
+          <CalculationNote>{ERROR_DESC}</CalculationNote>
+          <MetricErrorChart title="对海 — 距离误差" items={m.seaDistanceError} unit="m" />
+          <MetricErrorChart title="对海 — 高度误差" items={m.seaHeightError} unit="m" />
+          <MetricErrorChart title="对空 — 距离误差" items={m.airDistanceError} unit="m" />
+          <MetricErrorChart title="对空 — 高度误差" items={m.airHeightError} unit="m" />
         </>
       );
     case "azimuthError":
       return (
         <>
-          <ErrorStatsTable title="对海 — 方位角误差" items={m.seaAzimuthError} />
-          <ErrorStatsTable title="对空 — 方位角误差" items={m.airAzimuthError} />
+          <CalculationNote>{ERROR_DESC}</CalculationNote>
+          <MetricErrorChart title="对海 — 方位角误差" items={m.seaAzimuthError} unit="°" />
+          <MetricErrorChart title="对空 — 方位角误差" items={m.airAzimuthError} unit="°" />
         </>
       );
     case "elevationError":
       return (
         <>
-          <ErrorStatsTable title="对海 — 俯仰角误差" items={m.seaElevationError} />
-          <ErrorStatsTable title="对空 — 俯仰角误差" items={m.airElevationError} />
+          <CalculationNote>{ERROR_DESC}</CalculationNote>
+          <MetricErrorChart title="对海 — 俯仰角误差" items={m.seaElevationError} unit="°" />
+          <MetricErrorChart title="对空 — 俯仰角误差" items={m.airElevationError} unit="°" />
         </>
       );
     case "courseError":
       return (
         <>
-          <ErrorStatsTable title="对海 — 航向误差" items={m.seaCourseError} />
-          <ErrorStatsTable title="对空 — 航向误差" items={m.airCourseError} />
+          <CalculationNote>{ERROR_DESC}</CalculationNote>
+          <MetricErrorChart title="对海 — 航向误差" items={m.seaCourseError} unit="°" />
+          <MetricErrorChart title="对空 — 航向误差" items={m.airCourseError} unit="°" />
         </>
       );
     case "speedError":
       return (
         <>
-          <ErrorStatsTable title="对海 — 航速误差" items={m.seaSpeedError} />
-          <ErrorStatsTable title="对空 — 航速误差" items={m.airSpeedError} />
+          <CalculationNote>{ERROR_DESC}</CalculationNote>
+          <MetricErrorChart title="对海 — 航速误差" items={m.seaSpeedError} unit=" kn" />
+          <MetricErrorChart title="对空 — 航速误差" items={m.airSpeedError} unit=" kn" />
         </>
       );
     default:
       return null;
   }
-}
-
-function DurationList({
-  title,
-  rows,
-  avg,
-}: {
-  title: string;
-  rows: { id: string; value: string }[];
-  avg: number | null;
-}) {
-  if (rows.length === 0) {
-    return (
-      <section className="mb-3">
-        <h4 className="text-xs font-semibold text-nexus-text-secondary">{title}</h4>
-        <p className="text-[11px] text-nexus-text-muted">暂无数据</p>
-      </section>
-    );
-  }
-  return (
-    <section className="mb-3">
-      <h4 className="mb-1 text-xs font-semibold text-nexus-text-secondary">
-        {title}
-        {avg != null ? (
-          <span className="ml-2 font-normal text-nexus-text-muted">
-            平均 {(avg * 100).toFixed(1)}%
-          </span>
-        ) : null}
-      </h4>
-      <ul className="max-h-36 space-y-1 overflow-y-auto">
-        {rows.slice(0, 12).map((it) => (
-          <li key={it.id} className="flex justify-between font-mono text-[10px] text-nexus-text-muted">
-            <span>{it.id}</span>
-            <span>{it.value}</span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function CountList({
-  title,
-  rows,
-  avg,
-}: {
-  title: string;
-  rows: { id: string; value: string }[];
-  avg: number | null;
-}) {
-  if (rows.length === 0) {
-    return (
-      <section className="mb-3">
-        <h4 className="text-xs font-semibold text-nexus-text-secondary">{title}</h4>
-        <p className="text-[11px] text-nexus-text-muted">暂无数据</p>
-      </section>
-    );
-  }
-  return (
-    <section className="mb-3">
-      <h4 className="mb-1 text-xs font-semibold text-nexus-text-secondary">
-        {title}
-        {avg != null ? (
-          <span className="ml-2 font-normal text-nexus-text-muted">平均 {avg.toFixed(2)}</span>
-        ) : null}
-      </h4>
-      <ul className="max-h-36 space-y-1 overflow-y-auto">
-        {rows.slice(0, 12).map((it) => (
-          <li key={it.id} className="flex justify-between font-mono text-[10px] text-nexus-text-muted">
-            <span>{it.id}</span>
-            <span>{it.value}</span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
 }
 
 export function QualityMetricContent() {
@@ -358,24 +292,47 @@ export function QualityMetricContent() {
 
   if (metricsComputing) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-        <span className="text-lg opacity-40">⏳</span>
-        <p className="text-xs text-nexus-text-muted">正在计算质量指标…</p>
-      </div>
+      <EmptyState icon="⏳" title="正在计算质量指标…" />
     );
   }
 
   if (!metrics) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-center">
-        <p className="text-xs text-nexus-text-muted">暂无评估数据</p>
-        <p className="text-[10px] leading-relaxed text-nexus-text-muted/80">
-          在「航迹筛选」中发送查询；数据接收完成后将自动计算并展示图表（不绘制到地图）。
-          {queryStats.total > 0 ? ` 已缓存 ${queryStats.total} 条航迹点。` : ""}
-        </p>
-      </div>
+      <EmptyState
+        title="暂无评估数据"
+        subtitle={
+          <>
+            在「航迹筛选」中发送查询；数据接收完成后将自动计算并展示图表。
+            {queryStats.total > 0 ? ` 已缓存 ${queryStats.total} 条航迹点。` : ""}
+          </>
+        }
+      />
     );
   }
 
-  return <div className="min-h-0 flex-1 overflow-y-auto pr-1">{renderTab(qualityTab, metrics)}</div>;
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto pr-1 text-nexus-text-secondary">
+      {renderTab(qualityTab, metrics)}
+    </div>
+  );
+}
+
+function EmptyState({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon?: string;
+  title: string;
+  subtitle?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-center">
+      {icon ? <span className="text-lg opacity-40">{icon}</span> : null}
+      <p className="text-[13px] text-nexus-text-muted">{title}</p>
+      {subtitle ? (
+        <p className="max-w-xs text-[11px] leading-relaxed text-nexus-text-muted/80">{subtitle}</p>
+      ) : null}
+    </div>
+  );
 }

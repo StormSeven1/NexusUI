@@ -10,6 +10,8 @@ import {
   THIRD_PARTY_DM_ZOOM_DEFAULT,
 } from "@/lib/eo-video/thirdPartyDirectMoveClient";
 import { evaluateThirdPartyTaskHttpResponse } from "@/lib/thirdPartyTaskServiceResponse";
+import { canonicalEntityId } from "@/lib/camera-entity-id";
+import { useEoThirdPartyUdpDevStatusStore } from "@/stores/eo-third-party-udp-dev-status-store";
 import { cn } from "@/lib/utils";
 
 /** 与 `PtzMainWidget::onHighSpeedDirectMoveTimer`：`m_highSpeedDirectMoveDirection` 0 上 1 下 2 左 3 右 */
@@ -88,6 +90,11 @@ export function EoThirdPartyDirectMovePad({
   const dirRef = useRef<DirectMoveDir | -1>(-1);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const storeKey = canonicalEntityId(entityId) || entityId.trim().toLowerCase();
+  const devStatus = useEoThirdPartyUdpDevStatusStore((s) =>
+    storeKey ? s.byEntityId[storeKey]?.devStatus : undefined,
+  );
+
   useEffect(() => {
     panRef.current = 0;
     tiltRef.current = 0;
@@ -98,6 +105,17 @@ export function EoThirdPartyDirectMovePad({
       timerRef.current = null;
     }
   }, [entityId]);
+
+  /** 对齐 Qt `onHighSpeedDevStatusBasicReceived`：以 UDP 0x1001 上报为 DIRECTMOVE 基准 */
+  useEffect(() => {
+    if (!devStatus) return;
+    if (dirRef.current >= 0) return;
+    panRef.current = devStatus.pan;
+    tiltRef.current = devStatus.tilt;
+    if (devStatus.zoom !== undefined && devStatus.zoom >= 0) {
+      zoomRef.current = devStatus.zoom;
+    }
+  }, [devStatus]);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) {
@@ -199,7 +217,20 @@ export function EoThirdPartyDirectMovePad({
         </PadBtn>
       </div>
       <span className="max-w-[14rem] text-[10px] leading-snug text-white/55">
-        第三方 DIRECTMOVE · 步进 {THIRD_PARTY_DM_STEP}° · pan/tilt ∈ [{THIRD_PARTY_DM_PAN_TILT_MIN}, {THIRD_PARTY_DM_PAN_TILT_MAX}]
+        第三方 DIRECTMOVE · 步进 {THIRD_PARTY_DM_STEP}° · pan/tilt ∈ [{THIRD_PARTY_DM_PAN_TILT_MIN},{" "}
+        {THIRD_PARTY_DM_PAN_TILT_MAX}]
+        {devStatus ? (
+          <>
+            <br />
+            状态 0x1001 · pan {devStatus.pan.toFixed(1)}° · tilt {devStatus.tilt.toFixed(1)}°
+            {devStatus.zoom !== undefined ? ` · zoom ${devStatus.zoom.toFixed(0)}` : null}
+          </>
+        ) : (
+          <>
+            <br />
+            等待 MSG_DEV_STATUS_BASIC…
+          </>
+        )}
       </span>
     </div>
   );

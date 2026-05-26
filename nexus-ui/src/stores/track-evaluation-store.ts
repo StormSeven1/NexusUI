@@ -10,10 +10,12 @@ import {
 } from "@/lib/track-evaluation-ws";
 import {
   computeAllTrackMetrics,
+  resolveTrackEvalRadarChannelsFromAssets,
   wsTrackRowToFeature,
   type EvalTrackFeature,
   type TrackEvalMetricsResult,
 } from "@/lib/track-evaluation-metrics";
+import { useAssetStore } from "@/stores/asset-store";
 import type { TrackEvalRegionKind } from "@/components/map/modules/track-eval-region-draw-maplibre";
 import type {
   TrackEvalBoundingBox,
@@ -39,14 +41,19 @@ export interface QueryStats {
 
 export const TRACK_EVAL_SENSOR_OPTIONS = [
   { id: 0, label: "对海融合航迹" },
-  { id: 1, label: "水兵楼航迹" },
-  { id: 2, label: "信号台航迹" },
+  { id: 1, label: "远遥码头雷达" },
+  { id: 2, label: "靖子头雷达" },
   { id: 3, label: "AIS" },
-  { id: 5, label: "14s对空航迹" },
+  { id: 5, label: "探鸟雷达" },
   { id: 4, label: "自报位" },
   { id: 6, label: "对空融合航迹" },
   { id: 7, label: "KU雷达" },
 ] as const;
+
+/** 默认勾选：对海融合、码头雷达、AIS、探鸟、自报位、对空融合 */
+export const DEFAULT_TRACK_EVAL_SENSOR_IDS = [0, 1, 3, 4, 5, 6] as const;
+
+export const TRACK_EVAL_AUTO_QUERY_INTERVAL_MS = 3 * 60 * 1000;
 
 export const QUALITY_METRIC_TABS = [
   { id: "accuracy", label: "准确率" },
@@ -108,6 +115,8 @@ interface TrackEvaluationState {
   connectWs: () => void;
   disconnectWs: () => void;
   sendQuery: () => void;
+  /** 定时任务：刷新近 1 小时时间窗、恢复默认传感器并发送查询 */
+  runScheduledQuery: () => void;
   cancelQuery: () => void;
   toggleRealtime: () => void;
   requestReevaluate: () => void;
@@ -140,7 +149,10 @@ function runMetrics(set: (p: Partial<TrackEvaluationState>) => void, get: () => 
   set({ metricsComputing: true });
   queueMicrotask(() => {
     try {
-      const metrics = computeAllTrackMetrics(features);
+      const radarChannels = resolveTrackEvalRadarChannelsFromAssets(
+        useAssetStore.getState().assets,
+      );
+      const metrics = computeAllTrackMetrics(features, radarChannels);
       set({
         metrics,
         metricsComputing: false,
@@ -279,7 +291,7 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
 
   startTime: defaultDatetimeLocal(-1),
   endTime: defaultDatetimeLocal(0),
-  sensorIdsForQuery: [0, 1, 2, 3, 4, 5, 6, 7],
+  sensorIdsForQuery: [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
   directDownload: false,
   realtimeTracking: false,
   queryStatus: { type: "", message: "", details: "" },
@@ -382,6 +394,20 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
     set({ client: null, connectionState: "closed" });
   },
 
+  runScheduledQuery: () => {
+    const s = get();
+    if (s.realtimeTracking) return;
+    if (s.queryStatus.type === "loading" || s.metricsComputing) return;
+    if (s.directDownload) return;
+
+    set({
+      startTime: defaultDatetimeLocal(-1),
+      endTime: defaultDatetimeLocal(0),
+      sensorIdsForQuery: [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
+    });
+    get().sendQuery();
+  },
+
   sendQuery: () => {
     const s = get();
     const client = s.client ?? sharedClient;
@@ -397,7 +423,10 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
       end_time: formatTimeForQuery(s.endTime),
       region_type: s.regionType || "",
       batch_size: 50_000,
-      sensor_id: s.sensorIdsForQuery.length > 0 ? s.sensorIdsForQuery : [0, 1, 2, 3, 4, 5, 6, 7],
+      sensor_id:
+        s.sensorIdsForQuery.length > 0
+          ? s.sensorIdsForQuery
+          : [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
     };
     if (s.regionType === "rect" && s.bounding_box) {
       payload.bounding_box = s.bounding_box;

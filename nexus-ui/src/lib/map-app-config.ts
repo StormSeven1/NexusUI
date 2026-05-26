@@ -173,9 +173,13 @@ function wsEntityTypeRaw(r: Record<string, unknown>): string {
  * 9. 组装 AssetData 写入 asset-store
  *
  * @param r - WebSocket 实体行原始对象（已 JSON.parse）
- * @returns AssetData 或 null（无 ID 或无坐标时返回 null）
+ * @param options.allowMissingCoords - 资产列表等场景：无坐标也保留（lat/lng 置 0）
+ * @returns AssetData 或 null（无 ID 时返回 null；默认无坐标也丢弃）
  */
-export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
+export function mapOneEntityRow(
+  r: Record<string, unknown>,
+  options?: { allowMissingCoords?: boolean },
+): AssetData | null {
   /* ── 1. 提取实体 ID ── */
   /* 【重要】所有资产统一使用 entityId 字段作为唯一 key；
    * entityId 是后端为每个实体分配的唯一标识符，贯穿 WS 消息、航迹关联、资产渲染全流程。
@@ -201,8 +205,13 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
       if (Number.isFinite(plng)) lng = plng;
     }
   }
-  /* 无坐标的实体无法在地图上渲染，直接丢弃 */
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+  if (!hasCoords && !options?.allowMissingCoords) return null;
+  const panelNoCoords = !hasCoords && options?.allowMissingCoords === true;
+  if (!hasCoords) {
+    lat = 0;
+    lng = 0;
+  }
 
   const now = isoNow();
 
@@ -264,9 +273,17 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
     "friendly",
   );
 
-  /* ── 7. 提取健康/在线状态 ── */
+  /* ── 7. 识别资产类型（在线态解析依赖类型）── */
+  const rawType = wsEntityTypeRaw(r);
+  if (rawType === "unknown") {
+    return null;
+  }
+  const assetType = normalizeAssetType(rawType);
+
+  /* ── 8. 提取健康/在线状态 ── */
   /* health.healthStatus → online / offline / degraded；
-   * isLive / online.isOnline 为 0 时强制 offline */
+   * 相机（8090 实体列表）：优先 online.isOnline，不用 isLive 盖掉；
+   * 其他类型：isLive / online.isOnline 为 0 时强制 offline */
   const health = asRecord(r.health);
   const healthStatus = String(health?.healthStatus ?? r.status ?? "online");
   const status: string = (() => {
@@ -278,24 +295,17 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
 
   const isLive = r.isLive;
   const online = asRecord(r.online);
-  const effectiveStatus =
-    (isLive === 0 || online?.isOnline === 0) ? "offline" : status;
-
-  /* ── 8. 【关键】识别资产类型 ── */
-  /* 调用 wsEntityTypeRaw()，基于 specificType 字段识别：
-   *   - specificType 以 "Radar-" 开头 → "radar"（如 "Radar-Surveillance"）
-   *   - specificType == "CAMERA"      → "camera"
-   *   - 其他类型见 wsEntityTypeRaw 注释
-   * 再经 normalizeAssetType() 确保落入 PUBLIC_MAP_ASSET_TYPES 集合 */
-  const rawType = wsEntityTypeRaw(r);
-  if (rawType === "unknown") {
-    return null;
+  const isOnline = online?.isOnline;
+  let effectiveStatus: string;
+  if (assetType === "camera" && isOnline !== undefined && isOnline !== null) {
+    effectiveStatus = isOnline === 0 || isOnline === false ? "offline" : "online";
+  } else {
+    effectiveStatus = (isLive === 0 || isOnline === 0) ? "offline" : status;
   }
-  const assetType = normalizeAssetType(rawType);
   /* 雷达为全向扫描，fov_angle 强制 360° */
   const effectiveFovDeg = assetType === "radar" ? 360 : fovDeg;
 
-  /* ── 9. 组装 AssetData ── */
+  /* ── 9. 组装 AssetData（雷达 fov 等）── */
   const result: AssetData = {
     id,
     name,
@@ -311,6 +321,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
       ...((r.properties as Record<string, unknown> | null) ?? { ...r }),
       ...radarParams,
       ...radarExtraProps,
+      ...(panelNoCoords ? { _assetPanelNoCoords: true as const } : {}),
     },
     mission_status: String(r.mission_status ?? "monitoring"),
     assigned_target_id: r.assigned_target_id != null ? String(r.assigned_target_id) : null,
@@ -1140,26 +1151,11 @@ export type CameraManagementConfig = {
   requestTimeoutMs: number;
 };
 
-/** 根键 `thirdPartyPosGuide`：态势双击航迹 → 向第三方相机下发 `ThirdPartyCamPosTask`（雷达引导 / POS） */
-export type ThirdPartyPosGuideConfig = {
-  enabled: boolean;
-  /** 接收任务的第三方相机 `owner.entityId`（如 camera-hs-001），可多台依次下发 */
-  cameraEntityIds: string[];
-};
+/** 已废弃：双击航迹 POS 不再读此配置，固定单次 POST `ThirdPartyCamPosTask` */
+export type ThirdPartyPosGuideConfig = Record<string, never>;
 
-function parseThirdPartyPosGuide(root: Record<string, unknown>): ThirdPartyPosGuideConfig {
-  const raw = asRecord(root.thirdPartyPosGuide);
-  if (!raw) return { enabled: false, cameraEntityIds: [] };
-  const enabled = raw.enabled === true;
-  const idsRaw = raw.cameraEntityIds;
-  const cameraEntityIds: string[] = [];
-  if (Array.isArray(idsRaw)) {
-    for (const x of idsRaw) {
-      const s = typeof x === "string" ? x.trim() : "";
-      if (s) cameraEntityIds.push(s);
-    }
-  }
-  return { enabled, cameraEntityIds };
+function parseThirdPartyPosGuide(_root: Record<string, unknown>): ThirdPartyPosGuideConfig {
+  return {};
 }
 
 function parseCameraManagementConfig(root: Record<string, unknown>): CameraManagementConfig | null {
@@ -1320,7 +1316,7 @@ export type ResolvedAppConfig = {
   chatDisposalPlanWsEnabled: boolean;
   /** 根键 `cameraManagement`：光电元任务 HTTP；无配置时为 null */
   cameraManagement: CameraManagementConfig | null;
-  /** 根键 `thirdPartyPosGuide`：第三方相机 POS 雷达引导；缺省不下发 */
+  /** @deprecated 双击航迹 POS 不再依赖此配置 */
   thirdPartyPosGuide: ThirdPartyPosGuideConfig;
   /**
    * 根键 `softwareCompositionLinks`：顶栏「软件组成」下拉外链，与 Qt `TopInfoPanel` 管理菜单一致。
@@ -2110,7 +2106,7 @@ export async function loadResolvedAppConfig(customUrl?: string): Promise<Resolve
     gptInterfaceRightPanel: false,
     chatDisposalPlanWsEnabled: true,
     cameraManagement: null,
-    thirdPartyPosGuide: { enabled: false, cameraEntityIds: [] },
+    thirdPartyPosGuide: {},
     softwareCompositionLinks: [],
   };
   if (typeof window === "undefined") return empty;

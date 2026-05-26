@@ -6,6 +6,7 @@ import {
   unwrapDetectionEnvelope,
 } from "@/lib/eo-video/eoWsPayloadNormalize";
 import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
+import { recordEoDetectionReceived } from "@/stores/network-stats-store";
 
 type Listener = (data: EoCameraWsPayload) => void;
 
@@ -251,6 +252,7 @@ class EoDetectionWebSocketManager {
   private processCameraData(cameraData: EoCameraWsPayload) {
     if (cameraData?.entityId == null) return;
     const key = canonicalEntityId(cameraData.entityId);
+    recordEoDetectionReceived(key);
     const bucket = this.listeners.get(key);
     if (!bucket || bucket.size === 0) return;
     for (const fn of bucket) {

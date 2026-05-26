@@ -199,6 +199,8 @@ export const LYR_TOWER = "lyr-tower";
 export const LYR_ZONES = "lyr-zones";
 /** Postgres `area_table` 区域（矩形/圆/多边形），见 `/api/db-areas`（连库 `NEXUS_POSTGRES_URL`）+ `useDbAreasPoll` */
 export const LYR_DB_AREAS = "lyr-db-areas";
+/** 显示控制面板配置的态势同心圆/区域（`distance-rings-maplibre`） */
+export const LYR_DISTANCE_RINGS = "lyr-distance-rings";
 /** Map2D 量算/标绘图层分组 id（**不进** `layerVisibility` 初始键；显隐用 `applyLayerPanelVisibilityFromStore` 的 `?? true`） */
 export const LYR_MEASURE = "lyr-measure";
 
@@ -214,6 +216,7 @@ export const ALL_DATA_LAYER_IDS = [
   LYR_TDOA,
   LYR_ZONES,
   LYR_DB_AREAS,
+  LYR_DISTANCE_RINGS,
 ] as const;
 
 /**
@@ -242,6 +245,7 @@ export function buildDataLayerPanelRows(assets: ReadonlyArray<{ asset_type: stri
   if (types.has("laser")) rows.push({ id: LYR_LASER, name: "激光武器" });
   if (types.has("tdoa")) rows.push({ id: LYR_TDOA, name: "TDOA" });
   rows.push({ id: LYR_ZONES, name: "限制区域" });
+  rows.push({ id: LYR_DISTANCE_RINGS, name: "态势" });
   /** `LYR_DB_AREAS` 在 `LayerPanel` 独立「区域图层」分级块中控制，不进数据图层列表 */
   return rows;
 }

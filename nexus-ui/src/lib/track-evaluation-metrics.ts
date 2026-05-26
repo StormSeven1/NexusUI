@@ -2,6 +2,11 @@
  * 航迹质量评估指标（从 mapbox-vue2 MapView.vue 移植，纯数据计算，无 Vue/地图依赖）
  */
 
+import {
+  FALLBACK_TRACK_EVAL_RADAR_CHANNELS,
+  shortTrackEvalRadarLabel,
+} from "@/lib/track-evaluation-radar-config";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -40,33 +45,9 @@ export interface TrackEvalRadarChannels {
   [key: string]: TrackEvalRadarChannel | undefined;
 }
 
-/** 与 mapbox-vue2 `public/sysconfig.js` radarChannels 默认中心一致 */
-export const DEFAULT_TRACK_EVAL_RADAR_CHANNELS: TrackEvalRadarChannels = {
-  radar1: {
-    id: 1,
-    name: "水兵楼雷达",
-    center: { lon: 122.126213, lat: 37.511272 },
-    rotateAngleDeg: 0,
-  },
-  radar2: {
-    id: 2,
-    name: "信号台雷达",
-    center: { lon: 122.178101, lat: 37.510601 },
-    rotateAngleDeg: 0,
-  },
-  radar5: {
-    id: 3,
-    name: "14雷达",
-    center: { lon: 122.126213, lat: 37.511272 },
-    rotateAngleDeg: 0,
-  },
-  radar6: {
-    id: 0,
-    name: "对空融合雷达",
-    center: { lon: 122.126213, lat: 37.511272 },
-    rotateAngleDeg: 0,
-  },
-};
+/** 实体列表未就绪时的兜底；运行时请用 `resolveTrackEvalRadarChannelsFromAssets` */
+export { FALLBACK_TRACK_EVAL_RADAR_CHANNELS as DEFAULT_TRACK_EVAL_RADAR_CHANNELS } from "@/lib/track-evaluation-radar-config";
+export { resolveTrackEvalRadarChannelsFromAssets } from "@/lib/track-evaluation-radar-config";
 
 export interface BirdTrackAccuracyItem {
   id: string;
@@ -320,7 +301,7 @@ export function parseTimeToTimestamp(timeStr: string | number | unknown): number
 
 export function computeAllTrackMetrics(
   features: EvalTrackFeature[],
-  radarChannels: TrackEvalRadarChannels = DEFAULT_TRACK_EVAL_RADAR_CHANNELS,
+  radarChannels: TrackEvalRadarChannels = FALLBACK_TRACK_EVAL_RADAR_CHANNELS,
 ): TrackEvalMetricsResult {
   if (!features || features.length === 0) {
     return emptyTrackEvalMetricsResult();
@@ -329,7 +310,7 @@ export function computeAllTrackMetrics(
   const accuracy = calculateAccuracy(features);
   const recall = calculateRecall(features);
   const falseAlarm = calculateFalseAlarm(features);
-  const stability = calculateTrackingStability(features);
+  const stability = calculateTrackingStability(features, radarChannels);
   const errors = calculateErrors(features, radarChannels);
 
   return {
@@ -802,6 +783,7 @@ function calculateFalseAlarm(features: EvalTrackFeature[]): Pick<
 
 function calculateTrackingStability(
   features: EvalTrackFeature[],
+  radarChannels: TrackEvalRadarChannels,
 ): Pick<
   TrackEvalMetricsResult,
   | "seaFusionStability"
@@ -831,9 +813,9 @@ function calculateTrackingStability(
 > {
   const pointStability = calculateTrackingStabilityPoints(features);
   const duration = calculateTrackingStabilityDuration(features);
-  const maxDuration = calculateMaxTrackingDuration(features);
+  const maxDuration = calculateMaxTrackingDuration(features, radarChannels);
   const breakCounts = calculateBreakCount(features);
-  const changeBatch = calculateChangeBatchCount(features);
+  const changeBatch = calculateChangeBatchCount(features, radarChannels);
   return { ...pointStability, ...duration, ...maxDuration, ...breakCounts, ...changeBatch };
 }
 
@@ -1106,6 +1088,7 @@ function calculateTrackingStabilityDuration(
 
 function calculateMaxTrackingDuration(
   features: EvalTrackFeature[],
+  radarChannels: TrackEvalRadarChannels,
 ): Pick<
   TrackEvalMetricsResult,
   | "seaMaxTrackingDuration"
@@ -1113,6 +1096,11 @@ function calculateMaxTrackingDuration(
   | "seaMaxTrackingDurationAvg"
   | "airMaxTrackingDurationAvg"
 > {
+  const seaRadar1Label = shortTrackEvalRadarLabel(radarChannels.radar1?.name, "码头");
+  const seaRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar2?.name, "靖子头");
+  const airRadar1Label = shortTrackEvalRadarLabel(radarChannels.radar5?.name, "探鸟");
+  const airRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar6?.name, "KU");
+
   const seaFusionTracks = features.filter((f) => f.sensorId === 0);
   const seaAisRadarStats = new Map<
     string,
@@ -1152,13 +1140,13 @@ function calculateMaxTrackingDuration(
     const yuanYaoId = originalData.original_track_id1;
     const jingZiTouId = originalData.original_track_id3;
     if (isValidOriginalId(yuanYaoId)) {
-      const radarIdStr = `水兵楼_${yuanYaoId}`;
+      const radarIdStr = `${seaRadar1Label}_${yuanYaoId}`;
       if (!stat.radarTimeRanges.has(radarIdStr)) {
         stat.radarTimeRanges.set(radarIdStr, {
           min: timestamp,
           max: timestamp,
           radarId: yuanYaoId as number | string,
-          radarType: "水兵楼",
+          radarType: seaRadar1Label,
           fusionTrackIds: new Set([fusionTrackId]),
         });
       } else {
@@ -1169,13 +1157,13 @@ function calculateMaxTrackingDuration(
       }
     }
     if (isValidOriginalId(jingZiTouId)) {
-      const radarIdStr = `信号台_${jingZiTouId}`;
+      const radarIdStr = `${seaRadar2Label}_${jingZiTouId}`;
       if (!stat.radarTimeRanges.has(radarIdStr)) {
         stat.radarTimeRanges.set(radarIdStr, {
           min: timestamp,
           max: timestamp,
           radarId: jingZiTouId as number | string,
-          radarType: "信号台",
+          radarType: seaRadar2Label,
           fusionTrackIds: new Set([fusionTrackId]),
         });
       } else {
@@ -1265,13 +1253,13 @@ function calculateMaxTrackingDuration(
     const birdTrackId = originalData.original_track_id1;
     const kuRadarId = originalData.original_track_id3;
     if (isValidOriginalId(birdTrackId)) {
-      const radarIdStr = `14s对空_${birdTrackId}`;
+      const radarIdStr = `${airRadar1Label}_${birdTrackId}`;
       if (!stat.radarTimeRanges.has(radarIdStr)) {
         stat.radarTimeRanges.set(radarIdStr, {
           min: timestamp,
           max: timestamp,
           radarId: birdTrackId as number | string,
-          radarType: "14s对空",
+          radarType: airRadar1Label,
           fusionTrackIds: new Set([fusionTrackId]),
         });
       } else {
@@ -1282,13 +1270,13 @@ function calculateMaxTrackingDuration(
       }
     }
     if (isValidOriginalId(kuRadarId)) {
-      const radarIdStr = `KU雷达_${kuRadarId}`;
+      const radarIdStr = `${airRadar2Label}_${kuRadarId}`;
       if (!stat.radarTimeRanges.has(radarIdStr)) {
         stat.radarTimeRanges.set(radarIdStr, {
           min: timestamp,
           max: timestamp,
           radarId: kuRadarId as number | string,
-          radarType: "KU雷达",
+          radarType: airRadar2Label,
           fusionTrackIds: new Set([fusionTrackId]),
         });
       } else {
@@ -1448,6 +1436,7 @@ function calculateBreakCount(
 
 function calculateChangeBatchCount(
   features: EvalTrackFeature[],
+  radarChannels: TrackEvalRadarChannels,
 ): Pick<
   TrackEvalMetricsResult,
   | "seaChangeBatchCount"
@@ -1455,6 +1444,11 @@ function calculateChangeBatchCount(
   | "seaChangeBatchCountAvg"
   | "airChangeBatchCountAvg"
 > {
+  const seaRadar1Label = shortTrackEvalRadarLabel(radarChannels.radar1?.name, "码头");
+  const seaRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar2?.name, "靖子头");
+  const airRadar1Label = shortTrackEvalRadarLabel(radarChannels.radar5?.name, "探鸟");
+  const airRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar6?.name, "KU");
+
   const seaFusionTracks = features.filter((f) => f.sensorId === 0);
   const seaAisTracks = new Map<string, Array<{ timestamp: number; radarId: string | null }>>();
 
@@ -1467,8 +1461,8 @@ function calculateChangeBatchCount(
     const yuanYaoId = originalData.original_track_id1;
     const jingZiTouId = originalData.original_track_id3;
     const parts: string[] = [];
-    if (isValidOriginalId(yuanYaoId)) parts.push(`水兵楼_${yuanYaoId}`);
-    if (isValidOriginalId(jingZiTouId)) parts.push(`信号台_${jingZiTouId}`);
+    if (isValidOriginalId(yuanYaoId)) parts.push(`${seaRadar1Label}_${yuanYaoId}`);
+    if (isValidOriginalId(jingZiTouId)) parts.push(`${seaRadar2Label}_${jingZiTouId}`);
     const radarIdKey = parts.length > 0 ? parts.sort().join(",") : null;
     const aisIdStr = String(aisId);
     if (!seaAisTracks.has(aisIdStr)) seaAisTracks.set(aisIdStr, []);
@@ -1511,8 +1505,8 @@ function calculateChangeBatchCount(
     const birdTrackId = originalData.original_track_id1;
     const kuRadarId = originalData.original_track_id3;
     const parts: string[] = [];
-    if (isValidOriginalId(birdTrackId)) parts.push(`14s对空_${birdTrackId}`);
-    if (isValidOriginalId(kuRadarId)) parts.push(`KU雷达_${kuRadarId}`);
+    if (isValidOriginalId(birdTrackId)) parts.push(`${airRadar1Label}_${birdTrackId}`);
+    if (isValidOriginalId(kuRadarId)) parts.push(`${airRadar2Label}_${kuRadarId}`);
     const radarIdKey = parts.length > 0 ? parts.sort().join(",") : null;
     const selfReportIdStr = String(selfReportId);
     if (!airSelfReportTracks.has(selfReportIdStr)) airSelfReportTracks.set(selfReportIdStr, []);

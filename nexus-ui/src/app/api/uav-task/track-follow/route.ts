@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDronePlatformBaseUrl } from "@/lib/drone-platform-base-url";
+import { resolveDroneFlightHeightFromBody } from "@/lib/drone-task-settings";
 import {
   fetchWithTimeout,
   getUavTaskApiBase,
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const height = readEnvInt("NEXUS_UAV_TRACK_FOLLOW_HEIGHT_M", 60);
+  const height = resolveDroneFlightHeightFromBody(body, readEnvInt("NEXUS_UAV_TRACK_FOLLOW_HEIGHT_M", 100));
   const taskWorkMode = readEnvInt("NEXUS_UAV_TRACK_FOLLOW_TASK_WORK_MODE", 0);
 
   const latR = Math.round(lat * 1e6) / 1e6;

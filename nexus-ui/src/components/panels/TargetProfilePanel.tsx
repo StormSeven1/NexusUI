@@ -8,18 +8,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Crosshair, Plane, Ship, Anchor } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Track, TrackLayerKey } from "@/lib/map-entity-model";
+import type { Track } from "@/lib/map-entity-model";
 import { useTrackStore } from "@/stores/track-store";
 import { useTargetProfileStore } from "@/stores/target-profile-store";
-import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
-
-const SUBTYPE_LABELS: Record<TrackLayerKey, string> = {
-  fuse_sea: "对海融合航迹",
-  fuse_air: "对空融合航迹",
-  bird_radar: "探鸟雷达航迹",
-  radar_wharf: "远遥码头雷达航迹",
-  radar_jingzi: "靖子头雷达航迹",
-};
+import { resolveTrackLayerKey, TRACK_SUBTYPE_LABELS } from "@/lib/track-layer-visibility";
 
 const PROFILE_POLL_MS = 5000;
 
@@ -150,7 +142,7 @@ export function TargetProfilePanel() {
   const layerLabel = useMemo(() => {
     if (!displayTrack) return "—";
     const k = resolveTrackLayerKey(displayTrack);
-    return SUBTYPE_LABELS[k] ?? k;
+    return TRACK_SUBTYPE_LABELS[k] ?? k;
   }, [displayTrack]);
 
   const sourceText = useMemo(() => {

@@ -4,9 +4,19 @@ import {
   parseThirdPartyWideSubLayoutFromPayload,
   type ThirdPartyWideSubCamBox,
 } from "@/lib/eo-video/parseThirdPartyWideSubLayout";
+import {
+  parseThirdPartyDevStatusBasicFromPayload,
+  type ThirdPartyDevStatusBasic,
+} from "@/lib/eo-video/parseThirdPartyDevStatusBasic";
 
 type Row = {
   wideSubCams: ThirdPartyWideSubCamBox[] | undefined;
+  /** MSG_DEV_STATUS_BASIC 上报的当前方位（DIRECTMOVE 基准） */
+  devStatus?: ThirdPartyDevStatusBasic;
+  /** 最近一次收到 0x1001 的时间（视场 10s 超时） */
+  devStatusAt?: number;
+  /** MSG_CAM_IMAGE_REPORT 当前帧是否含检测框 */
+  hasTarget: boolean;
   updatedAt: number;
   lastSequence?: number;
 };
@@ -15,6 +25,8 @@ interface State {
   byEntityId: Record<string, Row>;
   /** 中继 WS 文本帧 `thirdPartyDevStatusBasic`（UDP `0x1001` JSON） */
   ingestDevStatusBasic: (d: Record<string, unknown>) => void;
+  /** 中继 WS 二进制帧（UDP `0x5001` 图像上报，含检测框） */
+  ingestImageReport: (entityId: string, hasBoxes: boolean) => void;
 }
 
 function rowKeyFromPayload(d: Record<string, unknown>): string {
@@ -53,10 +65,46 @@ export const useEoThirdPartyUdpDevStatusStore = create<State>((set, get) => ({
     const wide = parseThirdPartyWideSubLayoutFromPayload(d);
     const prev = prevRow?.wideSubCams;
     const nextWide = wide === undefined ? prev : wide;
+    const devStatus = parseThirdPartyDevStatusBasicFromPayload(d);
+    const prevDev = prevRow?.devStatus;
+    const nextDev: ThirdPartyDevStatusBasic | undefined =
+      devStatus === undefined
+        ? prevDev
+        : {
+            pan: devStatus.pan,
+            tilt: devStatus.tilt,
+            panVehicle: devStatus.panVehicle ?? prevDev?.panVehicle,
+            zoom: devStatus.zoom ?? prevDev?.zoom,
+          };
     set({
       byEntityId: {
         ...get().byEntityId,
-        [key]: { wideSubCams: nextWide, updatedAt: Date.now(), lastSequence: nextSequence ?? prevRow?.lastSequence },
+        [key]: {
+          wideSubCams: nextWide,
+          devStatus: nextDev,
+          devStatusAt: Date.now(),
+          hasTarget: prevRow?.hasTarget ?? false,
+          updatedAt: Date.now(),
+          lastSequence: nextSequence ?? prevRow?.lastSequence,
+        },
+      },
+    });
+  },
+  ingestImageReport: (entityId, hasBoxes) => {
+    const key = canonicalEntityId(entityId.trim()) || entityId.trim().toLowerCase();
+    if (!key) return;
+    const prevRow = get().byEntityId[key];
+    set({
+      byEntityId: {
+        ...get().byEntityId,
+        [key]: {
+          wideSubCams: prevRow?.wideSubCams,
+          devStatus: prevRow?.devStatus,
+          devStatusAt: prevRow?.devStatusAt,
+          hasTarget: hasBoxes,
+          updatedAt: Date.now(),
+          lastSequence: prevRow?.lastSequence,
+        },
       },
     });
   },

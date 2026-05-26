@@ -824,13 +824,6 @@
       "url": "http://192.168.18.103:8566/dashboard"
     }
   ],
-  "thirdPartyPosGuide": {
-    "_说明": "态势双击航迹时向所列第三方相机下发 ThirdPartyCamPosTask（0x3004 POS）。HTTP 与 NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL / 光电视频同源。航迹：targetId、经纬高、速度、航向取自 Track。",
-    "enabled": false,
-    "cameraEntityIds": [
-      "camera-hs-001"
-    ]
-  },
   "cameraManagement": {
     "_说明": "host/port 可被 NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL 覆盖。不写 path 或省略时 POST 默认 /api/v1/tasks（与光电视频 PTZ 同源）；仅兼容 Qt 根路径时写 \"path\": \"\"。",
     "host": "127.0.0.1",

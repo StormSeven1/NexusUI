@@ -79,6 +79,26 @@ export async function ensureEntitiesTrackTaskCache(force = false): Promise<void>
   }
 }
 
+/** 所有 hasPtz 相机（不要求 parent_device_id 为空），按 entityId 排序 */
+export function listHasPtzCameraEntityIds(): string[] {
+  if (!cached) return [];
+  const out: string[] = [];
+  for (const r of cached.byId.values()) {
+    if (r.hasPtz) out.push(r.entityId);
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+/** 带展示名的 hasPtz 相机列表 */
+export function listHasPtzCameraRows(): EntityTaskRow[] {
+  if (!cached) return [];
+  const rows: EntityTaskRow[] = [];
+  for (const r of cached.byId.values()) {
+    if (r.hasPtz) rows.push(r);
+  }
+  return rows.sort((a, b) => a.entityId.localeCompare(b.entityId, undefined, { numeric: true }));
+}
+
 /** 所有可下发光电航迹元任务的 owner（hasPtz 且 parent_device_id 为空），按 entityId 排序 */
 export function listTrackTaskOwnerEntityIds(): string[] {
   if (!cached) return [];

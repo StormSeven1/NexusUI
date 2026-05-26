@@ -213,6 +213,16 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     displayOrder: 7,
   },
   {
+    id: "knowledge-base",
+    location: "right-1",
+    mode: "docked",
+    position: { x: 500, y: 200 },
+    size: { width: 440, height: 400 },
+    zIndex: DEFAULT_Z_INDEX,
+    lastPopupPosition: null,
+    displayOrder: 8,
+  },
+  {
     id: "overview",
     location: null,
     mode: "hidden",
@@ -1257,6 +1267,14 @@ export const useDockStore = create<DockStoreWithSidebar>()(
   }), {
     name: DOCK_LAYOUT_STORAGE_KEY,
     storage: createJSONStorage(() => localStorage),
+    onRehydrateStorage: () => (state) => {
+      if (!state) return;
+      const existingIds = new Set(state.panels.map((p) => p.id));
+      const missing = DEFAULT_PANELS.filter((p) => !existingIds.has(p.id));
+      if (missing.length > 0) {
+        useDockStore.setState({ panels: [...state.panels, ...missing] });
+      }
+    },
     partialize: (state) => ({
       panels: state.panels,
       activePanelId: state.activePanelId,
@@ -1381,8 +1399,20 @@ export function getAllPanelConfigs(): PanelConfig[] {
  * 初始化动态分区系统
  * 在应用启动时自动调用，从固定区域迁移到动态分区
  */
+/** 将 DEFAULT_PANELS 中尚未出现在持久化布局里的面板补进 panels（如新增 knowledge-base） */
+function mergeMissingDefaultPanels() {
+  const state = useDockStore.getState();
+  const existingIds = new Set(state.panels.map((p) => p.id));
+  const missing = DEFAULT_PANELS.filter((p) => !existingIds.has(p.id));
+  if (missing.length === 0) return;
+  useDockStore.setState({ panels: [...state.panels, ...missing] });
+  log("info", "Merged missing default panels", missing.map((p) => p.id));
+}
+
 export function initializePartitionSystem() {
   const state = useDockStore.getState();
+
+  mergeMissingDefaultPanels();
 
   // 检查是否已经初始化
   if (state.leftPartitions.length === 0 && state.rightPartitions.length === 0) {

@@ -23,7 +23,7 @@ export function isOptoDeviceIconVisible(
 /**
  * 地图光电 FOV/图标是否允许绘制该 id。
  * `panelIds === null`：面板列表尚未加载，暂不按白名单过滤（避免首帧全空）。
- * `panelIds` 为 Set：仅图层面板列出的 PTZ 主相机可画；其余 asset-store 中的 camera（第三方、子路等）一律不画。
+ * `panelIds` 为 Set：仅图层面板列出的光电/第三方相机可画；其余 asset-store 中的 camera 一律不画。
  */
 export function isOptoCameraAllowedOnMap(
   assetId: string,

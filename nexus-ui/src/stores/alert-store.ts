@@ -54,16 +54,24 @@ export interface AlertData {
   title?: string;
   /** 告警来源（如「雷达」「光电」） */
   source?: string;
-  /** 告警等级（数值） */
+  /** 告警等级（数值；AlarmSys DDS 中常与 threatScore 同源） */
   alarmLevel?: number;
+  /** 威胁度（优先用于 Top5 排序；缺省回退 alarmLevel） */
+  threatScore?: number;
   /** 区域名称 */
   areaName?: string;
+  /** 区域判断（进入/离开/靠近/区域内，对齐 Qt area_judge） */
+  areaJudge?: string;
   /** 详细描述 */
   detail?: string;
   /** uniqueID（与 track-store showID 对应） */
   uniqueID?: string;
   /** 查证图片 URL */
   imageUrl?: string;
+  /** 相对本舰/参考点距离（海里），WS 或航迹补齐 */
+  distanceNm?: number;
+  /** 方位角（度，0–360），WS 或航迹补齐 */
+  bearingDeg?: number;
 }
 
 /** 告警过期时间（对齐 V2 ALARM_STALE_MS = 25s） */
@@ -105,6 +113,8 @@ interface AlertState {
   addAlerts: (newAlerts: AlertData[]) => void;
   removeStaleAlarms: () => void;
   removeAlarmItemsByTrackId: (trackId: string) => void;
+  /** 按告警 id 移除（第三方相机检测等无 trackId 告警） */
+  removeAlarmById: (id: string) => void;
   clearAlarmFlashing: () => void;
   clearAlerts: () => void;
 }
@@ -209,6 +219,15 @@ export const useAlertStore = create<AlertState>((set, get) => ({
         const tid = getAlarmTrackId(a);
         return !(tid != null && tid === needle);
       });
+      if (next.length === s.alerts.length) return s;
+      return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });
+    }),
+
+  removeAlarmById: (id) =>
+    set((s) => {
+      const needle = String(id).trim();
+      if (!needle) return s;
+      const next = s.alerts.filter((a) => a.id !== needle);
       if (next.length === s.alerts.length) return s;
       return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });
     }),

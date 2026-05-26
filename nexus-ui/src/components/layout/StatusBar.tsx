@@ -3,6 +3,7 @@
 import { useAppStore } from "@/stores/app-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { useTrackStore } from "@/stores/track-store";
+import { MapScaleBar } from "@/components/map/MapScaleBar";
 import {
   Wifi,
   MapPin,
@@ -77,7 +78,7 @@ export function StatusBar() {
         </button> */}
       </div>
 
-      {/* 坐标 */}
+      {/* 坐标 + 比例尺 */}
       <div className="flex items-center gap-3 font-mono text-[10px] text-nexus-text-secondary">
         <div className="flex items-center gap-1">
           <MapPin size={10} />
@@ -87,6 +88,8 @@ export function StatusBar() {
               : "—"}
           </span>
         </div>
+        <div className="h-3 w-px bg-nexus-border" />
+        <MapScaleBar />
         <span>Z{zoomLevel}</span>
       </div>
     </footer>

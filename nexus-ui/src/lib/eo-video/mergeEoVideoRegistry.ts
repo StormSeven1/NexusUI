@@ -33,7 +33,7 @@ export function stripRegistryStreams(c: EoVideoStreamsConfig): EoVideoStreamsCon
   return { ...c, streams };
 }
 
-export async function fetchCameraRegistryFromPublic(): Promise<EoCameraRegistryRow[]> {
+async function fetchCameraRegistryFromStaticFile(): Promise<EoCameraRegistryRow[]> {
   try {
     const r = await fetch("/config/eo-video.camera-registry.json", { cache: "no-store" });
     if (!r.ok) return [];
@@ -42,6 +42,45 @@ export async function fetchCameraRegistryFromPublic(): Promise<EoCameraRegistryR
   } catch {
     return [];
   }
+}
+
+/** 8090 实时光电相机列表（`NEXUS_ENTITIES_LIST_URL`） */
+export async function fetchCameraRegistryFromApi(): Promise<EoCameraRegistryRow[]> {
+  try {
+    const r = await fetch("/api/nexus-entities/opto-cameras", { cache: "no-store" });
+    if (!r.ok) return [];
+    const j = (await r.json()) as { ok?: boolean; cameras?: EoCameraRegistryRow[] };
+    if (j.ok !== true || !Array.isArray(j.cameras)) return [];
+    return j.cameras;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 光电右键菜单相机列表：优先 8090 实时列表（含 `camera-cs-*` 等非 `camera_XXX` 的 CAMERA 实体），
+ * 静态 `eo-video.camera-registry.json` 作回退与标签补全。
+ */
+export async function fetchCameraRegistryFromPublic(): Promise<EoCameraRegistryRow[]> {
+  const [live, staticRows] = await Promise.all([
+    fetchCameraRegistryFromApi(),
+    fetchCameraRegistryFromStaticFile(),
+  ]);
+  if (!live.length) return staticRows;
+
+  const byId = new Map<string, EoCameraRegistryRow>();
+  for (const c of staticRows) byId.set(c.entityId, c);
+  for (const c of live) {
+    const prev = byId.get(c.entityId);
+    byId.set(c.entityId, {
+      ...prev,
+      ...c,
+      label: c.label?.trim() || prev?.label || c.entityId,
+    });
+  }
+  return [...byId.values()].sort((a, b) =>
+    a.entityId.localeCompare(b.entityId, undefined, { numeric: true }),
+  );
 }
 
 export async function fetchDroneDevicesFromPublic(): Promise<EoDroneDeviceRow[]> {

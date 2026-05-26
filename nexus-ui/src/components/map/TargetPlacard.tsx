@@ -43,6 +43,7 @@ import {
   isTrackMatchedByAlarm,
   getTrackDispositionForRendering,
 } from "@/stores/track-store";
+import { shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -161,6 +162,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
       eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
       isAirTrackBirdGlyph(track),
       resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
+      shouldApplyVerifiedTrackGreen(track),
     );
   }, [kind, track]);
 

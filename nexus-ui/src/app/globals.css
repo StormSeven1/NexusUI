@@ -200,6 +200,29 @@
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1;
   }
+
+  /** 顶栏时钟：等宽数字 + 无衬线 */
+  .topnav-clock {
+    font-family: var(--font-uav-hud);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    color: rgb(110 231 183 / 0.92);
+    text-shadow: 0 0 12px rgb(52 211 153 / 0.18);
+  }
+
+  /** 顶栏气象（与时钟同字号，无边框） */
+  .topnav-weather {
+    font-family: var(--font-uav-hud);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    color: var(--color-nexus-text-secondary);
+  }
 }
 
   .nexus-card {

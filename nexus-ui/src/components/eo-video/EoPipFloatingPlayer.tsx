@@ -8,8 +8,10 @@ import { EoVideoViewport } from "./EoVideoViewport";
 import { EoStreamContextMenu } from "./EoStreamContextMenu";
 
 export interface EoPipFloatingPlayerProps {
-  /** 由光电主画面容器的 `relative` 内 `absolute` 定位右上角小窗 */
+  /** 由光电主画面容器的 `relative` 内 `absolute` 定位小窗 */
   open: boolean;
+  /** false = dock 默认态（左上、较小）；true = 放大态（右上、较大） */
+  expandedMode?: boolean;
   config: EoVideoStreamsConfig | null;
   iceServers: EoVideoIceServer[];
   pipStreamId: string;
@@ -22,9 +24,10 @@ export interface EoPipFloatingPlayerProps {
   streamLabel: string;
 }
 
-/** 叠在主画面区域内右上：独立 WebRTC；右键与主画面同源菜单切流 */
+/** 叠在主画面区域内：独立 WebRTC；右键与主画面同源菜单切流 */
 export function EoPipFloatingPlayer({
   open,
+  expandedMode = false,
   config,
   iceServers,
   pipStreamId,
@@ -41,7 +44,12 @@ export function EoPipFloatingPlayer({
 
   return (
     <div
-      className="pointer-events-none absolute right-2 top-10 z-[40] flex w-[min(32vw,260px)] max-w-[90%] flex-col outline-none"
+      className={cn(
+        "pointer-events-none absolute z-[40] flex max-w-[90%] flex-col outline-none",
+        expandedMode
+          ? "right-2 top-10 w-[min(32vw,260px)]"
+          : "left-2 top-2 w-[min(22vw,168px)]",
+      )}
       aria-label="画中画"
       data-eo-pip="1"
     >

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useDbAreaStore } from "@/stores/db-area-store";
+import { recordDbAreasReceived } from "@/stores/network-stats-store";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 
 const DEFAULT_INTERVAL_MS = 60_000;
@@ -44,6 +45,7 @@ export function useDbAreasPoll() {
       const { rows, error } = await fetchAreas();
       if (!mounted.current) return;
       useDbAreaStore.getState().setRows(rows, error);
+      if (rows.length > 0 || !error) recordDbAreasReceived();
     };
 
     void run();

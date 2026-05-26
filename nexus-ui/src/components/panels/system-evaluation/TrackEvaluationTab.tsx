@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useTrackEvaluationStore } from "@/stores/track-evaluation-store";
 import { TrackFilterSection } from "@/components/panels/track-evaluation/TrackFilterSection";
@@ -10,13 +9,6 @@ import { TrackQualitySection } from "@/components/panels/track-evaluation/TrackQ
 export function TrackEvaluationTab() {
   const mainTab = useTrackEvaluationStore((s) => s.mainTab);
   const setMainTab = useTrackEvaluationStore((s) => s.setMainTab);
-  const connectWs = useTrackEvaluationStore((s) => s.connectWs);
-  const disconnectWs = useTrackEvaluationStore((s) => s.disconnectWs);
-
-  useEffect(() => {
-    connectWs();
-    return () => disconnectWs();
-  }, [connectWs, disconnectWs]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

@@ -169,6 +169,80 @@ export function recordDroneFlightPathReceived(deviceSn?: string) {
   bump(key);
 }
 
+/** 记录无人机高频坐标（high_freq） */
+export function recordHighFreqReceived(deviceSn?: string) {
+  const key = deviceSn ? `high_freq:${deviceSn}` : "high_freq";
+  const label = deviceSn ? `高频 ${deviceSn}` : "高频遥测";
+  ensureEntry(key, label, "高频");
+  bump(key);
+}
+
+/** 态势 WebSocket 心跳 / 存活 */
+export function recordWsHeartbeat() {
+  ensureEntry("ws:heartbeat", "态势 WS", "连接");
+  bump("ws:heartbeat");
+}
+
+/** entity_status 整帧（含 relationships） */
+export function recordEntityStatusFrame() {
+  ensureEntry("entity_status", "实体状态", "实体状态");
+  bump("entity_status");
+}
+
+/** assets / assetbatch 批次 */
+export function recordAssetBatchReceived() {
+  ensureEntry("asset_batch", "资产批次", "资产");
+  bump("asset_batch");
+}
+
+/** 资产事件 asset_events */
+export function recordAssetEventReceived() {
+  ensureEntry("asset_event", "资产事件", "资产");
+  bump("asset_event");
+}
+
+/** 光电检测框 WebSocket */
+export function recordEoDetectionReceived(entityId?: string) {
+  const key = entityId ? `eo_detect:${entityId}` : "eo_detect";
+  const label = entityId ? `检测 ${entityId}` : "光电检测";
+  ensureEntry(key, label, "光电检测");
+  bump(key);
+}
+
+/** 无人机私有云 MQTT（光电视频页订阅） */
+export function recordMqttReceived(airportSn?: string) {
+  const key = airportSn ? `mqtt:${airportSn}` : "mqtt";
+  const label = airportSn ? `MQTT ${airportSn}` : "MQTT";
+  ensureEntry(key, label, "MQTT");
+  bump(key);
+}
+
+/** Postgres area_table 轮询 */
+export function recordDbAreasReceived() {
+  ensureEntry("db_areas", "库表区域", "库表");
+  bump("db_areas");
+}
+
+/** 航迹评估 C++ 数据服务 WebSocket */
+export function recordTrackEvalReceived() {
+  ensureEntry("track_eval", "航迹评估 WS", "评估");
+  bump("track_eval");
+}
+
+/** 查证任务状态 SSE */
+export function recordTaskStatusSseReceived() {
+  ensureEntry("task_status_sse", "任务状态 SSE", "任务状态");
+  bump("task_status_sse");
+}
+
+/** 第三方相机 UDP→WS 中继 */
+export function recordThirdPartyCameraReceived(entityId?: string) {
+  const key = entityId ? `third_cam:${entityId}` : "third_cam";
+  const label = entityId ? `第三方 ${entityId}` : "第三方相机";
+  ensureEntry(key, label, "第三方相机");
+  bump(key);
+}
+
 // ── 读取方法 ──
 
 /** 计算单条 entry 的展示信息 */
@@ -200,7 +274,26 @@ export function getNetworkStatsSnapshot(): NetworkStatDisplay[] {
     result.push(computeDisplay(entry, now));
   }
   // 按分类排序
-  const categoryOrder = ["航迹", "无人机", "实体", "告警", "区域", "光电", "机场", "航线"];
+  const categoryOrder = [
+    "连接",
+    "航迹",
+    "实体状态",
+    "实体",
+    "资产",
+    "告警",
+    "区域",
+    "库表",
+    "光电",
+    "光电检测",
+    "第三方相机",
+    "机场",
+    "无人机",
+    "高频",
+    "航线",
+    "MQTT",
+    "评估",
+    "任务状态",
+  ];
   result.sort((a, b) => {
     const ci = categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category);
     if (ci !== 0) return ci;

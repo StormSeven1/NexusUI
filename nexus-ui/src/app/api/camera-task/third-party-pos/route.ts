@@ -22,18 +22,18 @@ function validEntityId(raw: string): boolean {
 
 type PosBody = {
   backendBaseUrl?: unknown;
+  /** `owner.entityId`；缺省 `""` */
+  ownerEntityId?: unknown;
+  /** 兼容旧字段名 */
   entityId?: unknown;
+  /** `specification.entityId`；缺省 `""` */
+  specEntityId?: unknown;
   targetId?: unknown;
   targetLon?: unknown;
   targetLat?: unknown;
   targetAlt?: unknown;
   tarSpeed?: unknown;
   tarCourse?: unknown;
-  platformLon?: unknown;
-  platformLat?: unknown;
-  platformAlt?: unknown;
-  platformSpeed?: unknown;
-  platformCourse?: unknown;
 };
 
 function num(v: unknown): number | undefined {
@@ -44,7 +44,7 @@ function num(v: unknown): number | undefined {
 
 /**
  * 第三方相机雷达引导：`ThirdPartyCamPosTask`（0x3004 POS）→ `POST …/api/v1/tasks`
- * 见 third_party_camera_task_interface.md §5.4 / §8.4
+ * 与光电视频工具栏 SEARCH/TRACK 同源 BFF 模式；载荷对齐相机管理 HTTP 示例。
  */
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -55,11 +55,15 @@ export async function POST(req: NextRequest) {
   }
 
   const p = body as PosBody;
-  const entityId = String(p.entityId ?? "").trim();
+  const ownerEntityId = String(p.ownerEntityId ?? p.entityId ?? "").trim();
   const backendBaseUrl = String(p.backendBaseUrl ?? "").trim();
+  const specEntityId = String(p.specEntityId ?? "").trim();
 
-  if (!validEntityId(entityId)) {
-    return NextResponse.json({ error: "invalid entityId" }, { status: 400 });
+  if (ownerEntityId && !validEntityId(ownerEntityId)) {
+    return NextResponse.json({ error: "invalid owner entityId" }, { status: 400 });
+  }
+  if (specEntityId && !validEntityId(specEntityId)) {
+    return NextResponse.json({ error: "invalid specification entityId" }, { status: 400 });
   }
   const target = resolveTaskEndpoint(backendBaseUrl);
   if (!target) {
@@ -68,36 +72,34 @@ export async function POST(req: NextRequest) {
 
   const targetLon = num(p.targetLon);
   const targetLat = num(p.targetLat);
-  if (targetLon === undefined || targetLat === undefined) {
-    return NextResponse.json({ error: "targetLon/targetLat required" }, { status: 400 });
-  }
-
   const targetIdN = num(p.targetId);
   const targetAltN = num(p.targetAlt);
   const tarSpeedN = num(p.tarSpeed);
   const tarCourseN = num(p.tarCourse);
-  const platformLon = num(p.platformLon);
-  const platformLat = num(p.platformLat);
-  const platformAlt = num(p.platformAlt);
-  const platformSpeed = num(p.platformSpeed);
-  const platformCourse = num(p.platformCourse);
+
+  if (targetLon === undefined || targetLat === undefined) {
+    return NextResponse.json({ error: "targetLon/targetLat required" }, { status: 400 });
+  }
+  if (targetIdN === undefined) {
+    return NextResponse.json({ error: "targetId required" }, { status: 400 });
+  }
+  if (targetAltN === undefined || tarSpeedN === undefined || tarCourseN === undefined) {
+    return NextResponse.json({ error: "targetAlt/tarSpeed/tarCourse required" }, { status: 400 });
+  }
 
   const specification: Record<string, unknown> = {
     "@type": "type.casia.tasks.v1.ThirdPartyCamPosTask",
-    targetId: Math.trunc(targetIdN ?? 0),
+    /** 相机 id：态势双击固定传空字符串（由后端按 targetId 路由） */
+    entityId: specEntityId || "",
+    targetId: Math.trunc(targetIdN),
     targetLon,
     targetLat,
-    targetAlt: targetAltN ?? 0,
-    tarSpeed: tarSpeedN ?? 0,
-    tarCourse: tarCourseN ?? 0,
+    targetAlt: targetAltN,
+    tarSpeed: tarSpeedN,
+    tarCourse: tarCourseN,
   };
-  if (platformLon !== undefined) specification.platformLon = platformLon;
-  if (platformLat !== undefined) specification.platformLat = platformLat;
-  if (platformAlt !== undefined) specification.platformAlt = platformAlt;
-  if (platformSpeed !== undefined) specification.platformSpeed = platformSpeed;
-  if (platformCourse !== undefined) specification.platformCourse = platformCourse;
 
-  const taskPayload = {
+  const taskPayload: Record<string, unknown> = {
     version: { major: 1, minor: 0 },
     taskId: createTaskId("tp_pos"),
     taskType: "MANUAL",
@@ -108,7 +110,7 @@ export async function POST(req: NextRequest) {
       },
     },
     owner: {
-      entityId,
+      entityId: ownerEntityId || "",
     },
     specification,
   };

@@ -68,14 +68,6 @@ export function MapContainer() {
       {/* 小地图暂隐藏；恢复：取消上面 MiniMap import 注释并取消下一行注释 */}
       {/* <MiniMap /> */}
 
-      {/* 比例尺
-      <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2">
-        <div className="flex items-center gap-1 rounded nexus-glass px-2 py-1">
-          <div className="h-px w-12 bg-nexus-text-secondary" />
-          <span className="font-mono text-[9px] text-nexus-text-secondary">10 km</span>
-        </div>
-      </div> */}
-
       {/* 中心十字
       <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center">
         <div className="relative h-6 w-6 opacity-20">

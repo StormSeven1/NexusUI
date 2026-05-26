@@ -15,6 +15,7 @@ import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore, getTrackDispositionForRendering, isTrackAlarmLinked } from "@/stores/track-store";
 import { getFusionTrackMarkerFill, resolveTrackPointFill, isAirTrackBirdGlyph } from "@/lib/map-icons";
+import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
 import { LYR_TRACKS, TRACK_LAYER_KEYS_ORDERED, type Track } from "@/lib/map-entity-model";
@@ -58,10 +59,12 @@ function TrackListRow({
   const td = useTrackDisplayStore();
   const layerKey = effectiveTrackLayerKey(track);
   const dotRow = isDotTrackLayerKey(layerKey);
-  const dotFill =
+  const dotFill = resolveVerifiedTrackPointFill(
+    track,
     disp === "neutral"
       ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor)
-      : resolveTrackPointFill(track, disp, null, undefined);
+      : resolveTrackPointFill(track, disp, null, undefined),
+  );
   return (
     <button
       type="button"
@@ -85,6 +88,7 @@ function TrackListRow({
           disposition={disp}
           virtual={track.isVirtual === true}
           neutralFusionFill={disp === "neutral" ? getFusionTrackMarkerFill(track) : undefined}
+          opticallyVerified={shouldApplyVerifiedTrackGreen(track)}
           size="sm"
           className="mt-0.5 shrink-0"
         />

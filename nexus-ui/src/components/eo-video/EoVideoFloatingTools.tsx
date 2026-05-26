@@ -31,9 +31,11 @@ export interface EoVideoFloatingToolsProps {
   /** 无人机：底部罗盘/状态/控制台是否展开（与相机 PTZ 开关同类交互） */
   uavDockExpanded?: boolean;
   onToggleUavDock?: () => void;
-  /** 右侧工具栏应用内画中画（与 Chromium 顶层悬浮控件无关） */
+  /** 画中画小窗是否打开 */
   pipOpen?: boolean;
   onTogglePip?: () => void;
+  /** 第三方 UDP 广角子相机可通过画中画展示 */
+  pipThirdPartySubCamsAvailable?: boolean;
   captureReady: boolean;
   isRecording: boolean;
   onSnapshot: () => void;
@@ -110,6 +112,7 @@ export function EoVideoFloatingTools({
   onToggleUavDock,
   pipOpen = false,
   onTogglePip,
+  pipThirdPartySubCamsAvailable = false,
   captureReady,
   isRecording,
   onSnapshot,
@@ -358,6 +361,31 @@ export function EoVideoFloatingTools({
     log("[喊话面板] 设置：聚焦文字输入");
   };
 
+  const pipCornerHint = expandedMode ? "右上小窗" : "左上小窗";
+  const pipButtonTitle = pipOpen
+    ? "关闭画中画小窗"
+    : pipThirdPartySubCamsAvailable
+      ? `画中画（${pipCornerHint} / 广角子相机；右键切换源流）`
+      : `画中画（${pipCornerHint}；右键切换源流）`;
+
+  const pipButton = onTogglePip ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      title={pipButtonTitle}
+      aria-label="画中画"
+      aria-pressed={pipOpen}
+      className={cn(
+        "border border-white/25 bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+        pipOpen ? "border-sky-400/45 bg-sky-950/50 text-sky-300" : "text-white/85",
+      )}
+      onClick={() => onTogglePip()}
+    >
+      <PictureInPicture2 className="size-3.5" />
+    </Button>
+  ) : null;
+
   return (
     <div
       className={cn(
@@ -494,7 +522,7 @@ export function EoVideoFloatingTools({
         </Button>
       ) : null}
 
-      {!expandedMode ? null : variant === "camera" ? (
+      {variant === "camera" && expandedMode ? (
         <>
           <Button
             type="button"
@@ -524,21 +552,6 @@ export function EoVideoFloatingTools({
           >
             <Gamepad2 className="size-3.5" />
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            title={pipOpen ? "关闭画中画小窗" : "画中画（右上小窗；右键切换源流）"}
-            aria-label="画中画"
-            aria-pressed={pipOpen}
-            className={cn(
-              "border border-white/25 bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
-              pipOpen ? "border-sky-400/45 bg-sky-950/50 text-sky-300" : "text-white/85",
-            )}
-            onClick={() => onTogglePip?.()}
-          >
-            <PictureInPicture2 className="size-3.5" />
-          </Button>
           {showCameraExpandedDebugToggle && onToggleCameraExpandedDebug ? (
             <Button
               type="button"
@@ -563,7 +576,11 @@ export function EoVideoFloatingTools({
             </Button>
           ) : null}
         </>
-      ) : (
+      ) : null}
+
+      {pipButton}
+
+      {variant === "uav" && expandedMode ? (
         <>
           <Button
             type="button"
@@ -583,21 +600,6 @@ export function EoVideoFloatingTools({
             onClick={() => onToggleUavDock?.()}
           >
             <Gamepad2 className="size-3.5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            title={pipOpen ? "关闭画中画小窗" : "画中画（右上小窗；右键切换源流）"}
-            aria-label="画中画"
-            aria-pressed={pipOpen}
-            className={cn(
-              "border border-white/25 bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
-              pipOpen ? "border-sky-400/45 bg-sky-950/50 text-sky-300" : "text-white/85",
-            )}
-            onClick={() => onTogglePip?.()}
-          >
-            <PictureInPicture2 className="size-3.5" />
           </Button>
           <div className="my-0.5 h-px w-6 bg-gradient-to-r from-transparent via-white/35 to-transparent" aria-hidden />
           <Button
@@ -776,7 +778,7 @@ export function EoVideoFloatingTools({
             ) : null}
           </div>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

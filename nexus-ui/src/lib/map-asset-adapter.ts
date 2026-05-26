@@ -34,7 +34,7 @@ import { assetFriendlyColorFromProperties, assetLabelFontColorFromProperties } f
  *    - `center_icon_visible` -> `centerIconVisible`
  *    - `center_name_visible` -> `nameLabelVisible`
  *    - `fov_sector_visible`  -> `showFov`
- * 6) 名称格式化：camera/tower 使用统一格式化函数
+ * 6) 名称：camera 优先 `AssetData.name`（8090 `aliases.name`）；缺省时回退「相机{编号}」
  */
 export function adaptAssetsForMap(assets: AssetData[]): Asset[] {
   return assets
@@ -65,8 +65,10 @@ export function adaptAssetsForMap(assets: AssetData[]): Asset[] {
           getAssetLabelFontColorForAssetType(t);
       }
       let displayName = a.name;
-      if (t === "camera") displayName = formatCameraTowerMapLabel(a.id);
-      else if (t === "tower") displayName = formatTowerMapLabel(a.id);
+      if (t === "camera") {
+        const raw = String(a.name ?? "").trim();
+        displayName = raw || formatCameraTowerMapLabel(a.id);
+      } else if (t === "tower") displayName = formatTowerMapLabel(a.id);
       return {
         id: a.id,
         name: displayName,

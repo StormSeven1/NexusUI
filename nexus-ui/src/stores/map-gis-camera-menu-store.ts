@@ -10,7 +10,7 @@ interface MapGisCameraMenuState {
   /** 至少成功拉取过一次面板列表（用于地图白名单） */
   loaded: boolean;
   lastError: string | null;
-  /** 图层面板：仅光电 PTZ 主相机（不含第三方） */
+  /** 图层面板：光电 PTZ 主相机 + 8090 第三方相机 */
   ensureLoaded: (force?: boolean) => Promise<void>;
 }
 

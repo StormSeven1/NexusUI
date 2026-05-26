@@ -9,15 +9,15 @@ import {
   Map,
   Package,
   ClipboardList,
-  BarChart3,
   FolderOpen,
-  Search,
-  Settings,
+
   ChevronDown,
+  User,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { EoVideoTopLauncher } from "@/components/eo-video/EoVideoTopLauncher";
 import { TopNavQuickActions } from "@/components/layout/TopNavQuickActions";
+import { TopNavWeatherStrip } from "@/components/layout/TopNavWeatherStrip";
 import { getHttpConfig } from "@/lib/map-app-config";
 
 // 顶部Tab配置
@@ -45,24 +45,6 @@ const TOP_TABS = [
     label: "图层",
     icon: FolderOpen,
     description: "图层管理与显示"
-  },
-  {
-    id: "analytics" as const,
-    label: "分析",
-    icon: BarChart3,
-    description: "数据分析与可视化"
-  },
-  {
-    id: "search" as const,
-    label: "搜索",
-    icon: Search,
-    description: "全局搜索功能"
-  },
-  {
-    id: "settings" as const,
-    label: "设置",
-    icon: Settings,
-    description: "系统设置与配置"
   },
 ] as const;
 
@@ -216,6 +198,112 @@ function SystemWorkModeDropdown(props: {
             open && "rotate-180",
           )}
         />
+      </button>
+      {menu}
+    </div>
+  );
+}
+
+/** 顶栏用户头像菜单（Log Out 等，功能待接） */
+function UserAvatarMenu() {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  const [anchor, setAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
+
+  const updateAnchor = () => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setAnchor({
+      left: Math.max(8, r.right - 128),
+      top: r.bottom + 4,
+      width: 128,
+    });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    updateAnchor();
+    const onScroll = () => setOpen(false);
+    const onResize = () => updateAnchor();
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t)) return;
+      if (menuRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const menu =
+    open &&
+    anchor &&
+    typeof document !== "undefined" &&
+    createPortal(
+      <ul
+        ref={menuRef}
+        role="menu"
+        className="fixed z-[600] overflow-hidden rounded-md border border-nexus-border bg-nexus-bg-elevated py-1 text-xs shadow-xl"
+        style={{ left: anchor.left, top: anchor.top, minWidth: anchor.width }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <li role="none">
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10"
+            onClick={() => setOpen(false)}
+          >
+            <LogOut size={13} className="shrink-0 opacity-80" />
+            Log Out
+          </button>
+        </li>
+      </ul>,
+      document.body,
+    );
+
+  return (
+    <div className="relative flex items-center">
+      <button
+        ref={btnRef}
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="用户菜单"
+        title="用户"
+        className={cn(
+          "flex h-8 w-8 items-center justify-center rounded-full border border-nexus-border bg-nexus-bg-elevated text-nexus-text-secondary transition-colors",
+          "hover:border-nexus-accent/50 hover:text-nexus-text-primary",
+          open && "border-nexus-accent/60 text-nexus-accent",
+        )}
+        onClick={() => {
+          if (open) setOpen(false);
+          else {
+            updateAnchor();
+            setOpen(true);
+          }
+        }}
+      >
+        <User size={15} />
       </button>
       {menu}
     </div>
@@ -431,31 +519,12 @@ export function TopNav() {
         })}
       </nav>
 
-      {/* 3个图标tab */}
-      <div className="flex h-full items-center gap-2 px-3">
-        {TOP_TABS.slice(4).map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => handleTabClick(tab.id)}
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
-              topTab === tab.id
-                ? "bg-nexus-accent-glow text-nexus-text-primary"
-                : "text-nexus-text-muted hover:bg-white/10 hover:text-nexus-text-secondary"
-            )}
-            title={tab.description}
-          >
-            <tab.icon size={14} />
-          </button>
-        ))}
-      </div>
-
       {/* 右侧功能区 */}
-      <div className="flex h-full shrink-0 items-center justify-end gap-2 border-l border-nexus-border px-2 sm:px-3">
+      <div className="flex h-full shrink-0 items-center justify-end gap-4 border-l border-nexus-border px-2 sm:px-3">
         <TopNavQuickActions />
         <div className="hidden h-4 w-px shrink-0 bg-nexus-border md:block" aria-hidden />
-        <label className="flex min-w-0 items-center gap-2 text-[11px] text-nexus-text-secondary whitespace-nowrap">
-          <span className="hidden sm:inline">系统模式</span>
+        <label className="flex min-w-0 items-center gap-2 text-[11px] whitespace-nowrap">
+          <span className="hidden sm:inline text-yellow-400">系统模式</span>
           <SystemWorkModeDropdown
             value={workMode}
             posting={workModePosting}
@@ -463,23 +532,19 @@ export function TopNav() {
           />
         </label>
 
-        <EoVideoTopLauncher />
+        <div className="hidden lg:block h-4 w-px shrink-0 bg-nexus-border" aria-hidden />
+
+        <TopNavWeatherStrip />
+
+        <div className="hidden lg:block h-4 w-px shrink-0 bg-nexus-border" aria-hidden />
+
         {/* 时间显示 */}
-        <div
-          className="font-mono text-xs text-nexus-text-secondary"
-          aria-label="local-time"
-        >
+        <div className="topnav-clock" aria-label="local-time">
           {nowLabel || "--:--:--"}
         </div>
 
-        {/* 通知和用户 */}
-        <div className="h-4 w-px bg-nexus-border" />
-        <button className="relative flex h-7 w-7 items-center justify-center rounded text-nexus-text-muted hover:bg-nexus-bg-elevated hover:text-nexus-text-primary transition-colors">
-          <BarChart3 size={15} />
-        </button>
-        <button className="flex h-7 w-7 items-center justify-center rounded-full border border-nexus-border bg-nexus-glass text-nexus-text-muted hover:bg-nexus-accent hover:text-nexus-text-primary transition-all">
-          <Settings size={14} />
-        </button>
+        <div className="h-4 w-px shrink-0 bg-nexus-border" aria-hidden />
+        <UserAvatarMenu />
       </div>
     </header>
   );

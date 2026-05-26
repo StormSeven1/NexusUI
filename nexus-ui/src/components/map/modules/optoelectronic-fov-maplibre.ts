@@ -13,6 +13,7 @@
  *   2. 入资产:
  *      ├─ 静态: cameras.devices[] → mapCamerasDevicesPayload() → configAssetBase
  *      ├─ 动态: applyAssetListFromWs() → mergeDynamicAndStaticAssets() → asset-store
+ *      │        （光电经纬度 **8090** `NEXUS_ENTITIES_LIST_URL`；WS 仅推 PTZ/FOV/在线态）
  *      └─ camera 独立消息 → 直接 patch asset-store 中已有光电的 heading/fov_angle/range_km
  *
  *   3. 渲染: asset-store → OptoelectronicFovModule.setFromAssets()

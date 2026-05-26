@@ -14,6 +14,8 @@ interface MilSymbolProps {
   airBird?: boolean;
   /** 中立融合航迹填色（见 `getFusionTrackMarkerFill`），仅 disposition=neutral 时传入 */
   neutralFusionFill?: string | null;
+  /** 光电查证完成：军标整体绿色 */
+  opticallyVerified?: boolean;
   size?: "sm" | "md" | "lg";
   className?: string;
 }
@@ -28,6 +30,7 @@ export function MilSymbol({
   virtual = false,
   airBird = false,
   neutralFusionFill,
+  opticallyVerified = false,
   size = "md",
   className,
 }: MilSymbolProps) {
@@ -37,7 +40,17 @@ export function MilSymbol({
     lg: "h-10 w-10",
   };
   const px = { sm: 24, md: 32, lg: 40 }[size];
-  const src = buildMarkerSymbolDataUrl(type, disposition, undefined, virtual, undefined, neutralFusionFill, airBird);
+  const src = buildMarkerSymbolDataUrl(
+    type,
+    disposition,
+    undefined,
+    virtual,
+    undefined,
+    neutralFusionFill,
+    airBird,
+    false,
+    opticallyVerified,
+  );
 
   return (
     <Image

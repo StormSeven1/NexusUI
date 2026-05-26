@@ -81,6 +81,7 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
   const cameraIndex = numField("cameraIndex", "camera_index", "CameraIndex");
   const trackID = numField("trackID", "track_id", "trackId", "TrackID");
   const verifyTargetId = numField("verifyTargetId", "verify_target_id", "targetId", "target_id");
+  const uniqueIdFromBody = numField("uniqueId", "unique_id", "uniqueID");
   const longitudeDeg = numField("longitudeDeg", "longitude_deg", "lon", "longitude");
   const latitudeDeg = numField("latitudeDeg", "latitude_deg", "lat", "latitude");
   const distanceNm = numField("distanceNm", "distance_nm", "distanceNauticalMiles");
@@ -147,7 +148,6 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
 
   /** 与 Qt 一致：未带 bucket/key 时读 PostgreSQL `minio_multi_metadata` */
   if (!downloadUrl && camOk) {
-    const uniqueIdFromBody = numField("uniqueId", "unique_id");
     const dbRow = await resolveScreenshotMetadataFromDb({
       uniqueId: uniqueIdFromBody ?? undefined,
       trackId: trackOk ? trackID : undefined,
@@ -196,6 +196,7 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
     taskID,
     cameraIndex: cameraIndex != null && Number.isFinite(cameraIndex) ? cameraIndex : undefined,
     trackID: trackID != null && Number.isFinite(trackID) ? trackID : undefined,
+    uniqueId: uniqueIdFromBody != null && Number.isFinite(uniqueIdFromBody) ? uniqueIdFromBody : undefined,
     description: description || undefined,
     downloadUrl,
     imageMediaType,

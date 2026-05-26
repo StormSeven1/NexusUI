@@ -27,8 +27,9 @@ export function buildImportantTrackTargetFromTrack(track: Track): ImportantTrack
   };
 }
 
-/** 第三方 UDP `0x3004` POS：`ThirdPartyCamPosTask`，来自当前航迹位置与运动学（态势双击下发） */
+/** 第三方 UDP `0x3004` POS：`ThirdPartyCamPosTask`，来自当前航迹（态势双击下发） */
 export type ThirdPartyPosFieldsFromTrack = {
+  /** 与报文 `uniqueID` / 库表 `unique_id` 对齐 */
   targetId: number;
   targetLon: number;
   targetLat: number;
@@ -37,11 +38,30 @@ export type ThirdPartyPosFieldsFromTrack = {
   tarCourse: number;
 };
 
-export function buildThirdPartyPosFieldsFromTrack(track: Track): ThirdPartyPosFieldsFromTrack {
-  const targetId = numericTrackIdForCameraTask(track);
+/** 将航迹 `uniqueID`（纯数字）解析为 POS 的 `targetId` */
+export function parseTrackUniqueIdForThirdPartyPos(
+  track: Pick<Track, "uniqueID" | "showID">,
+): number | null {
+  const s = String(track.uniqueID ?? "").trim() || String(track.showID ?? "").trim();
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
+/**
+ * 构造 POS 必填字段；`uniqueID` 非纯数字或缺少经纬度时返回 `null`（跳过下发）。
+ * 不含 `platformLon/Lat/Alt`。
+ */
+export function buildThirdPartyPosFieldsFromTrack(track: Track): ThirdPartyPosFieldsFromTrack | null {
+  const targetId = parseTrackUniqueIdForThirdPartyPos(track);
+  if (targetId == null) return null;
+  if (!Number.isFinite(track.lng) || !Number.isFinite(track.lat)) return null;
+
   const courseCandidate =
     track.course !== undefined && Number.isFinite(track.course) ? track.course : track.heading;
   const tarCourse = Number.isFinite(courseCandidate) ? courseCandidate : 0;
+
   return {
     targetId,
     targetLon: track.lng,

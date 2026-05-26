@@ -14,15 +14,21 @@ import { MapContainer } from "@/components/map/MapContainer";
 import { WorkspaceDetails } from "./WorkspaceDetails";
 import { useUnifiedWsFeed } from "@/hooks/useUnifiedWsFeed";
 import { useDbAreasPoll } from "@/hooks/useDbAreasPoll";
+import { AlarmSpeechAnnouncer } from "@/components/system/AlarmSpeechAnnouncer";
 import { TaskStatusChatSseHost } from "@/components/system/TaskStatusChatSseHost";
+import { VerifiedTrackSyncHost } from "@/components/system/VerifiedTrackSyncHost";
+import { useTrackEvalAutoQuery } from "@/hooks/useTrackEvalAutoQuery";
 
 export function AppShell() {
   useUnifiedWsFeed();
   useDbAreasPoll();
+  useTrackEvalAutoQuery();
 
   return (
     <DockProvider>
       <TaskStatusChatSseHost />
+      <VerifiedTrackSyncHost />
+      <AlarmSpeechAnnouncer />
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-nexus-bg-base">
         <TopNav />
 

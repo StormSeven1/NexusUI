@@ -7,6 +7,8 @@ export type TaskStatusRequestBody = {
   taskID?: string;
   cameraIndex?: number;
   trackID?: number;
+  /** 航迹唯一 ID（与 `minio_multi_metadata.unique_id`、报文 uniqueID 对齐） */
+  uniqueId?: number;
   /** taskStatus 为 5/6/7 时由相机/后端填入（如模型研判结果） */
   description?: string;
   /**

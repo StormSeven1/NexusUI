@@ -5,6 +5,7 @@ import type { IClientOptions, MqttClient } from "mqtt";
 /** 浏览器包为 mqtt.esm.js：仅 default，无命名 export connect（Turbopack 会静态报错） */
 import mqttImport from "mqtt";
 import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
+import { recordMqttReceived } from "@/stores/network-stats-store";
 
 /** 从 default 上取 connect（兼容 __esModule / 嵌套 default） */
 function resolveMqttConnect(): (url: string, opts?: IClientOptions) => MqttClient {
@@ -490,6 +491,7 @@ export function useUavMqttDockState(opts: UseUavMqttDockStateOpts): {
       });
       client.on("message", (topic, payload) => {
         try {
+          recordMqttReceived(opts.airportSN?.trim() || undefined);
           const text = payload.toString();
           const oneLine = text.replace(/\s+/g, " ").slice(0, 420);
           setMqttHud((h) => ({

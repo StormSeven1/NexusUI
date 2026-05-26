@@ -53,16 +53,20 @@ export async function GET(req: Request) {
           headers: { Accept: "application/json", "Cache-Control": "no-cache" },
           cache: "no-store",
         });
-        if (!res.ok) continue;
+        if (!res.ok) {
+          webrtcWithUrl.push({ ...row, signalingUrl: "about:blank", rawVideoUrl: "" });
+          continue;
+        }
         const detail: unknown = await res.json();
         const playback = normalizeEntityPlaybackJson(detail, row.entityId);
         webrtcWithUrl.push({
           ...row,
-          signalingUrl: playback.signalingUrl,
+          signalingUrl: playback.signalingUrl?.trim() || "about:blank",
           rawVideoUrl: playback.rawVideoUrl,
         });
       } catch {
-        /* 单台失败不阻断列表 */
+        /* 8088 暂不可达仍保留菜单项，播放时由前端 deferred 拉流 */
+        webrtcWithUrl.push({ ...row, signalingUrl: "about:blank", rawVideoUrl: "" });
       }
     }
     const cameras = mapEntitiesPayloadToThirdPartyCameras(payload);

@@ -6,9 +6,11 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useAppStore } from "@/stores/app-store";
 import { registerMapModules, unregisterMapModules } from "@/lib/map-module-registry";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
+import { metersPerPixelMapLibre } from "@/lib/map-scale-bar";
 import { useTrackStore } from "@/stores/track-store";
-import { useTargetProfileStore } from "@/stores/target-profile-store";
-import { useDockStore } from "@/stores/dock-store";
+import { useAlertStore } from "@/stores/alert-store";
+import { computeTopThreatRankByShowId } from "@/lib/alarm-track-threat-rank";
+import { useVerifiedTrackStore } from "@/stores/verified-track-store";
 import {
   PUBLIC_MAP_ASSET_TYPES,
   LYR_AIRPORT,
@@ -22,6 +24,7 @@ import {
   LYR_TRACKS,
   LYR_ZONES,
   LYR_DB_AREAS,
+  LYR_DISTANCE_RINGS,
   type Track,
 } from "@/lib/map-entity-model";
 import type { Asset } from "@/lib/map-entity-model";
@@ -41,11 +44,7 @@ import {
   ensureEntitiesTrackTaskCache,
   listTrackTaskOwnerEntityIds,
 } from "@/lib/entities-track-task-cache";
-import {
-  buildImportantTrackTargetFromTrack,
-  buildThirdPartyPosFieldsFromTrack,
-} from "@/lib/map-gis-camera-task";
-import { evaluateThirdPartyTaskHttpResponse } from "@/lib/thirdPartyTaskServiceResponse";
+import { runGisTrackVerification } from "@/lib/run-gis-track-verification";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 import {
   buildMarkerSymbolDataUrl,
@@ -57,6 +56,8 @@ import {
   buildAssetSymbolDataUrl,
   getAllAssetSymbolKeysForPrereg,
   buildIconSizeExpr,
+  buildThreatRankBadgeDataUrl,
+  threatRankBadgeImageId,
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
@@ -79,7 +80,6 @@ import {
   resolveLaserDefaults,
   resolveTdoaDefaults,
   getAssetFriendlyColorForAssetType,
-  getDefaultEoCameraTaskBackendBaseUrl,
 } from "@/lib/map-app-config";
 import {
   RadarCoverageModule,
@@ -87,11 +87,24 @@ import {
   RADAR_ASSET_ICON_LAYER,
 } from "@/components/map/modules/radar-range-rings-maplibre";
 import {
+  DistanceRingsMaplibre,
+  DISTANCE_RINGS_LAYER_IDS,
+} from "@/components/map/modules/distance-rings-maplibre";
+import { pickDistanceRingSettings, pickSituationAreaLayerStyle } from "@/lib/distance-ring-settings";
+import { useDistanceRingStore } from "@/stores/distance-ring-store";
+import {
   AirportStaticMaplibre,
   AIRPORT_ICON_LAYER,
   AIRPORT_LABEL_LAYER,
 } from "@/components/map/modules/airport-maplibre";
 import { OptoelectronicFovModule, FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER } from "@/components/map/modules/optoelectronic-fov-maplibre";
+import {
+  ThirdPartyPtzFovModule,
+  THIRD_PARTY_PTZ_FOV_LAYER_IDS,
+} from "@/components/map/modules/third-party-ptz-fov-maplibre";
+import { useThirdPartyCameraGlobalMapFeed } from "@/hooks/useThirdPartyCameraGlobalMapFeed";
+import { resolveThirdPartyPtzFovRows } from "@/lib/third-party-ptz-fov";
+import { useEoThirdPartyUdpDevStatusStore } from "@/stores/eo-third-party-udp-dev-status-store";
 import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import { TowerMaplibre, TOWER_LAYER_IDS, TOWER_ICON_LAYER } from "@/components/map/modules/tower-maplibre";
@@ -119,6 +132,7 @@ import {
   TRACK_SYMBOL,
   TRACK_LABEL,
   TRACK_LABEL_RADAR,
+  TRACK_THREAT_RANK,
   TRACK_PICK_LAYERS,
   HIGHLIGHT_LAYER,
   HIGHLIGHT_RADAR_LAYER,
@@ -228,6 +242,7 @@ const LAYER_MAPPING: Record<string, string[]> = {
     TRACK_SYMBOL,
     TRACK_LABEL,
     TRACK_LABEL_RADAR,
+    TRACK_THREAT_RANK,
     HIGHLIGHT_LAYER,
     HIGHLIGHT_RADAR_LAYER,
     LOCK_ON,
@@ -248,11 +263,12 @@ const LAYER_MAPPING: Record<string, string[]> = {
   [LYR_LASER]: [...LASER_LAYER_IDS],
   [LYR_TDOA]: [...TDOA_LAYER_IDS],
   [LYR_RADAR_COVERAGE]: [...RADAR_COVERAGE_LAYER_IDS, RADAR_ASSET_ICON_LAYER],
-  [LYR_OPTO_FOV]: [...FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER],
+  [LYR_OPTO_FOV]: [...FOV_LAYER_IDS, ...THIRD_PARTY_PTZ_FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER],
   [LYR_TOWER]: [...TOWER_LAYER_IDS],
   [LYR_MEASURE]: [...MEASURE_TOOL_LAYER_IDS],
   [LYR_ZONES]: [...POLY_ZONES_LAYER_IDS],
   [LYR_DB_AREAS]: [...DB_AREAS_LAYER_IDS],
+  [LYR_DISTANCE_RINGS]: [...DISTANCE_RINGS_LAYER_IDS],
 };
 
 /** 图层面板签名：底图矢量 / 数据图层变化时触发 apply 与 redraw */
@@ -412,13 +428,17 @@ function pickCoordsFromFeature(f: maplibregl.MapGeoJSONFeature, e: maplibregl.Ma
 /* ---------- Map2D ---------- */
 
 export function Map2D() {
+  useThirdPartyCameraGlobalMapFeed();
+
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const lastFlySeqRef = useRef<number>(-1);
   const routeIdsRef = useRef<string[]>([]);
   const areaIdsRef = useRef<string[]>([]);
   const radarCovRef = useRef<RadarCoverageModule | null>(null);
+  const distanceRingsRef = useRef<DistanceRingsMaplibre | null>(null);
   const optoFovRef = useRef<OptoelectronicFovModule | null>(null);
+  const thirdPartyPtzFovRef = useRef<ThirdPartyPtzFovModule | null>(null);
   const towerModRef = useRef<TowerMaplibre | null>(null);
   const airportStaticRef = useRef<AirportStaticMaplibre | null>(null);
   const tracksRef = useRef<TracksMaplibre | null>(null);
@@ -511,11 +531,22 @@ export function Map2D() {
     map.on("styledata", applyPanelVisIfStyleLoaded);
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-left");
-    map.on("mousemove", (e) =>
-      useMapPointerStore.getState().setMouseCoords({ lat: e.lngLat.lat, lng: e.lngLat.lng })
-    );
-    map.on("zoomend", () => setZoomLevel(Math.round(map.getZoom())));
+    const pushMapScale = (lat: number) => {
+      useMapPointerStore
+        .getState()
+        .setMetersPerPixel(metersPerPixelMapLibre(lat, map.getZoom()));
+    };
+    map.on("mousemove", (e) => {
+      useMapPointerStore.getState().setMouseCoords({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+      pushMapScale(e.lngLat.lat);
+    });
+    map.on("zoomend", () => {
+      setZoomLevel(Math.round(map.getZoom()));
+      pushMapScale(map.getCenter().lat);
+    });
+    map.on("moveend", () => pushMapScale(map.getCenter().lat));
     map.on("load", () => {
+      pushMapScale(map.getCenter().lat);
       /* `parseVectorLayersForPanel` → `setBasemapVectorInfo`：填充 `basemapVectorLayers` / `basemapVectorVisibility`（图层面板勾底图矢量子层） */
       try {
         const parsed = parseVectorLayersForPanel(map.getStyle());
@@ -577,10 +608,14 @@ export function Map2D() {
           const { rows, areaVisibility } = useDbAreaStore.getState();
           setDbAreasGeoJSON(
             map,
-            buildDbAreasFeatureCollection(rows, (row) => {
-              if (!master) return false;
-              return areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] !== false;
-            }),
+            buildDbAreasFeatureCollection(
+              rows,
+              (row) => {
+                if (!master) return false;
+                return areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] !== false;
+              },
+              pickSituationAreaLayerStyle(useDistanceRingStore.getState()),
+            ),
           );
         }
 
@@ -591,6 +626,13 @@ export function Map2D() {
         radarCov.setFromAssets(_assetsEarly, currentAssetDataEarly);
         radarCovRef.current = radarCov;
 
+        const distanceRings = new DistanceRingsMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        distanceRings.install();
+        distanceRings.setFromSettings(
+          pickDistanceRingSettings(useDistanceRingStore.getState()),
+        );
+        distanceRingsRef.current = distanceRings;
+
         /* 光电 FOV 与相机中心图标；仅处理 camera，不含 tower（电侦） */
         const optoFov = new OptoelectronicFovModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
         optoFov.install();
@@ -598,6 +640,11 @@ export function Map2D() {
         optoFov.applyCamerasBundle(preCfg?.cameras ?? null);
         optoFov.setFromAssets(_assetsEarly);
         optoFovRef.current = optoFov;
+
+        const thirdPartyPtzFov = new ThirdPartyPtzFovModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        thirdPartyPtzFov.install();
+        thirdPartyPtzFov.setDefaultRangeM(preCfg?.cameras?.defaultRange ?? 15000);
+        thirdPartyPtzFovRef.current = thirdPartyPtzFov;
 
         /* 电侦（tower）：独立渲染模块，不与光电共用任何图层 */
         const towerMod = new TowerMaplibre(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
@@ -626,6 +673,7 @@ export function Map2D() {
         radarCov.setAssetDispositionAccent(assetIconAccent);
         optoFov.setAssetDispositionAccent(assetIconAccent);
         optoFov.applyCamerasBundle(appCfg.cameras);
+        thirdPartyPtzFovRef.current?.setDefaultRangeM(appCfg.cameras?.defaultRange ?? 15000);
         towerMod.setAssetDispositionAccent(assetIconAccent);
         towerMod.applyFovStyleFromBundle(appCfg.tower);
         airportStatic.setAssetDispositionAccent(assetIconAccent);
@@ -641,7 +689,7 @@ export function Map2D() {
         /* `map.addImage` 预注册各图层 `layout["icon-image"]` 用到的位图；`hasImage` 为真则跳过。并行加载以缩短首帧等待 */
         await Promise.all([
           /* 航迹点符号：空/海/潜 × 敌我中（`getAllMarkerSymbolKeys`），供 `TRACK_SYMBOL` 等 */
-          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill, airBird, airFuse }) => {
+          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill, airBird, airFuse, opticallyVerified }) => {
             if (!map.hasImage(id)) {
               map.addImage(
                 id,
@@ -655,6 +703,7 @@ export function Map2D() {
                     neutralFusionFill,
                     airBird === true,
                     airFuse === true,
+                    opticallyVerified === true,
                   ),
                   64,
                 ),
@@ -669,6 +718,15 @@ export function Map2D() {
           /* 锁定目标锁定圈（`LOCK_ON_IMAGE_ID`）→ `LOCK_ON` */
           (async () => {
             if (!map.hasImage(LOCK_ON_IMAGE_ID)) map.addImage(LOCK_ON_IMAGE_ID, await loadSvgImage(buildLockOnDataUrl(), 128), { pixelRatio: 2 });
+          })(),
+          /* 告警航迹威胁 Top5 红底序号 1–5 */
+          (async () => {
+            for (let r = 1; r <= 5; r++) {
+              const id = threatRankBadgeImageId(r);
+              if (!map.hasImage(id)) {
+                map.addImage(id, await loadSvgImage(buildThreatRankBadgeDataUrl(r), 22), { pixelRatio: 2 });
+              }
+            }
           })(),
           /* 五类站址图标全组合（`getAssetSymbolId` → `asset-{type}-…`），激光/TDOA 中心图标也走同一条路径 */
           ...getAllAssetSymbolKeysForPrereg(currentAssetData, assetIconPreregRootFriendlyTints).map(async ({ id, type, status, virtual, disposition, friendlyFill }) => {
@@ -836,94 +894,10 @@ export function Map2D() {
             if (!id || !f) return;
             const track = useTrackStore.getState().tracks.find((t) => t.id === id);
             if (!track) return;
-            useTargetProfileStore.getState().setFocusedShowId(track.showID);
-            const dock = useDockStore.getState();
-            dock.assignPanelToPartition("target-profile", "right-0");
-            dock.assignPanelToPartition("chat", "right-1");
-            void useAppConfigStore
-              .getState()
-              .ensureLoaded()
-              .then(async (cfg) => {
-                const target = buildImportantTrackTargetFromTrack(track);
-
-                const posGuide = cfg.thirdPartyPosGuide;
-                if (posGuide.enabled && posGuide.cameraEntityIds.length > 0) {
-                  const posFields = buildThirdPartyPosFieldsFromTrack(track);
-                  const backendBaseUrl = getDefaultEoCameraTaskBackendBaseUrl();
-                  for (const camEntityId of posGuide.cameraEntityIds) {
-                    try {
-                      const res = await fetch("/api/camera-task/third-party-pos", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json", Accept: "application/json" },
-                        body: JSON.stringify({
-                          backendBaseUrl,
-                          entityId: camEntityId,
-                          ...posFields,
-                        }),
-                      });
-                      const text = await res.text().catch(() => "");
-                      const outcome = evaluateThirdPartyTaskHttpResponse(res.ok, text);
-                      console.log("[map-track-dblclick] third-party POS →", camEntityId, {
-                        accepted: outcome.accepted,
-                        summary: outcome.logLine,
-                        httpStatus: res.status,
-                        bodyPreview: text.slice(0, 420),
-                      });
-                    } catch (err: unknown) {
-                      console.warn("[map-track-dblclick] third-party POS 请求异常", camEntityId, err);
-                    }
-                  }
-                }
-
-                const cm = cfg.cameraManagement;
-                /* 与 Qt 远程 `CAMERA_IMPORTANT_TRACK` 一致：经纬 0；action/alarmTime/trackTime/alarmID 由 buildImportantTrackTaskBody 归一化 */
-                if (!cm) {
-                  console.warn("[map-track-dblclick] cameraManagement 未配置，未发送 IM 任务:", {
-                    target,
-                  });
-                  return;
-                }
-                try {
-                  await ensureEntitiesTrackTaskCache();
-                } catch (err: unknown) {
-                  console.error("[map-track-dblclick] 实体快照加载失败，未发送任务:", err);
-                  return;
-                }
-                const owners = listTrackTaskOwnerEntityIds();
-                if (owners.length === 0) {
-                  console.warn(
-                    "[map-track-dblclick] 无可用航迹任务 owner（需 hasPtz=1 且 parent_device_id 为空）",
-                  );
-                  return;
-                }
-                console.log("[map-track-dblclick] 将下发相机数:", owners.length, owners.join(", "));
-                const client = CameraManagementClient.fromConfig(cm);
-                if (!client) return;
-                for (const ownerId of owners) {
-                  const body = buildImportantTrackTaskBody(cm, ownerId, target, { taskIdSuffix: ownerId });
-                  console.log("[map-track-dblclick] 发送 owner=", ownerId, "\n", JSON.stringify(body, null, 2));
-                  const res = await client.publishTask(body);
-                  if (res.networkError) {
-                    console.warn(
-                      "[map-track-dblclick] 相机管理请求失败:",
-                      ownerId,
-                      res.networkError,
-                      "URL:",
-                      client.publishUrl,
-                    );
-                    continue;
-                  }
-                  console.log(
-                    "[map-track-dblclick] HTTP 结果:",
-                    ownerId,
-                    res.status,
-                    res.ok ? "ok" : "fail",
-                    res.executionState ?? "",
-                    res.errorMessage ?? "",
-                  );
-                }
-              })
-              .catch((err: unknown) => console.error("[map-track-dblclick]", err));
+            console.info("[map-track-dblclick] 命中航迹", id, track.showID, track.uniqueID, track.trackId);
+            void runGisTrackVerification(track).catch((err: unknown) =>
+              console.error("[map-track-dblclick]", err),
+            );
           };
           map.on("dblclick", TRACK_SYMBOL, onTrackDblClick);
           map.on("dblclick", TRACK_DOT, onTrackDblClick);
@@ -1144,6 +1118,8 @@ export function Map2D() {
       airportStaticRef.current = null;
       optoFovRef.current?.dispose();
       optoFovRef.current = null;
+      thirdPartyPtzFovRef.current?.dispose();
+      thirdPartyPtzFovRef.current = null;
       towerModRef.current?.dispose();
       towerModRef.current = null;
       dronesRef.current?.dispose();
@@ -1397,6 +1373,20 @@ export function Map2D() {
     return useTrackDisplayStore.subscribe(flush);
   }, []);
 
+  /** 显示控制 · 距离环参数 → 刷新同心圆 GeoJSON */
+  useEffect(() => {
+    const flush = () => {
+      const mod = distanceRingsRef.current;
+      if (!mod) return;
+      const s = useDistanceRingStore.getState();
+      mod.setFromSettings(pickDistanceRingSettings(s));
+      const map = mapRef.current;
+      if (map) applyLayerPanelVisibilityFromStore(map, useAppStore.getState());
+    };
+    flush();
+    return useDistanceRingStore.subscribe(flush);
+  }, []);
+
   /** 图层「目标」总开关 → 重刷 GeoJSON（分类显隐在目标侧边栏，走 displayRevision） */
   useEffect(() => {
     const unsub = useAppStore.subscribe((s, p) => {
@@ -1422,6 +1412,35 @@ export function Map2D() {
     return unsub;
   }, []);
 
+  /** 光电查证完成：unique_id 标绿后刷新航迹 GeoJSON */
+  useEffect(() => {
+    const unsub = useVerifiedTrackStore.subscribe((s, p) => {
+      if (s.mapVerifiedRev === p.mapVerifiedRev) return;
+      if (!tracksRef.current) return;
+      tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : useTrackStore.getState().tracks);
+    });
+    return unsub;
+  }, []);
+
+  /** 告警航迹威胁度 Top5 → 地图航迹上方红底序号 1–5 */
+  useEffect(() => {
+    const flushThreatRanks = () => {
+      if (!tracksRef.current || DISABLE_MAP_TRACK_RENDERING) return;
+      const ranks = computeTopThreatRankByShowId(
+        useAlertStore.getState().alerts,
+        useTrackStore.getState().shadowTracks,
+      );
+      tracksRef.current.setThreatRankByShowId(ranks);
+    };
+    flushThreatRanks();
+    const unsubAlert = useAlertStore.subscribe(flushThreatRanks);
+    const unsubTrack = useTrackStore.subscribe(flushThreatRanks);
+    return () => {
+      unsubAlert();
+      unsubTrack();
+    };
+  }, []);
+
   /* Postgres 区域图层：总开关 `lyr-db-areas` + 各区域显隐 → GeoJSON */
   useEffect(() => {
     const flushDbAreas = () => {
@@ -1432,10 +1451,14 @@ export function Map2D() {
         const { rows, areaVisibility } = useDbAreaStore.getState();
         setDbAreasGeoJSON(
           m,
-          buildDbAreasFeatureCollection(rows, (row) => {
-            if (!master) return false;
-            return areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] !== false;
-          }),
+          buildDbAreasFeatureCollection(
+            rows,
+            (row) => {
+              if (!master) return false;
+              return areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] !== false;
+            },
+            pickSituationAreaLayerStyle(useDistanceRingStore.getState()),
+          ),
         );
         applyLayerPanelVisibilityFromStore(m, useAppStore.getState());
       } catch {
@@ -1448,10 +1471,12 @@ export function Map2D() {
       if ((s.layerVisibility[LYR_DB_AREAS] ?? true) === (p.layerVisibility[LYR_DB_AREAS] ?? true)) return;
       flushDbAreas();
     });
+    const unsubSituation = useDistanceRingStore.subscribe(flushDbAreas);
     flushDbAreas();
     return () => {
       unsubDb();
       unsubMaster();
+      unsubSituation();
     };
   }, []);
 
@@ -1462,14 +1487,37 @@ export function Map2D() {
       const cam = useMapGisCameraMenuStore.getState();
       const panelIds = cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
       optoFovRef.current?.setPerDeviceVisibility(vis, panelIds);
+      thirdPartyPtzFovRef.current?.setPerDeviceVisibility(vis, panelIds);
+    };
+    const flushThirdPartyPtzFov = () => {
+      const cam = useMapGisCameraMenuStore.getState();
+      const panelIds = cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
+      const vis = useOptoDeviceLayerStore.getState().deviceVisibility;
+      thirdPartyPtzFovRef.current?.setPerDeviceVisibility(vis, panelIds);
+      const rows = resolveThirdPartyPtzFovRows(
+        cam.rows,
+        useAssetStore.getState().assets,
+        useEoThirdPartyUdpDevStatusStore.getState().byEntityId,
+      );
+      thirdPartyPtzFovRef.current?.setFromRows(rows);
     };
     const unsubVis = useOptoDeviceLayerStore.subscribe(flushOptoPerDevice);
-    const unsubCam = useMapGisCameraMenuStore.subscribe(flushOptoPerDevice);
+    const unsubCam = useMapGisCameraMenuStore.subscribe(() => {
+      flushOptoPerDevice();
+      flushThirdPartyPtzFov();
+    });
+    const unsubAssets = useAssetStore.subscribe(flushThirdPartyPtzFov);
+    const unsubUdp = useEoThirdPartyUdpDevStatusStore.subscribe(flushThirdPartyPtzFov);
+    const ttlTimer = setInterval(flushThirdPartyPtzFov, 1000);
     flushOptoPerDevice();
+    flushThirdPartyPtzFov();
     void useMapGisCameraMenuStore.getState().ensureLoaded();
     return () => {
       unsubVis();
       unsubCam();
+      unsubAssets();
+      unsubUdp();
+      clearInterval(ttlTimer);
     };
   }, []);
 

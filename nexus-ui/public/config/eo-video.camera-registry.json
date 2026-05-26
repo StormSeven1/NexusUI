@@ -1,5 +1,5 @@
 {
-  "syncedAt": "2026-05-23T06:54:43.432Z",
+  "syncedAt": "2026-05-25T14:30:41.565Z",
   "sourceUrl": "http://192.168.18.141:8090/api/v1/entities?page=1&size=100",
   "cameras": [
     {
@@ -65,6 +65,22 @@
     {
       "entityId": "camera_015",
       "label": "远遥灯塔-枪机2"
+    },
+    {
+      "entityId": "camera_016",
+      "label": "码头广角东北"
+    },
+    {
+      "entityId": "camera_017",
+      "label": "码头广角东南"
+    },
+    {
+      "entityId": "camera_018",
+      "label": "码头广角西北"
+    },
+    {
+      "entityId": "camera_019",
+      "label": "码头广角西南"
     }
   ]
 }

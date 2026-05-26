@@ -70,10 +70,9 @@ export async function fetchMapGisCameraMenuRows(): Promise<MapGisCameraMenuRow[]
   return buildMapGisCameraMenuRows(listTrackTaskOwnerRows(), eoCtx);
 }
 
-/** 图层面板「光电装备」子树：仅 PTZ 主相机，不含第三方 */
+/** 图层面板「光电装备」子树：PTZ 主相机 + 8090 第三方相机（与右键「选择光电」同源） */
 export async function fetchOptoLayerPanelCameraRows(): Promise<MapGisCameraMenuRow[]> {
-  const all = await fetchMapGisCameraMenuRows();
-  return all.filter((r) => r.kind === "opto");
+  return fetchMapGisCameraMenuRows();
 }
 
 /** 仅第三方相机行（调试用或分组展示；面板用合并列表即可） */

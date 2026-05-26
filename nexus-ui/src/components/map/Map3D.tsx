@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
+import { metersPerPixelCesium } from "@/lib/map-scale-bar";
 import { useTrackStore, getTrackDispositionForRendering } from "@/stores/track-store";
+import { useVerifiedTrackStore } from "@/stores/verified-track-store";
+import { shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
 import {
   useTrackDisplayStore,
   neutralFusionColorForTrack,
@@ -13,12 +16,19 @@ import {
 import { trimHistoryTrailForDisplay, velocityVectorEndLngLat } from "@/lib/track-display-trail";
 import {
   LYR_DB_AREAS,
+  LYR_DISTANCE_RINGS,
   LYR_OPTO_FOV,
   LYR_TRACKS,
   type Asset,
   type RestrictedZone,
   type Track,
 } from "@/lib/map-entity-model";
+import { pickDistanceRingSettings } from "@/lib/distance-ring-settings";
+import { useDistanceRingStore } from "@/stores/distance-ring-store";
+import {
+  syncCesiumDistanceRings,
+  type CesiumDistanceRingGroups,
+} from "@/components/map/modules/distance-rings-cesium";
 import {
   shouldRenderOptoCameraFov,
   shouldRenderOptoCameraIcon,
@@ -31,7 +41,8 @@ import { useZoneStore } from "@/stores/zone-store";
 import { useDbAreaStore } from "@/stores/db-area-store";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { areaRowToPolygonRing, dbAreaFeatureId, dbAreaVisibilityKey } from "@/lib/area-table-geometry";
-import { DB_AREA_MAP_UI_COLOR, ringSouthEastLabelLngLat } from "@/lib/build-db-areas-geojson";
+import { ringSouthEastLabelLngLat } from "@/lib/build-db-areas-geojson";
+import { pickSituationAreaLayerStyle } from "@/lib/distance-ring-settings";
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
 import { useAssetStore } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
@@ -58,6 +69,7 @@ import {
   resolveTrackPointFill,
   isAirTrackBirdGlyph,
 } from "@/lib/map-icons";
+import { resolveVerifiedTrackPointFill } from "@/lib/verified-track-color";
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { AlertTriangle } from "lucide-react";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
@@ -208,6 +220,7 @@ function syncCesiumDbAreas(
   rows: AreaTableRow[],
   areaVisibility: Record<string, boolean>,
   layerMasterOn: boolean,
+  areaStyle: ReturnType<typeof pickSituationAreaLayerStyle>,
 ) {
   for (const e of groups.dbAreas) viewer.entities.remove(e);
   groups.dbAreas.length = 0;
@@ -224,9 +237,9 @@ function syncCesiumDbAreas(
     const ringClosed: [number, number][] = [...coords.map(([lng, lat]) => [lng, lat] as [number, number]), coords[0]];
     const [labelLng, labelLat] = ringSouthEastLabelLngLat(ringClosed);
 
-    const outlineCol = C.Color.fromCssColorString(DB_AREA_MAP_UI_COLOR);
-    const labelFill = outlineCol;
-    const outlineW = Math.max(1.5, Math.min(5, Number(row.line_width) || 2));
+    const outlineCol = C.Color.fromCssColorString(areaStyle.lineColor).withAlpha(areaStyle.lineOpacity);
+    const labelFill = C.Color.fromCssColorString(areaStyle.lineColor).withAlpha(areaStyle.labelOpacity);
+    const outlineW = areaStyle.lineWidth;
 
     const name =
       (row.area_name && String(row.area_name).trim()) ||
@@ -366,10 +379,13 @@ async function syncCesiumTrackBillboards(
   const visibleIds = new Set(allTracks.map((t) => t.id));
   const fullMap = new Map(allTracks.map((t) => [t.id, t]));
 
-  const pickTrackPointCss = (t: Track, eff: ReturnType<typeof getTrackDispositionForRendering>, friendlyFill?: string) =>
-    eff === "neutral"
-      ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor)
-      : resolveTrackPointFill(t, eff, accent, friendlyFill);
+  const pickTrackPointCss = (t: Track, eff: ReturnType<typeof getTrackDispositionForRendering>, friendlyFill?: string) => {
+    const base =
+      eff === "neutral"
+        ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor)
+        : resolveTrackPointFill(t, eff, accent, friendlyFill);
+    return resolveVerifiedTrackPointFill(t, base);
+  };
 
   for (const ent of groups.trackTrails) {
     viewer.entities.remove(ent);
@@ -413,6 +429,7 @@ async function syncCesiumTrackBillboards(
     const fusionTint =
       eff === "neutral" ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor) : undefined;
     const wantDot = isDotTrackLayerKey(resolveTrackLayerKey(track));
+    const opticallyVerified = shouldApplyVerifiedTrackGreen(track);
     const labelCommon = {
       text: track.name,
       font: '11px Roboto, "Noto Sans SC", sans-serif',
@@ -450,6 +467,7 @@ async function syncCesiumTrackBillboards(
               fusionTint,
               isAirTrackBirdGlyph(track),
               resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
+              opticallyVerified,
             ),
             scale: 0.90,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
@@ -477,6 +495,7 @@ async function syncCesiumTrackBillboards(
     const pc = pickTrackPointCss(t, eff, friendlyFill);
     const fusionTint =
       eff === "neutral" ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor) : undefined;
+    const opticallyVerified = shouldApplyVerifiedTrackGreen(t);
     if (ent.point) {
       ent.point.color = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc).withAlpha(0.92));
       if (ent.label) {
@@ -493,6 +512,7 @@ async function syncCesiumTrackBillboards(
         fusionTint,
         isAirTrackBirdGlyph(t),
         resolveTrackLayerKey(t) === "fuse_air" && isAirTrackBirdGlyph(t),
+        opticallyVerified,
       );
       ent.billboard.image = new Cesium.ConstantProperty(image);
       ent.billboard.rotation = new Cesium.ConstantProperty(trackBillboardRotationRad(t, Cesium));
@@ -558,6 +578,7 @@ export function Map3D() {
   const highlightEntitiesRef = useRef<CesiumEntity[]>([]);
   const routeEntitiesRef = useRef<Map<string, CesiumEntity>>(new Map());
   const areaEntitiesRef = useRef<Map<string, CesiumEntity[]>>(new Map());
+  const distanceRingGroupsRef = useRef<CesiumDistanceRingGroups>({ rings: [], labels: [] });
   const entityGroupsRef = useRef<Record<GroupKey, CesiumEntity[]>>({
     tracks: [],
     trackTrails: [],
@@ -588,6 +609,7 @@ export function Map3D() {
 
     let viewer: CesiumViewer | null = null;
     let destroyed = false;
+    let cesiumScalePush: (() => void) | null = null;
 
     const init = async () => {
       try {
@@ -648,6 +670,7 @@ export function Map3D() {
           useDbAreaStore.getState().rows,
           useDbAreaStore.getState().areaVisibility,
           useAppStore.getState().layerVisibility[LYR_DB_AREAS] !== false,
+          pickSituationAreaLayerStyle(useDistanceRingStore.getState()),
         );
 
         /* 2) 雷达覆盖（圆/扫描）与光电 FOV（扇形/圆）分开展示，与 2D 图层面板两项一致 */
@@ -816,6 +839,16 @@ export function Map3D() {
           }
         }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
+        cesiumScalePush = () => {
+          const mpp = metersPerPixelCesium(
+            v as import("@/lib/map-scale-bar").CesiumScaleViewer,
+            Cesium,
+          );
+          useMapPointerStore.getState().setMetersPerPixel(mpp);
+        };
+        cesiumScalePush();
+        v.camera.moveEnd.addEventListener(cesiumScalePush);
+
         /* init 内有 await：用最新 asset-store 再刷一遍扇区，避免仍停在配置/首帧朝向 */
         syncCesiumNonRadarCoverageFov(
           v,
@@ -827,6 +860,14 @@ export function Map3D() {
         );
 
         viewerRef.current = v;
+
+        syncCesiumDistanceRings(
+          v,
+          Cesium,
+          distanceRingGroupsRef.current,
+          pickDistanceRingSettings(useDistanceRingStore.getState()),
+          useAppStore.getState().layerVisibility[LYR_DISTANCE_RINGS] !== false,
+        );
 
         /* 按 layerVisibility 设置各组 entity 显隐（资产 billboard 按 `assetType` 分键，与 Map2D 一致） */
         const layerVis = useAppStore.getState().layerVisibility;
@@ -894,7 +935,12 @@ export function Map3D() {
       destroyed = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       if (placardPostRenderCleanupRef.current) placardPostRenderCleanupRef.current();
-      if (viewer && !viewer.isDestroyed()) viewer.destroy();
+      if (viewer && !viewer.isDestroyed()) {
+        if (cesiumScalePush) {
+          viewer.camera.moveEnd.removeEventListener(cesiumScalePush);
+        }
+        viewer.destroy();
+      }
       viewerRef.current = null;
       cesiumRef.current = null;
       radarSweepRef.current = [];
@@ -1030,6 +1076,24 @@ export function Map3D() {
     return unsub;
   }, []);
 
+  /** 显示控制 · 距离环：参数变化时重建 Cesium 实体 */
+  useEffect(() => {
+    const flush = () => {
+      const v = viewerRef.current;
+      const C = cesiumRef.current;
+      if (!v || !C || v.isDestroyed()) return;
+      const s = useDistanceRingStore.getState();
+      syncCesiumDistanceRings(
+        v,
+        C,
+        distanceRingGroupsRef.current,
+        pickDistanceRingSettings(s),
+        useAppStore.getState().layerVisibility[LYR_DISTANCE_RINGS] !== false,
+      );
+    };
+    return useDistanceRingStore.subscribe(flush);
+  }, []);
+
   /* 订阅 layerVisibility（与 Map2D `ALL_DATA_LAYER_IDS` 一致；资产 billboard 按 `assetType` 分键） */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
@@ -1044,6 +1108,9 @@ export function Map3D() {
       for (const ent of g.droneFov) ent.show = layerOn("lyr-drones");
       for (const ent of g.zones) ent.show = layerOn("lyr-zones");
       for (const ent of g.dbAreas) ent.show = layerOn("lyr-db-areas");
+      const drVis = layerOn(LYR_DISTANCE_RINGS);
+      for (const ent of distanceRingGroupsRef.current.rings) ent.show = drVis;
+      for (const ent of distanceRingGroupsRef.current.labels) ent.show = drVis;
       for (const ent of g.assets) {
         const at = ent.properties?.assetType?.getValue() as string | undefined;
         const layerKey =
@@ -1156,6 +1223,7 @@ export function Map3D() {
         da.rows,
         da.areaVisibility,
         useAppStore.getState().layerVisibility[LYR_DB_AREAS] !== false,
+        pickSituationAreaLayerStyle(useDistanceRingStore.getState()),
       );
     };
     const unsub1 = useDbAreaStore.subscribe(flush);
@@ -1163,9 +1231,12 @@ export function Map3D() {
       if ((s.layerVisibility[LYR_DB_AREAS] ?? true) === (p.layerVisibility[LYR_DB_AREAS] ?? true)) return;
       flush();
     });
+    const unsub3 = useDistanceRingStore.subscribe(flush);
+    flush();
     return () => {
       unsub1();
       unsub2();
+      unsub3();
     };
   }, []);
 
@@ -1213,11 +1284,16 @@ export function Map3D() {
       }
       void flush();
     });
+    const unsubVerified = useVerifiedTrackStore.subscribe((s, p) => {
+      if (s.mapVerifiedRev === p.mapVerifiedRev) return;
+      void flush();
+    });
     return () => {
       cancelled = true;
       unsub();
       unsubDisplay();
       unsubLayerVis();
+      unsubVerified();
     };
   }, []);
 

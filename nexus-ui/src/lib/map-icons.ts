@@ -1,4 +1,5 @@
 import type { ExpressionSpecification } from "maplibre-gl";
+import { VERIFIED_TRACK_MAP_COLOR } from "./verified-track-constants.ts";
 import { FORCE_COLORS, type ForceDisposition } from "./theme-colors.ts";
 import type { Track, PublicMapAssetType, AssetStatus } from "./map-entity-model.ts";
 import { PUBLIC_MAP_ASSET_TYPES } from "./map-entity-model.ts";
@@ -136,6 +137,9 @@ export function isAirTrackBirdGlyph(t: Pick<Track, "type" | "trackCategoryId" | 
  *
  * Get a stable marker image ID for MapLibre/Cesium caches.
  */
+/** 光电查证完成：军标 id 后缀（与态势色独立，统一绿色填充） */
+export const OPTICALLY_VERIFIED_SYMBOL_SUFFIX = "-ov";
+
 export function getMarkerSymbolId(
   type: TrackType,
   disposition: ForceDisposition,
@@ -144,19 +148,22 @@ export function getMarkerSymbolId(
   neutralFusionFill?: string | null,
   airBird = false,
   airFuse = false,
+  opticallyVerified = false,
 ): string {
   const birdSeg = type === "air" && airBird ? "-bird" : "";
   const fuseSeg = type === "air" && airFuse ? "-fuse" : "";
   const base = `track-${type}-${disposition}-${virtual ? "v" : "r"}${birdSeg}${fuseSeg}`;
+  let id: string;
   if (disposition === "friendly") {
     const suf = friendlyTintSuffix(friendlyTint);
-    return suf ? `${base}${suf}` : base;
-  }
-  if (disposition === "neutral") {
+    id = suf ? `${base}${suf}` : base;
+  } else if (disposition === "neutral") {
     const suf = neutralFusionFillSuffix(neutralFusionFill);
-    return suf ? `${base}${suf}` : base;
+    id = suf ? `${base}${suf}` : base;
+  } else {
+    id = base;
   }
-  return base;
+  return opticallyVerified ? `${id}${OPTICALLY_VERIFIED_SYMBOL_SUFFIX}` : id;
 }
 
 /** 融合航迹中立态配色：对海/水下白、对空浅紫、对空无人机黄 */
@@ -211,9 +218,11 @@ export function buildMarkerSymbolSvg(
   neutralFusionFill?: string | null,
   airBirdGlyph = false,
   airFuseGlyph = false,
+  opticallyVerified = false,
 ): string {
-  const color =
-    disposition === "neutral" && neutralFusionFill?.trim()
+  const color = opticallyVerified
+    ? VERIFIED_TRACK_MAP_COLOR
+    : disposition === "neutral" && neutralFusionFill?.trim()
       ? neutralFusionFill.trim()
       : resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
   const icon = type === "air"
@@ -255,6 +264,7 @@ export function buildMarkerSymbolDataUrl(
   neutralFusionFill?: string | null,
   airBirdGlyph = false,
   airFuseGlyph = false,
+  opticallyVerified = false,
 ): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
     buildMarkerSymbolSvg(
@@ -266,6 +276,7 @@ export function buildMarkerSymbolDataUrl(
       neutralFusionFill,
       airBirdGlyph,
       airFuseGlyph,
+      opticallyVerified,
     ),
   )}`;
 }
@@ -299,6 +310,8 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
   airBird?: boolean;
   /** 仅 `type === "air"`：对空融合专用图标 */
   airFuse?: boolean;
+  /** 光电查证完成：军标整体绿色 */
+  opticallyVerified?: boolean;
 }> {
   const types: TrackType[] = ["air", "sea", "underwater"];
   const dispositions: ForceDisposition[] = ["hostile", "friendly", "neutral"];
@@ -321,6 +334,7 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
     neutralFusionFill?: string;
     airBird?: boolean;
     airFuse?: boolean;
+    opticallyVerified?: boolean;
   }> = [];
   for (const type of types) {
     const airModes: Array<{ airBird: boolean; airFuse: boolean }> =
@@ -375,6 +389,23 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
       }
     }
   }
+  const snapshot = [...out];
+  for (const item of snapshot) {
+    out.push({
+      ...item,
+      id: getMarkerSymbolId(
+        item.type,
+        item.disposition,
+        item.virtual,
+        item.friendlyFill,
+        item.neutralFusionFill,
+        item.airBird === true,
+        item.airFuse === true,
+        true,
+      ),
+      opticallyVerified: true,
+    });
+  }
   return out;
 }
 
@@ -409,6 +440,45 @@ export function buildLockOnSvg(): string {
 
 export function buildLockOnDataUrl(): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(buildLockOnSvg())}`;
+}
+
+/* ── 告警航迹威胁 Top5 序号（红底方块 + 白字）── */
+
+export const THREAT_RANK_BADGE_PREFIX = "threat-rank-badge-";
+
+export function threatRankBadgeImageId(rank: number): string {
+  return `${THREAT_RANK_BADGE_PREFIX}${rank}`;
+}
+
+const THREAT_RANK_BADGE_PX = 22;
+
+/** 红底正方形序号徽标（1–5），供 MapLibre `icon-image` */
+export function buildThreatRankBadgeDataUrl(rank: number): string {
+  const label = String(Math.max(1, Math.min(5, Math.trunc(rank))));
+  if (typeof document === "undefined") {
+    throw new Error("[map-icons] buildThreatRankBadgeDataUrl 仅在浏览器环境可用");
+  }
+  const size = THREAT_RANK_BADGE_PX;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("[map-icons] Canvas 2D 不可用");
+  ctx.fillStyle = "#dc2626";
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = "#fecaca";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 13px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, size / 2, size / 2 + 0.5);
+  return canvas.toDataURL("image/png");
+}
+
+export function allThreatRankBadgeImageIds(): string[] {
+  return [1, 2, 3, 4, 5].map((n) => threatRankBadgeImageId(n));
 }
 
 /* ── 告警环（Alert severity rings）96x96 SVG ── */

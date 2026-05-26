@@ -271,7 +271,7 @@ export function LayerPanel() {
                             className="border-b border-nexus-border/30 py-2 pr-2 text-[10px] leading-relaxed text-nexus-text-muted last:border-b-0"
                             style={{ paddingLeft: 24 }}
                           >
-                            暂无可选光电（实体快照中无 PTZ 主相机）
+                            暂无可选光电（8090 中无 PTZ 主相机或第三方相机）
                           </div>
                         ) : (
                           optoCameraDevices.map((dev) => {

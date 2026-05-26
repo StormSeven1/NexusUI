@@ -11,7 +11,7 @@ import { generateId } from "ai";
 import type { FileUIPart, UIMessage } from "ai";
 import { NxIconButton } from "@/components/nexus";
 import { ChatMessageList } from "@/components/chat/ChatMessageList";
-import { ChatInput } from "@/components/chat/ChatInput";
+import { ChatInput, type ChatInputHandle } from "@/components/chat/ChatInput";
 import { LangGraphInterruptDialog } from "@/components/chat/LangGraphInterruptDialog";
 import { useVlmChatInjectStore } from "@/stores/vlm-chat-inject-store";
 import {
@@ -33,6 +33,11 @@ import {
 } from "@/lib/task-status-judgment-ui";
 import type { TaskStatusChatPayload } from "@/lib/task-status-types";
 import { subscribeTaskStatusChat } from "@/lib/task-status-chat-feed-bus";
+import {
+  getAssistantLangGraphThreadId,
+  useAssistantPanelMessages,
+  useAssistantPanelSessionStore,
+} from "@/stores/assistant-panel-session-store";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "sonner";
 import { Bot, ChevronRight, Trash2, Zap } from "lucide-react";
@@ -140,10 +145,13 @@ function appendToLastAssistantText(setMessages: Dispatch<SetStateAction<UIMessag
 }
 
 export function ChatPanelLangGraph() {
-  const [messages, setMessages] = useState<UIMessage[]>([]);
+  const [messages, setMessages] = useAssistantPanelMessages("chat");
+  const clearSession = useAssistantPanelSessionStore((s) => s.clearSession);
+  const setLangGraphThreadId = useAssistantPanelSessionStore((s) => s.setLangGraphThreadId);
   const [isStreaming, setIsStreaming] = useState(false);
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const chatInputRef = useRef<ChatInputHandle>(null);
   const leadingToolbarRef = useRef<HTMLDivElement | null>(null);
   /** Qt `m_mapTrackSession`：`trackId_cameraIndex` → 当前轮查证助手消息 id（供 taskStatus 5/6/7 追加研判） */
   const verifySessionRef = useRef<Map<string, string>>(new Map());
@@ -152,8 +160,6 @@ export function ChatPanelLangGraph() {
   const verifyBannerRef = useRef<Map<string, string>>(new Map());
   const judgmentStateRef = useRef<Map<string, TaskVerifyJudgmentState>>(new Map());
   const vlmInjectSeq = useVlmChatInjectStore((s) => s.injectSeq);
-  /** 与 Qt SSE 根字段 `thread_id` 一致：后续用户消息与 interrupt 恢复请求携带 */
-  const langGraphThreadIdRef = useRef("");
   const [interruptPrompt, setInterruptPrompt] = useState<LangGraphInterruptUiPayload | null>(null);
 
   useEffect(() => {
@@ -291,18 +297,17 @@ export function ChatPanelLangGraph() {
   const handleClear = useCallback(() => {
     stop();
     setQuickMenuOpen(false);
-    langGraphThreadIdRef.current = "";
     setInterruptPrompt(null);
     verifySessionRef.current.clear();
     verifyFourBubbleIdsRef.current.clear();
     verifyBannerRef.current.clear();
     judgmentStateRef.current.clear();
-    setMessages([]);
-  }, [stop]);
+    clearSession("chat");
+  }, [stop, clearSession]);
 
   const processLangGraphParsedLine = useCallback(async (parsed: Record<string, unknown>) => {
     const tid = parsed.thread_id;
-    if (typeof tid === "string" && tid.trim()) langGraphThreadIdRef.current = tid.trim();
+    if (typeof tid === "string" && tid.trim()) setLangGraphThreadId(tid.trim());
 
     const intr = parseLangGraphInterruptEvent(parsed);
     if (intr) {
@@ -389,7 +394,7 @@ export function ChatPanelLangGraph() {
       messages: [{ role: "user", content: userText }],
       user_context: {} as Record<string, unknown>,
     };
-    const existingThread = langGraphThreadIdRef.current.trim();
+    const existingThread = getAssistantLangGraphThreadId();
     if (existingThread) body.thread_id = existingThread;
 
     try {
@@ -429,6 +434,15 @@ export function ChatPanelLangGraph() {
     }
   }, [processLangGraphParsedLine]);
 
+  const handleQuickPromptSelect = useCallback((label: string) => {
+    if (interruptPrompt) {
+      toast.message("请先处理任务确认弹窗", { description: "继续执行、取消任务或关闭弹窗后再选择快捷问题" });
+      return;
+    }
+    setQuickMenuOpen(false);
+    chatInputRef.current?.setDraft(label);
+  }, [interruptPrompt]);
+
   const handleSend = useCallback(
     (text: string, files?: FileUIPart[]) => {
       if (files && files.length > 0) {
@@ -454,7 +468,7 @@ export function ChatPanelLangGraph() {
         <NxIconButton
           size="md"
           onClick={() => setQuickMenuOpen((o) => !o)}
-          disabled={isStreaming || !!interruptPrompt}
+          disabled={!!interruptPrompt}
           title="快捷问题"
         >
           <Zap size={15} strokeWidth={2} />
@@ -469,10 +483,7 @@ export function ChatPanelLangGraph() {
                 key={label}
                 type="button"
                 className="rounded px-2 py-1.5 text-left text-[11px] leading-snug text-nexus-text-primary hover:bg-white/[0.06]"
-                onClick={() => {
-                  setQuickMenuOpen(false);
-                  handleSend(label);
-                }}
+                onClick={() => handleQuickPromptSelect(label)}
               >
                 {label}
               </button>
@@ -509,9 +520,9 @@ export function ChatPanelLangGraph() {
                       <p className="mt-0.5 text-[10px] text-nexus-text-muted">智能对话 · 指令调度</p>
                     </div>
                     <p className="text-[11px] leading-[1.65] text-nexus-text-secondary">
-                      可根据自然语言理解意图，下发航迹查询、无人机协同等指令。在底部输入并发送；或使用下方
+                      可根据自然语言理解意图，下发航迹查询、无人机协同等指令。点击
                       <span className="mx-0.5 text-nexus-text-primary">快捷问题</span>
-                      与输入栏左侧的
+                      会填入底部输入框，可修改后再发送；输入栏左侧的
                       <span className="mx-0.5 inline-flex items-center gap-0.5 text-amber-300/90">
                         <Zap className="inline h-3 w-3" />
                         闪电
@@ -535,8 +546,8 @@ export function ChatPanelLangGraph() {
                     <li key={label} className="w-full">
                       <button
                         type="button"
-                        disabled={isStreaming || !!interruptPrompt}
-                        onClick={() => handleSend(label)}
+                        disabled={!!interruptPrompt}
+                        onClick={() => handleQuickPromptSelect(label)}
                         className={cn(
                           "group flex w-full items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.03] px-3 py-2.5 text-left",
                           "shadow-sm transition-all duration-200",
@@ -573,10 +584,12 @@ export function ChatPanelLangGraph() {
         )}
       </div>
       <ChatInput
+        ref={chatInputRef}
         onSend={handleSend}
         onStop={stop}
         isLoading={isStreaming || !!interruptPrompt}
         leadingToolbar={leadingToolbar}
+        enableVoiceInput
       />
       <LangGraphInterruptDialog
         open={!!interruptPrompt}

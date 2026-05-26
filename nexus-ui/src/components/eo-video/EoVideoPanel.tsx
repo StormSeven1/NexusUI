@@ -634,7 +634,7 @@ export function EoVideoPanel({
   }, [thirdPartyWideSubCams]);
 
   const thirdPartySubPipIds = useMemo(() => {
-    if (!expandedMode || !isThirdPartyUdpStream || !cfg?.streams?.length || !thirdPartyWideSubCams?.length) return [];
+    if (!isThirdPartyUdpStream || !cfg?.streams?.length || !thirdPartyWideSubCams?.length) return [];
     const seen = new Set<string>();
     const out: string[] = [];
     const norm = (id: string) => canonicalEntityId(id) || id.trim().toLowerCase();
@@ -649,9 +649,13 @@ export function EoVideoPanel({
       out.push(b.subCam.trim());
     }
     return out;
-  }, [expandedMode, isThirdPartyUdpStream, cfg?.streams, thirdPartyWideSubCams]);
+  }, [isThirdPartyUdpStream, cfg?.streams, thirdPartyWideSubCams]);
 
-  const showThirdPartySubPipToggle = expandedMode && isThirdPartyUdpStream && thirdPartySubPipIds.length > 0;
+  const showThirdPartySubPipStack =
+    (pipOpen || expandedMode) && thirdPartySubPipsVisible && isThirdPartyUdpStream && thirdPartySubPipIds.length > 0;
+
+  const showThirdPartySubPipToggle =
+    (pipOpen || expandedMode) && isThirdPartyUdpStream && thirdPartySubPipIds.length > 0;
 
   useEffect(() => {
     if (!showThirdPartySubPipToggle) {
@@ -1169,8 +1173,10 @@ export function EoVideoPanel({
     setPipStreamId(main);
   }, [pipOpen, activeStreamId, pipStreamId]);
 
+  const showEoPipFloatingPlayer = pipOpen && Boolean(activeStream) && !isThirdPartyUdpStream;
+
   useEffect(() => {
-    if (!pipOpen || !cfg || !pipStreamId.trim()) {
+    if (!pipOpen || !cfg || !pipStreamId.trim() || isThirdPartyUdpStream) {
       setPipSignalingUrl("");
       setPipErr(null);
       setPipResolving(false);
@@ -1218,6 +1224,7 @@ export function EoVideoPanel({
     playSignalingUrl,
     activeStream?.uav?.entityId,
     mqttDroneInDock,
+    isThirdPartyUdpStream,
   ]);
 
   const showCameraLoadingGate =
@@ -2324,7 +2331,8 @@ export function EoVideoPanel({
                 </div>
                 <EoPipFloatingPlayer
                   key={`eo-pip-${pipStreamId || activeStreamId}`}
-                  open={pipOpen && Boolean(activeStream)}
+                  open={showEoPipFloatingPlayer}
+                  expandedMode={expandedMode}
                   config={cfg}
                   iceServers={cfg.iceServers}
                   pipStreamId={pipStreamId || activeStreamId}
@@ -2363,8 +2371,8 @@ export function EoVideoPanel({
                           .filter(Boolean)
                           .join(" · ")}
                       />
-                      {expandedMode && thirdPartySubPipIds.length > 0 && thirdPartySubPipsVisible ? (
-                        <EoThirdPartySubCamPipStack entityIds={thirdPartySubPipIds} />
+                      {showThirdPartySubPipStack ? (
+                        <EoThirdPartySubCamPipStack entityIds={thirdPartySubPipIds} expandedMode={expandedMode} />
                       ) : null}
                     </>
                   ) : (
@@ -2421,6 +2429,7 @@ export function EoVideoPanel({
                         onTogglePtzPanel={() => setPtzPanelOpen((v) => !v)}
                         pipOpen={pipOpen}
                         onTogglePip={togglePip}
+                        pipThirdPartySubCamsAvailable={isThirdPartyUdpStream && thirdPartySubPipIds.length > 0}
                         captureReady={isThirdPartyUdpStream ? thirdPartyCaptureReady : captureReady}
                         isRecording={isRecording}
                         onSnapshot={handleSnapshot}
@@ -2495,7 +2504,8 @@ export function EoVideoPanel({
                   </div>
                   <EoPipFloatingPlayer
                     key={`eo-pip-${pipStreamId || activeStreamId}`}
-                    open={pipOpen && Boolean(activeStream)}
+                    open={showEoPipFloatingPlayer}
+                    expandedMode={expandedMode}
                     config={cfg}
                     iceServers={cfg.iceServers}
                     pipStreamId={pipStreamId || activeStreamId}

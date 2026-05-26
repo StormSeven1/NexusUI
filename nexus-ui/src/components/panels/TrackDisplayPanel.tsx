@@ -8,10 +8,9 @@ import { cn } from "@/lib/utils";
 import { TRACK_LAYER_KEYS_ORDERED, type TrackLayerKey } from "@/lib/map-entity-model";
 import { TRACK_SUBTYPE_LABELS } from "@/lib/track-layer-visibility";
 import { useTrackDisplayStore } from "@/stores/track-display-store";
-import { Route } from "lucide-react";
 import { useMemo, useState } from "react";
 
-export function TrackDisplayPanel() {
+export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) {
   const seaFusionColor = useTrackDisplayStore((s) => s.seaFusionColor);
   const airFusionColor = useTrackDisplayStore((s) => s.airFusionColor);
   const vectorLengthSecondsByLayer = useTrackDisplayStore((s) => s.vectorLengthSecondsByLayer);
@@ -38,21 +37,13 @@ export function TrackDisplayPanel() {
   const currentColor = selectedLayer === "fuse_air" ? airFusionColor : seaFusionColor;
   const setCurrentColor = selectedLayer === "fuse_air" ? setAirFusionColor : setSeaFusionColor;
 
-  return (
-    <div className="flex h-full flex-col">
-      <div className="border-b border-white/[0.06] p-3">
-        <div className="flex items-center gap-2">
-          <Route size={16} className="text-nexus-text-muted" />
-          <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">
-            航迹显示
-          </span>
-        </div>
-        <p className="mt-1 text-[10px] leading-snug text-nexus-text-muted">
-          选择航迹类型后分别调整矢量与尾迹；融合航迹可改中立色。
-        </p>
-      </div>
-
-      <div className="flex-1 space-y-4 overflow-y-auto p-3">
+  const body = (
+    <div className={embedded ? "space-y-4" : "flex-1 space-y-4 overflow-y-auto p-3"}>
+        {!embedded ? (
+          <p className="text-[10px] leading-snug text-nexus-text-muted">
+            选择航迹类型后分别调整矢量与尾迹；融合航迹可改中立色。
+          </p>
+        ) : null}
         <div>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
             航迹类型
@@ -147,7 +138,20 @@ export function TrackDisplayPanel() {
             <span>1800s</span>
           </div>
         </div>
+    </div>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b border-white/[0.06] p-3">
+        <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">航迹显示</span>
+        <p className="mt-1 text-[10px] leading-snug text-nexus-text-muted">
+          选择航迹类型后分别调整矢量与尾迹；融合航迹可改中立色。
+        </p>
       </div>
+      {body}
     </div>
   );
 }
