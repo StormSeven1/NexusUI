@@ -33,6 +33,8 @@ interface TaskProgressState {
   endByTarget: (targetId: string) => void;
   /** 方案更新淘汰：指定 blockId + schemeId 组合 → terminated */
   terminateEntries: (pairs: { blockId: string; schemeId: string }[]) => void;
+  /** 方案更新淘汰：指定 targetId 下若干 deviceId → terminated */
+  terminateByTargetDevices: (targetId: string, deviceIds: string[]) => void;
   /** 按 targetId + deviceId 判断是否已有 executing 条目（避免重复写入） */
   hasExecuting: (targetId: string, deviceId: string) => boolean;
   clearAll: () => void;
@@ -67,9 +69,13 @@ export const useTaskProgressStore = create<TaskProgressState>((set, get) => ({
   },
 
   endByTarget: (targetId) => {
+    const tid = String(targetId ?? "").trim();
+    if (!tid) return;
     set((s) => ({
       entries: s.entries.map((e) =>
-        e.targetId === targetId && e.status === "executing" ? { ...e, status: "ended", endedAt: Date.now() } : e,
+        String(e.targetId ?? "").trim() === tid && e.status === "executing"
+          ? { ...e, status: "ended", endedAt: Date.now() }
+          : e,
       ),
     }));
   },
@@ -80,6 +86,21 @@ export const useTaskProgressStore = create<TaskProgressState>((set, get) => ({
     set((s) => ({
       entries: s.entries.map((e) =>
         e.status === "executing" && keySet.has(`${e.blockId}|${e.schemeId}`) ? { ...e, status: "terminated", endedAt: Date.now() } : e,
+      ),
+    }));
+  },
+
+  terminateByTargetDevices: (targetId, deviceIds) => {
+    const tid = String(targetId ?? "").trim();
+    const ids = new Set(deviceIds.map((id) => String(id).trim().toLowerCase()).filter(Boolean));
+    if (!tid || ids.size === 0) return;
+    set((s) => ({
+      entries: s.entries.map((e) =>
+        e.status === "executing" &&
+        e.targetId === tid &&
+        ids.has(e.deviceId.toLowerCase())
+          ? { ...e, status: "terminated", endedAt: Date.now() }
+          : e,
       ),
     }));
   },

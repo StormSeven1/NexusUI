@@ -11,7 +11,6 @@
  *   2. WS 自动推送方案 → DisposalPlanWsClient → appendFromNormalized(_, "ws")
  *   3. 用户执行方案 → executeScheme → postDisposalExecute → applySchemeSideEffects
  *      - 激活激光/TDOA 扇区
- *      - 绘制资产→目标连线
  *      - 更新执行状态（executedSchemeIds / executingSchemeIds）
  *
  * 【跨方案去重】
@@ -20,9 +19,9 @@
  *   - getExecutionTrackingKey: targetId + 设备名集合（排序后 \u001f 拼接）
  *
  * 【地图效果管理】
- *   - applySchemeSideEffects: 执行成功后激活激光/TDOA + 绘制连线
+ *   - applySchemeSideEffects: 执行成功后激活激光/TDOA
  *   - reconcileDisposalMapEffectsForIncomingPayload: 新方案包到达时收敛旧效果
- *   - cleanupEffectsForMissingTargets: 目标消失时清理连线与激光/TDOA
+ *   - cleanupEffectsForMissingTargets: 目标消失时清理激光/TDOA
  *   - clearBlocks: 全清时同时清理所有地图效果
  */
 
@@ -38,29 +37,28 @@ import type {
   NormalizedDisposalPlans,
 } from "@/lib/disposal/disposal-types";
 import {
-  collectAllDeviceIdsFromNormalized,
   getExecutionTrackingKey,
-  inferIsAirTrackFromInputParams,
   primaryTargetIdFromNormalized,
 } from "@/lib/disposal/disposal-execution-utils";
 import { activateLaser, deactivateAllLasers, deactivateLaser } from "@/lib/laser-activation";
 import { activateTdoa, deactivateAllTdoa, deactivateTdoa } from "@/lib/tdoa-activation";
 import {
-  mergeConnectionLines,
   clearAllConnectionLines,
-  pruneConnectionLinesForTarget,
-  pruneConnectionLinesForMissingTargets,
-  type AssetTargetConnection,
   resolveTrackLngLatForTargetId,
 } from "@/lib/asset-target-line";
-import { findDisposalFollowDevicesToRelease } from "@/lib/disposal/disposal-weapon-follow";
 import { setLaserActivationEnabled, setTdoaActivationEnabled } from "@/lib/map-app-config";
 import { useAssetStore } from "@/stores/asset-store";
 import { useDroneStore } from "@/stores/drone-store";
 import { useTaskProgressStore } from "@/stores/task-progress-store";
+import {
+  clearAllWeaponActivationSuppressions,
+  clearWeaponActivationSuppression,
+  suppressWeaponActivationForTargetDevices,
+} from "@/lib/weapon/weapon-device-runtime";
 import { toast } from "sonner";
 
 export type DisposalWsStatus = "idle" | "connecting" | "open" | "error";
+export type DisposalRunMode = "manual" | "auto";
 
 export interface DisposalPlanCardRow {
   cardInstanceId: string;
@@ -97,15 +95,81 @@ function blockPrimaryTargetId(b: DisposalPlanBlock): string {
   return ip?.targetId != null ? String(ip.targetId).trim() : "";
 }
 
+function targetIdForAutoExecute(block: DisposalPlanBlock, row: DisposalPlanCardRow, scheme: MappedDisposalScheme): string {
+  return String(row.inputParams?.targetId ?? scheme.disposalTargetId ?? blockPrimaryTargetId(block) ?? "").trim();
+}
+
+function disposalTargetExists(targetId: string): boolean {
+  return !!targetId && resolveTrackLngLatForTargetId(targetId) != null;
+}
+
 /** 跨方案卡片继承：与 V2 DisposalCard `executedExecutionKeys` 一致 */
 const globalExecutedDisposalKeys = new Set<string>();
 const activatedLaserDeviceIds = new Set<string>();
 const activatedTdoaDeviceIds = new Set<string>();
+const activatedDevicesByTarget = new Map<string, { lasers: Set<string>; tdoa: Set<string> }>();
+let cleanupMissingTargetsInProgress = false;
 
 function clearDisposalActivationState(): void {
+  const ids = [...new Set([...activatedLaserDeviceIds, ...activatedTdoaDeviceIds])];
   globalExecutedDisposalKeys.clear();
   activatedLaserDeviceIds.clear();
   activatedTdoaDeviceIds.clear();
+  activatedDevicesByTarget.clear();
+  clearAllWeaponActivationSuppressions();
+  for (const id of ids) {
+    markSchemeWeaponStandby(id);
+  }
+}
+
+function activationBucketForTarget(targetId: string): { lasers: Set<string>; tdoa: Set<string> } {
+  const tid = String(targetId ?? "").trim();
+  let bucket = activatedDevicesByTarget.get(tid);
+  if (!bucket) {
+    bucket = { lasers: new Set<string>(), tdoa: new Set<string>() };
+    activatedDevicesByTarget.set(tid, bucket);
+  }
+  return bucket;
+}
+
+function setSchemeWeaponDeviceState(deviceId: string, deviceState: 0 | 2): void {
+  const id = String(deviceId ?? "").trim();
+  if (!id) return;
+  const store = useAssetStore.getState();
+  const cur = store.assets.find((a) => a.id === id);
+  if (!cur) return;
+  const props =
+    cur.properties && typeof cur.properties === "object"
+      ? (cur.properties as Record<string, unknown>)
+      : {};
+  const label = deviceState === 2 ? "执行" : "待机";
+  const nextStatus = deviceState === 2 ? "online" : "offline";
+  const nextSchemeActivated = deviceState === 2;
+  if (
+    cur.status === nextStatus &&
+    Number(props.deviceState) === deviceState &&
+    props.deviceStateLabel === label &&
+    props.schemeActivatedWeapon === nextSchemeActivated
+  ) {
+    return;
+  }
+  store.mergeAssetFields(id, {
+    status: nextStatus,
+    properties: {
+      ...props,
+      deviceState,
+      deviceStateLabel: label,
+      schemeActivatedWeapon: nextSchemeActivated,
+    },
+  });
+}
+
+function markSchemeWeaponExecuting(deviceId: string): void {
+  setSchemeWeaponDeviceState(deviceId, 2);
+}
+
+function markSchemeWeaponStandby(deviceId: string): void {
+  setSchemeWeaponDeviceState(deviceId, 0);
 }
 
 /**
@@ -154,19 +218,16 @@ function taskLooksLikeTdoa(task: MappedDisposalTask): boolean {
 }
 
 /**
- * 解析处置目标的经纬度坐标（用于激光/TDOA 扇区定位和资产→目标连线）。
+ * 解析处置目标的经纬度坐标（用于激光/TDOA 扇区定位）。
  * 优先从 track-store 查找实时航迹坐标，回退到 blueForceInfo 中的静态坐标。
  */
 function resolveDisposalTargetLngLat(
   targetId: string,
-  inputParams: DisposalInputParams | undefined,
+  _inputParams: DisposalInputParams | undefined,
   blue: Record<string, unknown> | undefined,
 ): { lng: number; lat: number } | null {
-  const hint = inferIsAirTrackFromInputParams(inputParams);
-  const fromTrack = resolveTrackLngLatForTargetId(targetId, hint);
+  const fromTrack = resolveTrackLngLatForTargetId(targetId);
   if (fromTrack) return fromTrack;
-  const loose = resolveTrackLngLatForTargetId(targetId, undefined);
-  if (loose) return loose;
   const lng = Number(blue?.longitude);
   const lat = Number(blue?.latitude);
   if (Number.isFinite(lng) && Number.isFinite(lat)) return { lng, lat };
@@ -236,7 +297,7 @@ function toastMissingSchemeAssets(scheme: MappedDisposalScheme, missingIds: stri
       ? missingIds.join("、")
       : `${missingIds.slice(0, 5).join("、")} 等共 ${missingIds.length} 个`;
   toast.error("处置方案：未找到对应资产", {
-    description: `「${name}」中的设备 id 在当前资产列表中不存在：${list}。已跳过这些任务的地图激活与连线。`,
+    description: `「${name}」中的设备 id 在当前资产列表中不存在：${list}。已跳过这些任务的地图激活。`,
     duration: 8000,
   });
 }
@@ -245,13 +306,53 @@ function toastMissingSchemeAssets(scheme: MappedDisposalScheme, missingIds: stri
  * 去掉某资产上处置触发的专题层状态（激光扇区/TDOA 扇区）。
  * 非激光/TDOA 类设备调用为 no-op。
  */
-function releaseDisposalAssetBindings(deviceId: string): void {
+function releaseDisposalAssetBindings(deviceId: string, kind?: "laser" | "tdoa"): void {
   const id = String(deviceId ?? "").trim();
   if (!id) return;
-  deactivateLaser(id);
-  activatedLaserDeviceIds.delete(id);
-  deactivateTdoa(id);
-  activatedTdoaDeviceIds.delete(id);
+  let released = false;
+  if (kind === undefined || kind === "laser") {
+    released = activatedLaserDeviceIds.delete(id) || released;
+    deactivateLaser(id);
+  }
+  if (kind === undefined || kind === "tdoa") {
+    released = activatedTdoaDeviceIds.delete(id) || released;
+    deactivateTdoa(id);
+  }
+  if (released || kind === undefined) {
+    markSchemeWeaponStandby(id);
+  }
+}
+
+function releaseActivatedDeviceForTarget(targetId: string, deviceId: string): void {
+  const tid = String(targetId ?? "").trim();
+  const id = String(deviceId ?? "").trim();
+  if (!tid || !id) return;
+  const bucket = activatedDevicesByTarget.get(tid);
+  if (!bucket) return;
+  const wasLaser = bucket.lasers.has(id);
+  const wasTdoa = bucket.tdoa.has(id);
+  bucket.lasers.delete(id);
+  bucket.tdoa.delete(id);
+  if (bucket.lasers.size === 0 && bucket.tdoa.size === 0) {
+    activatedDevicesByTarget.delete(tid);
+  }
+  if (wasLaser) releaseDisposalAssetBindings(id, "laser");
+  if (wasTdoa) releaseDisposalAssetBindings(id, "tdoa");
+}
+
+function releaseAllActivatedDevicesForTarget(targetId: string): string[] {
+  const tid = String(targetId ?? "").trim();
+  if (!tid) return [];
+  const bucket = activatedDevicesByTarget.get(tid);
+  if (!bucket) return [];
+  const ids = [...new Set([...bucket.lasers, ...bucket.tdoa])];
+  const lasers = [...bucket.lasers];
+  const tdoa = [...bucket.tdoa];
+  activatedDevicesByTarget.delete(tid);
+  for (const id of lasers) releaseDisposalAssetBindings(id, "laser");
+  for (const id of tdoa) releaseDisposalAssetBindings(id, "tdoa");
+  syncGlobalActivationFlagsByCurrentDevices();
+  return ids;
 }
 
 function syncGlobalActivationFlagsByCurrentDevices(): void {
@@ -259,53 +360,57 @@ function syncGlobalActivationFlagsByCurrentDevices(): void {
   if (activatedTdoaDeviceIds.size === 0) setTdoaActivationEnabled(false);
 }
 
-/**
- * 同一目标后续推送的新处置包若缩小了参与设备集合：此前已画的连线与激光/TDOA 等需收敛，
- * 否则会一直显示资产→目标连线或扇区跟随（见 WS 连续两包方案设备集合不一致）。
- */
-function reconcileDisposalMapEffectsForIncomingPayload(n: NormalizedDisposalPlans): void {
-  const tid = String(primaryTargetIdFromNormalized(n) ?? "").trim();
-  if (!tid) return;
-
-  const allowedAssets = collectAllDeviceIdsFromNormalized(n);
-  const removedFromLines = pruneConnectionLinesForTarget(tid, allowedAssets);
-  for (const assetId of removedFromLines) {
-    releaseDisposalAssetBindings(assetId);
-  }
-
-  // 方案更新淘汰：被移除的设备对应的任务进展 → 终止
-  if (removedFromLines.length > 0) {
-    const removedSet = new Set(removedFromLines.map((id) => id.toLowerCase()));
-    const progressEntries = useTaskProgressStore.getState().entries;
-    const toTerminate: { blockId: string; schemeId: string }[] = [];
-    for (const e of progressEntries) {
-      if (e.targetId === tid && e.status === "executing" && removedSet.has(e.deviceId.toLowerCase())) {
-        toTerminate.push({ blockId: e.blockId, schemeId: e.schemeId });
-      }
-    }
-    if (toTerminate.length > 0) useTaskProgressStore.getState().terminateEntries(toTerminate);
-  }
-
-  const keepLasers = new Set<string>();
-  const keepTdoa = new Set<string>();
+function allowedWeaponDevicesByTarget(n: NormalizedDisposalPlans): Map<string, { lasers: Set<string>; tdoa: Set<string> }> {
+  const out = new Map<string, { lasers: Set<string>; tdoa: Set<string> }>();
   for (const item of n.items || []) {
+    const fallbackTid = String(item.inputParams?.targetId ?? primaryTargetIdFromNormalized(n) ?? "").trim();
     for (const sch of item.mappedSchemes || []) {
+      const targetId = String(item.inputParams?.targetId ?? sch.disposalTargetId ?? fallbackTid ?? "").trim();
+      if (!targetId) continue;
+      let bucket = out.get(targetId);
+      if (!bucket) {
+        bucket = { lasers: new Set<string>(), tdoa: new Set<string>() };
+        out.set(targetId, bucket);
+      }
       for (const task of sch.tasks || []) {
         const id = String(task.deviceId ?? "").trim();
         if (!id) continue;
-        if (taskLooksLikeLaser(task)) keepLasers.add(id);
-        if (taskLooksLikeTdoa(task)) keepTdoa.add(id);
+        if (taskLooksLikeLaser(task)) bucket.lasers.add(id);
+        if (taskLooksLikeTdoa(task)) bucket.tdoa.add(id);
       }
     }
   }
+  return out;
+}
 
-  const { laserDeviceIds, tdoaDeviceIds } = findDisposalFollowDevicesToRelease(tid, keepLasers, keepTdoa);
-  for (const id of laserDeviceIds) releaseDisposalAssetBindings(id);
-  for (const id of tdoaDeviceIds) releaseDisposalAssetBindings(id);
+/**
+ * 同一目标后续推送的新处置包若缩小了参与设备集合：此前激活的激光/TDOA 等需收敛，
+ * 否则会一直显示旧设备扇区跟随（见 WS 连续两包方案设备集合不一致）。
+ */
+function reconcileDisposalMapEffectsForIncomingPayload(n: NormalizedDisposalPlans): void {
+  const allowedByTarget = allowedWeaponDevicesByTarget(n);
+  for (const [targetId, active] of [...activatedDevicesByTarget.entries()]) {
+    const allowed = allowedByTarget.get(targetId);
+    if (!allowed) continue;
+    const removed: string[] = [];
+    for (const id of [...active.lasers]) {
+      if (allowed.lasers.has(id)) continue;
+      releaseActivatedDeviceForTarget(targetId, id);
+      removed.push(id);
+    }
+    for (const id of [...active.tdoa]) {
+      if (allowed.tdoa.has(id)) continue;
+      releaseActivatedDeviceForTarget(targetId, id);
+      removed.push(id);
+    }
+    if (removed.length > 0) {
+      useTaskProgressStore.getState().terminateByTargetDevices(targetId, removed);
+    }
+  }
+  syncGlobalActivationFlagsByCurrentDevices();
 }
 
 function applySchemeSideEffects(scheme: MappedDisposalScheme, inputParams: DisposalInputParams | undefined): void {
-  const connections: AssetTargetConnection[] = [];
   const tid = String(inputParams?.targetId ?? "").trim();
 
   const missingIds = missingSchemeDeviceIds(scheme);
@@ -321,9 +426,11 @@ function applySchemeSideEffects(scheme: MappedDisposalScheme, inputParams: Dispo
     const blue = task.blueForceInfo as Record<string, unknown> | undefined;
     const targetCoords = resolveDisposalTargetLngLat(String(task.targetId ?? tid), inputParams, blue);
 
-    const trackId = String(task.targetId ?? tid);
+    const trackId = String(task.targetId ?? tid).trim();
+    if (!trackId) continue;
 
     if (taskLooksLikeLaser(task) && targetCoords) {
+      clearWeaponActivationSuppression(trackId, task.deviceId);
       if (
         activateLaser(task.deviceId, targetCoords.lng, targetCoords.lat, {
           trackTargetId: trackId,
@@ -331,10 +438,13 @@ function applySchemeSideEffects(scheme: MappedDisposalScheme, inputParams: Dispo
         })
       ) {
         activatedLaserDeviceIds.add(task.deviceId);
+        activationBucketForTarget(trackId).lasers.add(task.deviceId);
+        markSchemeWeaponExecuting(task.deviceId);
       }
     }
 
     if (taskLooksLikeTdoa(task) && targetCoords) {
+      clearWeaponActivationSuppression(trackId, task.deviceId);
       if (
         activateTdoa(task.deviceId, targetCoords.lng, targetCoords.lat, {
           trackTargetId: trackId,
@@ -342,43 +452,40 @@ function applySchemeSideEffects(scheme: MappedDisposalScheme, inputParams: Dispo
         })
       ) {
         activatedTdoaDeviceIds.add(task.deviceId);
+        activationBucketForTarget(trackId).tdoa.add(task.deviceId);
+        markSchemeWeaponExecuting(task.deviceId);
       }
     }
-
-    const flng = blue != null ? Number(blue.longitude) : NaN;
-    const flat = blue != null ? Number(blue.latitude) : NaN;
-    connections.push({
-      assetEntityId: task.deviceId,
-      targetId: String(task.targetId ?? tid),
-      ...(Number.isFinite(flng) && Number.isFinite(flat) ? { targetFallbackLng: flng, targetFallbackLat: flat } : {}),
-    });
   }
-
-  mergeConnectionLines(connections);
 }
 
 export interface DisposalPlanState {
   blocks: DisposalPlanBlock[];
   wsStatus: DisposalWsStatus;
+  runMode: DisposalRunMode;
   setWsStatus: (s: DisposalWsStatus) => void;
+  setRunMode: (mode: DisposalRunMode) => void;
   appendFromNormalized: (n: NormalizedDisposalPlans, source: DisposalPlanSource) => void;
   clearBlocks: () => void;
   cleanupEffectsForMissingTargets: () => void;
   executeScheme: (blockId: string, cardInstanceId: string, scheme: MappedDisposalScheme) => Promise<boolean>;
+  executeBestSchemesByTarget: (block: DisposalPlanBlock) => Promise<boolean[]>;
 }
 
 export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
   blocks: [],
   wsStatus: "idle",
+  runMode: "manual",
 
   setWsStatus: (s) => set({ wsStatus: s }),
+  setRunMode: (mode) => set({ runMode: mode }),
 
   /**
    * 将归一化后的方案包写入 store。
    * 数据流：normalizeDisposalPayload → 本方法 → blocks 列表更新 → DisposalPlanFeed 重新渲染
    *
    * 步骤：
-   *   1. reconcileDisposalMapEffectsForIncomingPayload: 收敛旧方案包的地图效果（连线/激光/TDOA）
+   *   1. reconcileDisposalMapEffectsForIncomingPayload: 收敛旧方案包的地图效果（激光/TDOA）
    *   2. 遍历 items，为每个 DisposalPlanCardRow 生成 cardInstanceId
    *   3. 跨卡片继承：检查 globalExecutedDisposalKeys，标记已执行方案
    *   4. 构建 DisposalPlanBlock 并插入 blocks 列表（最新在前）
@@ -418,19 +525,19 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
     });
 
     const summary = buildBlockSummary(source, n.taskId, items.length);
-    set({
-      blocks: [
-        ...blocks,
-        {
-          blockId: `blk_${randomId()}`,
-          taskId: n.taskId,
-          source,
-          createdAt: now,
-          summary,
-          items,
-        },
-      ],
-    });
+    const block: DisposalPlanBlock = {
+      blockId: `blk_${randomId()}`,
+      taskId: n.taskId,
+      source,
+      createdAt: now,
+      summary,
+      items,
+    };
+    set({ blocks: [...blocks, block] });
+
+    if (get().runMode === "auto") {
+      void get().executeBestSchemesByTarget(block);
+    }
   },
 
   clearBlocks: () => {
@@ -444,20 +551,43 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
   },
 
   cleanupEffectsForMissingTargets: () => {
-    const removedFromLines = pruneConnectionLinesForMissingTargets();
-    for (const assetId of removedFromLines) {
-      releaseDisposalAssetBindings(assetId);
+    if (cleanupMissingTargetsInProgress) return;
+    cleanupMissingTargetsInProgress = true;
+    try {
+      const progressTargets = useTaskProgressStore
+        .getState()
+        .entries
+        .filter((e) => e.status === "executing")
+        .map((e) => String(e.targetId ?? "").trim())
+        .filter(Boolean);
+      const candidateTargetIds = new Set([...activatedDevicesByTarget.keys(), ...progressTargets]);
+      const missingTargetIds = new Set<string>();
+
+      for (const targetId of candidateTargetIds) {
+        if (resolveTrackLngLatForTargetId(targetId) != null) continue;
+        missingTargetIds.add(targetId);
+        const released = releaseAllActivatedDevicesForTarget(targetId);
+        suppressWeaponActivationForTargetDevices(targetId, released);
+      }
+
+      if (missingTargetIds.size > 0) {
+        for (const targetId of missingTargetIds) {
+          useTaskProgressStore.getState().endByTarget(targetId);
+        }
+      }
+      syncGlobalActivationFlagsByCurrentDevices();
+    } finally {
+      cleanupMissingTargetsInProgress = false;
     }
-    syncGlobalActivationFlagsByCurrentDevices();
   },
 
   /**
-   * 执行方案：POST grpc-disposal/execute → 成功后激活地图效果（激光/TDOA/连线）
+   * 执行方案：POST grpc-disposal/execute → 成功后激活地图效果（激光/TDOA）
    *
    * 执行流：
    *   1. 标记 scheme 为 executing（UI 显示 loading）
    *   2. postDisposalExecute 发送执行请求
-   *   3. 成功：applySchemeSideEffects（激活激光/TDOA + 绘制资产→目标连线）
+   *   3. 成功：applySchemeSideEffects（激活激光/TDOA）
    *          + 写入 globalExecutedDisposalKeys（跨卡片去重）
    *   4. 失败：toast 提示 + 记录 lastError
    *   5. 更新 executedSchemeIds / executingSchemeIds 状态
@@ -494,7 +624,7 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
 
     if (ok) {
       applySchemeSideEffects(scheme, row?.inputParams);
-      const tid = String(row?.inputParams?.targetId ?? blockPrimaryTargetId(block) ?? "").trim();
+      const tid = row ? targetIdForAutoExecute(block, row, scheme) : String(scheme.disposalTargetId ?? blockPrimaryTargetId(block) ?? "").trim();
       const execKey = getExecutionTrackingKey(tid, scheme);
       if (execKey) globalExecutedDisposalKeys.add(execKey);
       // 写入任务进展
@@ -539,5 +669,28 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
       console.warn("[DisposalPlan] execute failed", createdTaskId, result);
     }
     return ok;
+  },
+  executeBestSchemesByTarget: async (block) => {
+    const jobs: Array<Promise<boolean>> = [];
+    for (const row of block.items) {
+      let best: MappedDisposalScheme | null = null;
+      for (const scheme of row.mappedSchemes) {
+        if (
+          !best ||
+          scheme.priority < best.priority ||
+          (scheme.priority === best.priority && scheme.maxRecommendationScore > best.maxRecommendationScore)
+        ) {
+          best = scheme;
+        }
+      }
+      if (!best) continue;
+      const targetId = targetIdForAutoExecute(block, row, best);
+      if (!disposalTargetExists(targetId)) continue;
+      if (row.executedSchemeIds.includes(best.schemeId)) continue;
+      if (row.executingSchemeIds.includes(best.schemeId)) continue;
+      jobs.push(get().executeScheme(block.blockId, row.cardInstanceId, best));
+    }
+    if (!jobs.length) return [];
+    return Promise.all(jobs);
   },
 }));

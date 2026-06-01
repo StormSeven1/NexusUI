@@ -50,6 +50,10 @@ def parse_dds_data(
             - drone_status: 无人机实时状态（EntityRealTimeStatus / DroneRealTimeStatus）
             - drone_task: 无人机任务状态（EntityRealTimeStatus / DroneTaskRealTimeStatus）
             - high_freq: 高频位置数据（EntityRealTimeStatus / highFreqRealTimeStatus）
+            - munition_status: 巡飞弹实时状态（EntityRealTimeStatus / MunitionRealTimeStatus）
+            - usv_status: 无人船实时状态（EntityRealTimeStatus / USVRealTimeStatus）
+            - laser_status: 激光武器实时状态（EntityRealTimeStatus / LaserRealTimeStatus）
+            - tdoa_status: TDOA 实时状态（与激光同形；IDL 无独立类型时订阅 LaserRealTimeStatus）
             - new_track_struct: TrackManager NewStruct 转发 TargetOutputSet
         
     Returns:
@@ -77,7 +81,9 @@ def parse_dds_data(
         elif structure_type == 'uav_image_track':
             return _parse_uav_image_track(dds_object)  
         elif structure_type == 'dock_status':
-            return _parse_dock_status(dds_object)
+            ret =  _parse_dock_status(dds_object)
+            # print("dock_status:",ret)
+            return ret
         elif structure_type == 'drone_status':
             result = _parse_drone_status(dds_object)
             if result:
@@ -93,6 +99,24 @@ def parse_dds_data(
             if result:
                 _store_drone_jsonl(result, "high_freq")
             return result
+        elif structure_type == 'munition_status':
+            ret= _parse_munition_status(dds_object)
+            print("munition_status:",ret)
+            return ret
+        elif structure_type == 'usv_status':
+            return _parse_usv_status(dds_object)
+        elif structure_type == 'laser_status':
+            ret = _parse_directed_weapon_status(
+                dds_object, 'laser_status', 'laserState', ('laserState',)
+            )
+            print("laser_status:",ret)
+            return ret
+        elif structure_type == 'tdoa_status':
+            ret= _parse_directed_weapon_status(
+                dds_object, 'tdoa_status', 'tdoaState', ('tdoaState', 'laserState')
+            )
+            print("tdoa_status:",ret)
+            return ret
         else:
             logger.warning(f"未知的DDS结构类型: {structure_type}，使用通用解析")
             return _parse_generic(dds_object, structure_type)
@@ -306,9 +330,9 @@ def _parse_alarm_event(dds_object) -> Optional[Dict]:
                 
                 result['alarms'].append(alarm_data)
         
-        print("*"*50)
-        print("解析告警事件:",result)
-        print("*"*50)
+        # print("*"*50)
+        # print("解析告警事件:",result)
+        # print("*"*50)
         return result
     except Exception as e:
         logger.error(f"解析告警事件失败: {e}")
@@ -371,6 +395,7 @@ def _parse_dock_status(dds_object) -> Optional[Dict]:
         },
         'source': 'DDS',
         'data_type': 'dock_status',
+        'isVirtualWeapon': bool(dds_object.isVirtualWeapon()) if hasattr(dds_object, 'isVirtualWeapon') else False,
     }
 
 
@@ -421,6 +446,85 @@ def _parse_drone_status(dds_object) -> Optional[Dict]:
         },
         'source': 'DDS',
         'data_type': 'drone_status',
+        'isVirtualWeapon': bool(dds_object.isVirtualWeapon()) if hasattr(dds_object, 'isVirtualWeapon') else False,
+    }
+
+
+# entityId / deviceSn -> 机场 dockSn（由 entity_status relationships 同步，供任务弹药日志）
+_drone_dock_sn_map: Dict[str, str] = {}
+
+
+def sync_dock_sn_map_from_relationships(relationships: Optional[Dict[str, Any]]) -> None:
+    """HTTP entity_status 解析后更新无人机→机场映射，供 drone_task 弹药日志打印机场 SN。"""
+    if not relationships:
+        return
+    for ap in relationships.get('airports') or []:
+        dock_sn = str(ap.get('dockSn') or ap.get('dock_sn') or '').strip()
+        if not dock_sn:
+            continue
+        for dr in ap.get('drones') or []:
+            device_sn = str(dr.get('deviceSn') or dr.get('device_sn') or '').strip()
+            entity_id = str(dr.get('entityId') or dr.get('entity_id') or '').strip()
+            if device_sn:
+                _drone_dock_sn_map[device_sn] = dock_sn
+            if entity_id:
+                _drone_dock_sn_map[entity_id] = dock_sn
+
+
+def _resolve_dock_sn_for_task(entity_id: str) -> str:
+    eid = (entity_id or '').strip()
+    if eid and eid in _drone_dock_sn_map:
+        return _drone_dock_sn_map[eid]
+    return ''
+
+
+def _read_munition_info_raw(dds_object) -> Dict[str, Any]:
+    """读取 DDS munition_info 原始字段（未做有效性归一化）。"""
+    raw: Dict[str, Any] = {
+        'munitionId': None,
+        'name': None,
+        'quantityUnits': None,
+    }
+    try:
+        mi = dds_object.munition_info()
+        try:
+            raw['munitionId'] = mi.munitionId()
+        except Exception:
+            pass
+        try:
+            raw['name'] = mi.name()
+        except Exception:
+            pass
+        try:
+            raw['quantityUnits'] = int(mi.quantityUnits())
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return raw
+
+
+def _normalize_munition_quantity_units(qty: Any) -> Optional[int]:
+    """NULL / -1 / 无效值 → None（前端不渲染）；有效非负整数 → 展示。"""
+    if qty is None:
+        return None
+    try:
+        n = int(qty)
+    except (TypeError, ValueError):
+        return None
+    if n < 0:
+        return None
+    return n
+
+
+def _parse_drone_munition_info(dds_object) -> Dict[str, Any]:
+    """DroneTaskRealTimeStatus.munition_info → 前端弹药数量展示"""
+    raw = _read_munition_info_raw(dds_object)
+    qty = _normalize_munition_quantity_units(raw['quantityUnits'])
+    return {
+        'munitionId': raw['munitionId'] if raw['munitionId'] is not None else '',
+        'name': raw['name'] if raw['name'] is not None else '',
+        'quantityUnits': qty,
     }
 
 
@@ -441,8 +545,18 @@ def _parse_drone_task(dds_object) -> Optional[Dict]:
         })
     sa = dds_object.current_SearchArea()
     pos = dds_object.position()
+    entity_id = dds_object.entityId()
+    munition_raw = _read_munition_info_raw(dds_object)
+    munition_info = _parse_drone_munition_info(dds_object)
+    dock_sn = _resolve_dock_sn_for_task(entity_id)
+    logger.info(
+        f"[无人机任务弹药] 机场SN={dock_sn or '-'} "
+        f"弹药原始quantityUnits={munition_raw['quantityUnits']!r} "
+        f"解析后quantityUnits={munition_info['quantityUnits']!r} "
+        f"(munitionId={munition_raw['munitionId']!r} name={munition_raw['name']!r})"
+    )
     return {
-        'entityId': dds_object.entityId(),
+        'entityId': entity_id,
         'online': dds_object.online(),
         'deviceState': _dds_device_state(dds_object),
         'timestamp': dds_object.timestamp(),
@@ -467,9 +581,174 @@ def _parse_drone_task(dds_object) -> Optional[Dict]:
             'latitude': pos.latitude(),
             'altitude': pos.altitude(),
         },
+        'munition_info': munition_info,
         'source': 'DDS',
         'data_type': 'drone_task',
     }
+
+
+def _weapon_state_value(dds_object, *method_names: str) -> int:
+    for name in method_names:
+        if hasattr(dds_object, name):
+            try:
+                return int(getattr(dds_object, name)())
+            except Exception:
+                continue
+    return 0
+
+
+def _parse_directed_weapon_status(
+    dds_object,
+    data_type: str,
+    state_field: str,
+    state_methods: tuple,
+) -> Optional[Dict]:
+    """LaserRealTimeStatus / 同形 TDOA；含 BaseDeviceStatus.deviceState 与目标 ID。"""
+    try:
+        pos = dds_object.position()
+        result: Dict[str, Any] = {
+            'entityId': dds_object.entityId(),
+            'online': dds_object.online(),
+            'deviceState': _dds_device_state(dds_object),
+            'timestamp': dds_object.timestamp(),
+            state_field: _weapon_state_value(dds_object, *state_methods),
+            'hitPoint': float(dds_object.hitPoint()),
+            'latitude': float(pos.latitude()),
+            'longitude': float(pos.longitude()),
+            'altitude': float(pos.altitude()),
+            'source': 'DDS',
+            'data_type': data_type,
+        }
+        if hasattr(dds_object, 'taskType'):
+            result['taskType'] = dds_object.taskType()
+        if hasattr(dds_object, 'executionState'):
+            result['executionState'] = int(dds_object.executionState())
+        if hasattr(dds_object, 'executionTimeMs'):
+            result['executionTimeMs'] = int(dds_object.executionTimeMs())
+        if hasattr(dds_object, 'elec'):
+            result['elec'] = float(dds_object.elec())
+        if hasattr(dds_object, 'isVirtualWeapon'):
+            result['isVirtualWeapon'] = bool(dds_object.isVirtualWeapon())
+        if hasattr(dds_object, 'dispositionType'):
+            result['dispositionType'] = int(dds_object.dispositionType())
+        if hasattr(dds_object, 'entityType'):
+            result['entityType'] = int(dds_object.entityType())
+        if hasattr(dds_object, 'targetID'):
+            result['targetID'] = dds_object.targetID()
+        if hasattr(dds_object, 'targetName'):
+            result['targetName'] = dds_object.targetName()
+        if hasattr(dds_object, 'targetType'):
+            result['targetType'] = int(dds_object.targetType())
+        lat = result.get('latitude')
+        lng = result.get('longitude')
+        if lat is None or lng is None or not (-90 <= float(lat) <= 90) or not (-180 <= float(lng) <= 180):
+            return None
+        return result
+    except Exception as e:
+        logger.error(f"解析定向武器状态失败 [{data_type}]: {e}")
+        return None
+
+
+def _parse_usv_status(dds_object) -> Optional[Dict]:
+    """USVRealTimeStatus（无人船）；位置优先 usv_info，回退 BaseDeviceStatus.position。"""
+    try:
+        pos = dds_object.position()
+        lat = float(pos.latitude())
+        lng = float(pos.longitude())
+        alt = float(pos.altitude())
+        usv_lat = lat
+        usv_lon = lng
+        usv_hdg = None
+        usv_cog = None
+        usv_sog = None
+        if hasattr(dds_object, 'usv_info'):
+            try:
+                info = dds_object.usv_info()
+                usv_lat = float(info.lat())
+                usv_lon = float(info.lon())
+                usv_hdg = float(info.HDG())
+                usv_cog = float(info.COG())
+                usv_sog = float(info.SOG())
+            except Exception:
+                pass
+        result: Dict[str, Any] = {
+            'entityId': dds_object.entityId(),
+            'online': dds_object.online(),
+            'timestamp': dds_object.timestamp(),
+            'strikeState': int(dds_object.strikeState()),
+            'latitude': usv_lat,
+            'longitude': usv_lon,
+            'altitude': alt,
+            'usv_lat': usv_lat,
+            'usv_lon': usv_lon,
+            'source': 'DDS',
+            'data_type': 'usv_status',
+        }
+        if usv_hdg is not None:
+            result['usv_HDG'] = usv_hdg
+        if usv_cog is not None:
+            result['usv_COG'] = usv_cog
+        if usv_sog is not None:
+            result['usv_SOG'] = usv_sog
+        if hasattr(dds_object, 'isVirtualWeapon'):
+            result['isVirtualWeapon'] = bool(dds_object.isVirtualWeapon())
+        if hasattr(dds_object, 'dispositionType'):
+            result['dispositionType'] = int(dds_object.dispositionType())
+        if hasattr(dds_object, 'entityType'):
+            result['entityType'] = int(dds_object.entityType())
+        if hasattr(dds_object, 'targetID'):
+            result['targetID'] = dds_object.targetID()
+        if hasattr(dds_object, 'targetName'):
+            result['targetName'] = dds_object.targetName()
+        if hasattr(dds_object, 'taskType'):
+            result['taskType'] = dds_object.taskType()
+        if hasattr(dds_object, 'executionState'):
+            result['executionState'] = int(dds_object.executionState())
+        if hasattr(dds_object, 'elec'):
+            result['elec'] = float(dds_object.elec())
+        if not (-90 <= float(usv_lat) <= 90) or not (-180 <= float(usv_lon) <= 180):
+            return None
+        return result
+    except Exception as e:
+        logger.error(f"解析无人船状态失败: {e}")
+        return None
+
+
+def _parse_munition_status(dds_object) -> Optional[Dict]:
+    """MunitionRealTimeStatus（巡飞弹）；状态用 munitionState，不使用 BaseDeviceStatus.deviceState。"""
+    try:
+        pos = dds_object.position()
+        result: Dict[str, Any] = {
+            'entityId': dds_object.entityId(),
+            'online': dds_object.online(),
+            'timestamp': dds_object.timestamp(),
+            'munitionState': int(dds_object.munitionState()),
+            'hitPoint': float(dds_object.hitPoint()),
+            'attitude_head': float(dds_object.attitude_head()),
+            'latitude': float(pos.latitude()),
+            'longitude': float(pos.longitude()),
+            'altitude': float(pos.altitude()),
+            'source': 'DDS',
+            'data_type': 'munition_status',
+        }
+        if hasattr(dds_object, 'isVirtualWeapon'):
+            result['isVirtualWeapon'] = bool(dds_object.isVirtualWeapon())
+        if hasattr(dds_object, 'dispositionType'):
+            result['dispositionType'] = int(dds_object.dispositionType())
+        if hasattr(dds_object, 'entityType'):
+            result['entityType'] = int(dds_object.entityType())
+        if hasattr(dds_object, 'targetID'):
+            result['targetID'] = dds_object.targetID()
+        if hasattr(dds_object, 'targetName'):
+            result['targetName'] = dds_object.targetName()
+        lat = result.get('latitude')
+        lng = result.get('longitude')
+        if lat is None or lng is None or not (-90 <= float(lat) <= 90) or not (-180 <= float(lng) <= 180):
+            return None
+        return result
+    except Exception as e:
+        logger.error(f"解析巡飞弹状态失败: {e}")
+        return None
 
 
 def _parse_high_freq(dds_object) -> Optional[Dict]:
@@ -493,6 +772,7 @@ def _parse_high_freq(dds_object) -> Optional[Dict]:
         'gimbal_yaw': dds_object.gimbal_yaw(),
         'source': 'DDS',
         'data_type': 'high_freq',
+        'isVirtualWeapon': bool(dds_object.isVirtualWeapon()) if hasattr(dds_object, 'isVirtualWeapon') else False,
     }
 
 

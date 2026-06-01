@@ -20,17 +20,21 @@ import { EXCLUDE_AIRPORT_IDS, EXCLUDE_DRONE_NAMES } from "@/lib/map-display-filt
 
 /** 虚兵无人机 SN 表 */
 const VIRTUAL_TROOP_DRONE_SNS = [
-  "DroneAABBCCDD101",
-  "DroneAABBCCDD102",
-  "DroneAABBCCDD103",
-  "DroneAABBCCDD104",
+  "DroneAABBCCDD201",
+  "DroneAABBCCDD202",
+  "DroneAABBCCDD203",
+  "DroneAABBCCDD204",
+  "DroneAABBCCDD205",
+  "DroneAABBCCDD206"
 ] as const;
 /** 虚兵机场 SN 表 */
 const VIRTUAL_TROOP_DOCK_SNS = [
-  "DockAABBCCDD101",
-  "DockAABBCCDD102",
-  "DockAABBCCDD103",
-  "DockAABBCCDD104",
+  "DockAABBCCDD201",
+  "DockAABBCCDD202",
+  "DockAABBCCDD203",
+  "DockAABBCCDD204",
+  "DockAABBCCDD205",
+  "DockAABBCCDD206"
 ] as const;
 
 const VT_DRONE_SET = new Set<string>(VIRTUAL_TROOP_DRONE_SNS);
@@ -156,6 +160,8 @@ export interface DroneTelemetry {
   isTakingOff: boolean;
   /** 降落标记：长时间无数据后设为 true，下次数据视为再次起飞 */
   wasLanded: boolean;
+  /** 任务载荷 munition_info.quantityUnits；任务结束后保留最近一次值 */
+  munitionQuantity: number | null;
   /** 起飞阶段：最近一次被接受的状态位置时间（用于判断是否退出起飞态） */
   lastStatusAcceptedAt: number | null;
   /** 起飞阶段：最近一次被接受的高频位置时间 */
@@ -224,12 +230,25 @@ function mergeGimbalIntoHighFreq(
 }
 
 export function readVirtualTroop(d: Record<string, unknown>): boolean {
-  return (
-    d.virtual_troop === true ||
-    d.virtualTroop === true ||
-    d.is_virtual === true ||
-    d.is_virtual === 1
-  );
+  const raw =
+    d.virtual_troop ??
+    d.virtualTroop ??
+    d.is_virtual ??
+    d.isVirtual ??
+    d.virtual;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  if (typeof raw === "string") {
+    const s = raw.trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes" || s === "virtual" || s === "虚兵";
+  }
+  const realityType = d.reality_type ?? d.realityType;
+  if (typeof realityType === "number") return realityType === 2;
+  if (typeof realityType === "string") {
+    const s = realityType.trim().toLowerCase();
+    return s === "2" || s === "virtual" || s === "虚兵";
+  }
+  return false;
 }
 
 function baseTelemetry(sn: string): DroneTelemetry {
@@ -254,7 +273,36 @@ function baseTelemetry(sn: string): DroneTelemetry {
     wasLanded: false,
     lastStatusAcceptedAt: null,
     lastHighFreqAcceptedAt: null,
+    munitionQuantity: null,
   };
+}
+
+/** 从 DroneFlightPath / drone_task 载荷解析弹药数量；null / -1 / 无效 → 不渲染 */
+function parseQuantityUnits(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s || s.toUpperCase() === "NULL") return null;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.trunc(n);
+}
+
+export function readMunitionQuantityFromPayload(data: Record<string, unknown> | null | undefined): number | null {
+  if (!data) return null;
+  const mi = data.munition_info ?? data.munitionInfo;
+  if (mi === null) return null;
+  if (mi && typeof mi === "object") {
+    const bag = mi as Record<string, unknown>;
+    return parseQuantityUnits(bag.quantityUnits ?? bag.quantity_units);
+  }
+  return parseQuantityUnits(
+    data.munition_quantity ??
+      data.munitionQuantity ??
+      data.quantityUnits ??
+      data.quantity_units,
+  );
 }
 
 interface DroneFleetState {
@@ -283,7 +331,7 @@ interface DroneFleetState {
 
   /** `drone_status` 载荷 -> 合并进 `drones[sn].status`（不新增） */
   setDroneStatus: (data: Record<string, unknown>) => void;
-  /** `drone_flight_path` 载荷 -> 写入 `drones[sn].flightPath`（不新增） */
+  /** `drone_flight_path` 载荷 -> 写入 `drones[sn]`（须已由 entity_status 创建，否则忽略） */
   setDroneFlightPath: (data: Record<string, unknown>) => void;
   /** `high_freq` 载荷 -> 合并进 `drones[sn].highFreq`（不新增） */
   setHighFreq: (data: Record<string, unknown>) => void;
@@ -340,7 +388,7 @@ function buildRelationshipCachesFromAirportsRaw(airportsRaw: unknown[]): {
         name: nm || undefined,
         latitude: Number.isFinite(dLat) ? dLat : undefined,
         longitude: Number.isFinite(dLng) ? dLng : undefined,
-        virtualTroop: virtualTroopForDroneSn(deviceSn),
+        virtualTroop: readVirtualTroop(d) || virtualTroopForDroneSn(deviceSn),
       });
       // 提取无人机名称 -> droneNames
       if (nm && deviceSn) {
@@ -361,7 +409,7 @@ function buildRelationshipCachesFromAirportsRaw(airportsRaw: unknown[]): {
       latitude: Number.isFinite(lat) ? lat : undefined,
       longitude: Number.isFinite(lng) ? lng : undefined,
       drones,
-      virtualTroop: virtualTroopForDockSn(dockSn),
+      virtualTroop: readVirtualTroop(ap) || virtualTroopForDockSn(dockSn),
     });
 
     // 机场标注名：取下属无人机名称去掉"无人机"前缀的数字部分，用"、"连接
@@ -399,7 +447,7 @@ const TAKEOFF_DISTANCE_M = 50;
 const BOTH_DATA_RECENT_MS = 3000;
 /** 高频位置最大有效时间（ms）：超过此时间未更新则改用 status 位置（与 V2 一致） */
 const HIGH_FREQ_MAX_AGE_MS = 2500;
-/** 降落判定：超过此时长无数据则标记 wasLanded */
+/** 降落判定：超过此时长无数据则标记 wasLanded 并清空历史飞迹 */
 const LANDED_NO_DATA_MS = 5000;
 
 /** 获取无人机所属机场坐标（从 relationships 或 docks 缓存查） */
@@ -458,6 +506,38 @@ function updateTakeoffState(sn: string, currentTime: number, state: DroneFleetSt
   const highFreqOk = drone.lastHighFreqAcceptedAt != null && currentTime - drone.lastHighFreqAcceptedAt <= BOTH_DATA_RECENT_MS;
   if (statusOk && highFreqOk) return { isTakingOff: false };
   return {};
+}
+
+function applyFlightPathToTelemetry(
+  prev: DroneTelemetry,
+  data: Record<string, unknown>,
+  ts: number,
+): DroneTelemetry {
+  const munitionQty = readMunitionQuantityFromPayload(data);
+  const execState = data.executionState ?? data.execution_state;
+  const isComplete = execState === 1 || execState === "1" || execState === "completed";
+  const isVt = prev.virtualTroop;
+  if (isComplete) {
+    return {
+      ...prev,
+      flightPath: null,
+      munitionQuantity: munitionQty,
+      updatedAt: isoNow(),
+      lastPacketAtMs: ts,
+      ...(isVt ? { historyTrail: [] } : {}),
+    };
+  }
+  return mergeCoords(
+    {
+      ...prev,
+      flightPath: { ...data },
+      munitionQuantity: munitionQty,
+      updatedAt: isoNow(),
+      statusReceivedAt: prev.statusReceivedAt,
+      lastPacketAtMs: ts,
+    },
+    data,
+  );
 }
 
 function mergeCoords(prev: DroneTelemetry, d: Record<string, unknown>): DroneTelemetry {
@@ -610,7 +690,9 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
       if (!prev) return s;
       const base = {
         ...prev,
-        status: discardStatus ? prev.status : { ...data },
+        status: discardStatus
+          ? { ...((prev.status as Record<string, unknown>) ?? {}), deviceState: data.deviceState }
+          : { ...data },
         /* status 通常携带 gimbal_pitch / gimbal_roll / gimbal_yaw（云台姿态），
          * 而 highFreq 同名字段常为 None。把这三个字段从 status 覆盖进 highFreq，
          * 三维视棱锥（latestPayloadForFov 优先 highFreq）即可拿到最新云台姿态。 */
@@ -648,43 +730,13 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
   setDroneFlightPath: (data) => {
     const sn = resolveDroneSn(data);
     if (!sn) return;
-    const s = get();
-    if (!(sn in s.drones)) return;
+    if (!(sn in get().drones)) return;
+
     const ts = Date.now();
-    /* 与 V2 DroneRenderer.updateDroneTask 一致：
-     * executionState=1 表示任务已完成，此时清空 flightPath（规划航线），
-     * 避免任务结束后旧航线残留。虚兵额外清空历史轨迹。 */
-    const execState = data.executionState ?? data.execution_state;
-    const isComplete = execState === 1 || execState === "1" || execState === "completed";
-    const isVt = s.drones[sn]?.virtualTroop;
-    if (isComplete) {
-      set((s) => {
-        const prev = s.drones[sn];
-        if (!prev) return s;
-        const next: DroneTelemetry = {
-          ...prev,
-          flightPath: null,
-          updatedAt: isoNow(),
-          lastPacketAtMs: ts,
-          ...(isVt ? { historyTrail: [] } : {}),
-        };
-        return { drones: { ...s.drones, [sn]: next } };
-      });
-      return;
-    }
     set((s) => {
       const prev = s.drones[sn];
       if (!prev) return s;
-      const next = mergeCoords(
-        {
-          ...prev,
-          flightPath: { ...data },
-          updatedAt: isoNow(),
-          statusReceivedAt: prev.statusReceivedAt,
-          lastPacketAtMs: ts,
-        },
-        data,
-      );
+      const next = applyFlightPathToTelemetry(prev, data, ts);
       return { drones: { ...s.drones, [sn]: next } };
     });
   },
@@ -792,7 +844,7 @@ function startTimeoutCheck() {
     for (const [sn, d] of Object.entries(next)) {
       const noDataMs = now - d.lastPacketAtMs;
       if (noDataMs > LANDED_NO_DATA_MS && !d.wasLanded) {
-        next[sn] = { ...d, wasLanded: true };
+        next[sn] = { ...d, wasLanded: true, historyTrail: [] };
         changed = true;
       }
       if (noDataMs > DRONE_TIMEOUT_MS) {

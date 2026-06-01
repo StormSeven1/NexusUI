@@ -1,15 +1,31 @@
 import type { ForceDisposition } from "./theme-colors";
 
-/** 从 WS / 后端 properties 解析是否虚兵（供地图符号与适配器共用） */
+/** 从 WS / 后端 properties 或 DDS 载荷顶层解析是否虚兵（激光/TDOA/巡飞弹等为 isVirtualWeapon） */
 export function isVirtualFromProperties(properties: Record<string, unknown> | null | undefined): boolean {
   if (!properties) return false;
-  if (properties.virtualTroop === true || properties.virtual_troop === true) return true;
-  const raw = properties.is_virtual ?? properties.virtual ?? properties.isVirtual;
+  if (
+    properties.virtualTroop === true ||
+    properties.virtual_troop === true ||
+    properties.isVirtualWeapon === true
+  ) {
+    return true;
+  }
+  const raw =
+    properties.is_virtual ??
+    properties.virtual ??
+    properties.isVirtual ??
+    properties.isVirtualWeapon;
   if (typeof raw === "boolean") return raw;
   if (typeof raw === "number") return raw !== 0;
   if (typeof raw === "string") {
     const s = raw.trim().toLowerCase();
-    return s === "true" || s === "1" || s === "yes" || s === "virtual";
+    return s === "true" || s === "1" || s === "yes" || s === "virtual" || s === "虚兵";
+  }
+  const realityType = properties.reality_type ?? properties.realityType;
+  if (typeof realityType === "number") return realityType === 2;
+  if (typeof realityType === "string") {
+    const s = realityType.trim().toLowerCase();
+    return s === "2" || s === "virtual" || s === "虚兵";
   }
   return false;
 }
@@ -46,7 +62,7 @@ export interface Track {
   distance?: number;
   /** 数据源标识 */
   dataSourceId?: string;
-  /** 虚兵：航迹符号外框为虚线样式（与资产 `virtual_troop` 一致） */
+  /** 虚兵：航迹符号保持填色，形体呈断续虚线效果（非描边套边） */
   isVirtual?: boolean;
   /** 无人机等目标：为 true 时超时阈值用 `trackRendering.trackTimeout.uavSeconds` */
   isUav?: boolean;
@@ -91,7 +107,7 @@ export function normalizeAssetType(raw: string | undefined | null): PublicMapAss
   if (s === "dock" || s === "gateway" || s === "airport" || s === "无人机机场") return "airport";
   if (s === "uav" || s === "drone" || s === "无人机") return "drone";
   if (s === "usv" || s === "无人船" || s === "unmanned_ship" || s === "unmanned-ship") return "usv";
-  if (s === "missile" || s === "飞弹" || s === "导弹") return "missile";
+  if (s === "missile" || s === "飞弹" || s === "导弹" || s === "munition" || s === "巡飞弹") return "missile";
   if ((PUBLIC_MAP_ASSET_TYPES as readonly string[]).includes(s)) return s as PublicMapAssetType;
   /* 不在已知类型列表中 —— 直接抛错 */
   throw new Error(`[normalizeAssetType] ✘ 未知资产类型 "${raw}"，不在已知类型 ${PUBLIC_MAP_ASSET_TYPES.join("/")} 中`);

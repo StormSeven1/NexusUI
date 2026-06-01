@@ -5,6 +5,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useAppStore } from "@/stores/app-store";
 import { registerMapModules, unregisterMapModules } from "@/lib/map-module-registry";
+import { registerExplosionMap2D, unregisterExplosionMap2D } from "@/lib/map/explosion-effect";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { useTrackStore } from "@/stores/track-store";
 import {
@@ -31,6 +32,7 @@ import { useAppConfigStore } from "@/stores/app-config-store";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 import {
   buildMarkerSymbolDataUrl,
+  preloadTrackIconFragments,
   getAllMarkerSymbolKeysForPrereg,
   buildLockOnDataUrl,
   LOCK_ON_IMAGE_ID,
@@ -60,6 +62,8 @@ import {
   tdoaLabelStyleFromBundle,
   resolveLaserDefaults,
   resolveTdoaDefaults,
+  getDirectedWeaponGeometryDefaults,
+  getDirectedWeaponScanDefaults,
   getAssetFriendlyColorForAssetType,
 } from "@/lib/map-app-config";
 import {
@@ -314,15 +318,17 @@ function applyLayerPanelVisibilityFromStore(
  * - range/heading/fovAngle 等从 Asset 对应字段直接映射。
  */
 function adaptAssetToLaserDevice(a: Asset): LaserDevice {
+  const geometryDefaults = getDirectedWeaponGeometryDefaults("laser");
+  const scanDefaults = getDirectedWeaponScanDefaults("laser");
   return {
     id: a.id,
     lng: a.lng,
     lat: a.lat,
     activationEnabled: false,
     /* Asset.range 单位 km；LaserDevice.rangeKm 也是 km，直接传递 */
-    rangeKm: a.range ?? 12,
+    rangeKm: a.range ?? geometryDefaults.rangeKm ?? 0,
     headingDeg: a.heading ?? 0,
-    openingDeg: a.fovAngle ?? 90,
+    openingDeg: a.fovAngle ?? geometryDefaults.openingDeg ?? 0,
     virtual: a.isVirtual,
     disposition: a.disposition,
     friendlyMapColor: (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
@@ -335,7 +341,7 @@ function adaptAssetToLaserDevice(a: Asset): LaserDevice {
     centerIconVisible: undefined,
     name: a.name,
     /* 默认动画参数；是否绘制扇区由 activationEnabled（bundle / activate）决定 */
-    scan: { cycleMs: 4000, tickMs: 90, bandCount: 9, bandWidthMeters: 1 },
+    scan: scanDefaults,
   };
 }
 
@@ -345,14 +351,16 @@ function adaptAssetToLaserDevice(a: Asset): LaserDevice {
  * 与激光同理，动态实体不含 TDOA 扫描参数；与专题层合并时保留由 bundle/激活写入的 scan。
  */
 function adaptAssetToTdoaDevice(a: Asset): TdoaDevice {
+  const geometryDefaults = getDirectedWeaponGeometryDefaults("tdoa");
+  const scanDefaults = getDirectedWeaponScanDefaults("tdoa");
   return {
     id: a.id,
     lng: a.lng,
     lat: a.lat,
     activationEnabled: false,
-    rangeKm: a.range ?? 12,
+    rangeKm: a.range ?? geometryDefaults.rangeKm ?? 0,
     headingDeg: a.heading ?? 0,
-    openingDeg: a.fovAngle ?? 90,
+    openingDeg: a.fovAngle ?? geometryDefaults.openingDeg ?? 0,
     virtual: a.isVirtual,
     disposition: a.disposition,
     friendlyMapColor: (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
@@ -361,7 +369,7 @@ function adaptAssetToTdoaDevice(a: Asset): TdoaDevice {
     /* TDOA 中心图标由 TdoaMaplibre 专题层独立管理，同激光 */
     centerIconVisible: undefined,
     name: a.name,
-    scan: { cycleMs: 2000, tickMs: 100, bandCount: 9, bandWidthMeters: 2 },
+    scan: scanDefaults,
   };
 }
 
@@ -559,6 +567,7 @@ export function Map2D() {
 
         const assetIconAccent: AssetDispositionIconAccent = appCfg.assetDispositionIconAccent ?? {};
         assetDispositionAccentRef.current = assetIconAccent;
+        await preloadTrackIconFragments();
         /* 与 `adaptAssetsForMap` 友方第二回退一致：根键 `assetFriendlyColor` 须参与预注册，否则 `drones.devices` 为空时 `asset-drone-*-mf#…` 未 addImage */
         const assetIconPreregRootFriendlyTints = PUBLIC_MAP_ASSET_TYPES.map((t) => getAssetFriendlyColorForAssetType(t));
         /* `map.addImage` 预注册各图层 `layout["icon-image"]` 用到的位图；`hasImage` 为真则跳过。并行加载以缩短首帧等待 */
@@ -585,7 +594,8 @@ export function Map2D() {
           ...getAllAssetSymbolKeysForPrereg(currentAssetData, assetIconPreregRootFriendlyTints).map(async ({ id, type, status, virtual, disposition, friendlyFill }) => {
             if (!map.hasImage(id)) {
               const src = await buildAssetSymbolDataUrl(type, status, virtual, disposition, assetIconAccent, friendlyFill);
-              map.addImage(id, await loadSvgImage(src, 56), { pixelRatio: 2 });
+              const rasterPx = type === "usv" || type === "missile" ? 82 : 56;
+              map.addImage(id, await loadSvgImage(src, rasterPx), { pixelRatio: 2 });
             }
           }),
         ]);
@@ -822,7 +832,9 @@ export function Map2D() {
     });
 
     mapRef.current = map;
+    registerExplosionMap2D(map);
     return () => {
+      unregisterExplosionMap2D();
       const tools = measureToolRefs.current;
       if (tools) {
         tools.dist.destroy();

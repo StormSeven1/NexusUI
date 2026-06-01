@@ -2,7 +2,12 @@
  * 处置方案执行态与 V2 DisposalCard 对齐：按「目标 + 方案内设备名集合」做跨方案去重与已执行继承。
  */
 
-import type { DisposalInputParams, MappedDisposalScheme, NormalizedDisposalPlans } from "./disposal-types";
+import type {
+  DisposalInputParams,
+  MappedDisposalScheme,
+  MappedDisposalTask,
+  NormalizedDisposalPlans,
+} from "./disposal-types";
 
 export function collectSchemeDeviceNames(scheme: MappedDisposalScheme): string[] {
   const out: string[] = [];
@@ -49,6 +54,20 @@ export function primaryTargetIdFromNormalized(n: NormalizedDisposalPlans): strin
 }
 
 /** 与 V2 `inferIsAirTrackFromInput` 一致：0/1、字符串 uav/boat 等 */
+/** 处置方案任务设备是否为巡飞弹/飞弹（用于告警标记与消灭时 DELETE） */
+export function taskLooksLikeMunition(task: MappedDisposalTask): boolean {
+  const a = String(task.actionName ?? "").toLowerCase();
+  if (a.includes("munition") || a.includes("巡飞") || a.includes("飞弹") || a.includes("导弹")) return true;
+  const red = task.redForceInfo as Record<string, unknown> | undefined;
+  const ut = String(red?.unitType ?? red?.unit_type ?? "").toLowerCase();
+  if (ut.includes("munition") || ut.includes("巡飞") || ut.includes("missile") || ut.includes("飞弹")) return true;
+  const name = String(task.deviceName ?? "").toLowerCase();
+  if (name.includes("巡飞") || name.includes("飞弹")) return true;
+  const id = String(task.deviceId ?? "").toLowerCase();
+  if (id.includes("munition") || id.includes("missile")) return true;
+  return false;
+}
+
 export function inferIsAirTrackFromInputParams(ip: DisposalInputParams | undefined): boolean | undefined {
   if (!ip) return undefined;
   const raw = ip.targetType;

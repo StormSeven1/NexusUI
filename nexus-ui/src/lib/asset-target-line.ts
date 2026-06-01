@@ -14,8 +14,7 @@
  *
  * 【坐标查找优先级】
  *   - 资产端：drone-store → asset-store → TDOA 设备 → 激光设备
- *   - 目标端：track-store 渲染缓存 → 影子缓存 → 蓝方坐标回退
- *   - 目标解析对齐 trackIdMode（distinguishSeaAir 模式下对海/对空用不同 ID）
+ *   - 目标端：track-store 渲染层 → 蓝方坐标回退
  *
  * 【清理机制】
  *   - pruneConnectionLinesForTarget：指定目标只保留 allowedAssets 内的连线
@@ -29,7 +28,7 @@ import { useDroneStore } from "@/stores/drone-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
 import type { Track } from "@/lib/map-entity-model";
-import { getAssetTargetLineConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
+import { getAssetTargetLineConfig } from "@/lib/map-app-config";
 
 /* ── 常量 ── */
 
@@ -76,47 +75,25 @@ function resolveAssetCoords(entityId: string): { lng: number; lat: number } | nu
 }
 
 /**
- * 与 track-store `isTrackMatchedByAlarm` 口径一致：
- * - distinguishSeaAir=false：优先 trackId，再 uniqueID/showID/id
- * - distinguishSeaAir=true：对空用 trackId 命中；对海用 uniqueID/showID
+ * 从渲染层 tracks 查找处置目标，用 trackId 直接匹配。
  */
-export function findTrackForDisposalTarget(targetId: string, isAirHint?: boolean): Track | undefined {
+export function findTrackForDisposalTarget(targetId: string): Track | undefined {
   const tid = String(targetId ?? "").trim();
   if (!tid) return undefined;
   const tracks = useTrackStore.getState().tracks;
-  const mode = getTrackIdModeConfig().distinguishSeaAir;
-
-  const tryMatch = (t: Track): boolean => {
+  return tracks.find((t) => {
     if (t.trackId != null && String(t.trackId) === tid) return true;
     if (String(t.uniqueID) === tid) return true;
     if (String(t.showID) === tid) return true;
     if (String(t.id) === tid) return true;
     return false;
-  };
-
-  const direct = tracks.find(tryMatch);
-  if (direct) return direct;
-
-  if (!mode) return undefined;
-
-  if (isAirHint === true) {
-    return tracks.find((t) => t.isAirTrack === true && t.trackId != null && String(t.trackId) === tid);
-  }
-  if (isAirHint === false) {
-    return tracks.find(
-      (t) =>
-        t.isAirTrack !== true &&
-        (String(t.uniqueID) === tid || String(t.showID) === tid || String(t.id) === tid),
-    );
-  }
-  return undefined;
+  });
 }
 
 export function resolveTrackLngLatForTargetId(
   targetId: string,
-  isAirHint?: boolean,
 ): { lng: number; lat: number } | null {
-  const track = findTrackForDisposalTarget(targetId, isAirHint);
+  const track = findTrackForDisposalTarget(targetId);
   if (track && track.lat != null && track.lng != null) {
     return { lng: track.lng, lat: track.lat };
   }

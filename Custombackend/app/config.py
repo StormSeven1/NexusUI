@@ -43,6 +43,15 @@ class Settings(BaseSettings):
 
 # UDP接收配置
 UDP_RECEIVERS: List[Dict[str, Any]] = [
+    {
+        "id": "udp_speed_camera",
+        "name": "高速相机检测(UDP)",
+        "type": "multicast",
+        "host": "239.192.110.99",
+        "port": 8568,
+        "enabled": True,
+        "data_format": "SpeedCamera",
+    }
     # # 虚兵：航迹（DroneStatus + HighFreq），二进制格式见 parsers/virtual_unit_udp.py
     # {
     #     "id": "udp_virtual_unit_track",
@@ -224,6 +233,25 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "discovery_server_ip": "192.168.18.141",
         "discovery_server_port": 11611,
         "multicast_ip": "239.255.0.1",
+        "multicast_port": 12370,
+        "dds_module_path": "./DDSReferences/NewTrackStruct/build",
+        "structure_type": "new_track_struct",
+        "dds_module_name": "NewTrackRealTimeStatus",
+        "data_class_name": "TargetOutputSet",
+        "pubsub_type_class_name": "TargetOutputSetPubSubType",
+        "type_name": "TargetMinimal::TargetOutputSet",
+        "use_default_xml": False
+    },
+        {
+        "id": "dds_forward_fuse_track",
+        "name": "融合航迹",
+        "enabled": True,
+        "domain_id": 141,
+        "topic_name": "TrackTopic_NewStruct_FuseTrack_virtual",
+        "profile_name": "track_subscriber_newstruct",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
         "multicast_port": 12355,
         "dds_module_path": "./DDSReferences/NewTrackStruct/build",
         "structure_type": "new_track_struct",
@@ -328,7 +356,26 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "name": "对空融合航迹",
         "enabled": True,
         "domain_id": 141,
-        "topic_name": "TrackTopic_NewStruct_FuseBirdRadarTrack",
+        "topic_name": "TrackTopic_NewStruct_FuseBirdTrack",
+        "profile_name": "track_subscriber_newstruct",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
+        "multicast_port": 12370,
+        "dds_module_path": "./DDSReferences/NewTrackStruct/build",
+        "structure_type": "new_track_struct",
+        "dds_module_name": "NewTrackRealTimeStatus",
+        "data_class_name": "TargetOutputSet",
+        "pubsub_type_class_name": "TargetOutputSetPubSubType",
+        "type_name": "TargetMinimal::TargetOutputSet",
+        "use_default_xml": False
+    },
+     {
+        "id": "dds_forward_fuse_bird_radar_track",
+        "name": "对空融合航迹",
+        "enabled": True,
+        "domain_id": 141,
+        "topic_name": "TrackTopic_NewStruct_FuseBirdTrack_virtual",
         "profile_name": "track_subscriber_newstruct",
         "discovery_server_ip": "192.168.18.141",
         "discovery_server_port": 11611,
@@ -455,6 +502,44 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "pubsub_type_class_name": "highFreqRealTimeStatusPubSubType",
         "type_name": "casia::device::status::DroneGeneralStatus::DroneStatus::highFreqRealTimeStatus",
         "use_default_xml": False
+    },
+    {
+        "id": "dds_munition_status",
+        "name": "巡飞弹实时状态",
+        "enabled": True,
+        "domain_id": 200,
+        "topic_name": "MunitionRealTimeStatusTopic",
+        "profile_name": "test_munition_client",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
+        "multicast_port": 12355,
+        "dds_module_path": "./DDSReferences/EntityRealTimeStatus/build",
+        "dds_module_name": "EntityRealTimeStatus",
+        "structure_type": "munition_status",
+        "data_class_name": "MunitionRealTimeStatus",
+        "pubsub_type_class_name": "MunitionRealTimeStatusPubSubType",
+        "type_name": "casia::device::status::MunitionStatus::MunitionRealTimeStatus",
+        "use_default_xml": False
+    },
+    {
+        "id": "dds_usv_status",
+        "name": "无人船实时状态",
+        "enabled": True,
+        "domain_id": 200,
+        "topic_name": "usvRealTimeStatusTopic",
+        "profile_name": "test_usv_client",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
+        "multicast_port": 12355,
+        "dds_module_path": "./DDSReferences/EntityRealTimeStatus/build",
+        "dds_module_name": "EntityRealTimeStatus",
+        "structure_type": "usv_status",
+        "data_class_name": "USVRealTimeStatus",
+        "pubsub_type_class_name": "USVRealTimeStatusPubSubType",
+        "type_name": "casia::device::status::USVStatus::USVRealTimeStatus",
+        "use_default_xml": False
     }
 ]
 
@@ -469,7 +554,7 @@ HTTP_POLLERS: List[Dict[str, Any]] = [
         "enabled": True,
         "data_format": "EntityStatus",
         "headers": {},
-        "params": {"page": 1, "size": 100},
+        "params": {"page": 1, "size": 1000},
         "auth": None
     },
 ]

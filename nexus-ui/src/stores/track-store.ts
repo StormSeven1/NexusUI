@@ -41,6 +41,37 @@ export function getRenderCache(): ReadonlyMap<string, Track> {
   return _renderCache;
 }
 
+function compactTrackDebug(t: Track) {
+  return {
+    showID: t.showID,
+    id: t.id,
+    trackId: t.trackId,
+    uniqueID: t.uniqueID,
+    type: t.type,
+    isAirTrack: t.isAirTrack === true,
+    lat: t.lat,
+    lng: t.lng,
+    lastUpdate: t.lastUpdate,
+  };
+}
+
+function dumpTrackAlarmMatchDebug(label: string, alarmTrackIds: Set<string>, incoming: Track[] = []): void {
+  if (typeof console === "undefined") return;
+  const renderTracks = [..._renderCache.values()].map(compactTrackDebug);
+  const shadowTracks = [...useTrackStore.getState().shadowTracks.values()].map(compactTrackDebug);
+  const incomingTracks = incoming.map(compactTrackDebug);
+  const alertDebug = getCurrentAlertDebugSnapshot();
+  console.groupCollapsed(
+    `[track-alarm-match] ${label} alarmKeys=${alarmTrackIds.size} alerts=${alertDebug.alerts.length} render=${renderTracks.length} shadow=${shadowTracks.length} incoming=${incomingTracks.length}`,
+  );
+  console.log("alarmTrackIds", [...alarmTrackIds]);
+  console.table(alertDebug.alerts);
+  console.table(incomingTracks);
+  console.table(renderTracks);
+  console.table(shadowTracks);
+  console.groupEnd();
+}
+
 interface TrackState {
   /** 渲染层：只存匹配告警的航迹（含 historyTrail） */
   tracks: Track[];
@@ -120,6 +151,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     if (needsRenderUpdate) {
       set({ tracks: [..._renderCache.values()] });
     }
+    dumpTrackAlarmMatchDebug("setTracks", alarmTrackIds, incoming);
   },
 
   setConnected: (v) => set({ connected: v }),
@@ -154,6 +186,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     if (changed) {
       set({ tracks: [..._renderCache.values()] });
     }
+    dumpTrackAlarmMatchDebug("syncWithAlarms", alarmTrackIds);
     return changed;
   },
 
@@ -223,10 +256,35 @@ function getCurrentAlarmTrackIds(): Set<string> {
       };
       _alertStoreGetter = () => mod.useAlertStore.getState().alarmTrackIds;
     } catch {
-      _alertStoreGetter = () => new Set<string>();
+      return new Set<string>();
     }
   }
   return _alertStoreGetter();
+}
+
+function getCurrentAlertDebugSnapshot(): {
+  alerts: Array<{ id: string; trackId?: string; targetType?: string | number; type?: string; alarmType?: string }>;
+} {
+  try {
+    const mod = require("@/stores/alert-store") as {
+      useAlertStore: {
+        getState: () => {
+          alerts: Array<{ id: string; trackId?: string; targetType?: string | number; type?: string; alarmType?: string }>;
+        };
+      };
+    };
+    return {
+      alerts: mod.useAlertStore.getState().alerts.map((a) => ({
+        id: a.id,
+        trackId: a.trackId,
+        targetType: a.targetType,
+        type: a.type,
+        alarmType: a.alarmType,
+      })),
+    };
+  } catch {
+    return { alerts: [] };
+  }
 }
 
 /**
@@ -237,10 +295,14 @@ function getCurrentAlarmTrackIds(): Set<string> {
  * - 28.9 对空：告警 trackId → 遍历航迹找 trackId 相同的
  */
 export function isTrackMatchedByAlarm(track: Track, alarmTrackIds: Set<string>): boolean {
-  if (getTrackIdModeConfig().distinguishSeaAir) {
-    const isAir = track.isAirTrack === true;
-    const matchKey = isAir ? track.trackId : track.uniqueID;
-    return matchKey != null && alarmTrackIds.has(String(matchKey));
-  }
-  return !!track.trackId && alarmTrackIds.has(track.trackId);
+  const domain = track.isAirTrack === true || track.type === "air" ? "air" : "sea";
+  const hasMatch = (...values: unknown[]): boolean => {
+    for (const raw of values) {
+      if (raw == null) continue;
+      const id = String(raw).trim();
+      if (id && alarmTrackIds.has(`${domain}:${id}`)) return true;
+    }
+    return false;
+  };
+  return hasMatch(track.trackId, track.uniqueID, track.showID, track.id);
 }

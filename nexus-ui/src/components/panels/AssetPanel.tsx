@@ -8,11 +8,7 @@ import { Search, ChevronDown, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { PUBLIC_MAP_SVG_FILES, publicIconFileUrl } from "@/lib/map-icons";
 import { normalizeAssetType, type PublicMapAssetType } from "@/lib/map-entity-model";
-import {
-  formatCameraTowerMapLabel,
-  formatTowerMapLabel,
-  getAssetDeviceStateTags,
-} from "@/lib/map-app-config";
+import { assetUiDisplayName, getAssetDeviceStateTags } from "@/lib/map-app-config";
 
 /** 资产类别展示顺序和中文名 */
 const CATEGORY_ORDER: { type: PublicMapAssetType; label: string }[] = [
@@ -25,14 +21,6 @@ const CATEGORY_ORDER: { type: PublicMapAssetType; label: string }[] = [
   { type: "laser", label: "激光" },
   { type: "tdoa", label: "TDOA" },
 ];
-
-/** 机场/无人机的 name 在入资产时已解析好，直接用；光电/电侦走 id 提取数字 */
-function mapAssetDisplayName(a: AssetData): string {
-  const t = normalizeAssetType(a.asset_type);
-  if (t === "camera") return formatCameraTowerMapLabel(a.id);
-  if (t === "tower") return formatTowerMapLabel(a.id);
-  return a.name;
-}
 
 /** 状态标签 */
 function Tag({ label, color }: { label: string; color: string }) {
@@ -97,7 +85,7 @@ function AssetRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-1">
           <span className="truncate text-[12px] font-medium text-nexus-text-primary">
-            {mapAssetDisplayName(asset)}
+            {assetUiDisplayName(asset)}
           </span>
           {tags && tags.length > 0 && (
             <div className="flex shrink-0 items-center gap-1">
@@ -156,7 +144,7 @@ function AirportCard({
         className="flex w-full items-center px-2.5 py-0.5 text-left hover:bg-white/[0.03]"
       >
         <span className="text-[12px] font-semibold text-nexus-text-primary">
-          {mapAssetDisplayName(asset)}
+          {assetUiDisplayName(asset)}
         </span>
       </button>
 
@@ -174,8 +162,10 @@ function AirportCard({
           {childDrones.length === 0 && (
             <span className="text-[10px] text-nexus-text-muted">无无人机</span>
           )}
-          {childDrones.map(({ asset: d }) => {
+          {childDrones.map(({ asset: d, telemetry }) => {
             const connected = d.status === "online";
+            const droneLabel =
+              String(telemetry?.displayName ?? "").trim() || assetUiDisplayName(d);
             return (
               <button
                 key={d.id}
@@ -186,7 +176,7 @@ function AirportCard({
                 )}
               >
                 <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", connected ? "bg-emerald-400" : "bg-red-400")} />
-                <span className="truncate text-[11px] text-nexus-text-primary">{d.name}</span>
+                <span className="truncate text-[11px] text-nexus-text-primary">{droneLabel}</span>
               </button>
             );
           })}

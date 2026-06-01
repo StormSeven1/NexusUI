@@ -62,8 +62,12 @@ export interface AlertData {
   detail?: string;
   /** uniqueID（与 track-store showID 对应） */
   uniqueID?: string;
+  /** 目标类型：0/sea=对海，1/air=对空；用于避免对海/对空 trackId 重号误匹配 */
+  targetType?: string | number;
   /** 查证图片 URL */
   imageUrl?: string;
+  /** 为 true 时不显示消灭按钮（如高速相机检测告警） */
+  suppressDestroy?: boolean;
 }
 
 /** 告警过期时间（对齐 V2 ALARM_STALE_MS = 25s） */
@@ -75,6 +79,40 @@ function getAlarmTrackId(item: AlertData): string | null {
   const raw = item.trackId;
   if (raw != null && raw.trim() !== "") return raw.trim();
   return null;
+}
+
+function alertDomain(item: AlertData): "air" | "sea" | null {
+  const raw = item.targetType ?? item.type;
+  if (raw === 1 || raw === "1") return "air";
+  if (raw === 0 || raw === "0") return "sea";
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (!s) return null;
+  if (s.includes("air") || s.includes("uav") || s.includes("drone") || s.includes("空")) return "air";
+  if (s.includes("sea") || s.includes("ship") || s.includes("boat") || s.includes("海")) return "sea";
+  return null;
+}
+
+function alarmTrackMatchKey(domain: "air" | "sea", trackId: string): string {
+  return `${domain}:${trackId}`;
+}
+
+function dumpAlarmMatchDebug(alerts: AlertData[], alarmTrackIds: Set<string>): void {
+  if (typeof console === "undefined") return;
+  console.groupCollapsed(`[alert-match] alerts=${alerts.length} keys=${alarmTrackIds.size}`);
+  console.log("alarmTrackIds", [...alarmTrackIds]);
+  console.table(
+    alerts.map((a) => ({
+      id: a.id,
+      trackId: a.trackId,
+      targetType: a.targetType,
+      type: a.type,
+      uniqueID: a.uniqueID,
+      domain: alertDomain(a),
+      alarmType: a.alarmType,
+      message: a.message,
+    })),
+  );
+  console.groupEnd();
 }
 
 /** 去重键：按业务 trackId */
@@ -231,8 +269,12 @@ function applyRevision<T extends { alerts: AlertData[]; alarmTrackIds: Set<strin
   const newIds = new Set<string>();
   for (const a of state.alerts) {
     const tid = getAlarmTrackId(a);
-    if (tid) newIds.add(tid);
+    if (!tid) continue;
+    const domain = alertDomain(a);
+    if (!domain) continue;
+    newIds.add(alarmTrackMatchKey(domain, tid));
   }
+  dumpAlarmMatchDebug(state.alerts, newIds);
   if (setsEqual(newIds, state.alarmTrackIds)) return state;
   return { ...state, alarmTrackIds: newIds, alarmTrackRevision: state.alarmTrackRevision + 1 };
 }

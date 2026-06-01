@@ -296,8 +296,8 @@
     "defaultMaxRange": 12000,
     "defaultInterval": 12000,
     "defaultShowRings": true,
-    "ringLineDefaultOpacity": 0.4,
-    "defaultRingFillOpacity": 0.08,
+    "ringLineDefaultOpacity": 0.01,
+    "defaultRingFillOpacity": 0.02,
     "defaultRingFillColor": "#00FF00",
     "ringLineFallbackColor": "#00FF00",
     "defaultRingLineWidth": 1,
@@ -306,7 +306,7 @@
     "defaultDistanceLabelsVisible": false,
     "defaultAngleLabelsVisible": false,
     "defaultAngleLabelInterval": 30,
-    "defaultCrosshairVisible": true,
+    "defaultCrosshairVisible": false,
     "visibility": {
       "centerNameVisible": true,
       "centerIconVisible": true
@@ -321,7 +321,7 @@
     },
     "distanceLabel": {
       "fontSize": 12,
-      "fontColor": "#FFFFFF",
+      "fontColor": "#8e8b8b",
       "haloColor": "#000000",
       "haloWidth": 1.5,
       "textOffset": [0, -0.2],
@@ -329,16 +329,16 @@
     },
     "angleLabel": {
       "fontSize": 11,
-      "fontColor": "#FFFF00",
+      "fontColor": "#f2f2c7",
       "haloColor": "#000000",
       "haloWidth": 1,
       "textOffset": [0, 0],
       "textFont": ["Open Sans Regular"]
     },
     "crosshair": {
-      "lineWidth": 1,
+      "lineWidth": 0,
       "lineDash": [4, 4],
-      "lineOpacity": 0.6,
+      "lineOpacity": 0.01,
       "color": "#FFFFFF"
     },
    "devices": [
@@ -352,7 +352,7 @@
       "interval": 500,
       "ringCount": null,
       "showRings": true,
-      "opacity": 0.5,
+      "opacity": 0.2,
       "ringFillOpacity": 0.08,
       "ringFillColor": "#ffffff",
       "color": "#ffffff",
@@ -361,10 +361,10 @@
       "virtualTroop": true,
       "distanceLabelsVisible": true,
       "distanceLabelColor": null,
-      "angleLabelsVisible": true,
+      "angleLabelsVisible": false,
       "angleLabelInterval": 30,
       "angleLabelColor": null,
-      "crosshairVisible": true,
+      "crosshairVisible": false,
       "centerIconVisible": true,
       "centerNameVisible": true,
       "label": {
@@ -377,7 +377,7 @@
       },
       "distanceLabel": {
         "fontSize": 11,
-        "fontColor": "#FFFFFF",
+        "fontColor": "#ffffff8a",
         "haloColor": "#000000",
         "haloWidth": 1.5,
         "textOffset": [0, -0.2],
@@ -385,7 +385,7 @@
       },
       "angleLabel": {
         "fontSize": 10,
-        "fontColor": "#FFFF00",
+        "fontColor": "#f5f5bf",
         "haloColor": "#000000",
         "haloWidth": 1,
         "textOffset": [0, 0],
@@ -469,6 +469,7 @@
     ]
   },
 
+
   "airports": {
     "assetFriendlyColor": "#34d399",
     "centerIconVisible": true,
@@ -498,8 +499,8 @@
 
   "drones": {
     "assetFriendlyColor": "#34d399",
-    "defaultRange": 15000,
-    "maxFovRange": 3000,
+    "defaultRange": 10000,
+    "maxFovRange": 1500,
     "horizontalFov": 30,
     "showFovSector": false,
     "maxHistoryPoints": 100,
@@ -535,10 +536,65 @@
     ]
   },
 
-  "tdoa": {
-    "activationEnabled": true,
+  "unmannedShips": {
     "assetFriendlyColor": "#34d399",
-    "defaultSectorRange": 15000,
+    "centerIconVisible": true,
+    "centerNameVisible": true,
+    "defaultRange": 15000,
+    "sectorBorder": {
+      "lineWidth": 0,
+      "lineColor": null,
+      "lineDash": []
+    },
+    "visibility": {
+      "sectorFillVisible": true,
+      "centerIconVisible": true,
+      "centerNameVisible": true
+    },
+    "label": {
+      "fontSize": 10,
+      "fontColor": "#34d399",
+      "haloColor": "#09090b",
+      "haloWidth": 1.5,
+      "textOffset": [0, 1.8],
+      "textFont": ["Open Sans Regular"]
+    },
+    "devices": [
+    ]
+  },
+
+  "missiles": {
+    "assetFriendlyColor": "#34d399",
+    "centerIconVisible": true,
+    "centerNameVisible": true,
+    "defaultRange": 15000,
+    "sectorBorder": {
+      "lineWidth": 0,
+      "lineColor": null,
+      "lineDash": []
+    },
+    "visibility": {
+      "sectorFillVisible": true,
+      "centerIconVisible": true,
+      "centerNameVisible": true
+    },
+    "label": {
+      "fontSize": 10,
+      "fontColor": "#34d399",
+      "haloColor": "#09090b",
+      "haloWidth": 1.5,
+      "textOffset": [0, 1.8],
+      "textFont": ["Open Sans Regular"]
+    },
+    "devices": [
+    ]
+  },
+
+  "tdoa": {
+    "activationEnabled": false,
+    "assetFriendlyColor": "#34d399",
+    "defaultSectorRange": 2000,
+    "defaultAngle": 60,
     "sectorFillDefaultColor": "#fb923c",
     "sectorFillDefaultOpacity": 0.30,
     "label": {
@@ -550,10 +606,10 @@
       "textFont": ["Open Sans Regular"]
     },
     "scan": {
-      "cycleMs": 2000,
-      "tickMs": 100,
-      "bandCount": 9,
-      "bandWidthMeters": 2
+      "cycleMs": 3000,
+      "tickMs": 300,
+      "bandCount": 5,
+      "bandWidthMeters": 5
     },
     "sectorBorder": {
       "lineWidth": 0,
@@ -565,25 +621,25 @@
       "centerNameVisible": false
     },
     "devices": [
-      {
-        "deviceId": "TDOA",
+       {
+        "deviceId": "system-TDOA-001",
         "name": "TDOA",
         "assetType": "tdoa",
         "center": [122.098000, 37.548900],
         "bearing": 0,
         "angle": 60,
-        "range": 5000,
+        "range": 2000,
         "color": "#ef1313",
         "opacity": 0.2,
-        "virtualTroop": false,
+        "virtualTroop": true,
         "disposition": "friendly",
         "centerNameVisible": true,
-        "activationEnabled": true,
+        "activationEnabled": false,
         "scan": {
-          "cycleMs": 2000,
-          "tickMs": 100,
-          "bandCount": 9,
-          "bandWidthMeters": 2
+          "cycleMs": 3000,
+          "tickMs": 300,
+          "bandCount": 5,
+          "bandWidthMeters": 5
         }
       }
     ]
@@ -592,8 +648,9 @@
   "laserWeapons": {
     "activationEnabled": false,
     "assetFriendlyColor": "#34d399",
-    "defaultRange": 12000,
-    "sectorFillDefaultColor": "#fb7185",
+    "defaultRange": 1000,
+    "defaultAngle": 3,
+    "sectorFillDefaultColor": "#ffffff",
     "sectorFillDefaultOpacity": 0.35,
     "label": {
       "fontSize": 10,
@@ -604,10 +661,10 @@
       "textFont": ["Open Sans Regular"]
     },
     "scan": {
-      "cycleMs": 2000,
-      "tickMs": 90,
-      "bandCount": 9,
-      "bandWidthMeters": 1
+      "cycleMs": 3000,
+      "tickMs": 300,
+      "bandCount": 5,
+      "bandWidthMeters": 5
     },
     "laserPulseOnMs": 10000,
     "laserPulseOffMs": 3000,
@@ -621,24 +678,24 @@
       "centerNameVisible": true
     },
     "devices": [
-      {
-        "deviceId": "laser-1",
+        {
+        "deviceId": "system-laser-001",
         "name": "激光武器",
         "assetType": "laser",
         "center": [122.0872,37.5463],
         "bearing": 0,
         "angle": 3,
-        "range": 1500,
+        "range": 1000,
         "color": "#ffffff",
         "opacity": 0.35,
-        "virtualTroop": false,
+        "virtualTroop": true,
         "disposition": "friendly",
         "centerNameVisible": true,
         "scan": {
-          "cycleMs": 2000,
-          "tickMs": 90,
-          "bandCount": 9,
-          "bandWidthMeters": 1
+          "cycleMs": 3000,
+          "tickMs": 300,
+          "bandCount": 5,
+          "bandWidthMeters": 5
         }
       }
     ]
@@ -657,7 +714,7 @@
     },
     "trackTimeout": {
       "enabled": true,
-      "seconds": 10,
+      "seconds": 60,
       "uavSeconds": 60,
       "checkIntervalMs": 2000
     },
@@ -690,11 +747,16 @@
     "imagePollIntervalMs": 3000,
     "imageFetchTimeoutMs": 1000,
     "chat": {
-      "_说明": "处置相关 HTTP 配置：手动产生方案、执行方案、处置结束",
+      "_说明": "处置 HTTP：产生方案、执行方案；消灭走 filterTargetOrForceUrls；巡飞弹删除走 entityDeleteUrl",
       "disposalPlanWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream",
       "disposalManualGeneratePlanUrl": "http://192.168.18.103:8000/api/v1/tasks/target-engagement/manual-generate-plan",
       "disposalExecuteUrl": "http://192.168.18.103:8000/api/v1/tasks/grpc-disposal/execute",
-      "disposalEndUrl": "http://192.168.18.110:8019/api/alarm_filter",
+      "filterTargetOrForceUrls": [
+        "http://192.168.18.141:8019/api/alarm_filter"
+      ],
+      "filterTargetOrForceTimeoutMs": 8000,
+      "entityDeleteUrl": "http://192.168.18.141:8090/api/v1/entities/{entityId}",
+      "entityDeleteTimeoutMs": 5000,
       "disposalHttpTimeoutMs": 8000,
       "disposalExecuteTimeoutMs": 8000,
       "autoDisposalWsConnectTimeoutMs": 10000,
@@ -715,7 +777,7 @@
   "trackIdMode": {
     "distinguishSeaAir": false
   },
-
+  
   "tileLayers": [
     {
       "id": "local-raster-tiles",

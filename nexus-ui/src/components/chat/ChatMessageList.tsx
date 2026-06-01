@@ -1,13 +1,11 @@
 "use client";
 
-import { useRef, useEffect, useMemo, useCallback } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import { ChatMessage } from "./ChatMessage";
 import { SchemeRow } from "./DisposalPlanFeed";
 import { useDisposalPlanStore, type DisposalPlanBlock } from "@/stores/disposal-plan-store";
 import { useTrackAliasStore } from "@/stores/track-alias-store";
 import { formatTargetKindPhraseFromTargetInfo, formatTargetIdForUi } from "@/lib/disposal/normalize-disposal-plans";
-import { getRenderCache } from "@/stores/track-store";
-import { useAppStore } from "@/stores/app-store";
 import { NxCard } from "@/components/nexus";
 import type { UIMessage } from "ai";
 import { Bot, Sparkles, Crosshair } from "lucide-react";
@@ -17,17 +15,6 @@ import { Bot, Sparkles, Crosshair } from "lucide-react";
 function DisposalBlockMessage({ block }: { block: DisposalPlanBlock }) {
   const executeScheme = useDisposalPlanStore((s) => s.executeScheme);
   const aliases = useTrackAliasStore((s) => s.aliases);
-  const requestFlyTo = useAppStore((s) => s.requestFlyTo);
-
-  const handleHoverTarget = useCallback((tid: string) => {
-    if (!tid) return;
-    const cache = getRenderCache();
-    const t = cache.get(tid);
-    if (t) { requestFlyTo(t.lat, t.lng, 14); return; }
-    for (const [, tr] of cache) {
-      if (tr.trackId === tid) { requestFlyTo(tr.lat, tr.lng, 14); return; }
-    }
-  }, [requestFlyTo]);
 
   return (
     <div className="flex gap-2 px-3 py-2 animate-fade-in">
@@ -36,7 +23,7 @@ function DisposalBlockMessage({ block }: { block: DisposalPlanBlock }) {
         <Bot size={13} />
       </div>
       <div className="min-w-0 flex-1 max-w-[80%] space-y-1">
-        <span className="text-[10px] font-medium text-nexus-text-muted">Nexus AI</span>
+        <span className="text-[10px] font-medium text-nexus-text-muted">作管AI</span>
         {block.items.map((row) => {
           const targetId = String(row.inputParams?.targetId ?? "").trim();
           const alias = targetId ? aliases[targetId] : undefined;
@@ -46,8 +33,7 @@ function DisposalBlockMessage({ block }: { block: DisposalPlanBlock }) {
             <NxCard key={row.cardInstanceId} padding="none" className="my-1 p-2">
               {/* 醒目标题：别名 + 目标类型（大），真实ID（小）；悬停飞到目标 */}
               <div
-                className="mb-1 flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 transition-colors hover:bg-white/[0.04]"
-                onMouseEnter={() => handleHoverTarget(targetId)}
+                className="mb-1 flex items-center gap-1.5 rounded px-1 -mx-1"
               >
                 <Crosshair size={13} className="shrink-0 text-amber-400" />
                 <div>
@@ -114,6 +100,7 @@ export function ChatMessageList({
   onHintClick?: (text: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(false);
   const disposalBlocks = useDisposalPlanStore((s) => s.blocks);
   const hasContent = messages.length > 0 || disposalBlocks.length > 0;
 
@@ -140,6 +127,10 @@ export function ChatMessageList({
   }, [messages, disposalBlocks]);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isStreaming, disposalBlocks.length]);
 
@@ -149,7 +140,9 @@ export function ChatMessageList({
         <Bot size={20} className="text-sky-400" />
       </div>
       <div>
-        <p className="text-xs font-medium text-nexus-text-secondary">Nexus AI 助手</p>
+        <p className="text-xs font-medium text-nexus-text-secondary">
+          {mounted ? "作管智能助手" : "Nexus AI 助手"}
+        </p>
         <p className="mt-1 text-[10px] leading-relaxed text-nexus-text-muted">
           输入指令与 AI 交互，支持态势查询、地图导航、目标分析等操作
         </p>

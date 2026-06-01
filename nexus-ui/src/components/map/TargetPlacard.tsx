@@ -11,9 +11,7 @@
  *   → disposalPlanStore.appendFromNormalized(_, "http")
  *   → DisposalPlanFeed 展示方案卡片
  *
- * 【消灭关联】
- *   - AlertPanel「消灭」后若当前选中的是被消灭航迹 → appStore.selectTrack(null)
- *   → 本组件关闭
+ * 【消灭】仅 AlertPanel 告警条提供；飞弹资产属性框无消灭按钮。
  */
 
 "use client";
@@ -24,7 +22,12 @@ import { buildTargetInfoFromTrack } from "@/lib/disposal/target-info-from-track"
 import { fetchDisposalPlansHttp } from "@/lib/disposal/disposal-api";
 import { useAppStore } from "@/stores/app-store";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
-import { buildAssetSymbolDataUrl, buildMarkerSymbolDataUrl, assetFriendlyColorFromProperties } from "@/lib/map-icons";
+import {
+  buildAssetSymbolDataUrl,
+  buildMarkerSymbolDataUrl,
+  assetFriendlyColorFromProperties,
+  preloadTrackIconFragments,
+} from "@/lib/map-icons";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import {
   isVirtualFromProperties,
@@ -40,6 +43,7 @@ import {
   formatIsoToSecond,
   getTrackRenderingConfig,
   getAssetFriendlyColorForAssetType,
+  isMunitionAsset,
 } from "@/lib/map-app-config";
 import { useAlertStore } from "@/stores/alert-store";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
@@ -64,6 +68,17 @@ function formatLatLng(lat: number | null | undefined, lng: number | null | undef
   const ns = lat >= 0 ? "N" : "S";
   const ew = lng >= 0 ? "E" : "W";
   return `${Math.abs(lat).toFixed(4)}°${ns}, ${Math.abs(lng).toFixed(4)}°${ew}`;
+}
+
+function alertMatchKeyForTrack(trackId: string, rawType: unknown): string {
+  const s = String(rawType ?? "").trim().toLowerCase();
+  const domain =
+    rawType === 1 || rawType === "1" || s.includes("air") || s.includes("uav") || s.includes("drone") || s.includes("空")
+      ? "air"
+      : rawType === 0 || rawType === "0" || s.includes("sea") || s.includes("ship") || s.includes("boat") || s.includes("海")
+        ? "sea"
+        : "";
+  return domain ? `${domain}:${trackId}` : "";
 }
 
 function DispositionBadge({ d }: { d: ForceDisposition }) {
@@ -170,14 +185,16 @@ export function TargetPlacard(props: TargetPlacardProps) {
   /** 构建告警 trackId 集合，复用 isTrackMatchedByAlarm 逻辑匹配 */
   const relatedAlerts = useMemo(() => {
     if (kind !== "track" || !track) return [];
-    const alarmTrackIds = new Set<string>();
-    for (const a of alerts) {
-      if (a.trackId) alarmTrackIds.add(a.trackId);
-    }
     return alerts
-      .filter((a) => a.trackId && isTrackMatchedByAlarm(track, new Set([a.trackId])))
+      .filter((a) => {
+        if (!a.trackId) return false;
+        const key = alertMatchKeyForTrack(a.trackId, a.targetType ?? a.type);
+        return key ? isTrackMatchedByAlarm(track, new Set([key])) : false;
+      })
       .slice(0, 5);
   }, [alerts, track, kind]);
+
+  const isMunition = kind === "asset" && isMunitionAsset(asset);
 
   const subtitle = kind === "track" ? "航迹" : assetTypeLabel;
   const titleText = useMemo(() => {
@@ -189,12 +206,25 @@ export function TargetPlacard(props: TargetPlacardProps) {
     return droneDisplayName || dockDisplayName || asset?.name || id;
   }, [kind, track, id, droneDisplayName, dockDisplayName, asset?.name]);
 
-  const trackSymbolUrl = useMemo(() => {
-    if (kind !== "track" || !track) return null;
+  const [trackSymbolUrl, setTrackSymbolUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (kind !== "track" || !track) {
+      setTrackSymbolUrl(null);
+      return;
+    }
+    let cancelled = false;
     const tr = getTrackRenderingConfig();
     const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
     const friendlyFill = track.disposition === "friendly" ? ts.idColor : undefined;
-    return buildMarkerSymbolDataUrl(track.type, track.disposition, undefined, track.isVirtual === true, friendlyFill);
+    const build = () =>
+      buildMarkerSymbolDataUrl(track.type, track.disposition, undefined, track.isVirtual === true, friendlyFill);
+    void preloadTrackIconFragments().then(() => {
+      if (!cancelled) setTrackSymbolUrl(build());
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [kind, track]);
 
   const [assetIconLoaded, setAssetIconLoaded] = useState<{ id: string; url: string } | null>(null);
@@ -435,7 +465,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
           {expanded && (
             <div className="mt-1 space-y-1">
               <Row k="类型" v={assetTypeLabel} />
-              <Row k="射程" v={asset?.range_km ? `${asset.range_km} km` : "-"} />
+              <Row k="entityId" v={asset?.id ?? "-"} />
+              {!isMunition ? <Row k="射程" v={asset?.range_km ? `${asset.range_km} km` : "-"} /> : null}
               <Row k="任务状态" v={asset?.mission_status ?? "-"} />
             </div>
           )}

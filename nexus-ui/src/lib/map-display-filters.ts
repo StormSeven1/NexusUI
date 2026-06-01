@@ -40,7 +40,7 @@ export const EXCLUDE_DRONE_IDS = new Set<string>(["uav_jo-001"]);
 export const EXCLUDE_DRONE_NAMES = new Set<string>(["远遥码头"]);
 
 /** 无人机：仅隐藏地图渲染（数据/资产列表/内部逻辑保留），按 deviceSn 匹配 */
-export const HIDE_RENDER_DRONE_SNS = new Set<string>(["1581F6Q8D244300C47RP"]);
+export const HIDE_RENDER_DRONE_SNS = new Set<string>(["1581F6Q8D244300C47RP","1581F6Q8X251H00G04XX","1581F6Q8D249C00GR66R"]);
 
 /**
  * 区域：**id** 白名单；空数组表示不按 id 过滤。
@@ -51,9 +51,9 @@ export const ZONE_ID_ALLOWLIST: readonly string[] = [];
 /**
  * 区域：**名称**需包含以下子串之一才显示（与 App.vue `Zones` 一致）。
  * 空数组表示**不按名称**过滤（仍可按 `ZONE_ID_ALLOWLIST` 过滤）。
- * 若需与 18.141 完全一致，保留默认两项；若需显示全部区域，改为 `[]`。
+ * 若需与 18.141 完全一致，保留默认两项；若需显示全部区域，改为 `[]`。港外航道监控区
  */
-export const ZONE_NAME_SUBSTRING_ALLOWLIST: readonly string[] = ["港外航道监控区"];
+export const ZONE_NAME_SUBSTRING_ALLOWLIST: readonly string[] = ["AAAA"];
 
 const zoneIdAllowSet =
   ZONE_ID_ALLOWLIST.length > 0 ? new Set(ZONE_ID_ALLOWLIST.map((s) => String(s).trim()).filter(Boolean)) : null;

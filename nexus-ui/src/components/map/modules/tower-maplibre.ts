@@ -5,7 +5,7 @@
  *   - 独立的 source / FOV fill / FOV line / icon 层 / label 层，不与光电共享任何 MapLibre 资源
  *   - 独立的图层显隐控制（LYR_TOWER）
  *   - 电侦图标使用 电侦.svg（PUBLIC_MAP_SVG_FILES.tower）
- *   - 电侦显示名为"电侦XXX"（formatTowerMapLabel），不是"相机XXX"
+ *   - 电侦显示名与资产列表一致（`AssetData.name` → `adaptAssetsForMap`）
  *   - 电侦有 FOV 扇区（与光电逻辑相同但完全独立 source/layer）
  */
 

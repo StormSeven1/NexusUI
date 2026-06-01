@@ -84,6 +84,19 @@ class ReceiverManager:
             else:
                 self._stats[receiver_id]['failed'] += 1
             return
+
+        if data_format == 'SpeedCamera':
+            from parsers.high_speed_camera_udp import parse_high_speed_camera_udp
+            messages, ok = parse_high_speed_camera_udp(data, source_name)
+            if ok and messages:
+                for msg in messages:
+                    ws_manager.queue_message(msg)
+                self._stats[receiver_id]['parsed'] += len(messages)
+            elif ok:
+                self._stats[receiver_id]['parsed'] += 1
+            else:
+                self._stats[receiver_id]['failed'] += 1
+            return
         
         # 解析数据
         tracks = TrackParser.parse(data, data_format, receiver_id)
@@ -163,7 +176,7 @@ class ReceiverManager:
                 data_type = parsed_data.get('data_type', '')
                 
                 if data_type == 'camera_status':
-                    if(parsed_data['entityId'] in ["camera_004","camera_001"]):
+                    if(parsed_data['entityId'] in ["camera_004","camera_001","camera-hs-001","camera-hs-002","camera-hs-003","camera-hs-004"]):
                         # print("*"*50)
                         # print("解析相机状态:",parsed_data)
                         # print("*"*50)
@@ -214,6 +227,26 @@ class ReceiverManager:
                         'type': 'HighFreq',
                         'data': parsed_data
                     })
+                elif data_type == 'munition_status':
+                    ws_manager.queue_message({
+                        'type': 'MunitionStatus',
+                        'data': parsed_data
+                    })
+                elif data_type == 'usv_status':
+                    ws_manager.queue_message({
+                        'type': 'UsvStatus',
+                        'data': parsed_data
+                    })
+                elif data_type == 'laser_status':
+                    ws_manager.queue_message({
+                        'type': 'LaserStatus',
+                        'data': parsed_data
+                    })
+                elif data_type == 'tdoa_status':
+                    ws_manager.queue_message({
+                        'type': 'TdoaStatus',
+                        'data': parsed_data
+                    })
                 else:
                     # 航迹数据（fusion_track, ais_track, radar_track 等），发送为 Track 类型
                     ws_manager.queue_track_data(parsed_data)
@@ -238,6 +271,8 @@ class ReceiverManager:
                 result = parse_entity_status(json_data)
                 
                 if result:
+                    from parsers.dds_parser import sync_dock_sn_map_from_relationships
+                    sync_dock_sn_map_from_relationships(result.get('relationships'))
                     # 准备发送到前端的数据（含 entities 全量 + relationships，不重复放在 cache_info 里）
                     ws_data = {
                         "type": "entity_status",

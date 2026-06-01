@@ -98,6 +98,17 @@ function rankSchemesByRecommendationScore(schemes: MappedDisposalScheme[]): void
   for (let i = 0; i < sorted.length; i++) {
     sorted[i].priority = i;
   }
+  schemes.sort((a, b) => a.priority - b.priority);
+}
+
+function renumberSchemeDisplayNames(schemes: MappedDisposalScheme[]): void {
+  for (let i = 0; i < schemes.length; i++) {
+    const nextPrefix = `方案${i + 1}`;
+    const name = String(schemes[i].schemeName || "").trim();
+    schemes[i].schemeName = name.match(/^方案\s*\d+/)
+      ? name.replace(/^方案\s*\d+/, nextPrefix)
+      : `${nextPrefix}${name ? `: ${name}` : ""}`;
+  }
 }
 
 function pickHighestPriorityScheme(mappedList: MappedDisposalScheme[]): MappedDisposalScheme | null {
@@ -372,6 +383,7 @@ export function normalizeDisposalPayload(payload: Record<string, unknown>): Norm
   /* 按目标分组排名：每组内按 recommendationScore 降序赋 P0/P1/P2… */
   for (const list of groups.values()) {
     rankSchemesByRecommendationScore(list);
+    renumberSchemeDisplayNames(list);
   }
 
   const items: NormalizedDisposalItem[] = [];

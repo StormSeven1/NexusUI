@@ -1,19 +1,10 @@
 /**
  * disposal-api — 处置方案 HTTP 交互层
  *
- * 【三大接口】
- * 1. fetchDisposalPlansHttp — 手动产生方案（POST disposalManualGeneratePlanUrl）
- *    - 请求体：{ targetInfo: { targetId, targetType, longitude, latitude, speed, course } }
- *    - 响应：NormalizedDisposalPlans | null
- *    - 特殊处理：HTTP 500 + FastAPI detail → 业务说明（如「未生成有效方案」），不抛错
+ * 1. fetchDisposalPlansHttp — 手动产生方案
+ * 2. postDisposalExecute — 执行方案
  *
- * 2. postDisposalExecute — 执行方案（POST disposalExecuteUrl）
- *    - 请求体：buildGrpcDisposalExecuteBody(scheme, parentTaskId)
- *    - 响应：ExecuteDisposalResult { ok, success, message, businessWorkflowId }
- *
- * 3. sendDisposalEndRequest — 处置结束/消灭（PUT disposalEndUrl + disposalEndPath）
- *    - URL query: type=0对海/1对空, trackid=业务航迹ID
- *    - 对齐 V2 TaskProgress.sendDisposalEndRequest
+ * 告警消灭走 alert-destroy.runAlertDestroyHttp。
  */
 
 import { getHttpChatConfig } from "@/lib/map-app-config";
@@ -191,62 +182,3 @@ export async function postDisposalExecute(
   }
 }
 
-/**
- * 处置结束：向后端发送告警过滤请求（PUT disposalEndUrl）
- *
- * 对齐 V2 TaskProgress.sendDisposalEndRequest：
- * - type=0 对海，type=1 对空
- * - trackid 为业务 trackId（非 GeoJSON uniqueID）
- * - 使用 PUT 方法，query 参数 type + trackid
- * - disposalEndUrl 已包含完整路径（如 http://192.168.18.110:8019/api/alarm_filter）
- *
- * @param trackid 业务航迹 trackId（告警匹配用的 ID）
- * @param isAirTrack 是否对空航迹（true=对空 type=1，false=对海 type=0）
- * @returns 请求是否成功
- */
-export async function sendDisposalEndRequest(
-  trackid: string,
-  isAirTrack: boolean,
-): Promise<boolean> {
-  const config = getHttpChatConfig();
-  const baseUrl = config.disposalEndUrl;
-  const type = isAirTrack ? 1 : 0;
-
-  if (!trackid || String(trackid).trim() === "") {
-    console.warn("[disposal-api] sendDisposalEndRequest: trackid 为空，跳过");
-    return false;
-  }
-
-  const tid = String(trackid).trim();
-  const fullUrl = `${baseUrl}?type=${type}&trackid=${encodeURIComponent(tid)}`;
-
-  console.log("[disposal-api] 发送处置结束请求:", fullUrl, { trackid: tid, isAirTrack, type });
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-  try {
-    const response = await fetch(fullUrl, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("[disposal-api] 处置结束请求失败:", response.status, errorText);
-      return false;
-    }
-
-    console.log("[disposal-api] ✅ 处置结束请求成功");
-    return true;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    console.error("[disposal-api] 处置结束请求异常:", error);
-    return false;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}

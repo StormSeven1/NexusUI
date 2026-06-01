@@ -15,6 +15,20 @@ function newAlertId(): string {
   return `al_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function dumpAlertNormalizeDebug(raw: unknown, normalized: AlertData | null, reason?: string): void {
+  if (typeof console === "undefined") return;
+  console.groupCollapsed(
+    `[alert-normalize] ${normalized ? "ok" : "null"} trackId=${normalized?.trackId ?? "-"} targetType=${normalized?.targetType ?? "-"} type=${normalized?.type ?? "-"}${reason ? ` reason=${reason}` : ""}`,
+  );
+  console.log("raw", raw);
+  console.log("normalized", normalized);
+  console.groupEnd();
+}
+
 /** V2 `alert_type` / 通用 `severity` / V2 `alarmLevel`（数字 0-4）→ store 用的三档 */
 export function wsAlertTypeToSeverity(
   raw: string | number | undefined | null,
@@ -33,7 +47,10 @@ export function wsAlertTypeToSeverity(
 
 /** 单条 WS 对象 → `AlertData`；无法解析时返回 null */
 export function normalizeWsAlertItem(raw: unknown): AlertData | null {
-  if (!raw || typeof raw !== "object") return null;
+  if (!raw || typeof raw !== "object") {
+    dumpAlertNormalizeDebug(raw, null, "not-object");
+    return null;
+  }
   const o = raw as Record<string, unknown>;
 
   const title = typeof o.title === "string" ? o.title.trim() : "";
@@ -47,7 +64,10 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     "";
   const message =
     title && body ? `${title}: ${body}` : title || body || (typeof o.msg === "string" ? o.msg : "");
-  if (!message) return null;
+  if (!message) {
+    dumpAlertNormalizeDebug(raw, null, "empty-message");
+    return null;
+  }
 
   const alertTypeRaw =
     (typeof o.severity === "string" && o.severity) ||
@@ -122,6 +142,31 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     typeof o.type === "string" && o.type !== "map_command" && o.type !== "alert_batch" && o.type !== "Alarm"
       ? o.type
       : undefined;
+  const targetInfo = asRecord(o.targetInfo) ?? asRecord(o.target_info);
+  const trackInfo = asRecord(o.trackInfo) ?? asRecord(o.track_info);
+  const trackObject = asRecord(o.track);
+  const targetTypeRaw =
+    o.targetType ??
+    o.target_type ??
+    o.trackType ??
+    o.track_type ??
+    o.objectType ??
+    o.object_type ??
+    targetInfo?.targetType ??
+    targetInfo?.target_type ??
+    targetInfo?.type ??
+    trackInfo?.targetType ??
+    trackInfo?.target_type ??
+    trackInfo?.type ??
+    trackObject?.trackType ??
+    trackObject?.track_type ??
+    trackObject?.type;
+  const targetType =
+    typeof targetTypeRaw === "number" && Number.isFinite(targetTypeRaw)
+      ? targetTypeRaw
+      : typeof targetTypeRaw === "string" && targetTypeRaw.trim()
+        ? targetTypeRaw.trim()
+        : undefined;
 
   const alarmLevelRaw = o.alarmLevel ?? o.level ?? o.alarm_level;
   const alarmLevel =
@@ -169,12 +214,15 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     ...(trackId ? { trackId } : {}),
     ...(lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : {}),
     ...(type ? { type } : {}),
+    ...(targetType !== undefined ? { targetType } : {}),
     ...(alarmLevel != null && Number.isFinite(alarmLevel) ? { alarmLevel } : {}),
     ...(source ? { source } : {}),
     ...(areaName ? { areaName } : {}),
     ...(uniqueID ? { uniqueID } : {}),
     ...(detail ? { detail } : {}),
+    ...(o.suppressDestroy === true ? { suppressDestroy: true } : {}),
   };
+  dumpAlertNormalizeDebug(raw, out);
   return out;
 }
 

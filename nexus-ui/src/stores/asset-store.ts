@@ -30,6 +30,8 @@ interface AssetState {
   mergeAssetFields: (id: string, patch: Partial<AssetData>) => void;
   /** 新增或覆盖整条实体（如 `DockStatus` / `DroneStatus` 单条）*/
   upsertAsset: (asset: AssetData) => void;
+  /** 从资产列表移除（巡飞弹摧毁等） */
+  removeAsset: (id: string) => void;
   /**
    * 每个资产的显示参数覆盖（不会被 WS 刷新覆盖）。
    * key = assetId, value = 要合并到 asset.properties 的字段（如 showRings, ring_color 等）
@@ -74,6 +76,11 @@ export const useAssetStore = create<AssetState>((set) => ({
         ],
       };
     }),
+
+  removeAsset: (id) =>
+    set((s) => ({
+      assets: s.assets.filter((a) => a.id !== id),
+    })),
 
   setDisplayOverride: (id, patch) =>
     set((s) => ({

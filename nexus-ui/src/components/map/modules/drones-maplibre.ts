@@ -62,7 +62,7 @@ import {
 } from "@/lib/map-app-config";
 import { HIDE_RENDER_DRONE_SNS } from "@/lib/map-display-filters";
 import type { DroneTelemetry } from "@/stores/drone-store";
-import { useDroneStore } from "@/stores/drone-store";
+import { useDroneStore, readMunitionQuantityFromPayload } from "@/stores/drone-store";
 import { useAssetStore } from "@/stores/asset-store";
 import type { ForceDisposition } from "@/lib/theme-colors";
 
@@ -174,6 +174,8 @@ export const DRONES_ROUTE_END_SOURCE = "nexus-drones-route-end-src";
 export const DRONES_ROUTE_END_INNER = "nexus-drones-route-end-inner";
 export const DRONES_ROUTE_END_OUTER = "nexus-drones-route-end-outer";
 export const DRONES_BATTERY_LAYER = "nexus-drones-battery";
+export const DRONES_AMMO_LAYER = "nexus-drones-ammo";
+const DRONE_AMMO_BADGE_PREFIX = "nexus-drone-ammo-badge-";
 /** 配置 / 资产 store 中的静态 `asset_type: drone` 站址（图标 + 名称），与实时机队 `DRONES_SOURCE` 分离 */
 export const DRONES_STATIC_SOURCE = "nexus-drones-static-sites";
 export const DRONES_STATIC_SYMBOL_LAYER = "nexus-drones-static-symbol";
@@ -524,6 +526,72 @@ function registerBatteryBarImages(map: maplibregl.Map) {
   }
 }
 
+function ammoBadgeImageId(count: number) {
+  return `${DRONE_AMMO_BADGE_PREFIX}${count}`;
+}
+
+const AMMO_BADGE_PIXEL_RATIO = 2;
+
+/** 红色方框 + 白色数量（2x Canvas，无描边/光晕） */
+function generateAmmoBadgeImage(count: number): { width: number; height: number; data: Uint8Array } {
+  const label = String(Math.max(0, Math.trunc(count)));
+  const fontSize = 15;
+  const lh = 16;
+  const lw = Math.max(11, label.length * 5 + 6);
+  const pr = AMMO_BADGE_PIXEL_RATIO;
+  const canvas = document.createElement("canvas");
+  canvas.width = lw * pr;
+  canvas.height = lh * pr;
+  const ctx = canvas.getContext("2d")!;
+  ctx.scale(pr, pr);
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = "#4400ff";
+  ctx.fillRect(0, 0, lw, lh);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, lw / 2, lh / 2);
+  const imgData = ctx.getImageData(0, 0, lw * pr, lh * pr);
+  return { width: lw * pr, height: lh * pr, data: new Uint8Array(imgData.data.buffer) };
+}
+
+function ensureAmmoBadgeImage(map: maplibregl.Map, count: number) {
+  const id = ammoBadgeImageId(count);
+  if (map.hasImage(id)) map.removeImage(id);
+  map.addImage(id, generateAmmoBadgeImage(count), { pixelRatio: AMMO_BADGE_PIXEL_RATIO });
+}
+
+let _ammoBadgesRegistered = false;
+
+/** 预注册 0–99 贴图 */
+function registerAmmoBadgeImages(map: maplibregl.Map) {
+  if (_ammoBadgesRegistered) return;
+  _ammoBadgesRegistered = true;
+  for (let i = 0; i <= 99; i++) {
+    ensureAmmoBadgeImage(map, i);
+  }
+}
+
+function munitionQtyForRender(tele: DroneTelemetry): number | null {
+  if (
+    typeof tele.munitionQuantity === "number" &&
+    Number.isFinite(tele.munitionQuantity) &&
+    tele.munitionQuantity >= 0
+  ) {
+    return tele.munitionQuantity;
+  }
+  return readMunitionQuantityFromPayload(tele.flightPath);
+}
+
+function syncAmmoBadgeImages(map: maplibregl.Map, drones: Record<string, DroneTelemetry>) {
+  for (const tele of Object.values(drones)) {
+    const q = munitionQtyForRender(tele);
+    if (q == null) continue;
+    ensureAmmoBadgeImage(map, q);
+  }
+}
+
 function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.FeatureCollection {
   const cfg = getDroneMapRenderingConfig();
   const features: GeoJSON.Feature[] = [];
@@ -583,6 +651,19 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
       features.push({
         type: "Feature",
         properties: { kind: "battery", batteryStep: step },
+        geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
+      });
+    }
+
+    // 弹药角标：红色方框贴图（右下角），数量写在框内
+    const ammoQty = munitionQtyForRender(tele);
+    if (ammoQty != null) {
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "ammo-badge",
+          ammoCount: ammoQty,
+        },
         geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
       });
     }
@@ -884,6 +965,10 @@ export class DronesMaplibre {
       );
     }
 
+    // 弹药角标：红色方框 + 框内数量（Canvas 贴图，图层置顶）
+    registerAmmoBadgeImages(m);
+    this.ensureAmmoLayer();
+
     this.applyPaintFromConfig();
     this.refreshFromStore();
     this.unsub = useDroneStore.subscribe(() => {
@@ -891,6 +976,44 @@ export class DronesMaplibre {
     });
 
     this.startTimeoutPrune();
+  }
+
+  /** 无人机右下角弹药：红色方框贴图（与电量条同样 icon-image concat 写法） */
+  private ensureAmmoLayer() {
+    const m = this.map;
+    if (!m.getSource(DRONES_SOURCE)) return;
+
+    registerAmmoBadgeImages(m);
+
+    const layout = {
+      "icon-image": ["concat", DRONE_AMMO_BADGE_PREFIX, ["to-string", ["get", "ammoCount"]]],
+      "icon-size": 0.72,
+      "icon-offset": [8, 3],
+      "icon-anchor": "top-left",
+      "icon-allow-overlap": true,
+      "icon-ignore-placement": true,
+      "icon-pitch-alignment": "viewport" as const,
+      "icon-rotation-alignment": "viewport" as const,
+    };
+
+    if (!m.getLayer(DRONES_AMMO_LAYER)) {
+      m.addLayer({
+        id: DRONES_AMMO_LAYER,
+        type: "symbol",
+        source: DRONES_SOURCE,
+        filter: ["==", ["get", "kind"], "ammo-badge"],
+        layout,
+      });
+    } else {
+      try {
+        for (const [k, v] of Object.entries(layout)) {
+          m.setLayoutProperty(DRONES_AMMO_LAYER, k, v);
+        }
+        m.moveLayer(DRONES_AMMO_LAYER);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   /** 由 `Map2D` 在资产 store 更新时调用：仅刷新 **`asset_type: drone`** 的配置/WS 合并站址（与 `useDroneStore` 无关） */
@@ -1004,8 +1127,10 @@ export class DronesMaplibre {
       this.renderRafId = null;
       const m = this.map;
       if (!m.getSource(DRONES_SOURCE)) return;
-      const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource;
+      this.ensureAmmoLayer();
       const drones = useDroneStore.getState().drones;
+      syncAmmoBadgeImages(m, drones);
+      const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource;
       src.setData(buildDroneGeoJSON(drones));
     });
   }
@@ -1049,9 +1174,12 @@ export class DronesMaplibre {
 
   refreshFromStore() {
     const m = this.map;
+    this.ensureAmmoLayer();
+    const drones = useDroneStore.getState().drones;
+    syncAmmoBadgeImages(m, drones);
     const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
-    src.setData(buildDroneGeoJSON(useDroneStore.getState().drones));
+    src.setData(buildDroneGeoJSON(drones));
   }
 
   dispose() {
@@ -1072,6 +1200,7 @@ export class DronesMaplibre {
     this.unsub = null;
     const m = this.map;
     for (const id of [
+      DRONES_AMMO_LAYER,
       DRONES_BATTERY_LAYER,
       DRONES_LABEL_LAYER,
       DRONES_SYMBOL_LAYER,

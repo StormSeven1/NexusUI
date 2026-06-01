@@ -12,12 +12,12 @@ import { useTrackStore, getRenderCache } from "@/stores/track-store";
 import { useDisposedStore } from "@/stores/disposed-store";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import { useTaskProgressStore } from "@/stores/task-progress-store";
-import { useTrackAliasStore } from "@/stores/track-alias-store";
+import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { cn } from "@/lib/utils";
-import { sendDisposalEndRequest } from "@/lib/disposal/disposal-api";
+import { runAlertDestroyHttp } from "@/lib/disposal/alert-destroy";
 import { AlertTriangle, AlertCircle, Info, X, ArrowUpDown } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 const SEVERITY_STYLES = {
@@ -50,25 +50,26 @@ const SEVERITY_STYLES = {
 type SeverityKey = keyof typeof SEVERITY_STYLES;
 const SEVERITY_SCORE: Record<SeverityKey, number> = { critical: 3, warning: 2, info: 1 };
 
-type SortMode = "time" | "level" | "severity";
+type SortMode = "name" | "time" | "level" | "severity";
 const SORT_OPTIONS: { id: SortMode; label: string }[] = [
+  { id: "name", label: "名称" },
   { id: "time", label: "时间" },
   { id: "level", label: "等级" },
   { id: "severity", label: "严重度" },
 ];
+
+function naturalNameCompare(a: string, b: string): number {
+  return a.localeCompare(b, "zh-CN", { numeric: true, sensitivity: "base" });
+}
 
 /**
  * 告警面板 — 消费 alert-store 的实时数据。
  *
  * 【数据流】`useUnifiedWsFeed`（`alert_batch` / `map_command` alert / `alert`）经 `ws-alert-normalize` 归一化 → `addAlerts` → 本列表。
  *
- * 【消灭按钮逻辑】（对齐 V2 LeftPanel.handleFinishDisposalClick + TaskProgress.endDisposalByTarget）
- * 1. 调用 sendDisposalEndRequest(trackid, isAirTrack) → PUT disposalEndUrl+disposalEndPath?type=&trackid=
- * 2. 标记已处置：disposedStore.addDisposedTrack(uniqueID, businessTrackId)
- * 3. 清除告警：alertStore.removeAlarmItemsByTrackId(trackId)
- * 4. 清除选中/高亮：appStore.selectTrack(null)（若当前选中的是该航迹）
- * 5. 清除处置方案连接线与激光/TDOA 激活：disposalPlanStore.cleanupEffectsForMissingTargets()
- * 6. 清除航迹渲染缓存：trackStore.syncWithAlarms 更新后自动过滤已处置航迹
+ * 【消灭按钮逻辑】
+ * 1. runAlertDestroyHttp：按本条告警 trackId 严格匹配正在执行的方案 → POST（entityId 逗号拼接，可为空）→ 仅有飞弹时 DELETE 飞弹
+ * 2. 标记已处置、清告警、清选中、清处置连线等（本地）
  */
 export function AlertPanel() {
   const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
@@ -77,7 +78,17 @@ export function AlertPanel() {
   const shadowTracks = useTrackStore((s) => s.shadowTracks);
   const addDisposedTrack = useDisposedStore((s) => s.addDisposedTrack);
   const cleanupEffectsForMissingTargets = useDisposalPlanStore((s) => s.cleanupEffectsForMissingTargets);
-  const [sortMode, setSortMode] = useState<SortMode>("time");
+  const aliases = useTrackAliasStore((s) => s.aliases);
+  const [sortMode, setSortMode] = useState<SortMode>("name");
+
+  useEffect(() => {
+    const aliasStore = useTrackAliasStore.getState();
+    for (const alert of alerts) {
+      if (!alert.trackId) continue;
+      const k = resolveAliasKey({ trackId: alert.trackId, uniqueID: alert.uniqueID ?? alert.trackId, isAirTrack: undefined });
+      if (k) aliasStore.getOrCreate(k);
+    }
+  }, [alerts]);
 
   /** 告警 trackId → 航迹 showID（用于 selectTrack） */
   const resolveShowIdFromAlarmTrackId = useCallback(
@@ -125,13 +136,27 @@ export function AlertPanel() {
       severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
       imageUrl: a.trackId ? alertImageMap.get(a.trackId) : undefined,
     }));
-    if (sortMode === "level") {
+    if (sortMode === "name") {
+      mapped.sort((a, b) => {
+        const aliasA = (() => {
+          if (!a.trackId) return "";
+          const k = resolveAliasKey({ trackId: a.trackId, uniqueID: a.uniqueID ?? a.trackId, isAirTrack: undefined });
+          return k ? (aliases[k] ?? a.trackId) : a.trackId;
+        })();
+        const aliasB = (() => {
+          if (!b.trackId) return "";
+          const k = resolveAliasKey({ trackId: b.trackId, uniqueID: b.uniqueID ?? b.trackId, isAirTrack: undefined });
+          return k ? (aliases[k] ?? b.trackId) : b.trackId;
+        })();
+        return naturalNameCompare(aliasA, aliasB);
+      });
+    } else if (sortMode === "level") {
       mapped.sort((a, b) => (b.alarmLevel ?? 0) - (a.alarmLevel ?? 0));
     } else if (sortMode === "severity") {
       mapped.sort((a, b) => SEVERITY_SCORE[b.severity] - SEVERITY_SCORE[a.severity]);
     }
     return mapped;
-  }, [alerts, alertImageMap, sortMode]);
+  }, [alerts, alertImageMap, aliases, sortMode]);
 
   const criticalCount = allAlerts.filter((a) => a.severity === "critical").length;
 
@@ -207,7 +232,10 @@ export function AlertPanel() {
                   </p> */}
                   {alert.trackId && (
                     <p className="mt-0.5 text-[12px] font-bold text-nexus-text-primary">
-                      {useTrackAliasStore.getState().getOrCreate(alert.trackId)}
+                      {(() => {
+                        const k = resolveAliasKey({ trackId: alert.trackId, uniqueID: alert.uniqueID ?? alert.trackId, isAirTrack: undefined });
+                        return (k && aliases[k]) ? aliases[k] : alert.trackId;
+                      })()}
                     </p>
                   )}
                   <div className="mt-1 space-y-0.5 text-[10px] text-nexus-text-muted">
@@ -267,44 +295,47 @@ export function AlertPanel() {
                     </div>
                   )}
                   <div className="mt-1.5 flex items-center gap-2">
-                    {alert.trackId && (
+                    {alert.trackId && !alert.suppressDestroy && (
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
                           const trackId = alert.trackId!;
-                          // 判断对空/对海：通过渲染缓存查找航迹类型
-                          let isAirTrack = false;
-                          for (const [, t] of getRenderCache()) {
-                            if (t.trackId === trackId) {
-                              isAirTrack = t.type === "air";
-                              break;
-                            }
-                          }
 
                           try {
-                            // 1. 发送处置结束 HTTP 请求（PUT alarm_filter?type=&trackid=）
-                            const httpOk = await sendDisposalEndRequest(trackId, isAirTrack);
+                            const http = await runAlertDestroyHttp(trackId);
+                            const adjudicationOk = http.adjudicationOk;
 
-                            // 2. 标记已处置（后续 WS 推送的该航迹点和告警都会被过滤）
+                            // 标记已处置（后续 WS 推送的该航迹点和告警都会被过滤）
                             const showId = resolveShowIdFromAlarmTrackId(trackId);
                             addDisposedTrack(showId ?? undefined, trackId);
 
-                            // 3. 清除告警列表中该 trackId 的条目
+                            // 4. 清除告警列表中该 trackId 的条目
                             removeAlarmItemsByTrackId(trackId);
 
-                            // 4. 若当前选中的是该航迹，取消选中/高亮
+                            // 5. 若当前选中的是该航迹，取消选中/高亮
                             if (selectedTrackId && selectedTrackId === showId) {
                               selectTrack(null);
                             }
 
-                            // 5. 清除处置方案连接线与激光/TDOA 激活状态
+                            // 6. 清除处置方案连接线与激光/TDOA 激活状态
                             cleanupEffectsForMissingTargets();
 
-                            // 6. 任务进展：该目标所有执行中条目 → 处置结束
+                            // 7. 任务进展：该目标所有执行中条目 → 处置结束
                             useTaskProgressStore.getState().endByTarget(trackId);
 
-                            const hint = httpOk ? "已通知后端" : "后端通知可能未送达";
-                            toast.success(`已消灭目标 ${trackId}（${hint}）`);
+                            const devHint =
+                              http.deviceEntityIds.length > 0
+                                ? `设备 ${http.deviceEntityIds.join(",")}`
+                                : "无执行中处置设备";
+                            const munHint =
+                              http.munitionEntityIds.length > 0
+                                ? `；已处理巡飞弹 ${http.munitionEntityIds.join(",")}`
+                                : "";
+                            toast.success(
+                              adjudicationOk
+                                ? `已消灭目标 ${trackId}（${devHint}${munHint}）`
+                                : `已消灭目标 ${trackId}（处置结束可能未全部成功；${devHint}${munHint}）`,
+                            );
                           } catch (err) {
                             console.error("[AlertPanel] 消灭操作失败:", err);
                             toast.error(`消灭失败: ${err instanceof Error ? err.message : "未知错误"}`);

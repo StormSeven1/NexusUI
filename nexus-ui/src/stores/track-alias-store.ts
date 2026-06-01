@@ -1,7 +1,7 @@
 /**
  * track-alias-store — 航迹别名（纯显示用）
  *
- * 按 trackId 自动分配递增别名（目标-1、目标-2 …）。
+ * 按 trackId 自动分配递增别名（目标1、目标2 …）。
  * 仅在 UI 渲染时调用，不参与任何缓存/过滤/匹配/处置逻辑。
  *
  * 【别名 key 规则】对齐告警匹配逻辑 isTrackMatchedByAlarm：
@@ -14,6 +14,9 @@
 import { create } from "zustand";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 
+const STORAGE_KEY = "nexus.trackAliases.v1";
+const TARGET_ALIAS_RE = /^目标-?(\d+)$/;
+
 interface TrackAliasState {
   aliases: Record<string, string>;
   _counter: number;
@@ -21,25 +24,63 @@ interface TrackAliasState {
   getAlias: (trackId: string) => string | undefined;
 }
 
+function maxAliasIndex(aliases: Record<string, string>): number {
+  let max = 0;
+  for (const alias of Object.values(aliases)) {
+    const m = String(alias).trim().match(TARGET_ALIAS_RE);
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (Number.isFinite(n)) max = Math.max(max, n);
+  }
+  return max;
+}
+
+function loadAliasSnapshot(): Pick<TrackAliasState, "aliases" | "_counter"> {
+  if (typeof window === "undefined") return { aliases: {}, _counter: 0 };
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { aliases: {}, _counter: 0 };
+    const parsed = JSON.parse(raw) as { aliases?: unknown; counter?: unknown; _counter?: unknown };
+    const aliases =
+      parsed.aliases && typeof parsed.aliases === "object" && !Array.isArray(parsed.aliases)
+        ? (parsed.aliases as Record<string, string>)
+        : {};
+    const counter = Math.max(Number(parsed.counter ?? parsed._counter) || 0, maxAliasIndex(aliases));
+    return { aliases, _counter: counter };
+  } catch {
+    return { aliases: {}, _counter: 0 };
+  }
+}
+
+function saveAliasSnapshot(aliases: Record<string, string>, counter: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ aliases, counter }));
+  } catch {
+    // localStorage 不可用时仍保持内存别名，不影响主流程。
+  }
+}
+
+const initialAliasState = loadAliasSnapshot();
+
 export const useTrackAliasStore = create<TrackAliasState>((set, get) => ({
-  aliases: {},
-  _counter: 0,
+  aliases: initialAliasState.aliases,
+  _counter: initialAliasState._counter,
 
   getOrCreate: (trackId) => {
+    const key = String(trackId ?? "").trim();
+    if (!key) return "";
     const s = get();
-    if (s.aliases[trackId]) return s.aliases[trackId];
-    // 延迟写入，避免在 React 渲染期间触发 setState
-    queueMicrotask(() => {
-      const cur = get();
-      if (cur.aliases[trackId]) return;
-      const next = cur._counter + 1;
-      const alias = `目标-${next}`;
-      set({ aliases: { ...cur.aliases, [trackId]: alias }, _counter: next });
-    });
-    return `目标-${s._counter + 1}`;
+    if (s.aliases[key]) return s.aliases[key];
+    const next = Math.max(s._counter, maxAliasIndex(s.aliases)) + 1;
+    const alias = `目标${next}`;
+    const aliases = { ...s.aliases, [key]: alias };
+    saveAliasSnapshot(aliases, next);
+    set({ aliases, _counter: next });
+    return alias;
   },
 
-  getAlias: (trackId) => get().aliases[trackId],
+  getAlias: (trackId) => get().aliases[String(trackId ?? "").trim()],
 }));
 
 /**

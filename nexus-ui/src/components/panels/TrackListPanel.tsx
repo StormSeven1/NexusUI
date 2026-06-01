@@ -7,7 +7,7 @@
 import { useState, useMemo } from "react";
 import { Search, Star, Plane, Ship } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getTrackIdModeConfig } from "@/lib/map-app-config";
+import { getTrackIdModeConfig, getTrackRenderingConfig } from "@/lib/map-app-config";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
@@ -48,9 +48,14 @@ function isAirDomain(t: Track): boolean {
   return t.isAirTrack === true || t.type === "air";
 }
 
+function trackRealityLabel(isVirtual?: boolean): string {
+  return isVirtual === true ? "虚兵" : "实兵";
+}
+
 export function TrackListPanel() {
   const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
   const liveTracks = useTrackStore((s) => s.tracks);
+  const aliases = useTrackAliasStore((s) => s.aliases);
   const [search, setSearch] = useState("");
   const [filterStarred, setFilterStarred] = useState(false);
   const [domainTab, setDomainTab] = useState<DomainTab>("all");
@@ -78,6 +83,8 @@ export function TrackListPanel() {
 
   const airCount = useMemo(() => liveTracks.filter(isAirDomain).length, [liveTracks]);
   const seaCount = liveTracks.length - airCount;
+
+  const trackRendering = useMemo(() => getTrackRenderingConfig(), []);
 
   const grouped = useMemo(() => {
     const groups: Record<string, typeof filtered> = {};
@@ -160,7 +167,12 @@ export function TrackListPanel() {
               </span>
             </div>
 
-            {tracks.map((track) => (
+            {tracks.map((track) => {
+              const ts = trackRendering.trackTypeStyles[track.type] ?? trackRendering.trackTypeStyles.sea;
+              const friendlyFill =
+                track.disposition === "friendly" ? ts.idColor : undefined;
+              const isVirtual = track.isVirtual === true;
+              return (
               <button
                 key={track.id}
                 onClick={() => {
@@ -177,13 +189,25 @@ export function TrackListPanel() {
                 <MilSymbol
                   type={track.type}
                   disposition={track.disposition}
+                  virtual={isVirtual}
+                  friendlyFill={friendlyFill}
                   size="sm"
                   className="mt-0.5 shrink-0"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-1">
                     <span className="truncate text-xs font-bold text-nexus-text-primary">
-                      {(() => { const k = resolveAliasKey(track); return k ? useTrackAliasStore.getState().getOrCreate(k) : track.name; })()}
+                      {(() => { const k = resolveAliasKey(track); return (k && aliases[k]) ? aliases[k] : track.name; })()}
+                    </span>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded px-1 py-0.5 text-[9px] font-medium leading-none",
+                        isVirtual
+                          ? "bg-amber-500/15 text-amber-300"
+                          : "bg-white/[0.06] text-nexus-text-muted",
+                      )}
+                    >
+                      {trackRealityLabel(isVirtual)}
                     </span>
                     {track.starred && (
                       <Star
@@ -208,7 +232,8 @@ export function TrackListPanel() {
                   </div>
                 </div>
               </button>
-            ))}
+            );
+            })}
           </div>
         ))}
       </div>

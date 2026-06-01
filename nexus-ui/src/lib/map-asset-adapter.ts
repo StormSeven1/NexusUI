@@ -2,14 +2,14 @@ import { isVirtualFromProperties, normalizeAssetType, type Asset } from "@/lib/m
 import type { AssetData } from "@/stores/asset-store";
 import { FORCE_COLORS } from "@/lib/theme-colors";
 import {
+  assetUiDisplayName,
   dispositionFromAssetData,
-  formatCameraTowerMapLabel,
-  formatTowerMapLabel,
   getAssetFriendlyColorForAssetType,
   getAssetLabelFontColorForAssetType,
   shouldDisplayAssetId,
 } from "@/lib/map-app-config";
 import { assetFriendlyColorFromProperties, assetLabelFontColorFromProperties } from "@/lib/map-icons";
+import { hsCameraFovRangeKm, isHsCamera } from "@/lib/speed-camera/hs-camera";
 
 /**
  * map-asset-adapter.ts
@@ -34,7 +34,7 @@ import { assetFriendlyColorFromProperties, assetLabelFontColorFromProperties } f
  *    - `center_icon_visible` -> `centerIconVisible`
  *    - `center_name_visible` -> `nameLabelVisible`
  *    - `fov_sector_visible`  -> `showFov`
- * 6) 名称格式化：camera/tower 使用统一格式化函数
+ * 6) 地图名称：与资产列表一致，用 `assetUiDisplayName`（`name`，空则回退 `id`）
  */
 export function adaptAssetsForMap(assets: AssetData[]): Asset[] {
   return assets
@@ -66,18 +66,15 @@ export function adaptAssetsForMap(assets: AssetData[]): Asset[] {
           assetLabelFontColorFromProperties(p ?? null) ??
           getAssetLabelFontColorForAssetType(t);
       }
-      let displayName = a.name;
-      if (t === "camera") displayName = formatCameraTowerMapLabel(a.id);
-      else if (t === "tower") displayName = formatTowerMapLabel(a.id);
       return {
         id: a.id,
-        name: displayName,
+        name: assetUiDisplayName(a),
         type: t,
         status: a.status as Asset["status"],
         disposition: disp,
         lat: a.lat,
         lng: a.lng,
-        range: a.range_km ?? undefined,
+        range: isHsCamera(a.id) ? hsCameraFovRangeKm(a.range_km) : (a.range_km ?? undefined),
         heading: a.heading ?? undefined,
         fovAngle: a.fov_angle ?? undefined,
         isVirtual: isVirtualFromProperties(a.properties),

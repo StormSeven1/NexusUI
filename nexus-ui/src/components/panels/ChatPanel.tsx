@@ -279,7 +279,7 @@ export function ChatPanel() {
   return (
     <div className="flex h-full flex-col">
       <NxPanelHeader
-        title="AI 助手"
+        title="作管智能助手"
         right={
           <div className="flex items-center gap-1">
             {messages.length > 0 && (

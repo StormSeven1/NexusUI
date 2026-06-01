@@ -152,13 +152,13 @@ class WebSocketManager:
     
     def queue_track_data(self, track_data: Dict[str, Any]):
         """将航迹数据加入广播队列"""
-        if track_data.get('data_type') == 'fusion_track':
-            logger.info(
-                "融合航迹→前端 trackId={} sources={} payload={}",
-                track_data.get('trackId'),
-                track_data.get('fusionSources'),
-                json.dumps(track_data, ensure_ascii=False, default=str),
-            )
+        # if track_data.get('data_type') == 'fusion_track':
+        #     logger.info(
+        #         "融合航迹→前端 trackId={} sources={} payload={}",
+        #         track_data.get('trackId'),
+        #         track_data.get('fusionSources'),
+        #         json.dumps(track_data, ensure_ascii=False, default=str),
+        #     )
         # 统一添加is_air_track字段
         if 'is_air_track' not in track_data:
             track_data['is_air_track'] = self._determine_air_track(track_data)

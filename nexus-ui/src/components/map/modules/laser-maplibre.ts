@@ -155,6 +155,7 @@ export class LaserMaplibre {
   private _sectorFillDefaultColor = "#fb7185";
   private _sectorFillDefaultOpacity = 0.35;
   private scanTimer: ReturnType<typeof setInterval> | null = null;
+  private syncingScanTimer = false;
   /** 脉动时各设备 scan 几何是否处于「亮相」帧 */
   private pulseVisibleById = new Map<string, boolean>();
   private laserPulseTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
@@ -345,6 +346,7 @@ export class LaserMaplibre {
     this.layerVis = { ...this.layerVis, ...partial };
     this.applyLayerLayoutVisibility();
     this.flush();
+    this.syncScanTimer();
   }
 
   private applyLayerLayoutVisibility() {
@@ -402,6 +404,7 @@ export class LaserMaplibre {
     }
 
     this.flush();
+    this.syncScanTimer();
   }
 
   /**
@@ -428,12 +431,14 @@ export class LaserMaplibre {
       }
     }
     this.flush();
+    this.syncScanTimer();
   }
 
   remove(id: string) {
     this.stopLaserPulse(id);
     this.devices.delete(id);
     this.flush();
+    this.syncScanTimer();
   }
 
   clear() {
@@ -442,6 +447,7 @@ export class LaserMaplibre {
     this.pulseVisibleById.clear();
     this.devices.clear();
     this.flush();
+    this.syncScanTimer();
   }
 
   getAll(): LaserDevice[] {
@@ -503,13 +509,16 @@ export class LaserMaplibre {
   }
 
   private syncScanTimer() {
-    if (!this.wantScan()) {
-      this.stopScanTimer();
-      return;
+    if (this.syncingScanTimer) return;
+    this.syncingScanTimer = true;
+    this.stopScanTimer();
+    try {
+      if (!this.wantScan()) return;
+      const tick = this.minScanTickMs();
+      this.scanTimer = setInterval(() => this.flush(), tick);
+    } finally {
+      this.syncingScanTimer = false;
     }
-    if (this.scanTimer != null) return;
-    const tick = this.minScanTickMs();
-    this.scanTimer = setInterval(() => this.flush(), tick);
   }
 
   private stopScanTimer() {
@@ -621,6 +630,5 @@ export class LaserMaplibre {
     const src = this.map.getSource(LASER_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (src) src.setData({ type: "FeatureCollection", features: feats });
     if (this.map.triggerRepaint) this.map.triggerRepaint();
-    this.syncScanTimer();
   }
 }

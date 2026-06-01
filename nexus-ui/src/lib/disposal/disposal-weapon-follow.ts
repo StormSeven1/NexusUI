@@ -8,13 +8,13 @@
 
 import { getMapModules } from "@/lib/map-module-registry";
 import { resolveTrackLngLatForTargetId } from "@/lib/asset-target-line";
-import { inferIsAirTrackFromInputParams } from "@/lib/disposal/disposal-execution-utils";
 import type { DisposalInputParams } from "@/lib/disposal/disposal-types";
 import type { Asset } from "@/lib/map-entity-model";
 import type { LaserDevice } from "@/components/map/modules/laser-maplibre";
 import type { LaserMaplibre } from "@/components/map/modules/laser-maplibre";
 import type { TdoaDevice } from "@/components/map/modules/tdoa-maplibre";
 import type { TdoaMaplibre } from "@/components/map/modules/tdoa-maplibre";
+import { getDirectedWeaponGeometryDefaults, getDirectedWeaponScanDefaults } from "@/lib/map-app-config";
 
 type FollowSpec = { targetId: string; inputParams?: DisposalInputParams };
 
@@ -33,12 +33,10 @@ function bearingTo(lng1: number, lat1: number, lng2: number, lat2: number): numb
 }
 
 function resolveTargetPos(spec: FollowSpec): { lng: number; lat: number } | null {
-  const hint = inferIsAirTrackFromInputParams(spec.inputParams);
-  return (
-    resolveTrackLngLatForTargetId(spec.targetId, hint) ?? resolveTrackLngLatForTargetId(spec.targetId, undefined)
-  );
+  return resolveTrackLngLatForTargetId(spec.targetId);
 }
 
+/** 【持续更新朝向】每 120ms；只改 headingDeg，不负责开/关扇区 */
 function tickFollowHeadings(): void {
   const mods = getMapModules();
   if (!mods) return;
@@ -46,15 +44,30 @@ function tickFollowHeadings(): void {
   const tdoaBatch: TdoaDevice[] = [];
 
   for (const [deviceId, spec] of laserFollow) {
+    // ① 查目标当前经纬度
     const pos = resolveTargetPos(spec);
     if (!pos) continue;
     const prev = mods.laser.getDevice(deviceId);
     if (!prev) continue;
+    // ② 站址→目标 重算 headingDeg（目标移动则扇区转向）
     const headingDeg = bearingTo(prev.lng, prev.lat, pos.lng, pos.lat);
+    const geometryDefaults = getDirectedWeaponGeometryDefaults("laser");
+    const scanDefaults = getDirectedWeaponScanDefaults("laser");
+    const openingDeg = prev.openingDeg > 0.1 ? prev.openingDeg : geometryDefaults.openingDeg ?? prev.openingDeg;
+    const rangeKm = prev.rangeKm > 0.001 ? prev.rangeKm : geometryDefaults.rangeKm ?? prev.rangeKm;
     laserBatch.push({
       ...prev,
       headingDeg,
+      openingDeg,
+      rangeKm,
       activationEnabled: true,
+      scan: {
+        cycleMs: prev.scan?.cycleMs && prev.scan.cycleMs > 0 ? prev.scan.cycleMs : scanDefaults.cycleMs,
+        tickMs: prev.scan?.tickMs && prev.scan.tickMs > 0 ? prev.scan.tickMs : scanDefaults.tickMs,
+        bandCount: prev.scan?.bandCount && prev.scan.bandCount > 0 ? prev.scan.bandCount : scanDefaults.bandCount,
+        bandWidthMeters:
+          prev.scan?.bandWidthMeters && prev.scan.bandWidthMeters > 0 ? prev.scan.bandWidthMeters : scanDefaults.bandWidthMeters,
+      },
     });
   }
 
@@ -64,8 +77,10 @@ function tickFollowHeadings(): void {
     const prev = mods.tdoa.getDevice(deviceId);
     if (!prev) continue;
     const headingDeg = bearingTo(prev.lng, prev.lat, pos.lng, pos.lat);
-    const openingDeg = prev.openingDeg > 0.1 ? prev.openingDeg : 90;
-    const rangeKm = prev.rangeKm > 0.001 ? prev.rangeKm : 50;
+    const geometryDefaults = getDirectedWeaponGeometryDefaults("tdoa");
+    const scanDefaults = getDirectedWeaponScanDefaults("tdoa");
+    const openingDeg = prev.openingDeg > 0.1 ? prev.openingDeg : geometryDefaults.openingDeg ?? prev.openingDeg;
+    const rangeKm = prev.rangeKm > 0.001 ? prev.rangeKm : geometryDefaults.rangeKm ?? prev.rangeKm;
     tdoaBatch.push({
       ...prev,
       headingDeg,
@@ -73,14 +88,15 @@ function tickFollowHeadings(): void {
       rangeKm,
       activationEnabled: true,
       scan: {
-        cycleMs: prev.scan?.cycleMs && prev.scan.cycleMs > 0 ? prev.scan.cycleMs : 2000,
-        tickMs: prev.scan?.tickMs && prev.scan.tickMs > 0 ? prev.scan.tickMs : 100,
-        bandCount: prev.scan?.bandCount && prev.scan.bandCount > 0 ? prev.scan.bandCount : 9,
+        cycleMs: prev.scan?.cycleMs && prev.scan.cycleMs > 0 ? prev.scan.cycleMs : scanDefaults.cycleMs,
+        tickMs: prev.scan?.tickMs && prev.scan.tickMs > 0 ? prev.scan.tickMs : scanDefaults.tickMs,
+        bandCount: prev.scan?.bandCount && prev.scan.bandCount > 0 ? prev.scan.bandCount : scanDefaults.bandCount,
         bandWidthMeters:
-          prev.scan?.bandWidthMeters && prev.scan.bandWidthMeters > 0 ? prev.scan.bandWidthMeters : 12,
+          prev.scan?.bandWidthMeters && prev.scan.bandWidthMeters > 0 ? prev.scan.bandWidthMeters : scanDefaults.bandWidthMeters,
       },
     });
   }
+  // ③ 批量写回专题层 → MapLibre 重绘
   if (laserBatch.length) mods.laser.upsertMany(laserBatch);
   if (tdoaBatch.length) mods.tdoa.upsertMany(tdoaBatch);
 }
@@ -97,6 +113,7 @@ function syncTickTimer(): void {
   tickTimer = setInterval(() => tickFollowHeadings(), 120);
 }
 
+/** 把设备加入跟瞄表；首次登记时启动 120ms 定时器 */
 export function registerLaserFollow(deviceId: string, targetId: string, inputParams?: DisposalInputParams): void {
   laserFollow.set(String(deviceId), { targetId: String(targetId), inputParams });
   syncTickTimer();
@@ -178,19 +195,21 @@ export function mergeLaserDeviceWithAssetWsWhileDisposalFollow(
   if (!cur) return incoming;
 
   if (laserFollow.has(String(asset.id))) {
+    const scanDefaults = getDirectedWeaponScanDefaults("laser");
     const scan =
       cur.activationEnabled === true
         ? { ...cur.scan }
         : {
-            cycleMs: cur.scan.cycleMs > 0 ? cur.scan.cycleMs : 4000,
-            tickMs: cur.scan.tickMs > 0 ? cur.scan.tickMs : 90,
-            bandCount: cur.scan.bandCount > 0 ? cur.scan.bandCount : 9,
-            bandWidthMeters: cur.scan.bandWidthMeters > 0 ? cur.scan.bandWidthMeters : 12,
+            cycleMs: cur.scan.cycleMs > 0 ? cur.scan.cycleMs : scanDefaults.cycleMs,
+            tickMs: cur.scan.tickMs > 0 ? cur.scan.tickMs : scanDefaults.tickMs,
+            bandCount: cur.scan.bandCount > 0 ? cur.scan.bandCount : scanDefaults.bandCount,
+            bandWidthMeters: cur.scan.bandWidthMeters > 0 ? cur.scan.bandWidthMeters : scanDefaults.bandWidthMeters,
           };
     return {
       ...incoming,
       lng: asset.lng,
       lat: asset.lat,
+      virtual: incoming.virtual,
       headingDeg: cur.headingDeg,
       openingDeg: cur.openingDeg > 0.1 ? cur.openingDeg : incoming.openingDeg,
       rangeKm: cur.rangeKm > 0.001 ? cur.rangeKm : incoming.rangeKm,
@@ -198,19 +217,23 @@ export function mergeLaserDeviceWithAssetWsWhileDisposalFollow(
       scan,
       pulseOnMs: cur.pulseOnMs ?? incoming.pulseOnMs,
       pulseOffMs: cur.pulseOffMs ?? incoming.pulseOffMs,
-      color: incoming.color ?? cur.color,
-      fillOpacity: incoming.fillOpacity ?? cur.fillOpacity,
+      color: cur.color ?? incoming.color,
+      fillOpacity: cur.fillOpacity ?? incoming.fillOpacity,
     };
   }
 
   return {
     ...incoming,
+    virtual: incoming.virtual,
+    headingDeg: cur.headingDeg,
+    openingDeg: cur.openingDeg > 0.1 ? cur.openingDeg : incoming.openingDeg,
+    rangeKm: cur.rangeKm > 0.001 ? cur.rangeKm : incoming.rangeKm,
     scan: { ...cur.scan },
     activationEnabled: cur.activationEnabled,
     pulseOnMs: cur.pulseOnMs ?? incoming.pulseOnMs,
     pulseOffMs: cur.pulseOffMs ?? incoming.pulseOffMs,
-    color: incoming.color ?? cur.color,
-    fillOpacity: incoming.fillOpacity ?? cur.fillOpacity,
+    color: cur.color ?? incoming.color,
+    fillOpacity: cur.fillOpacity ?? incoming.fillOpacity,
   };
 }
 
@@ -223,19 +246,21 @@ export function mergeTdoaDeviceWithAssetWsWhileDisposalFollow(
   if (!cur) return incoming;
 
   if (tdoaFollow.has(String(asset.id))) {
+    const scanDefaults = getDirectedWeaponScanDefaults("tdoa");
     const scan =
       cur.activationEnabled === true
         ? { ...cur.scan }
         : {
-            cycleMs: cur.scan.cycleMs > 0 ? cur.scan.cycleMs : 2000,
-            tickMs: cur.scan.tickMs > 0 ? cur.scan.tickMs : 100,
-            bandCount: cur.scan.bandCount > 0 ? cur.scan.bandCount : 9,
-            bandWidthMeters: cur.scan.bandWidthMeters > 0 ? cur.scan.bandWidthMeters : 12,
+            cycleMs: cur.scan.cycleMs > 0 ? cur.scan.cycleMs : scanDefaults.cycleMs,
+            tickMs: cur.scan.tickMs > 0 ? cur.scan.tickMs : scanDefaults.tickMs,
+            bandCount: cur.scan.bandCount > 0 ? cur.scan.bandCount : scanDefaults.bandCount,
+            bandWidthMeters: cur.scan.bandWidthMeters > 0 ? cur.scan.bandWidthMeters : scanDefaults.bandWidthMeters,
           };
     return {
       ...incoming,
       lng: asset.lng,
       lat: asset.lat,
+      virtual: incoming.virtual,
       headingDeg: cur.headingDeg,
       openingDeg: cur.openingDeg > 0.1 ? cur.openingDeg : incoming.openingDeg,
       rangeKm: cur.rangeKm > 0.001 ? cur.rangeKm : incoming.rangeKm,
@@ -248,6 +273,7 @@ export function mergeTdoaDeviceWithAssetWsWhileDisposalFollow(
 
   return {
     ...incoming,
+    virtual: incoming.virtual,
     scan: { ...cur.scan },
     activationEnabled: cur.activationEnabled,
     color: incoming.color ?? cur.color,

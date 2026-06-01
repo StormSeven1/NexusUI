@@ -1,10 +1,14 @@
 /**
- * TDOA 激活 / 去激活。
- *
- * 可选 `follow` 时扇区朝向随目标航迹持续更新（见 disposal-weapon-follow）。
+ * TDOA：地图扇区「首次对准 + 开扇区」与「停射」。
+ * 持续改 headingDeg 在 disposal-weapon-follow.tickFollowHeadings。
  */
 import { getMapModules } from "./map-module-registry";
-import { setTdoaActivationEnabled, getTdoaActivationEnabled } from "./map-app-config";
+import {
+  getDirectedWeaponGeometryDefaults,
+  getDirectedWeaponScanDefaults,
+  setTdoaActivationEnabled,
+  getTdoaActivationEnabled,
+} from "./map-app-config";
 import type { TdoaDevice } from "@/components/map/modules/tdoa-maplibre";
 import type { DisposalInputParams } from "@/lib/disposal/disposal-types";
 import {
@@ -32,10 +36,7 @@ function bearingTo(lng1: number, lat1: number, lng2: number, lat2: number): numb
   return ((Math.atan2(y, x) / rad) + 360) % 360;
 }
 
-/**
- * 激活指定 TDOA 设备：开启扫描动画 + 朝向目标。
- * 同时确保 TDOA `activationEnabled` 为 true。
- */
+/** 【首次发射 / 对准】开扇区 + 算一次 headingDeg；follow 时进入持续跟瞄 */
 export function activateTdoa(
   deviceId: string,
   targetLng: number,
@@ -44,26 +45,30 @@ export function activateTdoa(
 ): boolean {
   const mods = getMapModules();
   if (!mods) return false;
-
   const tdoa = mods.tdoa;
 
+  // ① 全局 TDOA 图层
   if (!getTdoaActivationEnabled()) {
     setTdoaActivationEnabled(true);
-    /* 同步更新图层可见性：扇区填充 + 扫描 + 边线均可见 */
     tdoa.setLayerVisibility({ fillVisible: true, scanFillVisible: true, lineVisible: true });
   }
+
+  // ② 专题层设备
   const prev = tdoa.getDevice(deviceId);
   if (!prev) return false;
 
+  // ③ 【本函数内唯一一次算朝向】
   const headingDeg = bearingTo(prev.lng, prev.lat, targetLng, targetLat);
-  const openingDeg = prev.openingDeg > 0.1 ? prev.openingDeg : 90;
-  const rangeKm = prev.rangeKm > 0.001 ? prev.rangeKm : 50;
+  const geometryDefaults = getDirectedWeaponGeometryDefaults("tdoa");
+  const scanDefaults = getDirectedWeaponScanDefaults("tdoa");
+  const openingDeg = prev.openingDeg > 0.1 ? prev.openingDeg : geometryDefaults.openingDeg ?? prev.openingDeg;
+  const rangeKm = prev.rangeKm > 0.001 ? prev.rangeKm : geometryDefaults.rangeKm ?? prev.rangeKm;
   const scan = {
-    cycleMs: prev.scan?.cycleMs && prev.scan.cycleMs > 0 ? prev.scan.cycleMs : 2000,
-    tickMs: prev.scan?.tickMs && prev.scan.tickMs > 0 ? prev.scan.tickMs : 100,
-    bandCount: prev.scan?.bandCount && prev.scan.bandCount > 0 ? prev.scan.bandCount : 9,
+    cycleMs: prev.scan?.cycleMs && prev.scan.cycleMs > 0 ? prev.scan.cycleMs : scanDefaults.cycleMs,
+    tickMs: prev.scan?.tickMs && prev.scan.tickMs > 0 ? prev.scan.tickMs : scanDefaults.tickMs,
+    bandCount: prev.scan?.bandCount && prev.scan.bandCount > 0 ? prev.scan.bandCount : scanDefaults.bandCount,
     bandWidthMeters:
-      prev.scan?.bandWidthMeters && prev.scan.bandWidthMeters > 0 ? prev.scan.bandWidthMeters : 12,
+      prev.scan?.bandWidthMeters && prev.scan.bandWidthMeters > 0 ? prev.scan.bandWidthMeters : scanDefaults.bandWidthMeters,
   };
 
   const updated: TdoaDevice = {
@@ -74,8 +79,10 @@ export function activateTdoa(
     activationEnabled: true,
     scan,
   };
+  // ④ 开扇区
   tdoa.upsert(updated);
 
+  // ⑤ 登记跟瞄 → tickFollowHeadings 持续改 heading
   if (follow?.trackTargetId) {
     registerTdoaFollow(deviceId, follow.trackTargetId, follow.inputParams);
   }
@@ -83,7 +90,6 @@ export function activateTdoa(
   return true;
 }
 
-/** 去激活指定 TDOA 设备：关闭扫描 */
 export function deactivateTdoa(deviceId: string): boolean {
   unregisterTdoaFollow(deviceId);
   const mods = getMapModules();
@@ -93,11 +99,8 @@ export function deactivateTdoa(deviceId: string): boolean {
   const prev = tdoa.getDevice(deviceId);
   if (!prev) return false;
 
-  const updated: TdoaDevice = {
-    ...prev,
-    activationEnabled: false,
-  };
-  tdoa.upsert(updated);
+  // 停射：本设备扇区关
+  tdoa.upsert({ ...prev, activationEnabled: false });
   if (!anyTdoaSectorActive(tdoa.getAll())) {
     setTdoaActivationEnabled(false);
     tdoa.setLayerVisibility({ fillVisible: false, scanFillVisible: false, lineVisible: false });
@@ -105,7 +108,6 @@ export function deactivateTdoa(deviceId: string): boolean {
   return true;
 }
 
-/** 去激活所有 TDOA 设备 */
 export function deactivateAllTdoa(): void {
   clearAllTdoaFollow();
   const mods = getMapModules();
@@ -114,10 +116,7 @@ export function deactivateAllTdoa(): void {
   const tdoa = mods.tdoa;
   const updates: TdoaDevice[] = [];
   for (const d of tdoa.getAll()) {
-    updates.push({
-      ...d,
-      activationEnabled: false,
-    });
+    updates.push({ ...d, activationEnabled: false });
   }
   if (updates.length) tdoa.upsertMany(updates);
   tdoa.setLayerVisibility({ fillVisible: false, scanFillVisible: false, lineVisible: false });

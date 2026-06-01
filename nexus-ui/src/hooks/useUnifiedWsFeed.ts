@@ -99,6 +99,20 @@
  *         扫描: 同激光，activationEnabled 时 setInterval 刷新
  *   超时: 无独立超时机制
  *
+ * 【巡飞弹 missile】
+ *   接收: entity_status → specificType="MISSILE"/"飞弹"（名称、初始坐标；将来实体齐全后为主）
+ *         munition_status → applyMunitionWsPayload()（lat/lng/munitionState；不写 name）
+ *   入资产: 静态 missiles.devices → configAssetBase；DDS 标 properties.ws_munition
+ *   重建: preserveDdsDynamicFieldsOnRebuild() 保留 DDS 几何/状态，名称 row.name || live.name
+ *   摧毁: munitionState=3 → 剔除 asset-store + destroyedMunitionIds 防静态复活
+ *   渲染: asset-store → MissileStaticMaplibre.setFromAssets()（无独立 munition-store）
+ *
+ * 【无人船 usv】
+ *   接收: usv_status → applyUsvWsPayload()（lat/lng/HDG/strikeState/isVirtualWeapon）
+ *   入资产: 静态 unmannedShips.devices → configAssetBase；DDS 标 properties.ws_usv
+ *   重建: preserveDdsDynamicFieldsOnRebuild() 保留 DDS 几何/航向/虚兵
+ *   渲染: asset-store → UsvStaticMaplibre.setFromAssets()
+ *
  * ── entity_status 消息处理流程（共3步）──
  *
  *   后端 WS 推送 type="entity_status" 消息
@@ -152,6 +166,8 @@ import {
   shouldDisplayZone,
   assetStatusFromDeviceState,
   deviceStatePropsFromPayload,
+  preserveDeviceStateFromPrev,
+  preserveDdsDynamicFieldsOnRebuild,
   stampDeviceStateOnAsset,
 } from "@/lib/map-app-config";
 import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
@@ -159,6 +175,14 @@ import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
 import { normalizeAssetType, type Track } from "@/lib/map-entity-model";
 import { recordTrackReceived, recordAlertReceived, recordZoneReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
+import {
+  applyMunitionWsPayload,
+  filterOutDestroyedMunitions,
+  isMunitionDestroyed,
+} from "@/lib/munition/munition-runtime";
+import { applyUsvWsPayload } from "@/lib/usv/usv-runtime";
+import { applyLaserWsPayload, applyTdoaWsPayload } from "@/lib/weapon/weapon-device-runtime";
+import { isHsCamera, applyHsCameraFovProps, onHsCameraDetection, tickHsCameraDetection } from "@/lib/speed-camera/hs-camera";
 
 /** 与 WS 全量资产列表合并：先静态后动态，同 id 以 WS 为准 */
 let configAssetBaseCache: AssetData[] = [];
@@ -185,16 +209,43 @@ function mergeAssetRowsById(base: AssetData[], overlays: AssetData[]): AssetData
   if (!overlays.length) return base;
   const byId = new Map<string, AssetData>(base.map((a) => [a.id, a]));
   for (const row of overlays) {
-    byId.set(row.id, row);
+    const prev = byId.get(row.id);
+    byId.set(row.id, prev ? preserveDeviceStateFromPrev(prev, row) : row);
   }
   return [...byId.values()];
 }
 
 /** 资产总入口：静态配置 + WS 实体 + relationships 机场/无人机 统一合并后一次性写入 */
 function rebuildAndCommitAssetSnapshot() {
-  const mergedStaticAndWs = mergeDynamicAndStaticAssets(configAssetBaseCache, lastWsAssetList);
-  const mergedAll = mergeAssetRowsById(mergedStaticAndWs, relationshipAssetsCache);
-  useAssetStore.getState().setAssets(filterAssetsForDisplay(mergedAll.map(stampDeviceStateOnAsset)));
+  const mergedStaticAndWs = mergeDynamicAndStaticAssets(
+    filterOutDestroyedMunitions(configAssetBaseCache),
+    filterOutDestroyedMunitions(lastWsAssetList),
+  );
+  const liveById = new Map(
+    useAssetStore
+      .getState()
+      .assets.filter((a) => !isMunitionDestroyed(a.id))
+      .map((a) => [a.id, a]),
+  );
+  let mergedAll = mergeAssetRowsById(
+    mergedStaticAndWs,
+    filterOutDestroyedMunitions(relationshipAssetsCache),
+  );
+  mergedAll = mergedAll.filter(
+    (row) => !(normalizeAssetType(row.asset_type) === "missile" && isMunitionDestroyed(row.id)),
+  );
+  /* entity_status 重建：机场/无人机保留 deviceState；激光/TDOA/巡飞弹保留 DDS 实时字段（见 map-app-config） */
+  mergedAll = mergedAll.map((row) => {
+    const live = liveById.get(row.id);
+    if (!live) return row;
+    const at = normalizeAssetType(row.asset_type);
+    if (at === "drone" || at === "airport") {
+      return preserveDeviceStateFromPrev(live, row);
+    }
+    return preserveDdsDynamicFieldsOnRebuild(live, row) ?? row;
+  });
+  const stamped = mergedAll.map(stampDeviceStateOnAsset);
+  useAssetStore.getState().setAssets(filterAssetsForDisplay(stamped));
 }
 
 /** 把 `position.altitude` 规范写入 properties.altitude（供 3D 模型基座高度使用） */
@@ -230,7 +281,7 @@ function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows:
       ...(prevProps ?? {}),
       ...(rowProps ?? {}),
     });
-    return {
+    const merged = {
       ...row,
       ...(mergedProps ? { properties: mergedProps } : {}),
       heading:
@@ -246,6 +297,7 @@ function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows:
           ? Number(row.range_km)
           : prev.range_km,
     };
+    return preserveDeviceStateFromPrev(prev, merged);
   });
 }
 
@@ -263,13 +315,23 @@ function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows:
 function applyAssetListFromWs(list: AssetData[], options?: { commit?: boolean }) {
   /* 无人机由 syncDroneAndAirportAssetsFromRelationships 统一管理（用 deviceSn 做 key），
    * 此处过滤掉 WS 实体列表中的无人机（用 entityId 做 key），防止同一无人机出现两条记录 */
-  const nonDroneList = list
-    .filter((a) => a.asset_type !== "drone")
-    .map((a) => {
-      if (a.asset_type !== "camera") return a;
-      /* camera 的 PTZ/FOV/射程只接受 camera/optoelectronic，entity_status 一律不写这三项 */
-      return { ...a, heading: null, fov_angle: null, range_km: null };
-    });
+  const nonDroneList = filterOutDestroyedMunitions(
+    list
+      .filter((a) => a.asset_type !== "drone")
+      .map((a) => {
+        if (a.asset_type !== "camera") return a;
+        // entity_status 里的 camera 行不含实时 PTZ，只更新属性；高速相机在此补 fov_sector_visible
+        const props = { ...((a.properties as Record<string, unknown> | null) ?? {}) };
+        applyHsCameraFovProps(a.id, props);
+        return {
+          ...a,
+          heading: null,
+          fov_angle: null,
+          range_km: null,
+          properties: props,
+        };
+      }),
+  );
   lastWsAssetList = mergeWsRowsPreserveNullableNumeric(lastWsAssetList, nonDroneList);
   if (options?.commit !== false) rebuildAndCommitAssetSnapshot();
 }
@@ -283,6 +345,7 @@ const ws = {
   readyNotified: false,
   trackPruneTimer: null as ReturnType<typeof setInterval> | null,
   alarmCleanupTimer: null as ReturnType<typeof setInterval> | null,
+  speedCameraPruneTimer: null as ReturnType<typeof setInterval> | null,
   alertRevisionUnsub: null as (() => void) | null,
   imagePollTimer: null as ReturnType<typeof setInterval> | null,
 };
@@ -331,7 +394,7 @@ function extractCameraLatLng(d: Record<string, unknown>): { lat: number; lng: nu
 function parseCameraBearingDeg(d: Record<string, unknown>): number | undefined {
   const originPtz = d.originPtz as Record<string, unknown> | undefined;
   const ptz = d.ptz as Record<string, unknown> | undefined;
-  const v = originPtz?.pan ?? ptz?.pan;
+  const v = originPtz?.pan ?? ptz?.pan ?? d.pan ?? d.panVehicle;
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
 }
@@ -509,16 +572,16 @@ function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
     const airportId = ap.dockSn;
     if (shouldDisplayAssetId("airport", airportId)) {
       const airportName = ds.docks[ap.dockSn]?.displayName ?? "机场";
-      const dockPayload = ds.docks[ap.dockSn]?.payload;
+      const dockPayload = ds.docks[ap.dockSn]?.payload as Record<string, unknown> | undefined;
+      const dockDs = dockPayload?.deviceState;
       const lat = ap.latitude ?? null;
       const lng = ap.longitude ?? null;
       if (lat == null || lng == null) continue;
-      const airportStatus = assetStatusFromDeviceState(dockPayload?.deviceState);
       rows.push({
         id: airportId,
         name: airportName,
         asset_type: "airport",
-        status: airportStatus,
+        status: assetStatusFromDeviceState(dockDs),
         disposition: "friendly",
         lat,
         lng,
@@ -527,8 +590,10 @@ function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
         fov_angle: null,
         properties: {
           virtual_troop: ap.virtualTroop,
+          is_virtual: ap.virtualTroop,
+          virtualTroop: ap.virtualTroop,
           dock_sn: ap.dockSn,
-          ...deviceStatePropsFromPayload((dockPayload ?? {}) as Record<string, unknown>),
+          ...(dockDs != null ? deviceStatePropsFromPayload(dockPayload!) : {}),
         },
         mission_status: "monitoring",
         assigned_target_id: null,
@@ -545,16 +610,16 @@ function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
       const droneAssetId = dr.deviceSn;
       if (!shouldDisplayAssetId("drone", droneAssetId, dr.name)) continue;
       const droneName = dr.name || dr.deviceSn;
-      const statusPayload = ds.drones[dr.deviceSn]?.status;
+      const statusPayload = ds.drones[dr.deviceSn]?.status as Record<string, unknown> | undefined;
+      const droneDs = statusPayload?.deviceState;
       const lat = dr.latitude ?? null;
       const lng = dr.longitude ?? null;
       if (lat == null || lng == null) continue;
-      const droneStatus = assetStatusFromDeviceState(statusPayload?.deviceState);
       rows.push({
         id: droneAssetId,
         name: droneName,
         asset_type: "drone",
-        status: droneStatus,
+        status: assetStatusFromDeviceState(droneDs),
         disposition: "friendly",
         lat,
         lng,
@@ -563,10 +628,12 @@ function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
         fov_angle: null,
         properties: {
           virtual_troop: dr.virtualTroop,
+          is_virtual: dr.virtualTroop,
+          virtualTroop: dr.virtualTroop,
           dock_sn: ap.dockSn,
           device_sn: dr.deviceSn,
           entity_id: dr.entityId ?? "",
-          ...deviceStatePropsFromPayload((statusPayload ?? {}) as Record<string, unknown>),
+          ...(droneDs != null ? deviceStatePropsFromPayload(statusPayload!) : {}),
         },
         mission_status: "monitoring",
         assigned_target_id: null,
@@ -811,15 +878,24 @@ function dispatchWsMessage(raw: string) {
         break;
       }
 
-      // ── 光电 ──
+      /*
+       * 光电 / 高速相机 — 实时状态
+       *
+       * WS type：speedcamera | camera | optoelectronic（三者同一套解析）
+       * 高速相机 UDP 设备状态（MSG_DEV_STATUS_BASIC）后端推 type=SpeedCamera，也进此分支
+       *
+       * 主要字段：entityId、position、ptz/originPtz.pan（朝向）、fov.horizontal（开角）、range_km
+       * 写入 lastWsAssetList → rebuildAndCommitAssetSnapshot → 地图光电 FOV 模块
+       *
+       * 高速相机额外：applyHsCameraFovProps 设 fov_sector_visible（默认关，检测中才开）
+       */
+      case "speedcamera":
       case "camera":
       case "optoelectronic": {
-        // V2 `App.vue`：PTZ.pan=水平角、fov.horizontal=开角；仅按报文字段解析，不做默认值兜底
         const d = msg.data as Record<string, unknown> | undefined;
         if (d) {
           const entityId = String(d.entityId ?? "");
           if (entityId) {
-            // console.log("camera:",d)
             const atType = normalizeAssetType(String(d.asset_type ?? d.type ?? "camera"));
             if (!shouldDisplayAssetId(atType, entityId)) break;
             const originPtz = d.originPtz as Record<string, unknown> | undefined;
@@ -843,6 +919,8 @@ function dispatchWsMessage(raw: string) {
               ...(typeof d.properties === "object" && d.properties ? (d.properties as Record<string, unknown>) : {}),
               ...deviceStatePropsFromPayload(d),
             };
+            // 仅 camera-hs-001~004：默认关 FOV，检测激活时 hs-camera 会再打开
+            applyHsCameraFovProps(entityId, baseProps);
             if (d.ptz && typeof d.ptz === "object") baseProps.ptz = d.ptz as Record<string, unknown>;
             if (d.originPtz && typeof d.originPtz === "object") baseProps.originPtz = d.originPtz as Record<string, unknown>;
             if (d.fov && typeof d.fov === "object") baseProps.fov = d.fov as Record<string, unknown>;
@@ -866,7 +944,7 @@ function dispatchWsMessage(raw: string) {
               patch.lng = ll.lng;
             }
 
-            /* 把实时 PTZ/坐标/状态写入 lastWsAssetList，再走统一重建通道 → setAssets → Map2D 订阅 → flushAssets */
+            /* 合并进 lastWsAssetList 后触发地图刷新（OptoelectronicFovModule 画扇形） */
             const now = isoNow();
             const wsIdx = lastWsAssetList.findIndex((a) => a.id === entityId);
             if (wsIdx >= 0) {
@@ -900,7 +978,14 @@ function dispatchWsMessage(raw: string) {
                   fov_angle: fovDeg ?? null,
                   properties: {
                     ...baseProps,
-                    ...(!ll ? { center_icon_visible: false, fov_sector_visible: false, ws_camera_pending_position: true } : {}),
+                    ...(!ll
+                      ? {
+                          center_icon_visible: false,
+                          ws_camera_pending_position: true,
+                          // 尚无坐标时不画 FOV；高速相机显式关扇形，避免用 0,0 误画
+                          ...(isHsCamera(entityId) ? { fov_sector_visible: false } : {}),
+                        }
+                      : {}),
                   },
                   mission_status: "monitoring",
                   assigned_target_id: null,
@@ -914,6 +999,17 @@ function dispatchWsMessage(raw: string) {
             rebuildAndCommitAssetSnapshot();
           }
         }
+        break;
+      }
+
+      /*
+       * 高速相机检测帧（UDP MSG_CAM_IMAGE_REPORT → SpeedCameraDetection）
+       * data.boxes 非空时：开 FOV + 告警；2s 无新帧由 tickHsCameraDetection 关闭
+       * 详见 lib/speed-camera/hs-camera.ts
+       */
+      case "speedcameradetection": {
+        const d = msg.data as Record<string, unknown> | undefined;
+        if (d) onHsCameraDetection(d, rebuildAndCommitAssetSnapshot);
         break;
       }
 
@@ -996,6 +1092,49 @@ function dispatchWsMessage(raw: string) {
         }
         break;
       }
+      case "munitionstatus":
+      case "munition_status": {
+        const d = msg.data as Record<string, unknown> | undefined;
+        if (d && typeof d === "object") {
+          applyMunitionWsPayload(d);
+          recordEntityReceived(String(d.entityId ?? ""), "missile");
+        }
+        break;
+      }
+      case "usvstatus":
+      case "usv_status": {
+        const d = msg.data as Record<string, unknown> | undefined;
+        if (d && typeof d === "object") {
+          applyUsvWsPayload(d);
+          recordEntityReceived(String(d.entityId ?? ""), "usv");
+        }
+        break;
+      }
+      /*
+       * 激光 DDS：applyLaserWsPayload
+       *   → patchExistingWeaponAsset（写 store）
+       *   → syncWeaponEmission（deviceState 2 发射 / 0·1 停射）
+       *   → 朝向：activateLaser 算一次 + registerLaserFollow → tickFollowHeadings
+       */
+      case "laserstatus":
+      case "laser_status": {
+        const d = msg.data as Record<string, unknown> | undefined;
+        if (d && typeof d === "object") {
+          applyLaserWsPayload(d);
+          recordEntityReceived(String(d.entityId ?? ""), "laser");
+        }
+        break;
+      }
+      /* TDOA DDS：同上，入口为 applyTdoaWsPayload */
+      case "tdoastatus":
+      case "tdoa_status": {
+        const d = msg.data as Record<string, unknown> | undefined;
+        if (d && typeof d === "object") {
+          applyTdoaWsPayload(d);
+          recordEntityReceived(String(d.entityId ?? ""), "tdoa");
+        }
+        break;
+      }
       case "cleardrones":
       case "cleartracks":
         useDroneStore.getState().clearDrones();
@@ -1026,7 +1165,6 @@ function dispatchWsMessage(raw: string) {
 
       // ── 忽略 ──
       case "pong":
-      case "speedcamera":
         break;
 
       default:
@@ -1078,7 +1216,7 @@ function openConnection() {
     startHeartbeat();
     if (!ws.readyNotified) {
       ws.readyNotified = true;
-      notify("WebSocket 已就绪", url, "success");
+      notify("WebSocket 已就绪111", url, "success");
     }
   };
 
@@ -1130,6 +1268,20 @@ function startAlarmCleanup() {
 
 function stopAlarmCleanup() {
   if (ws.alarmCleanupTimer) { clearInterval(ws.alarmCleanupTimer); ws.alarmCleanupTimer = null; }
+}
+
+function startSpeedCameraDetectionPrune() {
+  if (ws.speedCameraPruneTimer) clearInterval(ws.speedCameraPruneTimer);
+  ws.speedCameraPruneTimer = setInterval(() => {
+    tickHsCameraDetection(rebuildAndCommitAssetSnapshot);
+  }, 500);
+}
+
+function stopSpeedCameraDetectionPrune() {
+  if (ws.speedCameraPruneTimer) {
+    clearInterval(ws.speedCameraPruneTimer);
+    ws.speedCameraPruneTimer = null;
+  }
 }
 
 function startAlertRevisionSync() {
@@ -1194,6 +1346,7 @@ function startUnifiedWs() {
   openConnection();
   startTrackStalePrune();
   startAlarmCleanup();
+  startSpeedCameraDetectionPrune();
   startAlertRevisionSync();
   startImagePolling();
 }
@@ -1202,6 +1355,7 @@ function stopUnifiedWs() {
   ws.running = false;
   if (ws.trackPruneTimer) { clearInterval(ws.trackPruneTimer); ws.trackPruneTimer = null; }
   stopAlarmCleanup();
+  stopSpeedCameraDetectionPrune();
   stopAlertRevisionSync();
   stopImagePolling();
   clearReconnectTimer();

@@ -6,6 +6,8 @@ import {
   BarChart3,
   Settings
 } from "lucide-react";
+import { useDisposalPlanStore, type DisposalRunMode } from "@/stores/disposal-plan-store";
+import { cn } from "@/lib/utils";
 
 /**
  * 获取当前时间的展示文本（本地时间 + 时区）。
@@ -19,7 +21,14 @@ function formatNowLabel(now: Date, formatter: Intl.DateTimeFormat): string {
   return formatter.format(now);
 }
 
+const DISPOSAL_MODE_OPTIONS: Array<{ mode: DisposalRunMode; label: string }> = [
+  { mode: "auto", label: "全自动处置" },
+  { mode: "manual", label: "半自动处置" },
+];
+
 export function TopNav() {
+  const runMode = useDisposalPlanStore((s) => s.runMode);
+  const setRunMode = useDisposalPlanStore((s) => s.setRunMode);
 
   const timeFormatter = useMemo(
     () =>
@@ -71,6 +80,24 @@ export function TopNav() {
 
       {/* 右侧功能区 */}
       <div className="flex h-full items-center gap-3 border-l border-nexus-border px-4">
+        <div className="flex items-center gap-1 rounded border border-white/[0.08] bg-black/10 p-0.5">
+          {DISPOSAL_MODE_OPTIONS.map(({ mode, label }) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setRunMode(mode)}
+              className={cn(
+                "h-5 rounded px-2 text-[10px] font-medium transition-colors",
+                runMode === mode
+                  ? "bg-emerald-500/20 text-emerald-300"
+                  : "text-nexus-text-muted hover:bg-white/[0.06] hover:text-nexus-text-secondary",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         {/* 时间显示 */}
         <div
           className="font-mono text-xs text-nexus-text-secondary"

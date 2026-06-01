@@ -26,6 +26,7 @@ import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { AlertTriangle } from "lucide-react";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 import { createCesiumBaseImageryProvider, getMap3DInitialViewFromEnv } from "@/lib/map-3d-config";
+import { registerExplosionViewer3D, unregisterExplosionViewer3D } from "@/lib/map/explosion-effect";
 
 type CesiumModule = typeof import("cesium");
 type CesiumViewer = import("cesium").Viewer;
@@ -433,6 +434,7 @@ export function Map3D() {
         }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
         viewerRef.current = v;
+        registerExplosionViewer3D(v);
 
         /* 按 layerVisibility 设置各组 entity 显隐（资产 billboard 按 `assetType` 分键，与 Map2D 一致） */
         const layerVis = useAppStore.getState().layerVisibility;
@@ -503,6 +505,7 @@ export function Map3D() {
         viewer.entities.remove(selectedGlowEntityRef.current);
       }
       selectedGlowEntityRef.current = null;
+      unregisterExplosionViewer3D();
       if (viewer && !viewer.isDestroyed()) viewer.destroy();
       viewerRef.current = null;
       cesiumRef.current = null;

@@ -79,7 +79,7 @@ export function inferTrackSurfaceKind(rec: Record<string, unknown>): Track["type
 export function trackIconHeadingDeg(kind: Track["type"], courseDeg: number): number {
   const c = Number.isFinite(courseDeg) ? courseDeg : 0;
   if (kind === "air") return c + getTrackRenderingConfig().airIconHeadingOffsetDeg;
-  return 0;
+  return c;
 }
 
 /**
@@ -160,8 +160,10 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const altitude = altRaw != null && Number.isFinite(Number(altRaw)) ? Number(altRaw) : undefined;
 
   const propBag: Record<string, unknown> = { ...(asRecord(rec.properties) ?? {}) };
-  if (rec.virtualTroop !== undefined) propBag.virtualTroop = rec.virtualTroop;
-  if (rec.virtual_troop !== undefined) propBag.virtual_troop = rec.virtual_troop;
+  const rtRaw = rec.reality_type ?? rec.realityType;
+  if (rtRaw != null && Number(rtRaw) === 2) {
+    propBag.virtual_troop = true;
+  }
   const isVirtual = isVirtualFromProperties(propBag);
   const rawUav = rec.is_uav ?? rec.isUav ?? rec.uav;
   const isUav =
@@ -251,4 +253,3 @@ export function maxStoredTrailPointsPerTrack(): number {
   if (!Number.isFinite(max) || max < 2) return 2;
   return Math.max(2, Math.min(4000, Math.floor(max)));
 }
-
