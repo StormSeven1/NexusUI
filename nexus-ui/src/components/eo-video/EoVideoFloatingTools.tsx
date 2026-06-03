@@ -25,7 +25,7 @@ import type { ThirdPartyCamTaskKind } from "@/lib/eo-video/thirdPartyCamTaskClie
 export interface EoVideoFloatingToolsProps {
   className?: string;
   variant: "camera" | "uav";
-  ptzSupported?: boolean;
+  ptzSupported?: boolean; 
   ptzPanelOpen?: boolean;
   onTogglePtzPanel?: () => void;
   /** 无人机：底部罗盘/状态/控制台是否展开（与相机 PTZ 开关同类交互） */
