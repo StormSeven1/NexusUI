@@ -22,7 +22,7 @@ type Props = {
   dataType: EoCollectDataType;
   onStatus?: (line: string) => void;
   onSuccess?: (repoPath: string) => void;
-  onError?: (message: string) => void;
+  onError?: (message: string) => void; 
 };
 
 export function EoCaptureCollectDialog({
