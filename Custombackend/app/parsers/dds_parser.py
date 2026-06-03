@@ -347,7 +347,8 @@ _DRONE_STATUS_FILTERED_MODES = {0, 1, 2, 4, 14}
 def _dds_device_state(dds_object) -> Optional[int]:
     if hasattr(dds_object, 'deviceState'):
         try:
-            return int(dds_object.deviceState())
+            state = int(dds_object.deviceState())
+            return state if state in {0, 1, 2, 3} else None
         except Exception:
             return None
     return None

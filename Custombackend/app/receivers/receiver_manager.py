@@ -96,6 +96,18 @@ class ReceiverManager:
         #         f"videoAddress={entity.get('videoAddress') or '-'}"
         #     )
 
+        for entity in entities:
+            if isinstance(entity, dict) and str(entity.get("entityId", "")).strip() == "camera_004":
+                print("[YUANYAO_VISIBLE_STATUS][WS_ENTITY_STATUS_SEND]", {
+                    "source": source,
+                    "entityId": entity.get("entityId"),
+                    "status": entity.get("status"),
+                    "deviceState": entity.get("deviceState"),
+                    "platformActivity": entity.get("platformActivity"),
+                    "role": entity.get("role"),
+                })
+                break
+
         ws_manager.queue_message({
             "type": "entity_status",
             "source": source,
@@ -243,6 +255,17 @@ class ReceiverManager:
                 data_type = parsed_data.get('data_type', '')
                 
                 if data_type == 'camera_status':
+                    if str(parsed_data.get('entityId', '')).strip() == "camera_004":
+                        print("[YUANYAO_VISIBLE_STATUS][DDS_CAMERA_SEND]", {
+                            "receiver": receiver_id,
+                            "source": source_name,
+                            "entityId": parsed_data.get("entityId"),
+                            "deviceState": parsed_data.get("deviceState"),
+                            "online": parsed_data.get("online"),
+                            "taskType": parsed_data.get("taskType"),
+                            "executionState": parsed_data.get("executionState"),
+                            "timestamp": parsed_data.get("timestamp"),
+                        })
                     if(parsed_data['entityId'] in ["camera_004","camera_001","camera-hs-001","camera-hs-002","camera-hs-003","camera-hs-004"]):
                         # print("*"*50)
                         # print("解析相机状态:",parsed_data)
@@ -338,10 +361,34 @@ class ReceiverManager:
         if data_format == 'EntityStatus':
             try:
                 json_data = json.loads(data.decode('utf-8'))
+                records = ((json_data.get("data") or {}).get("records") or []) if isinstance(json_data, dict) else []
+                for raw_entity in records:
+                    if isinstance(raw_entity, dict) and str(raw_entity.get("entityId", "")).strip() == "camera_004":
+                        raw_status = raw_entity.get("status")
+                        print("[YUANYAO_VISIBLE_STATUS][HTTP_RAW]", {
+                            "poller": poller_id,
+                            "entityId": raw_entity.get("entityId"),
+                            "status": raw_status,
+                            "status.deviceState": raw_status.get("deviceState") if isinstance(raw_status, dict) else None,
+                            "isLive": raw_entity.get("isLive"),
+                            "online": raw_entity.get("online"),
+                        })
+                        break
                 result = parse_entities_response(json_data)
                 if not result:
                     self._stats[poller_id]['failed'] += 1
                     return
+                for parsed_entity in result.get("entities", []):
+                    if isinstance(parsed_entity, dict) and str(parsed_entity.get("entityId", "")).strip() == "camera_004":
+                        print("[YUANYAO_VISIBLE_STATUS][HTTP_PARSED]", {
+                            "poller": poller_id,
+                            "entityId": parsed_entity.get("entityId"),
+                            "status": parsed_entity.get("status"),
+                            "deviceState": parsed_entity.get("deviceState"),
+                            "platformActivity": parsed_entity.get("platformActivity"),
+                            "role": parsed_entity.get("role"),
+                        })
+                        break
 
                 self._latest_entities_result = result
                 if self._latest_relationships_result is None:

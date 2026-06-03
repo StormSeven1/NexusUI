@@ -121,6 +121,7 @@ def _normalize_entity_record(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]
     indicators = _as_dict(entity.get("indicators"))
     mil_view = _as_dict(entity.get("milView"))
     ontology = _as_dict(entity.get("ontology"))
+    status_obj = _as_dict(entity.get("status"))
 
     lat = _safe_number(
         _first_present(
@@ -146,6 +147,7 @@ def _normalize_entity_record(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]
     virtual_troop = bool(indicators.get("simulated") is True)
     disposition = _safe_str(mil_view.get("disposition"))
     video_address = _read_video_address(entity, asset_type)
+    device_state = _safe_number(status_obj.get("deviceState"))
 
     row: Dict[str, Any] = {
         "entityId": entity_id,
@@ -160,6 +162,10 @@ def _normalize_entity_record(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "deviceSn": device_sn,
         "gatewaySn": gateway_sn,
         "videoAddress": video_address,
+        "status": status_obj,
+        "platformActivity": _safe_str(status_obj.get("platformActivity")),
+        "role": _safe_str(status_obj.get("role")),
+        "deviceState": int(device_state) if device_state is not None else None,
         "ontology": {
             "specificType": _safe_str(ontology.get("specificType")),
             "platformType": _safe_str(ontology.get("platformType")),

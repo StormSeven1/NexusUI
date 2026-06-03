@@ -39,6 +39,8 @@ const SIZE_CONFIG = {
   auto:   { width: 600, height: 500 },
 };
 
+const VIEWPORT_MARGIN = 8;
+
 const UNIFIED_STYLES = {
   titlePadding:   "px-4 py-3",
   contentPadding: "px-4 py-3.5",
@@ -129,6 +131,22 @@ export function DraggableModal({
         if (resizeDirection.includes("n")) {
           nH = Math.max(minHeight, resizeStartSizeRef.current.height - dY);
           nY = resizeStartPositionRef.current.y + (resizeStartSizeRef.current.height - nH);
+        }
+        if (resizeDirection.includes("e")) {
+          nW = Math.min(nW, Math.max(minWidth, window.innerWidth - resizeStartPositionRef.current.x - VIEWPORT_MARGIN));
+        }
+        if (resizeDirection.includes("s")) {
+          nH = Math.min(nH, Math.max(minHeight, window.innerHeight - resizeStartPositionRef.current.y - VIEWPORT_MARGIN));
+        }
+        if (resizeDirection.includes("w")) {
+          const right = resizeStartPositionRef.current.x + resizeStartSizeRef.current.width;
+          nW = Math.min(nW, Math.max(minWidth, right - VIEWPORT_MARGIN));
+          nX = Math.max(VIEWPORT_MARGIN, right - nW);
+        }
+        if (resizeDirection.includes("n")) {
+          const bottom = resizeStartPositionRef.current.y + resizeStartSizeRef.current.height;
+          nH = Math.min(nH, Math.max(minHeight, bottom - VIEWPORT_MARGIN));
+          nY = Math.max(VIEWPORT_MARGIN, bottom - nH);
         }
         setModalSize({ width: nW, height: nH });
         setPosition({ x: nX, y: nY });
