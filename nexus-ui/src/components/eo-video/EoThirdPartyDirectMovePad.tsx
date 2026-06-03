@@ -222,7 +222,11 @@ export function EoThirdPartyDirectMovePad({
         {devStatus ? (
           <>
             <br />
-            状态 0x1001 · pan {devStatus.pan.toFixed(1)}° · tilt {devStatus.tilt.toFixed(1)}°
+            状态 0x1001 · panVehicle{" "}
+            {devStatus.panVehicle != null && Number.isFinite(devStatus.panVehicle)
+              ? `${devStatus.panVehicle.toFixed(1)}°`
+              : "—"}{" "}
+            · pan {devStatus.pan.toFixed(1)}° · tilt {devStatus.tilt.toFixed(1)}°
             {devStatus.zoom !== undefined ? ` · zoom ${devStatus.zoom.toFixed(0)}` : null}
           </>
         ) : (

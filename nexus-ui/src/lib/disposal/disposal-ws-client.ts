@@ -5,7 +5,7 @@
  *   由 ChatPanel 挂载时启动，硬编码常连。
  *
  * 【数据流】
- *   WS 连接 disposalPlanWsUrl（ws://192.168.18.103:8000/api/v1/ws/workflow-stream）
+ *   WS 连接 disposalPlanWsUrl（默认由 NEXT_PUBLIC_NEXUS_TASK_MANAGEMENT_URL 或 app-config.json http.chat 决定）
  *   → 接收消息 → normalizeDisposalPayload 归一化
  *   → handlers.onPlanReady(normalized) → disposalPlanStore.appendFromNormalized(_, "ws")
  *   → DisposalPlanFeed UI 展示

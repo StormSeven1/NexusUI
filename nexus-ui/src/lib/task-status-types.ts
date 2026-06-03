@@ -5,6 +5,9 @@
 export type TaskStatusRequestBody = {
   taskStatus: number;
   taskID?: string;
+  /** 上报方实体 id（`EntityId` / `entityId`），如 `camera_004`、`uav-007` */
+  entityId?: string;
+  /** legacy：标准光电序号；可由 `entityId` 推导，库表查图仍依赖此字段 */
   cameraIndex?: number;
   trackID?: number;
   /** 航迹唯一 ID（与 `minio_multi_metadata.unique_id`、报文 uniqueID 对齐） */

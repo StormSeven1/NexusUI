@@ -1,6 +1,9 @@
 "use client";
 
 import { parseThirdPartyWsFrame } from "@/lib/eo-video/thirdPartyCameraWsFrame";
+import { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
+
+export { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
 
 export function resolveThirdPartyCameraWsUrl(): string {
   const explicit =
@@ -12,14 +15,13 @@ export function resolveThirdPartyCameraWsUrl(): string {
   return `${proto}//${window.location.hostname}:${port}`;
 }
 
-export function normThirdPartyEntityId(s: string | undefined): string {
-  const i = (s ?? "").indexOf("\0");
-  const t = i >= 0 ? (s ?? "").slice(0, i) : (s ?? "");
-  return t.trim().toLowerCase();
-}
-
 type HubListener = {
   onDevStatusBasic?: (payload: Record<string, unknown>) => void;
+  /** 仅需 entity / 检测框（地图、告警）；中继侧不拷贝 YUV */
+  onBinaryFrameMeta?: (frame: NonNullable<ReturnType<typeof parseThirdPartyWsFrame>>) => void;
+  /** 光电 UDP 画面：需 YUV，解析时拷贝一份（与 meta 监听互斥使用为宜） */
+  onBinaryFrameVideo?: (frame: NonNullable<ReturnType<typeof parseThirdPartyWsFrame>>) => void;
+  /** @deprecated 请用 onBinaryFrameMeta / onBinaryFrameVideo */
   onBinaryFrame?: (frame: NonNullable<ReturnType<typeof parseThirdPartyWsFrame>>) => void;
 };
 
@@ -81,9 +83,28 @@ function connectHub() {
       return;
     }
     if (!(ev.data instanceof ArrayBuffer)) return;
-    const parsed = parseThirdPartyWsFrame(ev.data);
-    if (!parsed) return;
-    for (const l of hub.listeners) l.onBinaryFrame?.(parsed);
+    const buf = ev.data;
+    let metaParsed: ReturnType<typeof parseThirdPartyWsFrame> = null;
+    let videoParsed: ReturnType<typeof parseThirdPartyWsFrame> = null;
+    let needsMetaOnly = false;
+    let needsVideo = false;
+    for (const l of hub.listeners) {
+      if (l.onBinaryFrameMeta) needsMetaOnly = true;
+      if (l.onBinaryFrameVideo || l.onBinaryFrame) needsVideo = true;
+    }
+    if (needsMetaOnly) {
+      metaParsed = parseThirdPartyWsFrame(buf, { copyYuv: false });
+      if (!metaParsed) return;
+    }
+    if (needsVideo) {
+      videoParsed = parseThirdPartyWsFrame(buf, { copyYuv: true });
+      if (!videoParsed) return;
+    }
+    for (const l of hub.listeners) {
+      if (l.onBinaryFrameMeta && metaParsed) l.onBinaryFrameMeta(metaParsed);
+      if (l.onBinaryFrameVideo && videoParsed) l.onBinaryFrameVideo(videoParsed);
+      if (l.onBinaryFrame && videoParsed) l.onBinaryFrame(videoParsed);
+    }
   };
 
   ws.onclose = () => {

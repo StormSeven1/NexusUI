@@ -7,7 +7,8 @@ export type TrackLayerKey =
   | "bird_radar"
   | "radar_wharf"
   | "radar_jingzi"
-  | "ais_track";
+  | "ais_track"
+  | "uav_pose_track";
 
 /** 稳定顺序：签名 / 目标侧边栏 / 航迹显示面板 */
 export const TRACK_LAYER_KEYS_ORDERED = [
@@ -17,6 +18,7 @@ export const TRACK_LAYER_KEYS_ORDERED = [
   "radar_wharf",
   "radar_jingzi",
   "ais_track",
+  "uav_pose_track",
 ] as const satisfies readonly TrackLayerKey[];
 
 /** 从 WS / 后端 properties 解析是否虚兵（供地图符号与适配器共用） */

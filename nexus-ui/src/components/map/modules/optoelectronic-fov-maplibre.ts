@@ -39,6 +39,10 @@ import {
 } from "@/lib/opto-device-layer-visibility";
 import type { AssetData } from "@/stores/asset-store";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
+import {
+  isThirdPartyCameraEntityId,
+  normThirdPartyEntityId,
+} from "@/lib/eo-video/thirdPartyEntityId";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent, AssetStatus } from "@/lib/map-icons";
@@ -194,6 +198,8 @@ export function buildFovGeoJSON(
   accent?: AssetDispositionIconAccent | null,
   perDevice?: Readonly<OptoDeviceVisibilityMap>,
   panelCameraIds?: ReadonlySet<string> | null,
+  /** 第三方 PTZ 相机：视场由 `ThirdPartyPtzFovModule` 用 DDS `originPtz.pan` 绘制，此处不画紫色扇形 */
+  excludeFromOptoFovIds?: ReadonlySet<string> | null,
 ) {
   /* 仅光电(camera)画 FOV 扇区；电侦(tower)由 tower-maplibre 独立渲染 */
   const polyFeatures = assetList
@@ -201,6 +207,10 @@ export function buildFovGeoJSON(
       (a) =>
         a.type === "camera" &&
         a.showFov !== false &&
+        !(
+          isThirdPartyCameraEntityId(a.id) &&
+          excludeFromOptoFovIds?.has(normThirdPartyEntityId(a.id))
+        ) &&
         shouldRenderOptoCameraFov(a.id, perDevice ?? {}, panelCameraIds ?? null) &&
         a.range &&
         a.range > 0,
@@ -515,6 +525,14 @@ export class OptoelectronicFovModule {
   private perDeviceVisibility: OptoDeviceVisibilityMap = {};
   /** 图层面板 PTZ 主相机白名单；`null` 表示尚未加载 */
   private panelCameraIds: ReadonlySet<string> | null = null;
+  /** 第三方相机 id：2D 地图视场改由 `ThirdPartyPtzFovModule` 绘制 */
+  private excludeFromOptoFovIds: ReadonlySet<string> = new Set();
+
+  setExcludeFromOptoFovIds(ids: ReadonlySet<string>) {
+    this.excludeFromOptoFovIds = ids;
+    this.lastFovDataSig = "";
+    this.refreshFovGeoJson();
+  }
 
   setPerDeviceVisibility(
     map: Readonly<OptoDeviceVisibilityMap>,
@@ -538,6 +556,7 @@ export class OptoelectronicFovModule {
         this.assetDispositionAccent,
         this.perDeviceVisibility,
         this.panelCameraIds,
+        this.excludeFromOptoFovIds,
       ) as GeoJSON.FeatureCollection,
     );
   }
@@ -628,22 +647,23 @@ export class OptoelectronicFovModule {
       }
     }
     const nextFovSig = this.buildFovDataSig(assets);
-    if (f) {
+    if (f && nextFovSig !== this.lastFovDataSig) {
       f.setData(
         buildFovGeoJSON(
           assets,
           this.assetDispositionAccent,
           this.perDeviceVisibility,
           this.panelCameraIds,
+          this.excludeFromOptoFovIds,
         ) as GeoJSON.FeatureCollection,
       );
+      this.lastFovDataSig = nextFovSig;
+      try {
+        m.triggerRepaint();
+      } catch {
+        /* ignore */
+      }
     }
-    try {
-      m.triggerRepaint();
-    } catch {
-      /* ignore */
-    }
-    this.lastFovDataSig = nextFovSig;
     this.refreshOptoIcons();
   }
 

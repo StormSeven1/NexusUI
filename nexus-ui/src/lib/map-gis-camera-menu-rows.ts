@@ -5,6 +5,7 @@ import {
   type EntityTaskRow,
 } from "@/lib/entities-track-task-cache";
 import type { EoCameraRegistryRow } from "@/lib/eo-video/cameraRegistryTypes";
+import { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
 import { fetchMapGisEoMenuContext, type MapGisEoMenuContext } from "@/lib/map-gis-eo-menu-context";
 
 /** 与地图右键「选择光电…」子菜单同源的一行 */
@@ -50,7 +51,7 @@ export function buildMapGisCameraMenuRows(
   }
 
   for (const tp of eoCtx?.thirdPartyCameras ?? []) {
-    const id = canonicalEntityId(String(tp.entityId ?? "").trim());
+    const id = normThirdPartyEntityId(String(tp.entityId ?? "").trim());
     if (!id || seen.has(id)) continue;
     seen.add(id);
     out.push({

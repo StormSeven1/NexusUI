@@ -15,7 +15,7 @@
  *   - `targetType` — 目标类型（如 "对空融合航迹"、"drone"）
  *   - `sensor` — 传感器/来源信息（有 fusionSources 时组装为 "源名(trackId)" 格式）
  *   - `course` — 原始航向（对海=正北顺时针；对空=服务端航向）
- *   - `heading` — 图标渲染航向（对空=course + airIconHeadingOffsetDeg）
+ *   - `heading` — 图标渲染航向（对海融合=course；对空=course + airIconHeadingOffsetDeg）
  *
  * 【ID 体系】
  *   - uniqueID/showID: 渲染缓存 key，全局唯一
@@ -27,6 +27,7 @@ import { isVirtualFromProperties, type Track } from "@/lib/map-entity-model";
 import { readRealityTypeFromRecord, resolveTrackIsVirtual } from "@/lib/track-reality-type";
 import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
+import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import { transformCoordinate } from "@/lib/coordinate-transform";
 import {
   readTrackCategoryFromRecord,
@@ -44,6 +45,7 @@ const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
   "radar_wharf",
   "radar_jingzi",
   "ais_track",
+  "uav_pose_track",
 ]);
 
 function readTrackLayerKey(rec: Record<string, unknown>): TrackLayerKey | undefined {
@@ -86,11 +88,11 @@ function surfaceKindFromDdsOrTrackLayerKey(rec: Record<string, unknown>): Track[
   if (typeof ddsRaw === "string") {
     const rid = ddsRaw.trim().toLowerCase();
     const lk = TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[rid];
-    if (lk === "fuse_air" || lk === "bird_radar") return "air";
+    if (lk === "fuse_air" || lk === "bird_radar" || lk === "uav_pose_track") return "air";
     if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi") return "sea";
   }
   const tlk = readTrackLayerKey(rec);
-  if (tlk === "fuse_air" || tlk === "bird_radar") return "air";
+  if (tlk === "fuse_air" || tlk === "bird_radar" || tlk === "uav_pose_track") return "air";
   if (tlk === "fuse_sea" || tlk === "radar_wharf" || tlk === "radar_jingzi") return "sea";
   return undefined;
 }
@@ -120,13 +122,19 @@ export function inferTrackSurfaceKind(rec: Record<string, unknown>): Track["type
 
 /**
  * 计算图标渲染航向
- * - 海面/水下：固定 0（图标不旋转）
+ * - 对海融合（`fuse_sea`）：真航向，正北 0° 顺时针（与 `course` 一致）
+ * - 其余海面/水下：固定 0（非融合军标不旋转）
  * - 空中：原始航向 + airIconHeadingOffsetDeg（默认 45°，对齐 V2 旋转方向）
  * 数据传递：course(原始) → 此函数 → Track.heading → 地图图标 rotation
  */
-export function trackIconHeadingDeg(kind: Track["type"], courseDeg: number): number {
+export function trackIconHeadingDeg(
+  kind: Track["type"],
+  courseDeg: number,
+  trackLayerKey?: string | null,
+): number {
   const c = Number.isFinite(courseDeg) ? courseDeg : 0;
   if (kind === "air") return c + getTrackRenderingConfig().airIconHeadingOffsetDeg;
+  if (kind === "sea" && trackLayerKey === "fuse_sea") return c;
   return 0;
 }
 
@@ -189,7 +197,8 @@ export function mergeIncomingTrackWithStickyAirClassification(incoming: Track, p
     };
     const kind = inferTrackSurfaceKind(rec);
     const course = out.course ?? (kind === "air" ? getTrackRenderingConfig().airDefaultCourseDeg : 0);
-    out = { ...out, type: kind, heading: trackIconHeadingDeg(kind, course) };
+    const lk = resolveTrackLayerKey(out);
+    out = { ...out, type: kind, heading: trackIconHeadingDeg(kind, course, lk) };
     if (kind === "air") {
       out = { ...out, isAirTrack: true };
     } else if ("isAirTrack" in out) {
@@ -293,7 +302,6 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
 
   const kind = inferTrackSurfaceKind(rec);
   const course = readCourseDeg(rec, kind);
-  const heading = trackIconHeadingDeg(kind, course);
   const disposition = readDisposition(rec);
 
   const speed = Number(rec.speed ?? rec.speed_ms ?? 0);
@@ -376,6 +384,17 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const ddsLower = ddsSourceIdStr?.trim().toLowerCase();
   const tlkFromDds = ddsLower && TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[ddsLower] ? TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[ddsLower] : undefined;
   const resolvedTrackLayerKey = tlkFromDds ?? tlkPayload;
+
+  const heading = trackIconHeadingDeg(
+    kind,
+    course,
+    resolvedTrackLayerKey ??
+      (kind === "air"
+        ? "fuse_air"
+        : kind === "sea"
+          ? "fuse_sea"
+          : undefined),
+  );
 
   return {
     id: showID,

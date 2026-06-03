@@ -12,6 +12,8 @@ interface MilSymbolProps {
   virtual?: boolean;
   /** 对空：鸟形符号（与地图 `isAirTrackBirdGlyph` 一致） */
   airBird?: boolean;
+  /** 对海融合：水上目标符号（与地图 `fuse_sea` 一致） */
+  seaFuse?: boolean;
   /** 中立融合航迹填色（见 `getFusionTrackMarkerFill`），仅 disposition=neutral 时传入 */
   neutralFusionFill?: string | null;
   /** 光电查证完成：军标整体绿色 */
@@ -29,6 +31,7 @@ export function MilSymbol({
   disposition,
   virtual = false,
   airBird = false,
+  seaFuse = false,
   neutralFusionFill,
   opticallyVerified = false,
   size = "md",
@@ -50,6 +53,7 @@ export function MilSymbol({
     airBird,
     false,
     opticallyVerified,
+    seaFuse,
   );
 
   return (

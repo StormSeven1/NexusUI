@@ -19,13 +19,18 @@ import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackGreen } from "@/
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
 import { LYR_TRACKS, TRACK_LAYER_KEYS_ORDERED, type Track } from "@/lib/map-entity-model";
-import { useTrackDisplayStore, neutralFusionColorForTrack } from "@/stores/track-display-store";
+import {
+  useTrackDisplayStore,
+  neutralFusionColorForTrack,
+  uavPoseTrackDotColor,
+} from "@/stores/track-display-store";
 import { isTrackVirtualTroop } from "@/lib/track-reality-type";
 import { formatTrackSpeed } from "@/lib/track-speed-format";
 import {
   effectiveTrackLayerKey,
   isDotTrackLayerKey,
   isTrackVisibleBySubtype,
+  resolveTrackLayerKey,
   TRACK_SUBTYPE_LABELS,
 } from "@/lib/track-layer-visibility";
 
@@ -63,9 +68,11 @@ function TrackListRow({
   const dotRow = isDotTrackLayerKey(layerKey);
   const dotFill = resolveVerifiedTrackPointFill(
     track,
-    disp === "neutral"
-      ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor)
-      : resolveTrackPointFill(track, disp, null, undefined),
+    layerKey === "uav_pose_track"
+      ? uavPoseTrackDotColor(td)
+      : disp === "neutral"
+        ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor)
+        : resolveTrackPointFill(track, disp, null, undefined),
   );
   return (
     <button
@@ -89,6 +96,7 @@ function TrackListRow({
           type={track.type}
           disposition={disp}
           virtual={isTrackVirtualTroop(track)}
+          seaFuse={resolveTrackLayerKey(track) === "fuse_sea" && track.type === "sea"}
           neutralFusionFill={disp === "neutral" ? getFusionTrackMarkerFill(track) : undefined}
           opticallyVerified={shouldApplyVerifiedTrackGreen(track)}
           size="sm"

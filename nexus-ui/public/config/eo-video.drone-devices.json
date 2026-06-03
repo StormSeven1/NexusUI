@@ -1,99 +1,66 @@
 {
-  "syncedAt": "2026-05-26T06:56:29.583Z",
+  "syncedAt": "2026-06-03T02:00:48.421Z",
   "sourceUrl": "http://192.168.18.141:8090/api/v1/entities?page=1&size=100",
   "devices": [
     {
       "entityId": "uav-001",
+      "name": "无人机1",
       "deviceSN": "1581F6Q8D246S00G94B3",
       "airportSN": "7CTDM7D00BP0G0",
       "vendor": "dji"
     },
     {
       "entityId": "uav-002",
+      "name": "无人机2",
       "deviceSN": "1581F6Q8D248X00GQ701",
       "airportSN": "7CTXM9Q00B02HX",
       "vendor": "dji"
     },
     {
       "entityId": "uav-003",
+      "name": "无人机3",
       "deviceSN": "1581F6Q8D249C00GWSBJ",
       "airportSN": "7CTXM9N00B02CV",
       "vendor": "dji"
     },
     {
       "entityId": "uav-004",
+      "name": "无人机4",
       "deviceSN": "1581F6Q8D248X00G7SDL",
       "airportSN": "7CTXM8G00B0088",
       "vendor": "dji"
     },
     {
       "entityId": "uav-005",
+      "name": "无人机5",
       "deviceSN": "1581F6Q8X251H00G04XX",
       "airportSN": "7CTXM8G00B008C",
       "vendor": "dji"
     },
     {
       "entityId": "uav-006",
+      "name": "无人机6",
       "deviceSN": "1581F6Q8D249C00GR66R",
       "airportSN": "7CTDM7900B33P7",
       "vendor": "dji"
     },
     {
       "entityId": "uav-007",
+      "name": "无人机7",
       "deviceSN": "1581F6Q8D244300C47RP",
       "airportSN": "7CTDM7900BG18X",
       "vendor": "dji"
     },
     {
-      "entityId": "uav-008",
-      "deviceSN": "1581F6Q8X251H00G04XX",
-      "airportSN": "7CTXM8K00B00J1",
-      "vendor": "dji"
-    },
-    {
       "entityId": "uav-011",
+      "name": "无人机11",
       "deviceSN": "1581F6QAD241200BWX4E",
       "airportSN": "7CTDM4T00BG5D7",
       "vendor": "dji"
     },
     {
-      "entityId": "uav-201",
-      "deviceSN": "DroneAABBCCDD201",
-      "airportSN": "DockAABBCCDD201",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-202",
-      "deviceSN": "DroneAABBCCDD202",
-      "airportSN": "DockAABBCCDD202",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-203",
-      "deviceSN": "DroneAABBCCDD203",
-      "airportSN": "DockAABBCCDD203",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-204",
-      "deviceSN": "DroneAABBCCDD204",
-      "airportSN": "DockAABBCCDD204",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-205",
-      "deviceSN": "DroneAABBCCDD205",
-      "airportSN": "DockAABBCCDD205",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-206",
-      "deviceSN": "DroneAABBCCDD206",
-      "airportSN": "DockAABBCCDD206",
-      "vendor": "dji"
-    },
-    {
       "entityId": "uav_jo-001",
+      "name": "遥远码头",
       "deviceSN": "12230545",
       "airportSN": "whzdh01",
       "vendor": "jouav"

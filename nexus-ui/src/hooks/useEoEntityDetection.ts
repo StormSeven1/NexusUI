@@ -2,12 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
+import {
+  shouldCutEoVideoHardwarePassthrough,
+} from "@/lib/eo-video/eoVideoHardwarePassthrough";
+import { isEoVideoWebCodecsCanvasEnabled } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 import type { BufferedDetectionEntry } from "@/lib/eo-video/eoDetectionTypes";
 import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import { headersMatch, detectionRectsToEoBoxes } from "@/lib/eo-video/detectionSyncUtils";
 import { getEoDetectionWebSocketManager } from "@/lib/eo-video/eoDetectionWebSocket";
 import { ingestEntityDetectionPayload } from "@/lib/eo-video/entityDetectionIngest";
-import { parsePositiveTrackId } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import {
+  EO_CAMERA_DDS_EXECUTING_HOLD_MS,
+  useEoCameraDdsHeldTrackUi,
+} from "@/lib/eo-video/eoCameraDdsUiHold";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
 import { useTrackStore } from "@/stores/track-store";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
@@ -28,14 +35,6 @@ function finiteFromDdsField(v: unknown): number | undefined {
   }
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
-}
-
-/** 曾误把根载荷 `name`（相机状态/标题）写入 trackAlias，此处过滤后再当航迹别名 */
-function sanitizeDdsTrackAliasForOverlay(raw: string): string {
-  const t = raw.trim();
-  if (!t) return "";
-  if (/相机/.test(t) && /状态/.test(t)) return "";
-  return t;
 }
 
 /**
@@ -160,6 +159,8 @@ export function useEoEntityDetection({
   const detectionDelaySamplesRef = useRef(0);
   const lastDiagEmitMsRef = useRef(0);
   const lastDiagLineRef = useRef("");
+  /** 单目标跟踪态：缺帧时沿用上一帧单目标框，避免闪出海/空多目标框 */
+  const lastSingleBoxesRef = useRef<EoDetectionBox[]>([]);
 
   const id = entityId?.trim() ? canonicalEntityId(entityId.trim()) : "";
 
@@ -169,24 +170,11 @@ export function useEoEntityDetection({
     return canonicalEntityId(raw);
   }, [ddsCameraEntityId, entityId]);
 
-  const ddsCameraRow = useEoCameraDdsStatusStore((s) =>
-    ddsLookupId ? s.byEntityId[ddsLookupId] : undefined,
-  );
-
-  const ddsTrackIdForUi = useMemo(() => parsePositiveTrackId(ddsCameraRow?.trackID), [ddsCameraRow?.trackID]);
-
-  const ddsAliasStrMemo = useMemo(() => {
-    const av = ddsCameraRow?.trackAlias;
-    if (typeof av === "string" && av.trim()) return sanitizeDdsTrackAliasForOverlay(av);
-    if (av != null && String(av).trim()) return sanitizeDdsTrackAliasForOverlay(String(av));
-    return "";
-  }, [ddsCameraRow?.trackAlias]);
-
-  /** 与右下角 `useEoVideoDdsTaskLine` / `formatEoDdsCameraLine` 同源：仅 DDS 正整数航迹号 + trackAlias */
-  const singleTrackOverlayTitle = useMemo(() => {
-    if (ddsTrackIdForUi == null) return null;
-    return ddsAliasStrMemo || `T${ddsTrackIdForUi}`;
-  }, [ddsTrackIdForUi, ddsAliasStrMemo]);
+  /** 与右下角任务条同源 3s 滞回，避免单目标标牌航迹号随 DDS 抖动 */
+  const heldDdsTrackUi = useEoCameraDdsHeldTrackUi(ddsLookupId);
+  const ddsTrackIdForUi = heldDdsTrackUi.trackId;
+  const ddsAliasStrMemo = heldDdsTrackUi.trackAlias;
+  const singleTrackOverlayTitle = heldDdsTrackUi.overlayTitle;
 
   useEffect(() => {
     boatBuf.current = [];
@@ -205,6 +193,7 @@ export function useEoEntityDetection({
     lastSingleTypeRef.current = null;
     lastDiagEmitMsRef.current = 0;
     lastDiagLineRef.current = "";
+    lastSingleBoxesRef.current = [];
     setBoxes([]);
     setDiag("");
   }, [id]);
@@ -241,6 +230,13 @@ export function useEoEntityDetection({
       try {
         const next: EoDetectionBox[] = [];
         const now = Date.now();
+        const singleTrackMode = ddsTrackIdForUi != null;
+        if (!singleTrackMode) {
+          lastSingleBoxesRef.current = [];
+        }
+        const singleEntryMaxAgeMs = singleTrackMode
+          ? EO_CAMERA_DDS_EXECUTING_HOLD_MS
+          : SINGLE_TRACK_STALE_MS;
 
         const boxesFromEntry = (
           entry: BufferedDetectionEntry | null,
@@ -266,13 +262,18 @@ export function useEoEntityDetection({
           const ddDist = finiteFromDdsField(ddsRow?.distance);
 
           const pickedSingle = picker(singleBuf.current);
-          const singleEntry =
-            pickedSingle && now - pickedSingle.receivedAt <= SINGLE_TRACK_STALE_MS
-              ? pickedSingle
-              : null;
+          let singleEntry: BufferedDetectionEntry | null = null;
+          if (pickedSingle) {
+            const age = now - pickedSingle.receivedAt;
+            if (age <= singleEntryMaxAgeMs) {
+              singleEntry = pickedSingle;
+            } else if (singleTrackMode && age <= DETECTION_ENTRY_STALE_MS) {
+              singleEntry = pickedSingle;
+            }
+          }
           const singleBoxesRaw = boxesFromEntry(singleEntry, "single", "", "accent");
           const ex = expandedMode;
-          const singleBoxes =
+          const mapSingleBoxes =
             singleBoxesRaw.length > 0
               ? singleBoxesRaw.map((b) => {
                   const meta = singleEntry?.singleDisplayMeta;
@@ -335,8 +336,14 @@ export function useEoEntityDetection({
                   };
                 })
               : [];
+          const singleBoxes = mapSingleBoxes;
           if (singleBoxes.length > 0) {
             next.push(...singleBoxes);
+            lastSingleBoxesRef.current = singleBoxes;
+          } else if (singleTrackMode) {
+            if (lastSingleBoxesRef.current.length > 0) {
+              next.push(...lastSingleBoxesRef.current);
+            }
           } else {
             next.push(...boxesFromEntry(picker(boatBuf.current), "boat", "海", "friendly"));
             next.push(...boxesFromEntry(picker(planeBuf.current), "plane", "空", "hostile"));
@@ -371,12 +378,13 @@ export function useEoEntityDetection({
             const hdr = snap.syncHeader;
             const tryMatch = (arr: BufferedDetectionEntry[]): BufferedDetectionEntry | null =>
               pickBySyncHeader(arr, hdr, now);
-            const testHit =
-              tryMatch(boatBuf.current) ?? tryMatch(planeBuf.current) ?? tryMatch(singleBuf.current);
+            const testHit = singleTrackMode
+              ? tryMatch(singleBuf.current)
+              : tryMatch(boatBuf.current) ?? tryMatch(planeBuf.current) ?? tryMatch(singleBuf.current);
             if (testHit) {
               headerMatchedThisTick = true;
               headerEverMatchedRef.current = true;
-              syncMode = "header";
+              syncMode = singleTrackMode ? "header-single" : "header";
               syncDiagRef.current.headerOk++;
               buildBoxes(tryMatch);
               break;
@@ -518,8 +526,15 @@ export function useEoEntityDetection({
       }
     };
 
-    if (video && typeof video.requestVideoFrameCallback === "function") {
-      frameCbId = video.requestVideoFrameCallback(runByFrame);
+    const useVideoFrameClock =
+      !shouldCutEoVideoHardwarePassthrough(
+        isEoVideoWebCodecsCanvasEnabled() && Boolean(encodedSyncHub),
+      ) &&
+      video &&
+      typeof video.requestVideoFrameCallback === "function";
+
+    if (useVideoFrameClock) {
+      frameCbId = video!.requestVideoFrameCallback(runByFrame);
     } else {
       timer = window.setInterval(() => processAt(), RENDER_MS);
     }

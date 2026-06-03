@@ -1,6 +1,7 @@
 import type { TaskStatusChatPayload } from "@/lib/task-status-types";
 import type { FileUIPart } from "ai";
 import { enrichTaskStatusPayloadForVerifyUi } from "@/lib/task-status-track-enrich";
+import { buildVerifySessionKey } from "@/lib/task-status-verify-entity-ref";
 
 export function pickTaskStatusImageUrl(p: TaskStatusChatPayload): string | null {
   const u = p.downloadUrl?.trim();
@@ -56,17 +57,18 @@ function statusLabel(taskStatus: number): string {
   }
 }
 
-/** 航迹 + 相机，与 Qt `m_mapTrackSession` 的 key `"%1_%2".arg(trackId).arg(cameraIndex)` 一致 */
+/** 航迹 + 实体：优先 `{trackID}_{entityId}`，无 entityId 时回退 `{trackID}_{cameraIndex}` */
 export function taskStatusVerifySessionKey(
   trackID: number | undefined | null,
-  cameraIndex: number | undefined | null,
+  entityRef: { entityId?: string | null; cameraIndex?: number | null },
 ): string | null {
-  if (trackID == null || cameraIndex == null) return null;
-  const t = Number(trackID);
-  const c = Number(cameraIndex);
-  // trackID <= 0 视为无效（后端有时在研判包中将 trackID 置 0，不应建会话）
-  if (!Number.isFinite(t) || t <= 0 || !Number.isFinite(c)) return null;
-  return `${t}_${c}`;
+  return buildVerifySessionKey(trackID, {
+    entityId: entityRef.entityId?.trim() || undefined,
+    cameraIndex:
+      entityRef.cameraIndex != null && Number.isFinite(Number(entityRef.cameraIndex))
+        ? Number(entityRef.cameraIndex)
+        : undefined,
+  });
 }
 
 function fmtFixed(n: number, frac: number): string {
@@ -79,8 +81,12 @@ function fmtFixed(n: number, frac: number): string {
  */
 export function formatTaskStatusVerificationMarkdown(p: TaskStatusChatPayload): string {
   const targetId = p.verifyTargetId ?? p.trackID;
+  const entityLabel = p.entityId?.trim();
   const lines: string[] = [];
-  lines.push(`**相机查证** · 告警 \`${p.alarmId}\``);
+  lines.push(
+    `**${entityLabel && /^uav/i.test(entityLabel) ? "无人机" : "相机"}查证** · 告警 \`${p.alarmId}\``,
+  );
+  if (entityLabel) lines.push(`- **实体**：\`${entityLabel}\``);
   lines.push("");
   if (targetId != null && Number.isFinite(Number(targetId))) {
     lines.push(`正在查证ID为${targetId}的目标，航迹信息：`);
@@ -121,7 +127,8 @@ export function formatTaskStatusAssistantMarkdown(p: TaskStatusChatPayload): str
   lines.push("");
   lines.push(`- **阶段**：${statusLabel(p.taskStatus)}（码 ${p.taskStatus}）`);
   if (p.taskID) lines.push(`- **任务 ID**：${p.taskID}`);
-  if (p.cameraIndex != null) lines.push(`- **相机序号**：${p.cameraIndex}`);
+  if (p.entityId?.trim()) lines.push(`- **实体 ID**：${p.entityId.trim()}`);
+  else if (p.cameraIndex != null) lines.push(`- **相机序号**：${p.cameraIndex}`);
   if (p.trackID != null) lines.push(`- **航迹 ID**：${p.trackID}`);
   lines.push(`- **时间**：${p.receivedAt}`);
   if (p.description?.trim()) {

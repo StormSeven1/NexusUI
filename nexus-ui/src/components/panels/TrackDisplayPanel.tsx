@@ -13,10 +13,12 @@ import { useMemo, useState } from "react";
 export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) {
   const seaFusionColor = useTrackDisplayStore((s) => s.seaFusionColor);
   const airFusionColor = useTrackDisplayStore((s) => s.airFusionColor);
+  const uavPoseTrackColor = useTrackDisplayStore((s) => s.uavPoseTrackColor);
   const vectorLengthSecondsByLayer = useTrackDisplayStore((s) => s.vectorLengthSecondsByLayer);
   const trailLengthSecondsByLayer = useTrackDisplayStore((s) => s.trailLengthSecondsByLayer);
   const setSeaFusionColor = useTrackDisplayStore((s) => s.setSeaFusionColor);
   const setAirFusionColor = useTrackDisplayStore((s) => s.setAirFusionColor);
+  const setUavPoseTrackColor = useTrackDisplayStore((s) => s.setUavPoseTrackColor);
   const setVectorLengthSecondsForLayer = useTrackDisplayStore((s) => s.setVectorLengthSecondsForLayer);
   const setTrailLengthSecondsForLayer = useTrackDisplayStore((s) => s.setTrailLengthSecondsForLayer);
 
@@ -33,15 +35,30 @@ export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) 
 
   const currentVectorLengthSeconds = vectorLengthSecondsByLayer[selectedLayer] ?? 60;
   const currentTrailLengthSeconds = trailLengthSecondsByLayer[selectedLayer] ?? 600;
-  const showFusionColor = selectedLayer === "fuse_sea" || selectedLayer === "fuse_air";
-  const currentColor = selectedLayer === "fuse_air" ? airFusionColor : seaFusionColor;
-  const setCurrentColor = selectedLayer === "fuse_air" ? setAirFusionColor : setSeaFusionColor;
+  const showLayerColor =
+    selectedLayer === "fuse_sea" || selectedLayer === "fuse_air" || selectedLayer === "uav_pose_track";
+  const layerColorLabel =
+    selectedLayer === "uav_pose_track"
+      ? "圆点颜色"
+      : "融合中立色";
+  const currentColor =
+    selectedLayer === "fuse_air"
+      ? airFusionColor
+      : selectedLayer === "uav_pose_track"
+        ? uavPoseTrackColor
+        : seaFusionColor;
+  const setCurrentColor =
+    selectedLayer === "fuse_air"
+      ? setAirFusionColor
+      : selectedLayer === "uav_pose_track"
+        ? setUavPoseTrackColor
+        : setSeaFusionColor;
 
   const body = (
     <div className={embedded ? "space-y-4" : "flex-1 space-y-4 overflow-y-auto p-3"}>
         {!embedded ? (
           <p className="text-[10px] leading-snug text-nexus-text-muted">
-            选择航迹类型后分别调整矢量与尾迹；融合航迹可改中立色。
+            选择航迹类型后分别调整矢量与尾迹；融合航迹可改中立色，自报位可改圆点颜色。
           </p>
         ) : null}
         <div>
@@ -67,10 +84,10 @@ export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) 
           </div>
         </div>
 
-        {showFusionColor ? (
+        {showLayerColor ? (
           <div>
             <label className="mb-2 block text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
-              融合中立色（{TRACK_SUBTYPE_LABELS[selectedLayer]}）
+              {layerColorLabel}（{TRACK_SUBTYPE_LABELS[selectedLayer]}）
             </label>
             <div className="flex items-center gap-3">
               <input
@@ -148,7 +165,7 @@ export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) 
       <div className="border-b border-white/[0.06] p-3">
         <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">航迹显示</span>
         <p className="mt-1 text-[10px] leading-snug text-nexus-text-muted">
-          选择航迹类型后分别调整矢量与尾迹；融合航迹可改中立色。
+          选择航迹类型后分别调整矢量与尾迹；融合航迹可改中立色，自报位可改圆点颜色。
         </p>
       </div>
       {body}

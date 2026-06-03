@@ -12,12 +12,15 @@ function store(): AccStore {
   return g.__nexusTaskStatusKeyAcc;
 }
 
-function sessionTrackCameraKey(trackID: number, cameraIndex: number): string {
-  return `${trackID}_${cameraIndex}`;
+export function resetVerifyObjectKeyAccumulatorForSession(sessionKey: string): void {
+  const sk = sessionKey.trim();
+  if (!sk) return;
+  store().delete(sk);
 }
 
+/** @deprecated 优先 `resetVerifyObjectKeyAccumulatorForSession` + `buildVerifySessionKey` */
 export function resetVerifyObjectKeyAccumulator(trackID: number, cameraIndex: number): void {
-  store().delete(sessionTrackCameraKey(trackID, cameraIndex));
+  resetVerifyObjectKeyAccumulatorForSession(`${trackID}_${cameraIndex}`);
 }
 
 function normalizeKey(k: string): string {
@@ -27,13 +30,13 @@ function normalizeKey(k: string): string {
 /**
  * 合并分片到累积 key；仅 pathish 描述参与累积，避免把中文研判拼进 key。
  */
-export function accumulateVerifyObjectKeyFromDescription(
-  trackID: number,
-  cameraIndex: number,
+export function accumulateVerifyObjectKeyFromDescriptionForSession(
+  sessionKey: string,
   taskStatus: number,
   description: string,
 ): string {
-  const sk = sessionTrackCameraKey(trackID, cameraIndex);
+  const sk = sessionKey.trim();
+  if (!sk) return "";
   const m = store();
   if (taskStatus === 4) {
     m.delete(sk);
@@ -45,6 +48,20 @@ export function accumulateVerifyObjectKeyFromDescription(
   const merged = normalizeKey(prev + frag);
   m.set(sk, merged);
   return merged;
+}
+
+/** @deprecated 优先 `accumulateVerifyObjectKeyFromDescriptionForSession` */
+export function accumulateVerifyObjectKeyFromDescription(
+  trackID: number,
+  cameraIndex: number,
+  taskStatus: number,
+  description: string,
+): string {
+  return accumulateVerifyObjectKeyFromDescriptionForSession(
+    `${trackID}_${cameraIndex}`,
+    taskStatus,
+    description,
+  );
 }
 
 function encodeKeyPathSegments(key: string): string {

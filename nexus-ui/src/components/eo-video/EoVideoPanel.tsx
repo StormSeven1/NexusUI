@@ -47,7 +47,7 @@ import { resolveEoPipPlaybackUrl } from "@/lib/eo-video/resolveEoPipPlaybackUrl"
 import { useEoVideoDdsTaskLine } from "@/hooks/useEoVideoDdsTaskLine";
 import { blobToBase64DataOnly } from "@/lib/eo-video/blobToBase64";
 import { Button } from "@/components/ui/button";
-import { Home, Joystick, Loader2, Maximize2, Minimize2 } from "lucide-react";
+import { Home, Joystick, Loader2, Maximize2, Minimize2, PlaneTakeoff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useVlmChatInjectStore } from "@/stores/vlm-chat-inject-store";
@@ -68,7 +68,9 @@ import { EoExpandedCameraPtzHud } from "./EoExpandedCameraPtzHud";
 import { EoVideoPtzPanel } from "./EoVideoPtzPanel";
 import type { EoVideoTaskTrace } from "./EoVideoTaskTracePanel";
 import { EoVideoTaskTracePanel } from "./EoVideoTaskTracePanel";
+import { EoCaptureCollectDialog } from "./EoCaptureCollectDialog";
 import { EoSnapshotPreviewPopout, type EoSnapshotPreviewPayload } from "./EoSnapshotPreviewPopout";
+import { eoCollectDataTypeForPreviewKind } from "@/lib/eo-video/eoCaptureCollectUpload";
 import { getEoVideoExpandDockBaseTitle } from "@/lib/eo-video/eoVideoExpandDockTitle";
 import { EoVideoExpandFloatingFrame } from "./EoVideoExpandFloatingFrame";
 import { useEoFocusedUavAirportSnStore } from "@/stores/eo-focused-uav-airport-sn-store";
@@ -247,6 +249,12 @@ export function EoVideoPanel({
   } | null>(null);
   const cameraBottomFeedbackTimerRef = useRef<number | null>(null);
   const [snapshotPreview, setSnapshotPreview] = useState<EoSnapshotPreviewPayload | null>(null);
+  const [collectDialogOpen, setCollectDialogOpen] = useState(false);
+  const [collectTarget, setCollectTarget] = useState<{
+    kind: "snapshot" | "record";
+    blob: Blob;
+    fileName: string;
+  } | null>(null);
   const snapshotPreviewRef = useRef<EoSnapshotPreviewPayload | null>(null);
   const snapshotAutoDismissTimerRef = useRef<number | null>(null);
   const snapshotCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -358,7 +366,7 @@ export function EoVideoPanel({
       window.clearTimeout(snapshotAutoDismissTimerRef.current);
       snapshotAutoDismissTimerRef.current = null;
     }
-    if (!snapshotPreview) return;
+    if (!snapshotPreview || collectDialogOpen) return;
     snapshotAutoDismissTimerRef.current = window.setTimeout(() => {
       setSnapshotPreview((prev) => {
         if (!prev) return prev;
@@ -373,7 +381,7 @@ export function EoVideoPanel({
         snapshotAutoDismissTimerRef.current = null;
       }
     };
-  }, [snapshotPreview]);
+  }, [snapshotPreview, collectDialogOpen]);
 
   useEffect(() => {
     return () => {
@@ -1625,9 +1633,14 @@ export function EoVideoPanel({
     }
   }, [mqttAirportSn, uavCtrlAuth, appendClientLog, showUavBottomFeedback]);
 
+  /** 默认 dock 窗口：仅当前选中的光电面板响应 WASDQEZC */
+  const uavKeyboardEnabled = Boolean(
+    activeStream?.uav && (!dockPidNorm || eoPanelSelected),
+  );
+
   // 键盘手控（对应 C++ ptzmainwidget keyPressEvent/keyReleaseEvent + mainwindow slot_onUavStartCtrl）
   const { keyState, isControlling } = useUavKeyboardControl({
-    enabled: Boolean(activeStream?.uav),
+    enabled: uavKeyboardEnabled,
     airportSN: mqttAirportSn,
     hasAuth: uavCtrlAuth.hasAuth,
     publishStickMqtt: publishStickControl,
@@ -1750,9 +1763,20 @@ export function EoVideoPanel({
     });
   }, []);
 
-  const onSnapshotCollectStub = useCallback(async () => {
-    appendClientLog(`${new Date().toLocaleTimeString()} 采集：（功能预留）`);
+  const onSnapshotCollect = useCallback(async () => {
+    const p = snapshotPreviewRef.current;
+    if (!p?.blob) {
+      appendClientLog(`${new Date().toLocaleTimeString()} 采集失败：无文件数据`);
+      return;
+    }
+    setCollectTarget({ kind: p.kind, blob: p.blob, fileName: p.fileName });
+    setCollectDialogOpen(true);
   }, [appendClientLog]);
+
+  const closeCollectDialog = useCallback(() => {
+    setCollectDialogOpen(false);
+    setCollectTarget(null);
+  }, []);
 
   const onOpenCapturePath = useCallback(async () => {
     if (!isShowDirectoryPickerSupported()) {
@@ -2255,6 +2279,27 @@ export function EoVideoPanel({
                         <Joystick className="size-3.5" />
                       )}
                     </Button>
+                    {mqttDroneInDock === true ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className={cn(
+                          "pointer-events-auto border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+                          !mqttAirportSn || uavActionBusy?.takeoff ? "cursor-not-allowed opacity-50" : "",
+                        )}
+                        title="起飞"
+                        aria-label="起飞"
+                        disabled={!mqttAirportSn || Boolean(uavActionBusy?.takeoff)}
+                        onClick={() => void triggerUavAction("takeoff")}
+                      >
+                        {uavActionBusy?.takeoff ? (
+                          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                        ) : (
+                          <PlaneTakeoff className="size-3.5" aria-hidden />
+                        )}
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       variant="ghost"
@@ -2304,7 +2349,7 @@ export function EoVideoPanel({
                         preview={snapshotPreview}
                         onDismiss={dismissSnapshotPreview}
                         onOpen={onOpenCapturePath}
-                        onCollect={onSnapshotCollectStub}
+                        onCollect={onSnapshotCollect}
                         onAnalyze={onSnapshotAnalyze}
                       />
                     ) : null}
@@ -2386,7 +2431,11 @@ export function EoVideoPanel({
                           .join(" · ")}
                       />
                       {showThirdPartySubPipStack ? (
-                        <EoThirdPartySubCamPipStack entityIds={thirdPartySubPipIds} expandedMode={expandedMode} />
+                        <EoThirdPartySubCamPipStack
+                          entityIds={thirdPartySubPipIds}
+                          expandedMode={expandedMode}
+                          sideToolbarReserved
+                        />
                       ) : null}
                     </>
                   ) : (
@@ -2464,7 +2513,7 @@ export function EoVideoPanel({
                           preview={snapshotPreview}
                           onDismiss={dismissSnapshotPreview}
                           onOpen={onOpenCapturePath}
-                          onCollect={onSnapshotCollectStub}
+                          onCollect={onSnapshotCollect}
                           onAnalyze={onSnapshotAnalyze}
                         />
                       ) : null}
@@ -2578,6 +2627,25 @@ export function EoVideoPanel({
           />
         </EoVideoExpandFloatingFrame>
       ) : null}
+
+      <EoCaptureCollectDialog
+        open={collectDialogOpen}
+        onClose={closeCollectDialog}
+        isUav={Boolean(activeStream?.uav)}
+        kind={collectTarget?.kind ?? snapshotPreview?.kind ?? "snapshot"}
+        blob={collectTarget?.blob ?? null}
+        fileName={collectTarget?.fileName ?? snapshotPreview?.fileName ?? "capture.bin"}
+        dataType={eoCollectDataTypeForPreviewKind(collectTarget?.kind ?? snapshotPreview?.kind ?? "snapshot")}
+        onStatus={(line) => appendClientLog(`${new Date().toLocaleTimeString()} 采集：${line}`)}
+        onSuccess={(repoPath) => {
+          appendClientLog(`${new Date().toLocaleTimeString()} 采集上传成功：${repoPath}`);
+          toast.success("采集上传成功", { description: repoPath });
+        }}
+        onError={(msg) => {
+          appendClientLog(`${new Date().toLocaleTimeString()} 采集上传失败：${msg}`);
+          toast.error("采集上传失败", { description: msg });
+        }}
+      />
 
     </div>
   );

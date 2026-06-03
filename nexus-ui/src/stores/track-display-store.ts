@@ -27,7 +27,7 @@ function defaultSecondsByLayer(defaultSec: number): Record<TrackLayerKey, number
 }
 
 function layerUsesAirDisplayDefaults(key: TrackLayerKey): boolean {
-  return key === "fuse_air" || key === "bird_radar";
+  return key === "fuse_air" || key === "bird_radar" || key === "uav_pose_track";
 }
 
 /** 尾迹长度（秒）换算为保留点数时，假定相邻采样间隔（秒）；仅前端展示裁剪，不改动 track-store */
@@ -35,12 +35,16 @@ export const TRACK_TRAIL_SAMPLE_INTERVAL_SEC = 2;
 
 const STORAGE_KEY = "nexus-ui-track-display-v2";
 
+/** 自报位圆点默认色（航迹显示面板可改） */
+export const DEFAULT_UAV_POSE_TRACK_COLOR = "#22d3ee";
+
 export type TrackFusionKindUi = "sea" | "air";
 export type AirFusionSubtypeKey = "uav" | "bird";
 
 export interface TrackDisplayState {
   seaFusionColor: string;
   airFusionColor: string;
+  uavPoseTrackColor: string;
   /** 各 DDS 航迹类型矢量长度（秒 × 速度），1–300 */
   vectorLengthSecondsByLayer: Record<TrackLayerKey, number>;
   /** 各 DDS 航迹类型尾迹长度（秒），1–1800 */
@@ -51,6 +55,7 @@ export interface TrackDisplayState {
 
   setSeaFusionColor: (c: string) => void;
   setAirFusionColor: (c: string) => void;
+  setUavPoseTrackColor: (c: string) => void;
   setVectorLengthSecondsForLayer: (key: TrackLayerKey, s: number) => void;
   setTrailLengthSecondsForLayer: (key: TrackLayerKey, s: number) => void;
   toggleTrackSubtype: (key: TrackLayerKey) => void;
@@ -109,6 +114,7 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
     (set) => ({
       seaFusionColor: FUSION_TRACK_NEUTRAL_SEA,
       airFusionColor: FUSION_TRACK_NEUTRAL_AIR,
+      uavPoseTrackColor: DEFAULT_UAV_POSE_TRACK_COLOR,
       vectorLengthSecondsByLayer: defaultSecondsByLayer(60),
       trailLengthSecondsByLayer: defaultSecondsByLayer(600),
       trackSubtypeVisible: defaultTrackSubtypeVisible(),
@@ -123,6 +129,11 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
       setAirFusionColor: (c) =>
         set((s) => ({
           airFusionColor: c,
+          displayRevision: s.displayRevision + 1,
+        })),
+      setUavPoseTrackColor: (c) =>
+        set((s) => ({
+          uavPoseTrackColor: c,
           displayRevision: s.displayRevision + 1,
         })),
       setVectorLengthSecondsForLayer: (key, sec) =>
@@ -172,6 +183,7 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
       partialize: (s) => ({
         seaFusionColor: s.seaFusionColor,
         airFusionColor: s.airFusionColor,
+        uavPoseTrackColor: s.uavPoseTrackColor,
         vectorLengthSecondsByLayer: s.vectorLengthSecondsByLayer,
         trailLengthSecondsByLayer: s.trailLengthSecondsByLayer,
         trackSubtypeVisible: s.trackSubtypeVisible,
@@ -211,6 +223,7 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
           ...current,
           seaFusionColor: (p.seaFusionColor as string) ?? current.seaFusionColor,
           airFusionColor: (p.airFusionColor as string) ?? current.airFusionColor,
+          uavPoseTrackColor: (p.uavPoseTrackColor as string) ?? current.uavPoseTrackColor,
           vectorLengthSecondsByLayer,
           trailLengthSecondsByLayer,
           trackSubtypeVisible: mergedSub,
@@ -243,6 +256,11 @@ export function neutralFusionColorForTrack(
     return sea;
   }
   return track.isAirTrack === true ? air : sea;
+}
+
+/** 自报位圆点填色（航迹显示里配置，与敌我属性无关） */
+export function uavPoseTrackDotColor(state: Pick<TrackDisplayState, "uavPoseTrackColor">): string {
+  return state.uavPoseTrackColor;
 }
 
 export function vectorLengthSecondsForTrack(

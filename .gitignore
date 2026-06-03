@@ -64,3 +64,6 @@ Custombackend/app/DDSReferences/Camera/build3/
 Custombackend/app/DDSReferences/Camera/build_xk/
 docker/nginx/certs/
 nexus-ui/public/tiles/*.pmtiles
+# 由 dev-start / prod-start 从 app-config.json 生成的环境专用端点（勿提交）
+nexus-ui/public/app-config.dev.json
+nexus-ui/public/app-config.prod.json

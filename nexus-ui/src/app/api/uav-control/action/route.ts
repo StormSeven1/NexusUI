@@ -111,7 +111,6 @@ function readEnvNumber(key: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 与 WatchSys mainwindow.cpp slot_onUavTakeOff / uavctrlboard::onUavTakeOff 字段对齐 */
 function buildTakeoffToPointPayload(lat: number, lon: number, heightM: number): string {
   const nTime = Date.now();
   const strip = (u: string) => u.replace(/-/g, "");
@@ -140,6 +139,19 @@ function buildTakeoffToPointPayload(lat: number, lon: number, heightM: number): 
     bid,
     tid,
     data,
+  });
+}
+
+/** 与 api4third `debug_mode_open` / Qt uavctrlboard 热备一致，走 `thing/product/{sn}/services` */
+function buildDebugModeMqttPayload(method: "debug_mode_open" | "debug_mode_close"): string {
+  const nTime = Date.now();
+  const strip = (u: string) => u.replace(/-/g, "");
+  return JSON.stringify({
+    method,
+    timestamp: nTime,
+    bid: strip(randomUUID()),
+    tid: strip(randomUUID()),
+    data: {},
   });
 }
 
@@ -195,6 +207,13 @@ function resolveMqttTopicAndPayload(
       };
     }
     return { topic, payload: buildTakeoffToPointPayload(c.lat, c.lon, c.heightM) };
+  }
+
+  if (action === "hotback") {
+    if (payloadTpl && payloadTpl !== "{}") {
+      return { topic, payload: fillTemplate(payloadTpl, airportSN, deviceSN) };
+    }
+    return { topic, payload: buildDebugModeMqttPayload("debug_mode_open") };
   }
 
   if (!payloadTpl) return { skip: "no_mqtt_payload_configured" };

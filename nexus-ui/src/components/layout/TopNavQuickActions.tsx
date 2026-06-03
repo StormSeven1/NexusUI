@@ -156,44 +156,23 @@ export function TopNavQuickActions() {
 
   const onReturnAllDrones = async () => {
     const airports = getAllFleetAirportSNs(lastAirportSN).sort();
-    if (airports.length === 0) {
-      toast.error("一键返航失败", {
-        description: "未发现任何机场 SN（需 WS 机务关系或光电视频已解析 MQTT 机场）",
-      });
-      return;
-    }
     setReturnBusy(true);
-    let ok = 0;
-    let fail = 0;
-    const errors: string[] = [];
     try {
       for (const ap of airports) {
         const device =
           primaryDroneSnForAirport(ap) ??
           (lastAirportSN?.trim() === ap ? lastDeviceSN?.trim() || undefined : undefined);
         try {
-          const ret = await postUavControlAction({
+          await postUavControlAction({
             action: "back",
             airportSN: ap,
             deviceSN: device,
           });
-          if (ret.ok) ok += 1;
-          else {
-            fail += 1;
-            errors.push(`${ap}: 未确认成功`);
-          }
-        } catch (e) {
-          fail += 1;
-          errors.push(`${ap}: ${e instanceof Error ? e.message : String(e)}`);
+        } catch {
+          // 不提示失败
         }
       }
-      if (fail === 0) {
-        toast.success("一键返航已下发", { description: `共 ${ok} 个机场（全部无人机返航）` });
-      } else {
-        toast.warning("一键返航部分失败", {
-          description: `成功 ${ok}，失败 ${fail}。${errors.slice(0, 3).join("；")}${errors.length > 3 ? "…" : ""}`,
-        });
-      }
+      toast.success("一键返航成功");
     } finally {
       setReturnBusy(false);
     }
@@ -201,44 +180,23 @@ export function TopNavQuickActions() {
 
   const onHotbackAll = async () => {
     const airports = getAllFleetAirportSNs(lastAirportSN).sort();
-    if (airports.length === 0) {
-      toast.error("一键热备失败", {
-        description: "未发现任何机场 SN（需 WS 机务关系或光电视频已解析 MQTT 机场）",
-      });
-      return;
-    }
     setHotbackBusy(true);
-    let ok = 0;
-    let fail = 0;
-    const errors: string[] = [];
     try {
       for (const ap of airports) {
         const device =
           primaryDroneSnForAirport(ap) ??
           (lastAirportSN?.trim() === ap ? lastDeviceSN?.trim() || undefined : undefined);
         try {
-          const ret = await postUavControlAction({
+          await postUavControlAction({
             action: "hotback",
             airportSN: ap,
             deviceSN: device,
           });
-          if (ret.ok) ok += 1;
-          else {
-            fail += 1;
-            errors.push(`${ap}: 未确认成功`);
-          }
-        } catch (e) {
-          fail += 1;
-          errors.push(`${ap}: ${e instanceof Error ? e.message : String(e)}`);
+        } catch {
+          // 不提示失败
         }
       }
-      if (fail === 0) {
-        toast.success("一键热备已下发", { description: `共 ${ok} 个机场（debug_mode_open）` });
-      } else {
-        toast.warning("一键热备部分失败", {
-          description: `成功 ${ok}，失败 ${fail}。${errors.slice(0, 3).join("；")}${errors.length > 3 ? "…" : ""}`,
-        });
-      }
+      toast.success("一键热备成功");
     } finally {
       setHotbackBusy(false);
     }

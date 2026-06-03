@@ -53,6 +53,11 @@ import {
 } from "@/lib/map-icons";
 import type { Asset } from "@/lib/map-entity-model";
 import { getRadarConfigDefaults } from "@/lib/map-app-config";
+import {
+  shouldRenderRadarCoverage,
+  shouldRenderRadarIcon,
+  type RadarDeviceVisibilityMap,
+} from "@/lib/radar-device-layer-visibility";
 
 /**
  * 雷达距离环覆盖：构建 GeoJSON，行为对齐 V2 `RangeRingManager` 与 `map-app-config`。
@@ -437,12 +442,15 @@ function getRadarDefaults(): Record<string, unknown> {
 export function buildRadarCoverageGeoJSON(
   rows: AssetData[],
   accent?: AssetDispositionIconAccent | null,
+  perDevice?: Readonly<RadarDeviceVisibilityMap>,
 ): GeoJSON.FeatureCollection {
   const defaults = getRadarDefaults();
+  const vis = perDevice ?? {};
   const features: GeoJSON.Feature[] = [];
   const radarRows = rows.filter((r) => String(r.asset_type ?? "").toLowerCase() === "radar");
   for (const row of rows) {
     if (String(row.asset_type ?? "").toLowerCase() !== "radar") continue;
+    if (!shouldRenderRadarCoverage(row.id, vis)) continue;
     const p = (row.properties ?? {}) as Record<string, unknown>;
     if (p.showRings === false) {
       continue;
@@ -669,11 +677,20 @@ export function pickRadarTypographyFromRows(rows: AssetData[]): {
 }
 
 /** 雷达站中心点资产图标 GeoJSON，与 `RADAR_COVERAGE_*` 各层同图叠加 */
-export function buildRadarAssetIconGeoJSON(assetList: Asset[]): GeoJSON.FeatureCollection {
+export function buildRadarAssetIconGeoJSON(
+  assetList: Asset[],
+  perDevice?: Readonly<RadarDeviceVisibilityMap>,
+): GeoJSON.FeatureCollection {
+  const vis = perDevice ?? {};
   return {
     type: "FeatureCollection",
     features: assetList
-      .filter((a) => a.type === "radar" && a.centerIconVisible !== false)
+      .filter(
+        (a) =>
+          a.type === "radar" &&
+          a.centerIconVisible !== false &&
+          shouldRenderRadarIcon(a.id, vis),
+      )
       .map((a) => ({
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] as [number, number] },
@@ -710,6 +727,7 @@ export class RadarCoverageModule {
   private map: maplibregl.Map;
   private beforeId?: string;
   private vis: RadarCoverageVisibility = { ...radarVisDefault };
+  private perDeviceVisibility: RadarDeviceVisibilityMap = {};
   private assetDispositionAccent: AssetDispositionIconAccent | null = null;
   private lastAssets: Asset[] | null = null;
   private lastRawAssets: AssetData[] | null = null;
@@ -884,6 +902,18 @@ export class RadarCoverageModule {
     this.applyVisibility();
   }
 
+  setPerDeviceVisibility(map: Readonly<RadarDeviceVisibilityMap>) {
+    this.perDeviceVisibility = { ...map };
+    const m = this.map;
+    const rc = m.getSource(RADAR_COVERAGE_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (rc && this.lastRawAssets) {
+      rc.setData(
+        buildRadarCoverageGeoJSON(this.lastRawAssets, this.assetDispositionAccent, this.perDeviceVisibility) as GeoJSON.FeatureCollection,
+      );
+    }
+    this.refreshRadarIcons();
+  }
+
   private applyVisibility() {
     const m = this.map;
     const setVis = (id: string, show: boolean) => {
@@ -902,7 +932,9 @@ export class RadarCoverageModule {
     const m = this.map;
     const rc = m.getSource(RADAR_COVERAGE_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (rc && this.lastRawAssets) {
-      rc.setData(buildRadarCoverageGeoJSON(this.lastRawAssets, accent) as GeoJSON.FeatureCollection);
+      rc.setData(
+        buildRadarCoverageGeoJSON(this.lastRawAssets, accent, this.perDeviceVisibility) as GeoJSON.FeatureCollection,
+      );
     }
     this.refreshRadarIcons();
   }
@@ -912,7 +944,11 @@ export class RadarCoverageModule {
     const assets = this.lastAssets;
     if (!assets) return;
     const rs = m.getSource(RADAR_ASSET_ICON_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (rs) rs.setData(buildRadarAssetIconGeoJSON(assets) as GeoJSON.FeatureCollection);
+    if (rs) {
+      rs.setData(
+        buildRadarAssetIconGeoJSON(assets, this.perDeviceVisibility) as GeoJSON.FeatureCollection,
+      );
+    }
   }
 
   setFromAssets(assets: Asset[], rawAssets: AssetData[]) {
@@ -954,7 +990,11 @@ export class RadarCoverageModule {
     }
 
     const rc = m.getSource(RADAR_COVERAGE_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (rc) rc.setData(buildRadarCoverageGeoJSON(rawAssets, this.assetDispositionAccent) as GeoJSON.FeatureCollection);
+    if (rc) {
+      rc.setData(
+        buildRadarCoverageGeoJSON(rawAssets, this.assetDispositionAccent, this.perDeviceVisibility) as GeoJSON.FeatureCollection,
+      );
+    }
     this.refreshRadarIcons();
   }
 

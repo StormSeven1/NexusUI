@@ -6,12 +6,30 @@ import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
 import { useAlertStore } from "@/stores/alert-store";
 import { cn } from "@/lib/utils";
-import { buildDataLayerPanelRows, LYR_DB_AREAS, LYR_OPTO_FOV } from "@/lib/map-entity-model";
+import {
+  buildDataLayerPanelRows,
+  LYR_DB_AREAS,
+  LYR_DRONES,
+  LYR_OPTO_FOV,
+  LYR_RADAR_COVERAGE,
+} from "@/lib/map-entity-model";
 import { useDbAreaStore } from "@/stores/db-area-store";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
+import { useDroneDeviceLayerStore } from "@/stores/drone-device-layer-store";
+import { useDroneStore } from "@/stores/drone-store";
 import { countDbAreaPanelUiRows, countVisibleDbAreaLeaves } from "@/lib/db-area-panel-helpers";
 import { countOptoDevicePanelUiRows, countVisibleOptoDeviceLeaves } from "@/lib/opto-device-layer-visibility";
+import {
+  countDroneDevicePanelUiRows,
+  countVisibleDroneDeviceLeaves,
+} from "@/lib/drone-device-layer-visibility";
+import {
+  countRadarDevicePanelUiRows,
+  countVisibleRadarDeviceLeaves,
+} from "@/lib/radar-device-layer-visibility";
+import { useRadarDeviceLayerStore } from "@/stores/radar-device-layer-store";
+import { collectMapGisDroneRowsSync, mapGisDroneSyncSignature } from "@/lib/map-gis-drone-rows";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { getMapMeasureHandlers, useMapMeasureUi } from "@/stores/map-measure-bridge";
 import { AreaDrawSetupDialog } from "@/components/map/AreaDrawDialogs";
@@ -52,6 +70,10 @@ function countLayerPanelEnabled(
   dbAreaRows: ReadonlyArray<AreaTableRow>,
   dbAreaVisibility: Readonly<Record<string, boolean>>,
   optoDeviceVisibility: Readonly<Record<string, { fov?: boolean; icon?: boolean }>>,
+  droneDeviceVisibility: Readonly<Record<string, { position?: boolean; route?: boolean }>>,
+  dronePanelSns: ReadonlyArray<string>,
+  radarDeviceVisibility: Readonly<Record<string, { coverage?: boolean; icon?: boolean }>>,
+  radarPanelIds: ReadonlyArray<string>,
 ): number {
   const rows = buildDataLayerPanelRows(assets);
   let n = rows.filter((r) => layerVisibility[r.id] !== false).length;
@@ -65,6 +87,16 @@ function countLayerPanelEnabled(
     optoDeviceVisibility,
     layerVisibility[LYR_OPTO_FOV] !== false,
   );
+  n += countVisibleDroneDeviceLeaves(
+    dronePanelSns,
+    droneDeviceVisibility,
+    layerVisibility[LYR_DRONES] !== false,
+  );
+  n += countVisibleRadarDeviceLeaves(
+    radarPanelIds,
+    radarDeviceVisibility,
+    layerVisibility[LYR_RADAR_COVERAGE] !== false,
+  );
   return n;
 }
 
@@ -74,13 +106,21 @@ function countLayerPanelLoaded(
   basemapVectorLayers: ReadonlyArray<{ id: string }>,
   dbAreaRows: ReadonlyArray<AreaTableRow>,
   cameraMenuIds: ReadonlyArray<string>,
+  dronePanelSns: ReadonlyArray<string>,
+  radarPanelIds: ReadonlyArray<string>,
 ): number {
   const rows = buildDataLayerPanelRows(assets);
   const dbUi = countDbAreaPanelUiRows(dbAreaRows);
   const optoUi = rows.some((r) => r.id === LYR_OPTO_FOV)
     ? countOptoDevicePanelUiRows(cameraMenuIds.length)
     : 0;
-  return 1 + basemapVectorLayers.length + rows.length + dbUi + optoUi;
+  const droneUi = rows.some((r) => r.id === LYR_DRONES)
+    ? countDroneDevicePanelUiRows(dronePanelSns.length)
+    : 0;
+  const radarUi = rows.some((r) => r.id === LYR_RADAR_COVERAGE)
+    ? countRadarDevicePanelUiRows(radarPanelIds.length)
+    : 0;
+  return 1 + basemapVectorLayers.length + rows.length + dbUi + optoUi + droneUi + radarUi;
 }
 
 // 工作区详情配置
@@ -220,9 +260,27 @@ export function WorkspaceDetails() {
   const dbAreaRows = useDbAreaStore((s) => s.rows);
   const dbAreaVisibility = useDbAreaStore((s) => s.areaVisibility);
   const optoDeviceVisibility = useOptoDeviceLayerStore((s) => s.deviceVisibility);
+  const droneDeviceVisibility = useDroneDeviceLayerStore((s) => s.deviceVisibility);
   const cameraMenuRows = useMapGisCameraMenuStore((s) => s.rows);
   const ensureCameraMenuRows = useMapGisCameraMenuStore((s) => s.ensureLoaded);
   const cameraMenuIds = useMemo(() => cameraMenuRows.map((r) => r.entityId), [cameraMenuRows]);
+  const droneStoreDrones = useDroneStore((s) => s.drones);
+  const droneToAirport = useDroneStore((s) => s.droneToAirport);
+  const droneRelationships = useDroneStore((s) => s.relationships);
+  const assetDroneSig = useMemo(() => mapGisDroneSyncSignature(assets), [assets]);
+  const dronePanelSns = useMemo(
+    () => collectMapGisDroneRowsSync().map((r) => r.sn),
+    [droneStoreDrones, droneToAirport, droneRelationships, assetDroneSig],
+  );
+  const radarDeviceVisibility = useRadarDeviceLayerStore((s) => s.deviceVisibility);
+  const radarPanelIds = useMemo(
+    () =>
+      assets
+        .filter((a) => a.asset_type === "radar")
+        .map((a) => a.id)
+        .sort(),
+    [assets],
+  );
 
   useEffect(() => {
     if (!buildDataLayerPanelRows(assets).some((r) => r.id === LYR_OPTO_FOV)) return;
@@ -243,6 +301,10 @@ export function WorkspaceDetails() {
       dbAreaRows,
       dbAreaVisibility,
       optoDeviceVisibility,
+      droneDeviceVisibility,
+      dronePanelSns,
+      radarDeviceVisibility,
+      radarPanelIds,
     );
     return [
       { label: "监控目标", value: String(assets.length), icon: MapPin, color: "text-blue-400" },
@@ -261,7 +323,11 @@ export function WorkspaceDetails() {
     dbAreaRows,
     dbAreaVisibility,
     optoDeviceVisibility,
+    droneDeviceVisibility,
     cameraMenuIds,
+    dronePanelSns,
+    radarDeviceVisibility,
+    radarPanelIds,
   ]);
 
   const assetsLiveStats = useMemo((): StatRow[] => {
@@ -286,7 +352,14 @@ export function WorkspaceDetails() {
   }, [assets]);
 
   const layersLiveStats = useMemo((): StatRow[] => {
-    const loaded = countLayerPanelLoaded(assets, basemapVectorLayers, dbAreaRows, cameraMenuIds);
+    const loaded = countLayerPanelLoaded(
+      assets,
+      basemapVectorLayers,
+      dbAreaRows,
+      cameraMenuIds,
+      dronePanelSns,
+      radarPanelIds,
+    );
     const visible = countLayerPanelEnabled(
       assets,
       cameraMenuIds,
@@ -297,6 +370,10 @@ export function WorkspaceDetails() {
       dbAreaRows,
       dbAreaVisibility,
       optoDeviceVisibility,
+      droneDeviceVisibility,
+      dronePanelSns,
+      radarDeviceVisibility,
+      radarPanelIds,
     );
     const markers = tracks.length + assets.length;
     const drawings = drawnAreas.length + routeLines.length;
@@ -318,7 +395,11 @@ export function WorkspaceDetails() {
     dbAreaRows,
     dbAreaVisibility,
     optoDeviceVisibility,
+    droneDeviceVisibility,
     cameraMenuIds,
+    dronePanelSns,
+    radarDeviceVisibility,
+    radarPanelIds,
   ]);
 
   const config = WORKSPACE_CONFIGS[topTab];

@@ -138,3 +138,5 @@ export function buildCameraRegistryFile(sourceUrl: string, payload: unknown): Eo
     cameras: mapEntitiesPayloadToCameras(payload),
   };
 }
+
+export { isThirdPartyCameraOntologyRow } from "./thirdPartyCamCtrlType";

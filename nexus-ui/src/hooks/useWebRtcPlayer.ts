@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { shouldCutEoVideoHardwarePassthrough } from "@/lib/eo-video/eoVideoHardwarePassthrough";
 import { attachEncodedVideoFrameSync, type EoEncodedSyncHub, type EncodedFrameData } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import type { EoVideoIceServer } from "@/lib/eo-video/types";
 
@@ -197,42 +198,48 @@ export function useWebRtcPlayer({
           }
         }
       }
-      const stream = ev.streams[0] ?? new MediaStream([ev.track]);
-      video.srcObject = stream;
-      video.muted = true;
-      video.playsInline = true;
-      try {
-        video.disablePictureInPicture = true;
-      } catch {
-        /* UA 不支持时忽略 */
-      }
-      void video.play().catch(() => {
-        /* autoplay policy */
-      });
+      const cutVideoDecode = shouldCutEoVideoHardwarePassthrough(Boolean(onEncodedFrame));
+      if (!cutVideoDecode) {
+        const stream = ev.streams[0] ?? new MediaStream([ev.track]);
+        video.srcObject = stream;
+        video.muted = true;
+        video.playsInline = true;
+        try {
+          video.disablePictureInPicture = true;
+        } catch {
+          /* UA 不支持时忽略 */
+        }
+        void video.play().catch(() => {
+          /* autoplay policy */
+        });
 
-      if (blackFrameTimerRef.current != null) {
-        window.clearInterval(blackFrameTimerRef.current);
-        blackFrameTimerRef.current = null;
+        if (blackFrameTimerRef.current != null) {
+          window.clearInterval(blackFrameTimerRef.current);
+          blackFrameTimerRef.current = null;
+        }
+        const t0 = Date.now();
+        blackFrameTimerRef.current = window.setInterval(() => {
+          if (genRef.current !== gen) {
+            if (blackFrameTimerRef.current != null) window.clearInterval(blackFrameTimerRef.current);
+            blackFrameTimerRef.current = null;
+            return;
+          }
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
+            iceFailCountRef.current = 0;
+            if (blackFrameTimerRef.current != null) window.clearInterval(blackFrameTimerRef.current);
+            blackFrameTimerRef.current = null;
+            return;
+          }
+          if (Date.now() - t0 >= BLACK_FRAME_GIVEUP_MS) {
+            if (blackFrameTimerRef.current != null) window.clearInterval(blackFrameTimerRef.current);
+            blackFrameTimerRef.current = null;
+            scheduleIceReconnect("black_frame_timeout");
+          }
+        }, BLACK_FRAME_CHECK_MS);
+      } else {
+        video.srcObject = null;
+        iceFailCountRef.current = 0;
       }
-      const t0 = Date.now();
-      blackFrameTimerRef.current = window.setInterval(() => {
-        if (genRef.current !== gen) {
-          if (blackFrameTimerRef.current != null) window.clearInterval(blackFrameTimerRef.current);
-          blackFrameTimerRef.current = null;
-          return;
-        }
-        if (video.videoWidth > 0 && video.videoHeight > 0) {
-          iceFailCountRef.current = 0;
-          if (blackFrameTimerRef.current != null) window.clearInterval(blackFrameTimerRef.current);
-          blackFrameTimerRef.current = null;
-          return;
-        }
-        if (Date.now() - t0 >= BLACK_FRAME_GIVEUP_MS) {
-          if (blackFrameTimerRef.current != null) window.clearInterval(blackFrameTimerRef.current);
-          blackFrameTimerRef.current = null;
-          scheduleIceReconnect("black_frame_timeout");
-        }
-      }, BLACK_FRAME_CHECK_MS);
     };
 
     try {

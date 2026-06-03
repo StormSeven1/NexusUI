@@ -80,22 +80,38 @@ export const MAP_FORCE_DISPOSITIONS: ForceDisposition[] = ["friendly", "hostile"
 
 /* ── 目标航迹图标：使用 public/icons/ 中的 SVG 资源，viewBox 自动缩放至渲染尺寸 ── */
 
-type TrackIconDef = { viewBox: string; pathD: string };
+type TrackIconDef = {
+  viewBox: string;
+  pathD: string;
+  /** viewBox 坐标：轮廓底边 Y（横线贴此边，虚线在其上方） */
+  footY: number;
+  footX1?: number;
+  footX2?: number;
+};
 
 const TRACK_SVG_ICONS: Record<TrackType, TrackIconDef> = {
   // 来自 public/icons/空中目标.svg（viewBox 0 0 1024 1024）
   air: {
     viewBox: "0 0 1024 1024",
+    footY: 896,
+    footX1: 128,
+    footX2: 896,
     pathD: "M950.208 208.64c16-48.128 12.8-89.888-12.8-118.784l-3.2-3.2c-28.8-25.696-70.368-28.896-118.368-12.832-41.6 12.832-80 38.528-115.168 70.624l-83.2 83.488L240 138.016c-16-3.2-35.2 0-48 12.864L115.2 227.936c-9.6 9.6-16 25.696-12.8 44.96 3.2 16.032 12.8 28.896 25.6 35.296l265.568 144.512-112 112.352-95.968-25.664c-6.4-3.2-12.8-3.2-16-3.2-12.8 0-25.6 6.4-35.2 16.032l-54.4 57.792C67.2 619.648 64 635.712 64 648.544c0 16.064 9.6 28.896 19.2 35.328l147.168 109.152 108.8 147.712c9.6 12.832 22.4 19.264 35.2 19.264h3.168c12.8 0 25.6-6.4 35.2-16.064l57.6-57.792c12.8-12.832 19.2-32.096 12.8-48.16l-25.6-96.32 111.968-112.384 143.968 266.496c9.6 16.064 22.4 22.496 32 25.696 6.4 3.2 9.6 3.2 12.8 3.2 12.8 0 22.4-3.2 32-9.6l76.768-57.824c16-12.832 22.4-32.096 19.2-51.36l-89.6-398.144 83.2-83.488c32-32.096 57.6-70.624 70.4-115.584z m-224.896 180.8l97.376 425.92-58.432 41.92-181.76-329.12-201.28 200.064 35.68 125.824L377.952 896l-103.872-138.752L128 647.552l42.208-41.92 126.592 35.456 201.28-200.032-334.4-180.704 58.464-58.08 412.256 96.8 110.4-106.464c25.92-25.824 58.4-45.184 90.88-58.08 35.712-12.896 48.672-3.232 55.168 0 3.264 6.432 9.76 19.36 0 54.848a197.76 197.76 0 0 1-58.432 90.336l-107.104 109.696z",
   },
   // 来自 public/icons/水面目标.svg（viewBox 0 0 1024 1024）
   sea: {
     viewBox: "0 0 1024 1024",
+    footY: 726,
+    footX1: 312,
+    footX2: 712,
     pathD: "M625.777778 284.444444v56.888889h28.444444a56.888889 56.888889 0 0 1 56.888889 56.888889v102.769778l57.144889 18.688a56.888889 56.888889 0 0 1 35.527111 74.24l-52.622222 138.951111c21.020444-5.745778 36.778667-12.828444 44.856889-17.720889a28.444444 28.444444 0 0 1 29.297778 48.810667c-28.444444 17.066667-102.286222 44.657778-189.326223 32.199111a589.368889 589.368889 0 0 1-30.634666-5.347556c-23.210667-4.494222-44.373333-8.590222-93.354667-8.590222-48.952889 0-70.144 4.096-93.354667 8.590222a589.368889 589.368889 0 0 1-30.606222 5.347556c-87.04 12.430222-160.881778-15.132444-189.326222-32.199111a28.444444 28.444444 0 0 1 29.269333-48.810667c8.106667 4.892444 23.836444 11.975111 44.885334 17.720889l-52.622223-138.979555a56.888889 56.888889 0 0 1 35.498667-74.24L312.888889 501.020444V398.222222a56.888889 56.888889 0 0 1 56.888889-56.888889h28.444444v-56.888889a56.888889 56.888889 0 0 1 56.888889-56.888888h113.777778a56.888889 56.888889 0 0 1 56.888889 56.888888z m-170.666667 0v56.888889h113.777778v-56.888889h-113.777778z m-85.333333 197.973334l49.834666-16.298667-1.137777-0.369778 30.464-9.187555 16.952889-5.546667c2.702222-0.853333 5.404444-1.536 8.106666-1.991111l19.911111-6.030222a56.149333 56.149333 0 0 1 36.209778 0l19.854222 6.001778c2.702222 0.483556 5.404444 1.137778 8.135111 2.019555l16.952889 5.546667 2.816 0.853333-0.085333 0.028445L654.222222 482.417778V398.222222H369.777778v84.195556z m113.777778 22.670222l-210.147556 68.664889 63.857778 168.561778a256.568889 256.568889 0 0 0 42.723555-2.474667c8.732444-1.251556 16.839111-2.816 25.315556-4.465778A461.852444 461.852444 0 0 1 483.555556 725.902222v-220.785778z m267.036444 68.664889L540.444444 505.088v220.785778c36.693333 1.450667 58.481778 5.688889 78.279112 9.500444 8.448 1.649778 16.554667 3.214222 25.315555 4.465778 14.791111 2.104889 29.098667 2.816 42.666667 2.474667l63.886222-168.561778z",
   },
   // 来自 public/icons/水下目标.svg；用 clipPath 定义的区域作 viewBox，自然裁切可见部分
   underwater: {
     viewBox: "-182 257 1113.8 820.7",
+    footY: 782,
+    footX1: -15,
+    footX2: 688,
     pathD: "M585.9,462.3c33.9,0,61.7,26.4,63.9,59.8v4.2c.1,0,.1,64,.1,64h38.4c131.5,0,239.2,104.6,243.1,236v7.2c.1,134.3-108.7,243.2-243,243.2H125.2c-72.8,0-133.6-55.5-140.2-128h-90.2s0,51.2,0,51.2c0,20.5-16,37.5-36.5,38.5-20.5,1-38.2-14.3-40.1-34.8l-.2-3.7v-332.8c0-20.5,16-37.5,36.5-38.5,20.5-1,38.2,14.4,40.1,34.8l.2,3.7v38.4H-13.3c12-64.6,66.9-112.3,132.5-115.1h6c0-.1,12.8-.1,12.8-.1v-64c0-33.9,26.4-61.7,59.8-63.9h4.2c0-.1,383.9-.1,383.9-.1ZM688.4,667.1H125.2c-35.4,0-64,28.7-64,64v204.8c0,35.3,28.7,64,64,64h563.2c60,.8,115.7-30.8,145.9-82.6s30.2-115.8,0-167.6c-30.2-51.8-85.9-83.3-145.9-82.6h0ZM-15.6,782.3h-89.6v89.6H-15.6v-89.6ZM573.2,539.2H214.8v51.2h358.4v-51.2ZM573.2,539.2",
   },
 };
@@ -106,8 +122,23 @@ const TRACK_SVG_ICONS: Record<TrackType, TrackIconDef> = {
  */
 const AIR_BIRD_TRACK_ICON: TrackIconDef = {
   viewBox: "0 0 256 256",
+  footY: 224,
+  footX1: 24,
+  footX2: 216,
   pathD:
     "M176,68a12,12,0,1,1-12-12A12,12,0,0,1,176,68Zm64,12a8,8,0,0,1-3.56,6.66L216,100.28V120A104.11,104.11,0,0,1,112,224H24a16,16,0,0,1-12.49-26l.1-.12L96,96.63V76.89C96,43.47,122.79,16.16,155.71,16H156a60,60,0,0,1,57.21,41.86l23.23,15.48A8,8,0,0,1,240,80Zm-22.42,0L201.9,69.54a8,8,0,0,1-3.31-4.64A44,44,0,0,0,156,32h-.22C131.64,32.12,112,52.25,112,76.89V99.52a8,8,0,0,1-1.85,5.13L24,208h26.9l70.94-85.12a8,8,0,1,1,12.29,10.24L71.75,208H112a88.1,88.1,0,0,0,88-88V96a8,8,0,0,1,3.56-6.66Z",
+};
+
+/**
+ * 对海融合航迹专用轮廓（`public/icons/水上目标.svg`，船型朝上=正北）。
+ */
+const SEA_FUSE_TRACK_ICON: TrackIconDef = {
+  viewBox: "800 210 295 720",
+  footY: 924,
+  footX1: 806,
+  footX2: 1113,
+  pathD:
+    "M806,503.3V924h307.2V503.3h-26.7v394H832.7v-394H806z M832.7,503.3v40.1h26.7v-40.1H832.7z M1059.8,503.3v40.1h26.7v-40.1H1059.8z M872.8,272.3c-24.5,58.4-40,140.1-40,230.9H806c0-93.5,15.9-178.9,42.1-241.3c13.1-31.2,29-57.3,47.4-75.8c18.4-18.6,40.1-30.2,64.1-30.2c24,0,45.6,11.6,64.1,30.2c18.4,18.5,34.3,44.6,47.4,75.8c26.2,62.4,42.1,147.7,42.1,241.3h-26.7c0-90.9-15.5-172.5-40-230.9c-12.3-29.2-26.6-52-41.7-67.3c-15.1-15.2-30.4-22.3-45.1-22.3c-14.7,0-30,7.1-45.1,22.3C899.3,220.3,885,243.1,872.8,272.3z",
 };
 
 /**
@@ -116,6 +147,9 @@ const AIR_BIRD_TRACK_ICON: TrackIconDef = {
  */
 const AIR_FUSE_TRACK_ICON: TrackIconDef = {
   viewBox: "0 0 1024 1024",
+  footY: 628,
+  footX1: 40,
+  footX2: 984,
   pathD:
     "M80 260H336C372 260 404 282 420 314L512 496L604 314C620 282 652 260 688 260H944C966 260 984 278 984 300S966 340 944 340H712C694 340 678 350 670 366L548 606C541 620 527 628 512 628S483 620 476 606L354 366C346 350 330 340 312 340H80C58 340 40 322 40 300S58 260 80 260Z",
 };
@@ -147,10 +181,12 @@ export function getMarkerSymbolId(
   airBird = false,
   airFuse = false,
   opticallyVerified = false,
+  seaFuse = false,
 ): string {
   const birdSeg = type === "air" && airBird ? "-bird" : "";
   const fuseSeg = type === "air" && airFuse ? "-fuse" : "";
-  const base = `track-${type}-${disposition}-${virtual ? "v" : "r"}${birdSeg}${fuseSeg}`;
+  const seaFuseSeg = type === "sea" && seaFuse ? "-seafuse" : "";
+  const base = `track-${type}-${disposition}-${virtual ? "v" : "r"}${birdSeg}${fuseSeg}${seaFuseSeg}`;
   let id: string;
   if (disposition === "friendly") {
     const suf = friendlyTintSuffix(friendlyTint);
@@ -175,6 +211,107 @@ export function getFusionTrackMarkerFill(track: Pick<Track, "type" | "isUav">): 
     return track.isUav === true ? FUSION_TRACK_NEUTRAL_UAV : FUSION_TRACK_NEUTRAL_AIR;
   }
   return FORCE_COLORS.neutral;
+}
+
+/** 对海融合水上目标：相对默认内框缩至 4/5 */
+const SEA_FUSE_TRACK_ICON_SCALE = 0.8;
+
+const TRACK_MARKER_PAD_X = 4;
+const TRACK_MARKER_PAD_Y = 6;
+const TRACK_MARKER_INNER_W = 56;
+const TRACK_MARKER_INNER_H = 54;
+
+function trackMarkerInnerFrame(seaFuseGlyph: boolean): { x: number; y: number; w: number; h: number } {
+  const scale = seaFuseGlyph ? SEA_FUSE_TRACK_ICON_SCALE : 1;
+  const w = TRACK_MARKER_INNER_W * scale;
+  const h = TRACK_MARKER_INNER_H * scale;
+  return {
+    x: TRACK_MARKER_PAD_X + (TRACK_MARKER_INNER_W - w) / 2,
+    y: TRACK_MARKER_PAD_Y + (TRACK_MARKER_INNER_H - h) / 2,
+    w,
+    h,
+  };
+}
+
+function parseTrackIconViewBox(viewBox: string): { x: number; y: number; w: number; h: number } {
+  const p = viewBox.trim().split(/[\s,]+/).map(Number);
+  if (p.length >= 4 && p.every((n) => Number.isFinite(n))) {
+    return { x: p[0]!, y: p[1]!, w: p[2]!, h: p[3]! };
+  }
+  return { x: 0, y: 0, w: 1024, h: 1024 };
+}
+
+/** 将 viewBox 中的轮廓底边映射到 64×64 画布坐标 */
+function trackIconFootInCanvas(
+  icon: TrackIconDef,
+  frame: { x: number; y: number; w: number; h: number },
+): { x1: number; x2: number; y: number } {
+  const vb = parseTrackIconViewBox(icon.viewBox);
+  const x1vb = icon.footX1 ?? vb.x;
+  const x2vb = icon.footX2 ?? vb.x + vb.w;
+  return {
+    x1: frame.x + ((x1vb - vb.x) / vb.w) * frame.w,
+    x2: frame.x + ((x2vb - vb.x) / vb.w) * frame.w,
+    y: frame.y + ((icon.footY - vb.y) / vb.h) * frame.h,
+  };
+}
+
+/** 底边横线长度减半（沿底边中线居中） */
+function footLineHalfSpan(foot: { x1: number; x2: number }): { x1: number; x2: number } {
+  const cx = (foot.x1 + foot.x2) / 2;
+  const half = (foot.x2 - foot.x1) / 4;
+  return { x1: cx - half, x2: cx + half };
+}
+
+/**
+ * 实兵不画底线；虚兵在底边上方 10px、再上方 10px 各画一条半宽虚线。
+ */
+function trackMarkerBottomLinesMarkup(
+  type: TrackType,
+  color: string,
+  virtual: boolean,
+  foot: { x1: number; x2: number; y: number },
+): string {
+  if (!virtual) return "";
+  if (type !== "sea" && type !== "underwater" && type !== "air") return "";
+
+  const { x1, x2 } = footLineHalfSpan(foot);
+  const sw = 2.2;
+  const gap = 10;
+  const fmt = (n: number) => n.toFixed(2);
+  const dashed = (lineY: number) =>
+    `<line x1="${fmt(x1)}" y1="${fmt(lineY)}" x2="${fmt(x2)}" y2="${fmt(lineY)}" stroke="${color}" stroke-width="${sw}" stroke-dasharray="5 3.5" stroke-linecap="round"/>`;
+
+  return `${dashed(foot.y - gap)}${dashed(foot.y - gap * 2)}`;
+}
+
+function resolveTrackMarkerIconAndColor(
+  type: TrackType,
+  disposition: ForceDisposition,
+  accent: AssetDispositionIconAccent | null | undefined,
+  friendlyFill: string | null | undefined,
+  neutralFusionFill: string | null | undefined,
+  airBirdGlyph: boolean,
+  airFuseGlyph: boolean,
+  opticallyVerified: boolean,
+  seaFuseGlyph: boolean,
+): { icon: TrackIconDef; color: string } {
+  const color = opticallyVerified
+    ? VERIFIED_TRACK_MAP_COLOR
+    : disposition === "neutral" && neutralFusionFill?.trim()
+      ? neutralFusionFill.trim()
+      : resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
+  const icon =
+    type === "air"
+      ? airFuseGlyph
+        ? AIR_FUSE_TRACK_ICON
+        : airBirdGlyph
+          ? AIR_BIRD_TRACK_ICON
+          : TRACK_SVG_ICONS.air
+      : type === "sea" && seaFuseGlyph
+        ? SEA_FUSE_TRACK_ICON
+        : TRACK_SVG_ICONS[type];
+  return { icon, color };
 }
 
 /** 航迹点/线/标签颜色：中立用融合配色；其余同 `resolveTrackMarkerFill` */
@@ -217,21 +354,23 @@ export function buildMarkerSymbolSvg(
   airBirdGlyph = false,
   airFuseGlyph = false,
   opticallyVerified = false,
+  seaFuseGlyph = false,
 ): string {
-  const color = opticallyVerified
-    ? VERIFIED_TRACK_MAP_COLOR
-    : disposition === "neutral" && neutralFusionFill?.trim()
-      ? neutralFusionFill.trim()
-      : resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
-  const icon = type === "air"
-    ? (airFuseGlyph ? AIR_FUSE_TRACK_ICON : (airBirdGlyph ? AIR_BIRD_TRACK_ICON : TRACK_SVG_ICONS.air))
-    : TRACK_SVG_ICONS[type];
+  const { icon, color } = resolveTrackMarkerIconAndColor(
+    type,
+    disposition,
+    accent,
+    friendlyFill,
+    neutralFusionFill,
+    airBirdGlyph,
+    airFuseGlyph,
+    opticallyVerified,
+    seaFuseGlyph,
+  );
   const innerBody = `<path d="${icon.pathD}" fill="${color}"/>`;
-  /** 虚兵：画在军标本体之上，避免被 fill 遮住 */
-  const virtualBottomDash =
-    virtual
-      ? `<line x1="8" y1="61" x2="56" y2="61" stroke="${color}" stroke-width="3" stroke-dasharray="6 4" stroke-linecap="round" opacity="1"/>`
-      : "";
+  const frame = trackMarkerInnerFrame(seaFuseGlyph);
+  const foot = trackIconFootInCanvas(icon, frame);
+  const bottomLines = trackMarkerBottomLinesMarkup(type, color, virtual, foot);
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">`,
@@ -240,10 +379,10 @@ export function buildMarkerSymbolSvg(
     `<feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#000" flood-opacity="0.85"/>`,
     `</filter>`,
     `</defs>`,
-    `<svg x="4" y="6" width="56" height="54" viewBox="${icon.viewBox}" filter="url(#sh)">`,
+    `<svg x="${frame.x}" y="${frame.y}" width="${frame.w}" height="${frame.h}" viewBox="${icon.viewBox}" filter="url(#sh)">`,
     innerBody,
     `</svg>`,
-    virtualBottomDash,
+    bottomLines,
     `<path d="M32 2 L32 7" stroke="${color}" stroke-width="2.2" stroke-linecap="round" opacity="0.9"/>`,
     `</svg>`,
   ].join("");
@@ -264,6 +403,7 @@ export function buildMarkerSymbolDataUrl(
   airBirdGlyph = false,
   airFuseGlyph = false,
   opticallyVerified = false,
+  seaFuseGlyph = false,
 ): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
     buildMarkerSymbolSvg(
@@ -276,6 +416,7 @@ export function buildMarkerSymbolDataUrl(
       airBirdGlyph,
       airFuseGlyph,
       opticallyVerified,
+      seaFuseGlyph,
     ),
   )}`;
 }
@@ -309,6 +450,8 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
   airBird?: boolean;
   /** 仅 `type === "air"`：对空融合专用图标 */
   airFuse?: boolean;
+  /** 仅 `type === "sea"`：对海融合专用图标（水上目标） */
+  seaFuse?: boolean;
   /** 光电查证完成：军标整体绿色 */
   opticallyVerified?: boolean;
 }> {
@@ -333,6 +476,7 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
     neutralFusionFill?: string;
     airBird?: boolean;
     airFuse?: boolean;
+    seaFuse?: boolean;
     opticallyVerified?: boolean;
   }> = [];
   for (const type of types) {
@@ -344,7 +488,10 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
             { airBird: false, airFuse: true },
           ]
         : [{ airBird: false, airFuse: false }];
+    const seaModes: Array<{ seaFuse: boolean }> =
+      type === "sea" ? [{ seaFuse: false }, { seaFuse: true }] : [{ seaFuse: false }];
     for (const { airBird, airFuse } of airModes) {
+      for (const { seaFuse } of seaModes) {
       for (const disposition of dispositions) {
         for (const virtual of [false, true]) {
           if (disposition !== "friendly") {
@@ -355,36 +502,40 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
                   : [FUSION_TRACK_NEUTRAL_SEA];
               for (const fill of fills) {
                 out.push({
-                  id: getMarkerSymbolId(type, disposition, virtual, undefined, fill, airBird, airFuse),
+                  id: getMarkerSymbolId(type, disposition, virtual, undefined, fill, airBird, airFuse, false, seaFuse),
                   type,
                   disposition,
                   virtual,
                   neutralFusionFill: fill,
                   ...(type === "air" ? { airBird, airFuse } : {}),
+                  ...(type === "sea" ? { seaFuse } : {}),
                 });
               }
             } else {
               out.push({
-                id: getMarkerSymbolId(type, disposition, virtual, undefined, undefined, airBird, airFuse),
+                id: getMarkerSymbolId(type, disposition, virtual, undefined, undefined, airBird, airFuse, false, seaFuse),
                 type,
                 disposition,
                 virtual,
                 ...(type === "air" ? { airBird, airFuse } : {}),
+                ...(type === "sea" ? { seaFuse } : {}),
               });
             }
             continue;
           }
           for (const tint of tintList) {
             out.push({
-              id: getMarkerSymbolId(type, disposition, virtual, tint || undefined, undefined, airBird, airFuse),
+              id: getMarkerSymbolId(type, disposition, virtual, tint || undefined, undefined, airBird, airFuse, false, seaFuse),
               type,
               disposition,
               virtual,
               friendlyFill: tint || undefined,
               ...(type === "air" ? { airBird, airFuse } : {}),
+              ...(type === "sea" ? { seaFuse } : {}),
             });
           }
         }
+      }
       }
     }
   }
@@ -401,6 +552,7 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
         item.airBird === true,
         item.airFuse === true,
         true,
+        item.seaFuse === true,
       ),
       opticallyVerified: true,
     });

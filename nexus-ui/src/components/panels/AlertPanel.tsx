@@ -21,8 +21,12 @@ import {
   sendAlarmTrackFilterRequest,
   type AlarmFilterFuseType,
 } from "@/lib/alarm-filter-api";
+import {
+  resolveUniqueIdForAlert,
+  sendAlarmConfirmRequest,
+} from "@/lib/alarm-confirm-api";
 import { resolveAlertFuseType } from "@/lib/alarm-track-match";
-import { AlertTriangle, AlertCircle, Info, Plane, ScanSearch, Ship, Trash2, Video } from "lucide-react";
+import { AlertTriangle, AlertCircle, Info, Plane, ScanSearch, Ship, Trash2, Video, CheckCircle2 } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { THIRD_PARTY_DETECT_ALERT_TYPE } from "@/lib/third-party-ptz-fov";
@@ -75,6 +79,14 @@ function isTrackAlarmItem(alert: AlertData): boolean {
   return Boolean(alert.trackId?.trim()) && alert.type !== THIRD_PARTY_DETECT_ALERT_TYPE;
 }
 
+function isVerifiedAlarmItem(alert: AlertData): boolean {
+  return alert.alarmType !== "threat";
+}
+
+function alarmKindLabel(alert: AlertData): "威胁" | "告警" {
+  return isVerifiedAlarmItem(alert) ? "告警" : "威胁";
+}
+
 /** 航迹告警目标 ID 前的对海/对空小标（与目标档案面板一致） */
 function AlertTrackFuseIcon({ fuseType }: { fuseType: 0 | 1 }) {
   const cls = "inline size-[11px] shrink-0 align-[-1px] opacity-95";
@@ -96,6 +108,7 @@ export function AlertPanel() {
   const { selectTrack, requestFlyTo } = useAppStore();
   const alerts = useAlertStore((s) => s.alerts);
   const removeAlarmItemsByTrackId = useAlertStore((s) => s.removeAlarmItemsByTrackId);
+  const upsertAlarm = useAlertStore((s) => s.upsertAlarm);
   const shadowTracks = useTrackStore((s) => s.shadowTracks);
 
   const resolveShowId = useCallback(
@@ -154,6 +167,10 @@ export function AlertPanel() {
           toast.error("删除告警失败", { description: result.message ?? "告警服务无响应" });
           return;
         }
+        const showId = resolveShowIdFromAlarmTrackId(trackId, shadowTracks, alert);
+        if (showId) {
+          useTrackStore.getState().clearManualTrackAffiliation(showId);
+        }
         removeAlarmItemsByTrackId(trackId);
         toast.success(`已删除航迹告警 ${trackId}`);
       } catch (err) {
@@ -187,6 +204,34 @@ export function AlertPanel() {
     [shadowTracks],
   );
 
+  const handleConfirmAlarm = useCallback(
+    async (e: React.MouseEvent, alert: (typeof allAlerts)[number]) => {
+      e.stopPropagation();
+      const uniqueId = resolveUniqueIdForAlert(alert, shadowTracks);
+      if (uniqueId == null) {
+        toast.error("无法确认：缺少 uniqueId");
+        return;
+      }
+      try {
+        const result = await sendAlarmConfirmRequest(uniqueId);
+        if (!result.ok) {
+          toast.error("确认告警失败", { description: result.message ?? "告警服务无响应" });
+          return;
+        }
+        upsertAlarm({
+          ...alert,
+          alarmType: "alert",
+          uniqueID: String(uniqueId),
+        });
+        toast.success("已确认告警", { description: `uniqueId ${uniqueId}` });
+      } catch (err) {
+        console.error("[AlertPanel] 确认告警失败:", err);
+        toast.error(`确认失败: ${err instanceof Error ? err.message : "未知错误"}`);
+      }
+    },
+    [shadowTracks, upsertAlarm],
+  );
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-white/[0.06] p-3">
@@ -208,6 +253,13 @@ export function AlertPanel() {
           const fuseType = isTrackAlarmItem(alert)
             ? resolveAlertFuseType(alert, shadowTracks)
             : undefined;
+          const kindLabel = isTrackAlarmItem(alert) ? alarmKindLabel(alert) : style.label;
+          const kindColor =
+            kindLabel === "威胁"
+              ? "text-amber-400"
+              : kindLabel === "告警"
+                ? "text-emerald-400"
+                : style.labelColor;
           const summaryLine = `目标：${summary.target}, 位置：${summary.position}, 区域：${summary.area}, 等级：${summary.level}`;
 
           return (
@@ -236,15 +288,30 @@ export function AlertPanel() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
-                      <span className={cn("shrink-0 text-[10px] font-bold", style.labelColor)}>
-                        {style.label}
+                      <span className={cn("shrink-0 text-[10px] font-bold", kindColor)}>
+                        {kindLabel}
                       </span>
+                      {isTrackAlarmItem(alert) && kindLabel !== style.label && (
+                        <span className={cn("shrink-0 text-[10px] font-medium opacity-70", style.labelColor)}>
+                          {style.label}
+                        </span>
+                      )}
                       <span className="truncate font-mono text-[10px] text-nexus-text-muted">
                         {alert.timestamp}
                       </span>
                     </div>
                     {isTrackAlarmItem(alert) && (
                       <div className="flex shrink-0 items-center gap-1">
+                        {!isVerifiedAlarmItem(alert) && (
+                          <button
+                            type="button"
+                            onClick={(e) => void handleConfirmAlarm(e, alert)}
+                            className="flex items-center gap-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 transition-colors hover:border-emerald-500/60 hover:bg-emerald-500/20"
+                          >
+                            <CheckCircle2 size={10} />
+                            确认告警
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={(e) => void handleDelete(e, alert)}

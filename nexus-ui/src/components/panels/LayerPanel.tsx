@@ -5,14 +5,32 @@
  * 树形显隐行与 `TrackListPanel` 航迹类型、`PanelVisibilityTree` 统一缩进与样式。
  */
 
-import { buildDataLayerPanelRows, LYR_DB_AREAS, LYR_OPTO_FOV } from "@/lib/map-entity-model";
+import {
+  buildDataLayerPanelRows,
+  LYR_DB_AREAS,
+  LYR_DRONES,
+  LYR_OPTO_FOV,
+  LYR_RADAR_COVERAGE,
+} from "@/lib/map-entity-model";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import {
   countVisibleOptoDeviceLeaves,
   isOptoDeviceFovVisible,
   isOptoDeviceIconVisible,
 } from "@/lib/opto-device-layer-visibility";
+import {
+  countVisibleDroneDeviceLeaves,
+  isDroneDevicePositionVisible,
+  isDroneDeviceRouteVisible,
+} from "@/lib/drone-device-layer-visibility";
+import {
+  countVisibleRadarDeviceLeaves,
+  isRadarDeviceCoverageVisible,
+  isRadarDeviceIconVisible,
+} from "@/lib/radar-device-layer-visibility";
 import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
+import { useDroneDeviceLayerStore } from "@/stores/drone-device-layer-store";
+import { useRadarDeviceLayerStore } from "@/stores/radar-device-layer-store";
 import { useAssetStore } from "@/stores/asset-store";
 import {
   VECTOR_LAYER_GROUP_LABELS,
@@ -23,6 +41,8 @@ import { useDbAreaStore } from "@/stores/db-area-store";
 import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
 import { countVisibleDbAreaLeaves, isDbAreaDrawable } from "@/lib/db-area-panel-helpers";
+import { collectMapGisDroneRowsSync, mapGisDroneSyncSignature } from "@/lib/map-gis-drone-rows";
+import { useDroneStore } from "@/stores/drone-store";
 import {
   PanelTreeBranchRow,
   PanelTreeGroup,
@@ -60,6 +80,14 @@ export function LayerPanel() {
   const optoDeviceVisibility = useOptoDeviceLayerStore((s) => s.deviceVisibility);
   const toggleOptoDeviceFov = useOptoDeviceLayerStore((s) => s.toggleDeviceFov);
   const toggleOptoDeviceIcon = useOptoDeviceLayerStore((s) => s.toggleDeviceIcon);
+  const droneDeviceVisibility = useDroneDeviceLayerStore((s) => s.deviceVisibility);
+  const toggleDroneDevicePosition = useDroneDeviceLayerStore((s) => s.toggleDevicePosition);
+  const toggleDroneDeviceRoute = useDroneDeviceLayerStore((s) => s.toggleDeviceRoute);
+  const syncDroneDeviceSns = useDroneDeviceLayerStore((s) => s.syncDroneSns);
+  const radarDeviceVisibility = useRadarDeviceLayerStore((s) => s.deviceVisibility);
+  const toggleRadarDeviceCoverage = useRadarDeviceLayerStore((s) => s.toggleDeviceCoverage);
+  const toggleRadarDeviceIcon = useRadarDeviceLayerStore((s) => s.toggleDeviceIcon);
+  const syncRadarDeviceIds = useRadarDeviceLayerStore((s) => s.syncRadarIds);
   const cameraMenuRows = useMapGisCameraMenuStore((s) => s.rows);
   const cameraMenuLoading = useMapGisCameraMenuStore((s) => s.loading);
   const ensureCameraMenuRows = useMapGisCameraMenuStore((s) => s.ensureLoaded);
@@ -67,6 +95,35 @@ export function LayerPanel() {
   const hasOptoLayerRow = useMemo(
     () => dataPanelRows.some((r) => r.id === LYR_OPTO_FOV),
     [dataPanelRows],
+  );
+
+  const hasDroneLayerRow = useMemo(
+    () => dataPanelRows.some((r) => r.id === LYR_DRONES),
+    [dataPanelRows],
+  );
+
+  const hasRadarLayerRow = useMemo(
+    () => dataPanelRows.some((r) => r.id === LYR_RADAR_COVERAGE),
+    [dataPanelRows],
+  );
+
+  const radarPanelDevices = useMemo(
+    () =>
+      assets
+        .filter((a) => a.asset_type === "radar")
+        .map((a) => ({ id: a.id, label: (a.name || "").trim() || a.id }))
+        .sort((a, b) => a.label.localeCompare(b.label, "zh-CN")),
+    [assets],
+  );
+
+  const droneStoreDrones = useDroneStore((s) => s.drones);
+  const droneToAirport = useDroneStore((s) => s.droneToAirport);
+  const droneRelationships = useDroneStore((s) => s.relationships);
+  const assetDroneSig = useMemo(() => mapGisDroneSyncSignature(assets), [assets]);
+
+  const dronePanelDevices = useMemo(
+    () => collectMapGisDroneRowsSync().map((r) => ({ id: r.sn, label: r.label })),
+    [droneStoreDrones, droneToAirport, droneRelationships, assetDroneSig],
   );
 
   const optoCameraDevices = useMemo(
@@ -103,13 +160,29 @@ export function LayerPanel() {
   const [openDbGroup, setOpenDbGroup] = useState<Record<number, boolean>>({});
   const [openOptoTree, setOpenOptoTree] = useState(true);
   const [openOptoDevice, setOpenOptoDevice] = useState<Record<string, boolean>>({});
+  const [openDroneTree, setOpenDroneTree] = useState(true);
+  const [openDroneDevice, setOpenDroneDevice] = useState<Record<string, boolean>>({});
+  const [openRadarTree, setOpenRadarTree] = useState(true);
+  const [openRadarDevice, setOpenRadarDevice] = useState<Record<string, boolean>>({});
 
   const optoMasterOn = layerVisibility[LYR_OPTO_FOV] !== false;
+  const droneMasterOn = layerVisibility[LYR_DRONES] !== false;
+  const radarMasterOn = layerVisibility[LYR_RADAR_COVERAGE] !== false;
 
   useEffect(() => {
     if (!hasOptoLayerRow) return;
     void ensureCameraMenuRows();
   }, [hasOptoLayerRow, ensureCameraMenuRows]);
+
+  useEffect(() => {
+    if (!hasDroneLayerRow) return;
+    syncDroneDeviceSns(dronePanelDevices.map((d) => d.id));
+  }, [hasDroneLayerRow, dronePanelDevices, syncDroneDeviceSns]);
+
+  useEffect(() => {
+    if (!hasRadarLayerRow) return;
+    syncRadarDeviceIds(radarPanelDevices.map((d) => d.id));
+  }, [hasRadarLayerRow, radarPanelDevices, syncRadarDeviceIds]);
 
   const toggleVectorGroup = useCallback((gk: string) => {
     setOpenVectorGroup((prev) => ({ ...prev, [gk]: !prev[gk] }));
@@ -162,6 +235,16 @@ export function LayerPanel() {
       optoDeviceVisibility,
       optoMasterOn,
     );
+    n += countVisibleDroneDeviceLeaves(
+      dronePanelDevices.map((d) => d.id),
+      droneDeviceVisibility,
+      droneMasterOn,
+    );
+    n += countVisibleRadarDeviceLeaves(
+      radarPanelDevices.map((d) => d.id),
+      radarDeviceVisibility,
+      radarMasterOn,
+    );
     return n;
   }, [
     layersData,
@@ -174,6 +257,12 @@ export function LayerPanel() {
     optoCameraDevices,
     optoDeviceVisibility,
     optoMasterOn,
+    dronePanelDevices,
+    droneDeviceVisibility,
+    droneMasterOn,
+    radarPanelDevices,
+    radarDeviceVisibility,
+    radarMasterOn,
   ]);
 
   const sectionHeader = (
@@ -237,7 +326,131 @@ export function LayerPanel() {
             <div className="border-b border-nexus-border/50 px-2 pb-2">
               <PanelTreeGroup>
                 {layersData.map((layer) => {
-                  if (layer.id !== LYR_OPTO_FOV) {
+                  if (layer.id === LYR_RADAR_COVERAGE) {
+                    return (
+                      <div key={layer.id}>
+                        <PanelTreeBranchRow
+                          depth={0}
+                          open={openRadarTree}
+                          onToggleOpen={() => setOpenRadarTree((v) => !v)}
+                          label={layer.name}
+                          visible={layer.visible}
+                          onToggleVisible={() => toggleLayerVisibility(layer.id)}
+                        />
+                        {openRadarTree && layer.visible ? (
+                          radarPanelDevices.length === 0 ? (
+                            <div
+                              className="border-b border-nexus-border/30 py-2 pr-2 text-[10px] leading-relaxed text-nexus-text-muted last:border-b-0"
+                              style={{ paddingLeft: 24 }}
+                            >
+                              暂无可选雷达（资产列表中无 radar 类型装备）
+                            </div>
+                          ) : (
+                            radarPanelDevices.map((dev) => {
+                              const dOpen = openRadarDevice[dev.id] ?? false;
+                              return (
+                                <div key={dev.id}>
+                                  <PanelTreeBranchRow
+                                    depth={1}
+                                    open={dOpen}
+                                    onToggleOpen={() =>
+                                      setOpenRadarDevice((prev) => ({
+                                        ...prev,
+                                        [dev.id]: !prev[dev.id],
+                                      }))
+                                    }
+                                    label={dev.label}
+                                    disabled={!radarMasterOn}
+                                  />
+                                  {dOpen ? (
+                                    <>
+                                      <PanelTreeToggleRow
+                                        depth={2}
+                                        visible={isRadarDeviceCoverageVisible(dev.id, radarDeviceVisibility)}
+                                        onToggle={() => toggleRadarDeviceCoverage(dev.id)}
+                                        label="距离环"
+                                        disabled={!radarMasterOn}
+                                      />
+                                      <PanelTreeToggleRow
+                                        depth={2}
+                                        visible={isRadarDeviceIconVisible(dev.id, radarDeviceVisibility)}
+                                        onToggle={() => toggleRadarDeviceIcon(dev.id)}
+                                        label="GIS 图标"
+                                        disabled={!radarMasterOn}
+                                      />
+                                    </>
+                                  ) : null}
+                                </div>
+                              );
+                            })
+                          )
+                        ) : null}
+                      </div>
+                    );
+                  }
+                  if (layer.id === LYR_DRONES) {
+                    return (
+                      <div key={layer.id}>
+                        <PanelTreeBranchRow
+                          depth={0}
+                          open={openDroneTree}
+                          onToggleOpen={() => setOpenDroneTree((v) => !v)}
+                          label={layer.name}
+                          visible={layer.visible}
+                          onToggleVisible={() => toggleLayerVisibility(layer.id)}
+                        />
+                        {openDroneTree && layer.visible ? (
+                          dronePanelDevices.length === 0 ? (
+                            <div
+                              className="border-b border-nexus-border/30 py-2 pr-2 text-[10px] leading-relaxed text-nexus-text-muted last:border-b-0"
+                              style={{ paddingLeft: 24 }}
+                            >
+                              暂无可选无人机（需 WS 推送机巢关系或资产列表含无人机）
+                            </div>
+                          ) : (
+                            dronePanelDevices.map((dev) => {
+                              const dOpen = openDroneDevice[dev.id] ?? false;
+                              return (
+                                <div key={dev.id}>
+                                  <PanelTreeBranchRow
+                                    depth={1}
+                                    open={dOpen}
+                                    onToggleOpen={() =>
+                                      setOpenDroneDevice((prev) => ({
+                                        ...prev,
+                                        [dev.id]: !prev[dev.id],
+                                      }))
+                                    }
+                                    label={dev.label}
+                                    disabled={!droneMasterOn}
+                                  />
+                                  {dOpen ? (
+                                    <>
+                                      <PanelTreeToggleRow
+                                        depth={2}
+                                        visible={isDroneDevicePositionVisible(dev.id, droneDeviceVisibility)}
+                                        onToggle={() => toggleDroneDevicePosition(dev.id)}
+                                        label="自报位"
+                                        disabled={!droneMasterOn}
+                                      />
+                                      <PanelTreeToggleRow
+                                        depth={2}
+                                        visible={isDroneDeviceRouteVisible(dev.id, droneDeviceVisibility)}
+                                        onToggle={() => toggleDroneDeviceRoute(dev.id)}
+                                        label="航线"
+                                        disabled={!droneMasterOn}
+                                      />
+                                    </>
+                                  ) : null}
+                                </div>
+                              );
+                            })
+                          )
+                        ) : null}
+                      </div>
+                    );
+                  }
+                  if (layer.id !== LYR_OPTO_FOV && layer.id !== LYR_RADAR_COVERAGE && layer.id !== LYR_DRONES) {
                     return (
                       <PanelTreeToggleRow
                         key={layer.id}
@@ -247,6 +460,9 @@ export function LayerPanel() {
                         label={layer.name}
                       />
                     );
+                  }
+                  if (layer.id !== LYR_OPTO_FOV) {
+                    return null;
                   }
                   return (
                     <div key={layer.id}>

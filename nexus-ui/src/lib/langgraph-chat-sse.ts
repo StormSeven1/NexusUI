@@ -3,6 +3,11 @@
  * 每行 `data: {...}`，`event` / `thread_id` / `data` 内 `message`、`text` 等。
  */
 
+import {
+  logLangGraphChatSseEvent,
+  type LangGraphChatHttpLogKind,
+} from "@/lib/langgraph-chat-http-log";
+
 export function extractLangGraphDisplayChunks(obj: Record<string, unknown>): string[] {
   const out: string[] = [];
   const event = String(obj.event ?? "");
@@ -49,6 +54,27 @@ export function parseSseDataLine(trimmed: string): Record<string, unknown> | nul
   } catch {
     return null;
   }
+}
+
+/** 上游可能发 [DONE] 或带 event 的结束帧；interrupt 需由调用方单独处理（不关流） */
+export function isLangGraphSseTerminalEvent(obj: Record<string, unknown>): boolean {
+  const ev = String(obj.event ?? "").toLowerCase();
+  if (ev === "error" || ev === "done" || ev === "stream_end" || ev === "complete" || ev === "end") {
+    return true;
+  }
+  const data = obj.data;
+  if (data && typeof data === "object") {
+    const st = String((data as Record<string, unknown>).status ?? "").toLowerCase();
+    if (
+      st === "completed" ||
+      st === "failed" ||
+      st === "workflow_completed" ||
+      st === "done"
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** 与 Qt `WorkflowInterruptDialog` + `GPTInterfaceWgt` 解析 `event == "interrupt"` 一致 */
@@ -98,31 +124,141 @@ export function parseLangGraphInterruptEvent(obj: Record<string, unknown>): Lang
   return { message, interruptId, mainInterruptId, threadId, nodeName };
 }
 
+export type LangGraphSseConsumeResult = {
+  reason: "http_done" | "idle_timeout" | "terminal_event" | "interrupt" | "cancelled";
+  eventCount: number;
+};
+
+export type ConsumeLangGraphSseOptions = {
+  kind?: LangGraphChatHttpLogKind;
+  /** 与 logLangGraphChatRequest 返回的序号一致 */
+  logSeq?: number;
+  /** 距上次收到数据超过该毫秒则结束流（防止 isStreaming 一直 true） */
+  idleTimeoutMs?: number;
+  signal?: AbortSignal;
+};
+
 /**
- * 消费 LangGraph SSE 流（与 `ChatPanelLangGraph` / Qt `readyRead` 按行处理一致）。
+ * 消费 LangGraph SSE 流（与 Qt readyRead 按行处理一致）。
+ * 若上游长期不关闭连接，空闲超时后 cancel reader，便于发起下一次 chat。
  */
+export async function consumeLangGraphSseStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onParsed: (parsed: Record<string, unknown>) => void | Promise<void>,
+  opts?: ConsumeLangGraphSseOptions,
+): Promise<LangGraphSseConsumeResult> {
+  const dec = new TextDecoder();
+  const idleMs = opts?.idleTimeoutMs ?? 8_000;
+  const logSeq = opts?.logSeq;
+  let buf = "";
+  let eventCount = 0;
+  let stopReason: LangGraphSseConsumeResult["reason"] = "http_done";
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let cancelledByIdle = false;
+
+  const clearIdle = () => {
+    if (idleTimer != null) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
+
+  const armIdle = () => {
+    clearIdle();
+    idleTimer = setTimeout(() => {
+      cancelledByIdle = true;
+      stopReason = "idle_timeout";
+      void reader.cancel().catch(() => {});
+    }, idleMs);
+  };
+
+  const cancelReader = async () => {
+    try {
+      await reader.cancel();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  armIdle();
+  try {
+    if (opts?.signal?.aborted) {
+      stopReason = "cancelled";
+      return { reason: stopReason, eventCount };
+    }
+
+    while (true) {
+      if (opts?.signal?.aborted) {
+        stopReason = "cancelled";
+        break;
+      }
+
+      const { done, value } = await reader.read();
+      if (done) {
+        if (cancelledByIdle) {
+          stopReason = "idle_timeout";
+        }
+        break;
+      }
+
+      armIdle();
+      buf += dec.decode(value, { stream: true });
+      const { lines, rest } = splitLines(buf);
+      buf = rest;
+
+      for (const raw of lines) {
+        const line = raw.replace(/\r$/, "").trim();
+        if (!line) continue;
+        if (line === "data: [DONE]" || line === "data:[DONE]") {
+          stopReason = "terminal_event";
+          clearIdle();
+          await cancelReader();
+          return { reason: stopReason, eventCount };
+        }
+
+        const parsed = parseSseDataLine(line);
+        if (!parsed) continue;
+
+        eventCount += 1;
+        if (logSeq != null) {
+          logLangGraphChatSseEvent(logSeq, eventCount, parsed, line);
+        }
+
+        if (String(parsed.event ?? "") === "interrupt") {
+          await onParsed(parsed);
+          stopReason = "interrupt";
+          clearIdle();
+          await cancelReader();
+          return { reason: stopReason, eventCount };
+        }
+
+        if (isLangGraphSseTerminalEvent(parsed)) {
+          await onParsed(parsed);
+          stopReason = "terminal_event";
+          clearIdle();
+          await cancelReader();
+          return { reason: stopReason, eventCount };
+        }
+
+        await onParsed(parsed);
+      }
+    }
+  } finally {
+    clearIdle();
+    try {
+      reader.releaseLock();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return { reason: stopReason, eventCount };
+}
+
+/** @deprecated 使用 consumeLangGraphSseStream（含空闲超时与结束检测） */
 export async function forEachLangGraphSseLine(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   onParsed: (parsed: Record<string, unknown>) => void | Promise<void>,
 ): Promise<void> {
-  const dec = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const { lines, rest } = splitLines(buf);
-    buf = rest;
-    for (const raw of lines) {
-      const line = raw.replace(/\r$/, "").trim();
-      if (!line) continue;
-      const parsed = parseSseDataLine(line);
-      if (parsed) await onParsed(parsed);
-    }
-  }
-  const tail = buf.replace(/\r$/, "").trim();
-  if (tail) {
-    const parsed = parseSseDataLine(tail);
-    if (parsed) await onParsed(parsed);
-  }
+  await consumeLangGraphSseStream(reader, onParsed);
 }

@@ -20,6 +20,7 @@ import { useVerifiedTrackStore } from "@/stores/verified-track-store";
 import {
   useTrackDisplayStore,
   neutralFusionColorForTrack,
+  uavPoseTrackDotColor,
   trailLengthSecondsForTrack,
   vectorLengthSecondsForTrack,
 } from "@/stores/track-display-store";
@@ -38,7 +39,7 @@ export const TRACK_SOURCE = "tracks-source";
 /** 融合航迹（对海/对空）点要素：军标 symbol，与高亮环同源 */
 export const TRACK_FUSION_PTS_SOURCE = "tracks-fusion-pts";
 
-/** 雷达 + AIS 航迹点要素：圆点 circle，与高亮环同源 */
+/** 雷达 + AIS + 自报位航迹点要素：圆点 circle，与高亮环同源 */
 export const TRACK_RADAR_PTS_SOURCE = "tracks-radar-pts";
 
 /** 多选高亮环：`insertBeforeLayerId` 指向本层时，雷达/光电等专题层会插在其下（由下至上绘制，高亮环盖在专题层之上） */
@@ -132,11 +133,15 @@ export function trackMapDrawHistoryTrails(tracks: ReadonlyArray<Track>): boolean
 function trackPointFillAndStyle(t: Track, accent: AssetDispositionIconAccent | null | undefined) {
   const tr = getTrackRenderingConfig();
   const td = useTrackDisplayStore.getState();
+  const disp = getTrackDispositionForRendering(t);
+  const style = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
+  if (resolveTrackLayerKey(t) === "uav_pose_track") {
+    const pointFill = resolveVerifiedTrackPointFill(t, uavPoseTrackDotColor(td));
+    return { pointFill, disp, neutralFusion: undefined, style };
+  }
   const seaCol = td.seaFusionColor;
   const airCol = td.airFusionColor;
-  const disp = getTrackDispositionForRendering(t);
   const neutralFusion = disp === "neutral" ? neutralFusionColorForTrack(t, seaCol, airCol) : undefined;
-  const style = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
   const friendlyFill = disp === "friendly" ? style.idColor : undefined;
   const baseFill = neutralFusion ?? resolveTrackPointFill(t, disp, accent ?? null, friendlyFill);
   const pointFill = resolveVerifiedTrackPointFill(t, baseFill);
@@ -212,8 +217,9 @@ export function buildTrackFusionPointsGeoJSON(
     const v = isTrackVirtualTroop(t);
     const iconScale = Math.max(0.55, Math.min(1.5, style.pointSize / 3.5));
     const airBirdGlyph = isAirTrackBirdGlyph(t);
-    const isFuseAirTrack = resolveTrackLayerKey(t) === "fuse_air";
+    const isFuseAirTrack = layerKey === "fuse_air";
     const airFuseGlyph = isFuseAirTrack && airBirdGlyph;
+    const seaFuseGlyph = layerKey === "fuse_sea" && t.type === "sea";
     const opticallyVerified = shouldApplyVerifiedTrackGreen(t);
     const baseProps: Record<string, unknown> = {
       id: t.id,
@@ -232,6 +238,7 @@ export function buildTrackFusionPointsGeoJSON(
       heading: t.heading,
       course: t.course ?? null,
       isFuseAirTrack,
+      isSeaFuseTrack: seaFuseGlyph,
       isAirBirdGlyph: airBirdGlyph,
       altitude: t.altitude ?? null,
       color: pointFill,
@@ -246,6 +253,7 @@ export function buildTrackFusionPointsGeoJSON(
         airBirdGlyph,
         airFuseGlyph,
         opticallyVerified,
+        seaFuseGlyph,
       ),
       iconScale,
     };
@@ -436,6 +444,8 @@ export class TracksMaplibre {
   private lastTracks: Track[] = [];
   /** showID → 威胁序号 1–5（1 为最高威胁度） */
   private threatRankByShowId = new Map<string, number>();
+  /** 并发 `ensureTrackSymbolImages` 时合并同一 symbolId 的加载/注册，避免重复 `addImage` */
+  private pendingTrackSymbolImages = new Map<string, Promise<void>>();
 
   constructor(map: maplibregl.Map) {
     this.map = map;
@@ -594,7 +604,7 @@ export class TracksMaplibre {
               ["==", ["coalesce", ["get", "isAirBirdGlyph"], false], true],
             ],
             0,
-            ["coalesce", ["get", "heading"], 0],
+            ["coalesce", ["get", "heading"], ["get", "course"], 0],
           ],
           "icon-rotation-alignment": "map",
           "icon-pitch-alignment": "map",
@@ -795,13 +805,39 @@ export class TracksMaplibre {
     );
   }
 
+  /** 同一 symbolId 仅注册一次；并发 `setTracksAsync` 共享 in-flight Promise */
+  private registerTrackSymbolImage(id: string, load: () => Promise<HTMLImageElement>): Promise<void> {
+    const m = this.map;
+    if (m.hasImage(id)) return Promise.resolve();
+    const inflight = this.pendingTrackSymbolImages.get(id);
+    if (inflight) return inflight;
+
+    const task = (async () => {
+      if (m.hasImage(id)) return;
+      const img = await load();
+      if (m.hasImage(id)) return;
+      try {
+        m.addImage(id, img, { pixelRatio: 2 });
+      } catch (e) {
+        if (!m.hasImage(id)) throw e;
+      }
+    })();
+    const wrapped = task.finally(() => {
+      if (this.pendingTrackSymbolImages.get(id) === wrapped) {
+        this.pendingTrackSymbolImages.delete(id);
+      }
+    });
+    this.pendingTrackSymbolImages.set(id, wrapped);
+    return wrapped;
+  }
+
   /** 按需注册军标：中立融合自定义色 + 光电查证完成（`-ov` 绿色军标） */
   private async ensureTrackSymbolImages(tracks: Track[]) {
-    const m = this.map;
     const td = useTrackDisplayStore.getState();
     const accent = this.dispositionAccent;
     const tr = getTrackRenderingConfig();
     const seen = new Set<string>();
+    const pending: Promise<void>[] = [];
     for (const t of tracks) {
       if (isDotTrackLayerKey(resolveTrackLayerKey(t))) continue;
       const disp = getTrackDispositionForRendering(t);
@@ -810,7 +846,9 @@ export class TracksMaplibre {
       const neutralFusion =
         disp === "neutral" ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor) : undefined;
       const airBirdGlyph = isAirTrackBirdGlyph(t);
-      const airFuseGlyph = resolveTrackLayerKey(t) === "fuse_air" && airBirdGlyph;
+      const layerKey = resolveTrackLayerKey(t);
+      const airFuseGlyph = layerKey === "fuse_air" && airBirdGlyph;
+      const seaFuseGlyph = layerKey === "fuse_sea" && t.type === "sea";
       const opticallyVerified = shouldApplyVerifiedTrackGreen(t);
       const needsCustomNeutral = disp === "neutral" && !opticallyVerified;
       const needsVerifiedIcon = opticallyVerified;
@@ -825,23 +863,33 @@ export class TracksMaplibre {
         airBirdGlyph,
         airFuseGlyph,
         opticallyVerified,
+        seaFuseGlyph,
       );
       if (seen.has(id)) continue;
       seen.add(id);
-      if (m.hasImage(id)) continue;
-      const srcData = buildMarkerSymbolDataUrl(
-        t.type,
-        disp,
-        accent,
-        isTrackVirtualTroop(t),
-        friendlyFill,
-        neutralFusion,
-        airBirdGlyph,
-        airFuseGlyph,
-        opticallyVerified,
+
+      const virtual = isTrackVirtualTroop(t);
+      pending.push(
+        this.registerTrackSymbolImage(id, () =>
+          loadSvgImage(
+            buildMarkerSymbolDataUrl(
+              t.type,
+              disp,
+              accent,
+              virtual,
+              friendlyFill,
+              neutralFusion,
+              airBirdGlyph,
+              airFuseGlyph,
+              opticallyVerified,
+              seaFuseGlyph,
+            ),
+            64,
+          ),
+        ),
       );
-      m.addImage(id, await loadSvgImage(srcData, 64), { pixelRatio: 2 });
     }
+    await Promise.all(pending);
   }
 
   setHighlightFilter(ids: string[]) {
@@ -861,6 +909,7 @@ export class TracksMaplibre {
   }
 
   dispose() {
+    this.pendingTrackSymbolImages.clear();
     const m = this.map;
     for (const id of [
       TRACK_THREAT_RANK,

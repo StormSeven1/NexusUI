@@ -4,6 +4,13 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** 8090 实体：仅保留 `indicators.simulated === false` 的条目（仿真/演练实体排除） */
+export function entityIndicatorsSimulatedIsFalse(raw: Record<string, unknown>): boolean {
+  const indicators = raw.indicators;
+  if (!isRecord(indicators)) return false;
+  return indicators.simulated === false;
+}
+
 function pickStr(r: Record<string, unknown>, keys: string[]): string {
   for (const k of keys) {
     const v = r[k];
@@ -106,8 +113,15 @@ export function extractEntityRecords(payload: unknown): unknown[] {
 
 function mapOne(raw: unknown): EoDroneDeviceRow | null {
   if (!isRecord(raw)) return null;
+  if (!entityIndicatorsSimulatedIsFalse(raw)) return null;
   const entityId = pickStr(raw, ["entityId", "entity_id", "id", "uuid", "deviceId", "device_id"]);
-  const name = pickStr(raw, ["name", "entityName", "entity_name", "title", "label", "displayName", "deviceName"]);
+  let name = pickStr(raw, ["name", "entityName", "entity_name", "title", "label", "displayName", "deviceName"]);
+  if (!name) {
+    const aliases = raw.aliases;
+    if (isRecord(aliases)) {
+      name = pickStr(aliases, ["name", "displayName", "label"]);
+    }
+  }
   let deviceSN = pickStr(raw, [
     "deviceSN",
     "device_sn",
@@ -196,11 +210,10 @@ function mapOne(raw: unknown): EoDroneDeviceRow | null {
   };
 }
 
-export function mapEntitiesPayloadToDevices(payload: unknown): EoDroneDeviceRow[] {
-  const rows = extractEntityRecords(payload);
+export function mapEntityRecordsToDevices(records: unknown[]): EoDroneDeviceRow[] {
   const out: EoDroneDeviceRow[] = [];
   const seen = new Set<string>();
-  for (const r of rows) {
+  for (const r of records) {
     const d = mapOne(r);
     if (!d) continue;
     const k = `${d.entityId}:${d.deviceSN}:${d.airportSN}`;
@@ -209,6 +222,10 @@ export function mapEntitiesPayloadToDevices(payload: unknown): EoDroneDeviceRow[
     out.push(d);
   }
   return out;
+}
+
+export function mapEntitiesPayloadToDevices(payload: unknown): EoDroneDeviceRow[] {
+  return mapEntityRecordsToDevices(extractEntityRecords(payload));
 }
 
 export function buildDroneDevicesFile(sourceUrl: string, payload: unknown): EoDroneDevicesFile {

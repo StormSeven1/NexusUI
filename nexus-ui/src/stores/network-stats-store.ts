@@ -235,10 +235,18 @@ export function recordTaskStatusSseReceived() {
   bump("task_status_sse");
 }
 
-/** 第三方相机 UDP→WS 中继 */
+/** 第三方相机 UDP→WS 中继（二进制视频帧） */
 export function recordThirdPartyCameraReceived(entityId?: string) {
   const key = entityId ? `third_cam:${entityId}` : "third_cam";
   const label = entityId ? `第三方 ${entityId}` : "第三方相机";
+  ensureEntry(key, label, "第三方相机");
+  bump(key);
+}
+
+/** 第三方相机 UDP→WS 中继（0x1001 文本状态，含 panVehicle） */
+export function recordThirdPartyDevStatusBasicReceived(entityId?: string) {
+  const key = entityId ? `third_cam_status:${entityId}` : "third_cam_status";
+  const label = entityId ? `第三方状态 ${entityId}` : "第三方相机状态";
   ensureEntry(key, label, "第三方相机");
   bump(key);
 }

@@ -31,6 +31,7 @@ export const TRACK_LAYER_KEY_BY_DDS_SOURCE_ID: Record<string, TrackLayerKey> = {
   dds_forward_radar_track1: "radar_wharf",
   dds_forward_radar_track2: "radar_jingzi",
   dds_forward_ais_track: "ais_track",
+  dds_forward_uav_pose_track: "uav_pose_track",
 };
 
 /** 目标列表 / 航迹显示面板共用标签 */
@@ -41,6 +42,7 @@ export const TRACK_SUBTYPE_LABELS: Record<TrackLayerKey, string> = {
   radar_wharf: "远遥码头雷达航迹",
   radar_jingzi: "靖子头雷达航迹",
   ais_track: "AIS 航迹",
+  uav_pose_track: "自报位航迹",
 };
 
 /** 雷达类 DDS 来源：地图上用圆点而非军标 */
@@ -48,9 +50,9 @@ export function isRadarTrackLayerKey(k: TrackLayerKey): boolean {
   return k === "bird_radar" || k === "radar_wharf" || k === "radar_jingzi";
 }
 
-/** 地图与目标列表上用圆点表示的航迹（雷达 + AIS） */
+/** 地图与目标列表上用圆点表示的航迹（雷达 + AIS + 自报位） */
 export function isDotTrackLayerKey(k: TrackLayerKey): boolean {
-  return isRadarTrackLayerKey(k) || k === "ais_track";
+  return isRadarTrackLayerKey(k) || k === "ais_track" || k === "uav_pose_track";
 }
 
 type LayerResolveInput = Pick<
@@ -72,6 +74,7 @@ function inferTrackLayerKeyFromText(track: LayerResolveInput): TrackLayerKey | u
   if (/\bdds_forward_fuse_track\b/.test(textBlob)) return "fuse_sea";
   if (/\bdds_forward_bird_radar_track\b/.test(textBlob)) return "bird_radar";
   if (/\bdds_forward_ais_track\b/.test(textBlob)) return "ais_track";
+  if (/\bdds_forward_uav_pose_track\b/.test(textBlob)) return "uav_pose_track";
   return undefined;
 }
 

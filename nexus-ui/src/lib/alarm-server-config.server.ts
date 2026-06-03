@@ -11,3 +11,7 @@ export function getAlarmServerBaseUrl(): string {
 export function getAlarmFilterApiUrl(): string {
   return `${getAlarmServerBaseUrl()}/api/alarm_filter`;
 }
+
+export function getAlarmConfirmApiUrl(): string {
+  return `${getAlarmServerBaseUrl()}/api/alarm_confirm`;
+}

@@ -740,8 +740,9 @@
     "trackTimeout": {
       "enabled": true,
       "seconds": 30,
-      "fusionSeconds": 120,
-      "uavSeconds": 60,
+      "fusionSeconds": 30,
+      "fusionAirSeconds": 30,
+      "uavSeconds": 10,
       "checkIntervalMs": 2000
     },
     "airIconHeadingOffsetDeg": -45,
@@ -769,7 +770,7 @@
     "imagePollIntervalMs": 3000,
     "imageFetchTimeoutMs": 1000,
     "chat": {
-      "_说明": "处置相关 HTTP 配置：手动产生方案、执行方案、处置结束。顶栏「日常查证」使用 quickWorkflowUrl + dailyVerification*（与 Qt ThreatListTable 工作流模式 1 一致）。",
+      "_说明": "处置相关 HTTP 配置：手动产生方案、执行方案、处置结束。顶栏「日常查证」使用 quickWorkflowUrl + dailyVerification*（与 Qt ThreatListTable 工作流模式 1 一致）。同源地址可由 .env.local 的 NEXT_PUBLIC_NEXUS_TASK_MANAGEMENT_URL 覆盖下列 *Url 字段。",
       "disposalPlanWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream",
       "disposalManualGeneratePlanUrl": "http://192.168.18.103:8000/api/v1/tasks/target-engagement/manual-generate-plan",
       "disposalExecuteUrl": "http://192.168.18.103:8000/api/v1/tasks/grpc-disposal/execute",
@@ -780,7 +781,7 @@
       "quickWorkflowUrl": "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
       "quickWorkflowTimeoutMs": 5000,
       "dailyVerificationWorkflowId": "auto_duty_workflow-quick-1",
-      "dailyVerificationSchemaId": "SCHEME_3B065AE6",
+      "dailyVerificationSchemaId": "SCHEME_A753403E",
       "quickWorkflowStatusWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream"
     }
   },
@@ -801,7 +802,7 @@
     },
     {
       "label": "任务管理",
-      "url": "http://192.168.18.103:8000/chat"
+      "url": "http://192.168.18.141:8888/chat"
     },
     {
       "label": "雷达管理",

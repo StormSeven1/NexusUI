@@ -42,6 +42,13 @@ const INITIAL_KEY_STATE: UavKeyState = {
   C: false,
 };
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return target.isContentEditable;
+}
+
 export interface UseUavKeyboardControlOpts {
   /** 是否启用键盘控制 */
   enabled: boolean;
@@ -129,6 +136,9 @@ export function useUavKeyboardControl(opts: UseUavKeyboardControlOpts) {
       if (e.repeat) return; // 忽略按住重复
       const key = e.key.toUpperCase();
       if (!(key in INITIAL_KEY_STATE)) return;
+      if (isTypingTarget(e.target)) return;
+
+      e.preventDefault();
 
       // 检查授权
       if (!opts.hasAuth) {
@@ -150,6 +160,9 @@ export function useUavKeyboardControl(opts: UseUavKeyboardControlOpts) {
     const handleKeyUp = (e: KeyboardEvent) => {
       const key = e.key.toUpperCase();
       if (!(key in INITIAL_KEY_STATE)) return;
+      if (isTypingTarget(e.target)) return;
+
+      e.preventDefault();
 
       setKeyState((prev) => {
         if (!prev[key as UavKeyCode]) return prev; // 未按下

@@ -8,109 +8,41 @@ import {
   PanelWindowState,
   PanelId,
   PanelLocation,
-  DockPartition,
 } from "@/stores/dock-store";
 import {
   isElectroOpticalDockPanel,
   useEoVideoPanelFocusStore,
 } from "@/stores/eo-video-panel-focus-store";
-import {
-  SNAP_SIDEBAR_THRESHOLD,
-} from "@/components/dock/types";
+import { SNAP_SIDEBAR_THRESHOLD } from "@/components/dock/types";
 import {
   type DockPopupResizeEdge,
   DOCK_POPUP_RESIZE_EDGE_HIT,
   DOCK_POPUP_RESIZE_HANDLE_CLASS,
   resizeDockPopupRect,
 } from "@/lib/dock/dockPopupResize";
+import { DockGuideDashboard } from "@/components/dock/DockGuideDashboard";
+import { DockPartitionDropPreview } from "@/components/dock/DockPartitionDropPreview";
+import {
+  type DockGuideZone,
+  type PartitionSnapTarget,
+  type SidebarSnapLayout,
+  buildSnapTargetFromGuideZone,
+  detectNearDockSide,
+  findPartitionAtRelativeY,
+  getPartitionViewportRect,
+  getSidebarSnapLayout,
+} from "@/lib/dock/dockGuideLayout";
 
-// 分区吸附目标类型
-interface PartitionSnapTarget {
-  partitionId: string | null;
-  edgePosition: "top" | "bottom" | "middle" | null;
-  insertIndex: number | null;
-  side: "left" | "right" | null;
-  // 新增：是否创建新分区
-  willCreatePartition: boolean;
-}
-
-/**
- * 新分区预览组件
- * 显示将要创建的新分区的视觉效果
- */
-interface NewPartitionPreviewProps {
-  target: PartitionSnapTarget;
-  partitions: DockPartition[];
-}
-
-function NewPartitionPreview({ target, partitions }: NewPartitionPreviewProps) {
-  if (!target.side) return null;
-
-  // 使用与边缘检测相同的容器高度计算
-  const topNavHeight = 48;
-  const statusBarHeight = 32;
-  const containerTop = topNavHeight;
-  const containerHeight = window.innerHeight - topNavHeight - statusBarHeight;
-
-  // 新分区的高度（按照实际创建时的比例）
-  const newHeightRatio = 1 / (partitions.length + 1);
-  const newPartitionHeight = newHeightRatio * containerHeight;
-
-  // 计算压缩系数
-  const compressionFactor = 1 - newHeightRatio;
-
-  let previewTop = 0;
-  const targetIndex = partitions.findIndex(p => p.id === target.partitionId);
-
-  // 根据边缘位置计算预览位置
-  if (target.edgePosition === "top") {
-    // 在目标分区的上方插入
-    // 计算插入点之前所有分区压缩后的累积高度
-    for (let i = 0; i < targetIndex; i++) {
-      previewTop += partitions[i].heightRatio * compressionFactor * containerHeight;
-    }
-  } else if (target.edgePosition === "bottom") {
-    // 在目标分区的下方插入
-    // 计算插入点之前（包括目标分区）所有分区压缩后的累积高度
-    for (let i = 0; i <= targetIndex; i++) {
-      previewTop += partitions[i].heightRatio * compressionFactor * containerHeight;
-    }
-  }
-
-  previewTop += containerTop;
-
-  return (
-    <>
-      {/* 预览框：青色实线边框 + 半透明填充 + 圆角 */}
-      <div
-        className="fixed border border-solid z-40 pointer-events-none"
-        style={{
-          top: previewTop,
-          left: target.side === "left" ? 48 : "auto",
-          right: target.side === "right" ? 48 : "auto",
-          width: "312px",
-          height: newPartitionHeight,
-          borderColor: "rgba(34, 211, 238, 0.6)",
-          backgroundColor: "rgba(34, 211, 238, 0.1)",
-          borderRadius: "0.5rem",
-        }}
-      />
-    </>
-  );
-}
-
-/**
- * 已有分区高亮组件
- * 显示将要吸附到的已有分区的高亮效果
- */
-interface ExistingPartitionHighlightProps {
-  target: PartitionSnapTarget;
-  partitions: DockPartition[];
-}
-
-function ExistingPartitionHighlight({ target, partitions }: ExistingPartitionHighlightProps) {
-  // 吸附到已有分区时不显示预览
+function dockGuideZoneFromPoint(clientX: number, clientY: number): DockGuideZone | null {
+  const el = document.elementFromPoint(clientX, clientY);
+  const zone = el?.closest("[data-dock-guide-zone]")?.getAttribute("data-dock-guide-zone");
+  if (zone === "top" || zone === "middle" || zone === "bottom") return zone;
   return null;
+}
+
+function isPointerOnDockGuide(clientX: number, clientY: number): boolean {
+  const el = document.elementFromPoint(clientX, clientY);
+  return !!el?.closest("[data-dock-guide-root]");
 }
 
 interface DockWindowProps {
@@ -156,7 +88,11 @@ export function DockWindow({
     createPartition,
     assignPanelToPartition,
     leftPartitions,
-    rightPartitions
+    rightPartitions,
+    leftSidebarOpen,
+    rightSidebarOpen,
+    leftSidebarWidth,
+    rightSidebarWidth,
   } = useDockStore();
   const eoFocusedDockId = useEoVideoPanelFocusStore((s) => s.focusedDockPanelId);
   const setEoFocusedDockPanel = useEoVideoPanelFocusStore((s) => s.setFocusedDockPanel);
@@ -166,9 +102,75 @@ export function DockWindow({
   const [showSnapIndicator, setShowSnapIndicator] = useState(false);
   const [snapArea, setSnapArea] = useState<PanelLocation>(null);
   const [partitionSnapTarget, setPartitionSnapTarget] = useState<PartitionSnapTarget | null>(null);
+  const [dockGuideVisible, setDockGuideVisible] = useState(false);
+  const [dockGuideSide, setDockGuideSide] = useState<"left" | "right" | null>(null);
+  const [dockGuideZone, setDockGuideZone] = useState<DockGuideZone | null>(null);
+  const [dockGuideAnchorRect, setDockGuideAnchorRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [dockGuideLayout, setDockGuideLayout] = useState<SidebarSnapLayout | null>(null);
   const showSnapIndicatorRef = useRef(false);
   const snapAreaRef = useRef<PanelLocation>(null);
   const partitionSnapTargetRef = useRef<PartitionSnapTarget | null>(null);
+  const guideAnchorRef = useRef<{
+    side: "left" | "right";
+    partitionId: string;
+    partitionIndex: number;
+    layout: SidebarSnapLayout;
+  } | null>(null);
+
+  const sidebarLayoutOpts = {
+    leftSidebarOpen,
+    leftSidebarWidth,
+    rightSidebarOpen,
+    rightSidebarWidth,
+  };
+
+  const applyGuideSelection = (
+    zone: DockGuideZone | null,
+    anchor: typeof guideAnchorRef.current,
+  ) => {
+    setDockGuideZone(zone);
+    if (!zone || !anchor) {
+      setPartitionSnapTarget(null);
+      setShowSnapIndicator(false);
+      partitionSnapTargetRef.current = null;
+      showSnapIndicatorRef.current = false;
+      return;
+    }
+    const partitions =
+      anchor.side === "left" ? leftPartitions : rightPartitions;
+    const partition = partitions[anchor.partitionIndex];
+    if (!partition) return;
+    const target = buildSnapTargetFromGuideZone(
+      zone,
+      partition,
+      anchor.partitionIndex,
+      anchor.side,
+    );
+    setPartitionSnapTarget(target);
+    setShowSnapIndicator(true);
+    partitionSnapTargetRef.current = target;
+    showSnapIndicatorRef.current = true;
+  };
+
+  const clearDockGuide = () => {
+    setDockGuideVisible(false);
+    setDockGuideSide(null);
+    setDockGuideZone(null);
+    setDockGuideAnchorRect(null);
+    setDockGuideLayout(null);
+    guideAnchorRef.current = null;
+    setShowSnapIndicator(false);
+    setPartitionSnapTarget(null);
+    showSnapIndicatorRef.current = false;
+    partitionSnapTargetRef.current = null;
+    setSnapArea(null);
+    snapAreaRef.current = null;
+  };
 
   useEffect(() => {
     if (isDragging || resizeEdge) return;
@@ -195,85 +197,6 @@ export function DockWindow({
     };
     setResizeEdge(edge);
     bringToFront(initialState.id);
-  };
-
-  /**
-   * 检测分区吸附目标
-   * 根据拖拽位置检测应该吸附到哪个分区的哪个边缘
-   */
-  const detectPartitionSnapTarget = (
-    position: { x: number; y: number },
-    side: "left" | "right",
-    partitions: DockPartition[]
-  ): PartitionSnapTarget => {
-    // 检测是否靠近侧边栏
-    // 左侧：从左边缘0px到阈值距离
-    // 右侧：从右边缘向内阈值距离（考虑侧边栏宽度）
-    const sidebarWidth = 360; // 侧边栏展开时的宽度
-    const isNearSide = side === "left"
-      ? position.x < SNAP_SIDEBAR_THRESHOLD
-      : position.x > window.innerWidth - sidebarWidth - SNAP_SIDEBAR_THRESHOLD;
-
-    if (!isNearSide || partitions.length === 0) {
-      return { partitionId: null, edgePosition: null, insertIndex: null, side: null, willCreatePartition: false };
-    }
-
-    // 侧边栏容器的实际高度和位置
-    // TopNav高度: 48px (h-12), StatusBar高度: 32px (h-8)
-    const topNavHeight = 48;
-    const statusBarHeight = 32;
-    const containerTop = topNavHeight;
-    const containerHeight = window.innerHeight - topNavHeight - statusBarHeight;
-
-    // 将窗口的y坐标转换为相对于侧边栏容器的y坐标
-    const relativeY = position.y - containerTop;
-
-    // 命中某分区后按 20% / 60% / 20% 三段判定：
-    // 上20% -> 在该分区上方新建
-    // 中60% -> 挤入该分区
-    // 下20% -> 在该分区下方新建
-    let accumulatedHeight = 0;
-    for (let i = 0; i < partitions.length; i++) {
-      const partition = partitions[i];
-      const partitionTop = accumulatedHeight * containerHeight;
-      const partitionBottom = (accumulatedHeight + partition.heightRatio) * containerHeight;
-      if (relativeY >= partitionTop && relativeY <= partitionBottom) {
-        const partitionHeight = partitionBottom - partitionTop;
-        const localY = relativeY - partitionTop;
-        const topBand = partitionHeight * 0.2;
-        const bottomBandStart = partitionHeight * 0.8;
-
-        if (localY <= topBand) {
-          return {
-            partitionId: partition.id,
-            edgePosition: "top",
-            insertIndex: i,
-            side,
-            willCreatePartition: true,
-          };
-        }
-        if (localY >= bottomBandStart) {
-          return {
-            partitionId: partition.id,
-            edgePosition: "bottom",
-            insertIndex: i + 1,
-            side,
-            willCreatePartition: true,
-          };
-        }
-        return {
-          partitionId: partition.id,
-          edgePosition: "middle",
-          insertIndex: i,
-          side,
-          willCreatePartition: false,
-        };
-      }
-
-      accumulatedHeight += partition.heightRatio;
-    }
-
-    return { partitionId: null, edgePosition: null, insertIndex: null, side: null, willCreatePartition: false };
   };
 
   // 拖拽功能
@@ -314,50 +237,44 @@ export function DockWindow({
 
         setPosition(constrainedPosition);
 
-        // 检测目标侧边栏
-        let targetSide: "left" | "right" | null = null;
-        const sidebarWidth = 360; // 侧边栏展开时的宽度
-        const isNearLeft = constrainedPosition.x < SNAP_SIDEBAR_THRESHOLD;
-        const isNearRight = constrainedPosition.x > window.innerWidth - sidebarWidth - SNAP_SIDEBAR_THRESHOLD;
+        const targetSide = detectNearDockSide(
+          e.clientX,
+          SNAP_SIDEBAR_THRESHOLD,
+          sidebarLayoutOpts,
+        );
 
-        if (isNearLeft) {
-          targetSide = "left";
-        } else if (isNearRight) {
-          targetSide = "right";
-        }
-
-        // 检测分区吸附目标
-        // 使用鼠标位置而不是窗口位置来检测，这样更准确
-        let snapTarget: PartitionSnapTarget | null = null;
         if (targetSide) {
-          const partitions = targetSide === "left" ? leftPartitions : rightPartitions;
-          // 使用鼠标的实际位置来检测吸附目标
-          const mousePosition = { x: e.clientX, y: e.clientY };
-          snapTarget = detectPartitionSnapTarget(mousePosition, targetSide, partitions);
-        }
+          const layout = getSidebarSnapLayout(targetSide, sidebarLayoutOpts);
+          const partitions =
+            targetSide === "left" ? leftPartitions : rightPartitions;
+          const relativeY = e.clientY - layout.containerTop;
+          const hit = findPartitionAtRelativeY(
+            relativeY,
+            partitions,
+            layout.containerHeight,
+          );
+          const onGuide = isPointerOnDockGuide(e.clientX, e.clientY);
 
-        // 更新吸附提示
-        if (snapTarget && snapTarget.partitionId) {
-          setShowSnapIndicator(true);
-          setPartitionSnapTarget(snapTarget);
-          showSnapIndicatorRef.current = true;
-          partitionSnapTargetRef.current = snapTarget;
-
-          // 为了向后兼容，也设置旧的snapArea（转换为新的分区位置格式）
-          if (snapTarget.side === "left") {
-            setSnapArea(snapTarget.edgePosition === "top" ? "left-0" : "left-1");
-            snapAreaRef.current = snapTarget.edgePosition === "top" ? "left-0" : "left-1";
-          } else {
-            setSnapArea(snapTarget.edgePosition === "top" ? "right-0" : "right-1");
-            snapAreaRef.current = snapTarget.edgePosition === "top" ? "right-0" : "right-1";
+          if (!onGuide && hit) {
+            guideAnchorRef.current = {
+              side: targetSide,
+              partitionId: hit.partition.id,
+              partitionIndex: hit.index,
+              layout,
+            };
+            setDockGuideAnchorRect(
+              getPartitionViewportRect(hit.index, partitions, layout),
+            );
           }
+
+          setDockGuideVisible(true);
+          setDockGuideSide(targetSide);
+          setDockGuideLayout(layout);
+
+          const zone = dockGuideZoneFromPoint(e.clientX, e.clientY);
+          applyGuideSelection(zone, guideAnchorRef.current);
         } else {
-          setShowSnapIndicator(false);
-          setPartitionSnapTarget(null);
-          setSnapArea(null);
-          showSnapIndicatorRef.current = false;
-          partitionSnapTargetRef.current = null;
-          snapAreaRef.current = null;
+          clearDockGuide();
         }
       }
 
@@ -375,27 +292,30 @@ export function DockWindow({
         setResizeEdge(null);
         resizeStartRef.current = null;
 
-        // 释放瞬间再计算一次吸附目标，避免 state 异步导致判定落后
         let freshTarget: PartitionSnapTarget | null = null;
         if (isDragging) {
-          const sidebarWidth = 360;
-          const side =
-            e.clientX < SNAP_SIDEBAR_THRESHOLD
-              ? "left"
-              : e.clientX > window.innerWidth - sidebarWidth - SNAP_SIDEBAR_THRESHOLD
-                ? "right"
-                : null;
-          if (side) {
-            const stateNow = useDockStore.getState();
-            const partitionsNow = side === "left" ? stateNow.leftPartitions : stateNow.rightPartitions;
-            const releasePos = { x: e.clientX, y: e.clientY };
-            const detected = detectPartitionSnapTarget(releasePos, side, partitionsNow);
-            if (detected.partitionId) freshTarget = detected;
+          const releaseZone = dockGuideZoneFromPoint(e.clientX, e.clientY);
+          const anchor = guideAnchorRef.current;
+          if (releaseZone && anchor) {
+            const partitions =
+              anchor.side === "left" ? leftPartitions : rightPartitions;
+            const partition = partitions[anchor.partitionIndex];
+            if (partition) {
+              freshTarget = buildSnapTargetFromGuideZone(
+                releaseZone,
+                partition,
+                anchor.partitionIndex,
+                anchor.side,
+              );
+            }
           }
         }
 
+        const releaseZone = dockGuideZoneFromPoint(e.clientX, e.clientY);
         const effectiveTarget = freshTarget ?? partitionSnapTargetRef.current;
-        const effectiveShowSnap = showSnapIndicatorRef.current || !!effectiveTarget?.partitionId;
+        const effectiveShowSnap =
+          !!effectiveTarget?.partitionId &&
+          (!!releaseZone || showSnapIndicatorRef.current);
 
         // 检查是否应该吸附
         if (isDragging && effectiveShowSnap && effectiveTarget && effectiveTarget.side) {
@@ -416,23 +336,13 @@ export function DockWindow({
             }
           }
 
-          setShowSnapIndicator(false);
-          setPartitionSnapTarget(null);
-          setSnapArea(null);
-          showSnapIndicatorRef.current = false;
-          partitionSnapTargetRef.current = null;
-          snapAreaRef.current = null;
+          clearDockGuide();
           return;
         }
 
-        // 向后兼容：如果没有分区吸附目标，但固定区域吸附目标存在
-        if (isDragging && effectiveShowSnap && snapAreaRef.current) {
+        if (isDragging && snapAreaRef.current) {
           snapPanelToArea(initialState.id, snapAreaRef.current);
-          setShowSnapIndicator(false);
-          setSnapArea(null);
-          showSnapIndicatorRef.current = false;
-          partitionSnapTargetRef.current = null;
-          snapAreaRef.current = null;
+          clearDockGuide();
           return;
         }
 
@@ -452,12 +362,7 @@ export function DockWindow({
           });
         }
 
-        setShowSnapIndicator(false);
-        setPartitionSnapTarget(null);
-        setSnapArea(null);
-        showSnapIndicatorRef.current = false;
-        partitionSnapTargetRef.current = null;
-        snapAreaRef.current = null;
+        clearDockGuide();
       }
     };
 
@@ -484,6 +389,10 @@ export function DockWindow({
     assignPanelToPartition,
     leftPartitions,
     rightPartitions,
+    leftSidebarOpen,
+    rightSidebarOpen,
+    leftSidebarWidth,
+    rightSidebarWidth,
   ]);
 
   // 窗口激活时提升层级；光电多窗时点任意处即记入「当前选中」
@@ -534,21 +443,28 @@ export function DockWindow({
       }}
       onMouseDown={handleFocus}
     >
-      {/* 新分区预览指示器 */}
-      {showSnapIndicator && partitionSnapTarget && partitionSnapTarget.willCreatePartition && (
-        <NewPartitionPreview
-          target={partitionSnapTarget}
-          partitions={partitionSnapTarget.side === "left" ? leftPartitions : rightPartitions}
+      {dockGuideVisible && dockGuideAnchorRect && dockGuideSide ? (
+        <DockGuideDashboard
+          anchorRect={dockGuideAnchorRect}
+          side={dockGuideSide}
+          activeZone={dockGuideZone}
+          onZoneChange={(zone) => applyGuideSelection(zone, guideAnchorRef.current)}
         />
-      )}
+      ) : null}
 
-      {/* 已有分区高亮指示器 */}
-      {showSnapIndicator && partitionSnapTarget && !partitionSnapTarget.willCreatePartition && (
-        <ExistingPartitionHighlight
+      {showSnapIndicator &&
+      partitionSnapTarget &&
+      dockGuideLayout &&
+      dockGuideZone ? (
+        <DockPartitionDropPreview
           target={partitionSnapTarget}
-          partitions={partitionSnapTarget.side === "left" ? leftPartitions : rightPartitions}
+          partitions={
+            partitionSnapTarget.side === "left" ? leftPartitions : rightPartitions
+          }
+          layout={dockGuideLayout}
+          activeZone={dockGuideZone}
         />
-      )}
+      ) : null}
 
       {chromeless ? (
         <>

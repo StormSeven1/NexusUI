@@ -16,6 +16,7 @@ import { useUnifiedWsFeed } from "@/hooks/useUnifiedWsFeed";
 import { useDbAreasPoll } from "@/hooks/useDbAreasPoll";
 import { AlarmSpeechAnnouncer } from "@/components/system/AlarmSpeechAnnouncer";
 import { TaskStatusChatSseHost } from "@/components/system/TaskStatusChatSseHost";
+import { TaskStatusVerifyChatHost } from "@/components/system/TaskStatusVerifyChatHost";
 import { VerifiedTrackSyncHost } from "@/components/system/VerifiedTrackSyncHost";
 import { useTrackEvalAutoQuery } from "@/hooks/useTrackEvalAutoQuery";
 
@@ -27,6 +28,7 @@ export function AppShell() {
   return (
     <DockProvider>
       <TaskStatusChatSseHost />
+      <TaskStatusVerifyChatHost />
       <VerifiedTrackSyncHost />
       <AlarmSpeechAnnouncer />
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-nexus-bg-base">

@@ -17,16 +17,26 @@ type Props = {
   onDismiss: () => void;
   /** 打开文件路径（目录选择器定位到当前保存目录） */
   onOpen: () => void | Promise<void>;
-  /** 采集：业务预留（录屏） */
+  /** 采集：上传至采集仓库 */
   onCollect: () => void | Promise<void>;
-  /** 分析：截图专用 */
+  /** 分析：截图 VLM 研判 */
   onAnalyze: () => void | Promise<void>;
+  /** 截图时是否显示「分析」按钮（录像预览仅显示「采集」） */
+  showAnalyze?: boolean;
 };
 
 /**
- * 贴在右侧截图工具列左侧的无边框小预览：从左侧滑入，下图「采集」「分析」。
+ * 贴在右侧截图工具列左侧的无边框小预览：从左侧滑入，下方「打开」「采集」「分析」。
+ * 对齐 Qt `Sink_Msgbox`：截图/录像后均可采集；截图额外支持分析。
  */
-export function EoSnapshotPreviewPopout({ preview, onDismiss, onOpen, onCollect, onAnalyze }: Props) {
+export function EoSnapshotPreviewPopout({
+  preview,
+  onDismiss,
+  onOpen,
+  onCollect,
+  onAnalyze,
+  showAnalyze = preview.kind === "snapshot",
+}: Props) {
   const [entered, setEntered] = useState(false);
   const [busy, setBusy] = useState<"open" | "collect" | "analyze" | null>(null);
 
@@ -87,7 +97,7 @@ export function EoSnapshotPreviewPopout({ preview, onDismiss, onOpen, onCollect,
           />
         )}
       </div>
-      <div className="flex items-center gap-1.5 pt-0.5">
+      <div className="flex items-center gap-1 pt-0.5">
         <Button
           type="button"
           variant="secondary"
@@ -103,10 +113,21 @@ export function EoSnapshotPreviewPopout({ preview, onDismiss, onOpen, onCollect,
           size="xs"
           className="h-7 flex-1 rounded-none border-0 bg-sky-600/80 text-[10px] text-white hover:bg-sky-500/90"
           disabled={busy !== null}
-          onClick={() => void run(preview.kind === "snapshot" ? "analyze" : "collect")}
+          onClick={() => void run("collect")}
         >
-          {busy === "collect" ? "…" : busy === "analyze" ? "…" : preview.kind === "snapshot" ? "分析" : "采集"}
+          {busy === "collect" ? "…" : "采集"}
         </Button>
+        {showAnalyze ? (
+          <Button
+            type="button"
+            size="xs"
+            className="h-7 flex-1 rounded-none border-0 bg-violet-600/75 text-[10px] text-white hover:bg-violet-500/90"
+            disabled={busy !== null}
+            onClick={() => void run("analyze")}
+          >
+            {busy === "analyze" ? "…" : "分析"}
+          </Button>
+        ) : null}
       </div>
     </div>
   );

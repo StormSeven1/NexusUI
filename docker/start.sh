@@ -10,6 +10,7 @@ echo "========================================"
 BACKEND_PORT="${BACKEND_PORT:-27003}"
 FRONTEND_PORT="${FRONTEND_PORT:-22301}"
 export BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}"
+export NEXT_PUBLIC_APP_CONFIG_URL="${NEXT_PUBLIC_APP_CONFIG_URL:-/app-config.json}"
 export WATCHPACK_POLLING="${WATCHPACK_POLLING:-true}"
 export PORT="${FRONTEND_PORT}"
 
@@ -43,6 +44,7 @@ if [[ "${BACKEND_ONLY:-0}" == "1" ]]; then
 elif [ "$DEV_MODE" = "1" ]; then
     echo "开发模式：nexus-ui + Custombackend"
     cd /workspace/nexus-ui
+    echo "[nexus-ui dev] NEXT_PUBLIC_APP_CONFIG_URL=${NEXT_PUBLIC_APP_CONFIG_URL}"
     echo "[nexus-ui dev] NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-}"
     echo "[nexus-ui dev] NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}"
     if [[ "${NEXUS_UI_CLEAN_NEXT:-0}" == "1" ]]; then
@@ -78,6 +80,7 @@ else
         echo "❌ TCP ${FRONTEND_PORT} 仍被占用，已跳过 next start。"
     else
         echo "[nexus-ui] 构建时将固化 NEXT_PUBLIC_*（须由 docker run -e 或 nexus-ui/.env.local 提供）"
+        echo "[nexus-ui] NEXT_PUBLIC_APP_CONFIG_URL=${NEXT_PUBLIC_APP_CONFIG_URL}"
         echo "[nexus-ui] NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-}"
         echo "[nexus-ui] NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}"
         npm run build

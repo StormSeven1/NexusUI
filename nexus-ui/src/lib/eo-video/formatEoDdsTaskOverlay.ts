@@ -5,7 +5,7 @@ import type { DroneTelemetry } from "@/stores/drone-store";
  * 与 WatchSys `CMainWindow::slot_dealCameraStatus` 中 TargetCollectionIMChildTask 分支一致：
  * DDS `ExecutionState` 枚举首项为 EXECUTING（值为 0）；非 0 或 COMPLETED/FAILED 等视为已结束 → 空闲中。
  */
-function isCameraExecutionActive(executionState: unknown): boolean {
+export function isCameraExecutionActive(executionState: unknown): boolean {
   if (executionState === null || executionState === undefined) return false;
   if (typeof executionState === "number" && Number.isFinite(executionState)) {
     return Math.trunc(executionState) === 0;

@@ -1,0 +1,255 @@
+syntax = "proto3";
+
+package track.eval.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// ---------- Request ----------
+
+message EvaluateTrackQualityRequest {
+  google.protobuf.Timestamp start_time = 1;
+  google.protobuf.Timestamp end_time = 2;
+  EvaluationScope scope = 3;
+  repeated MetricType metric_types = 4;
+  repeated int32 sensor_ids = 10;
+  RegionFilter region = 11;
+  TrackIdFilter track_id_filter = 12;
+  AttributeRangeFilter attr_range = 13;
+  EvaluationOptions options = 20;
+}
+
+enum EvaluationScope {
+  EVALUATION_SCOPE_UNSPECIFIED = 0;
+  SEA = 1;
+  AIR = 2;
+  BOTH = 3;
+}
+
+enum MetricType {
+  METRIC_TYPE_UNSPECIFIED = 0;
+  ACCURACY = 1;
+  RECALL = 2;
+  FALSE_ALARM = 3;
+  STABILITY_POINT = 10;
+  STABILITY_DURATION = 11;
+  BREAK_COUNT = 12;
+  CHANGE_BATCH_COUNT = 13;
+  MAX_TRACKING_DURATION = 14;
+  DISTANCE_HEIGHT_ERROR = 20;
+  AZIMUTH_ERROR = 21;
+  ELEVATION_ERROR = 22;
+  COURSE_ERROR = 23;
+  SPEED_ERROR = 24;
+}
+
+message RegionFilter {
+  enum Type {
+    UNSPECIFIED = 0;
+    RECT = 1;
+    POLYGON = 2;
+  }
+  Type type = 1;
+  BoundingBox bounding_box = 2;
+  repeated GeoPoint polygon_points = 3;
+}
+
+message BoundingBox {
+  double min_longitude = 1;
+  double max_longitude = 2;
+  double min_latitude = 3;
+  double max_latitude = 4;
+}
+
+message GeoPoint {
+  double longitude = 1;
+  double latitude = 2;
+}
+
+message TrackIdFilter {
+  oneof id {
+    int64 fused_track_id = 1;
+    int64 unique_id = 2;
+  }
+}
+
+message AttributeRangeFilter {
+  optional double min_azimuth = 1;
+  optional double max_azimuth = 2;
+  optional double min_distance = 3;
+  optional double max_distance = 4;
+  optional double min_speed = 5;
+  optional double max_speed = 6;
+  optional double min_course = 7;
+  optional double max_course = 8;
+  optional double min_size = 9;
+  optional double max_size = 10;
+}
+
+message EvaluationOptions {
+  int32 accuracy_window_seconds = 1;
+  int32 break_consecutive_threshold = 2;
+  SeaFusionFilter sea_fusion_filter = 3;
+  AirFusionFilter air_fusion_filter = 4;
+  bool require_reference = 5;
+}
+
+enum SeaFusionFilter {
+  SEA_FUSION_ALL = 0;
+  SEA_FUSION_WITH_AIS = 1;
+  SEA_FUSION_WITHOUT_AIS = 2;
+}
+
+enum AirFusionFilter {
+  AIR_FUSION_ALL = 0;
+  AIR_FUSION_WITH_SELF_REPORT = 1;
+  AIR_FUSION_WITHOUT_SELF_REPORT = 2;
+}
+
+// ---------- Response ----------
+
+enum EvaluationStatus {
+  OK = 0;
+  MISSING_AIS = 1;
+  MISSING_SELF_REPORT = 2;
+  MISSING_REFERENCE_DATA = 3;
+  INVALID_TIME_RANGE = 4;
+  INTERNAL_ERROR = 5;
+}
+
+message EvaluateTrackQualityResponse {
+  EvaluationStatus status = 1;
+  string error_message = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp end_time = 4;
+  bool time_range_defaulted = 5;
+  uint32 track_point_count = 6;
+  int64 evaluated_at_unix_ms = 7;
+  FusionEffectMetrics fusion_effect = 10;
+  ContinuityMetrics continuity = 11;
+  ErrorMetrics errors = 12;
+}
+
+message FusionEffectMetrics {
+  repeated AccuracyItem bird_track_accuracy = 1;
+  repeated AccuracyItem ku_radar_accuracy = 2;
+  repeated RecallItem bird_track_recall = 3;
+  repeated RecallItem ku_radar_recall = 4;
+  repeated FalseAlarmItem bird_false_alarm = 5;
+  repeated FalseAlarmItem ku_false_alarm = 6;
+  StabilitySummary sea_stability = 7;
+  StabilitySummary air_stability = 8;
+}
+
+message AccuracyItem {
+  string radar_track_id = 1;
+  double accuracy = 2;
+  uint32 fused_count = 3;
+  uint32 radar_count = 4;
+  repeated string fusion_track_ids = 5;
+  repeated string self_report_ids = 6;
+}
+
+message RecallItem {
+  string self_report_id = 1;
+  double recall = 2;
+  uint32 bird_or_ku_count = 3;
+  uint32 fusion_count = 4;
+}
+
+message FalseAlarmItem {
+  string radar_track_id = 1;
+  double false_alarm = 2;
+  uint32 fused_count = 3;
+  uint32 radar_count = 4;
+}
+
+message StabilitySummary {
+  double avg_stability = 1;
+  repeated StabilityByReferenceItem by_reference = 2;
+}
+
+message StabilityByReferenceItem {
+  string reference_id = 1;
+  double stability = 2;
+}
+
+message ContinuityMetrics {
+  StabilityDurationSummary sea_stability_duration = 1;
+  StabilityDurationSummary air_stability_duration = 2;
+  repeated BreakCountItem sea_break_count = 3;
+  repeated BreakCountItem air_break_count = 4;
+  repeated ChangeBatchItem sea_change_batch = 5;
+  repeated ChangeBatchItem air_change_batch = 6;
+  repeated MaxTrackingItem sea_max_tracking = 7;
+  repeated MaxTrackingItem air_max_tracking = 8;
+  double sea_break_count_avg = 9;
+  double air_break_count_avg = 10;
+  double sea_change_batch_count_avg = 11;
+  double air_change_batch_count_avg = 12;
+  double sea_max_tracking_duration_avg = 13;
+  double air_max_tracking_duration_avg = 14;
+}
+
+message StabilityDurationSummary {
+  double avg = 1;
+  repeated StabilityByReferenceItem by_reference = 2;
+}
+
+message BreakCountItem {
+  string reference_id = 1;
+  uint32 break_count = 2;
+}
+
+message ChangeBatchItem {
+  string reference_id = 1;
+  uint32 change_batch_count = 2;
+}
+
+message MaxTrackingItem {
+  string reference_id = 1;
+  double max_duration_ratio = 2;
+  string longest_radar_id = 3;
+}
+
+message ErrorMetrics {
+  repeated ErrorByReferenceItem sea_distance = 1;
+  repeated ErrorByReferenceItem sea_height = 2;
+  repeated ErrorByReferenceItem air_distance = 3;
+  repeated ErrorByReferenceItem air_height = 4;
+  repeated ErrorByReferenceItem sea_azimuth = 5;
+  repeated ErrorByReferenceItem air_azimuth = 6;
+  repeated ErrorByReferenceItem sea_elevation = 7;
+  repeated ErrorByReferenceItem air_elevation = 8;
+  repeated ErrorByReferenceItem sea_course = 9;
+  repeated ErrorByReferenceItem air_course = 10;
+  repeated ErrorByReferenceItem sea_speed = 11;
+  repeated ErrorByReferenceItem air_speed = 12;
+}
+
+message ErrorByReferenceItem {
+  string reference_id = 1;
+  double fusion_avg = 2;
+  double fusion_rmse = 3;
+  double radar1_avg = 4;
+  double radar1_rmse = 5;
+  double radar2_avg = 6;
+  double radar2_rmse = 7;
+}
+
+message ProgressEvent {
+  string stage = 1;
+  uint32 percent = 2;
+  string message = 3;
+}
+
+message EvaluateTrackQualityEvent {
+  oneof payload {
+    ProgressEvent progress = 1;
+    EvaluateTrackQualityResponse result = 2;
+  }
+}
+
+service TrackEvaluationService {
+  rpc EvaluateTrackQuality(EvaluateTrackQualityRequest) returns (EvaluateTrackQualityResponse);
+  rpc EvaluateTrackQualityStream(EvaluateTrackQualityRequest) returns (stream EvaluateTrackQualityEvent);
+}

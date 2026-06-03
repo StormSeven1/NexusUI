@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { isEoVideoDebugUiEnabled } from "@/lib/eo-video/eoVideoDebugUi";
 import type { EoWebCodecsPresentation } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
+import { isEoVideoHardwarePassthroughEnabled } from "@/lib/eo-video/eoVideoHardwarePassthrough";
 import { isEoVideoWebCodecsCanvasEnabled } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import type { EoVideoIceServer } from "@/lib/eo-video/types";
@@ -32,7 +33,7 @@ export interface EoVideoViewportProps {
  * 默认：画面由硬件 `<video>` 解码。
  *
  * `NEXT_PUBLIC_EO_VIDEO_WEBCODECS_CANVAS=true` 且传入 `encodedSyncHub` 时：增加 WebCodecs + Canvas 主显示，
- * `<video>` 仅用 `opacity-0` 隐藏（保留解码与尺寸），避免过去 `visibility:invisible` + Canvas 叠层导致整区黑屏的情况。
+ * `<video>` 仅用 `opacity-0` 隐藏（默认仍硬件解码）；`HARDWARE_PASSTHROUGH=false` 时不绑流、不解码，仅 WebCodecs Canvas 出画。
  * 检测同步仍走 Insertable Streams → encodedSyncHub。
  */
 export function EoVideoViewport({
@@ -252,6 +253,7 @@ function EoVideoViewportWebCodecs({
             PC {connectionState} · ICE {iceConnectionState}
             {encodedSyncHub ? " · syncHub" : ""}
             {webCodecsActive ? " · WebCodecsCanvas" : " · WebCodecs…"}
+            {!isEoVideoHardwarePassthroughEnabled() ? " · noVideoPassthrough" : ""}
           </span>
           {error ? <span className="text-nexus-error">ERR {error}</span> : null}
         </div>

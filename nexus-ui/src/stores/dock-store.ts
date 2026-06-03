@@ -30,6 +30,7 @@ import {
 } from "@/components/dock/types";
 import { getDockableWindows } from "@/components/dock/windowRegistry";
 import { createEoElectroOpticalDefaultPanelStates } from "@/lib/eo-video/eoElectroOpticalDockPool";
+import type { DockLayoutSnapshot } from "@/lib/dock/dock-layout-snapshot";
 
 const DOCK_LAYOUT_STORAGE_KEY = "nexus-dock-layout-v1";
 const DEFAULT_LEFT_SIDEBAR_WIDTH = 300;
@@ -215,6 +216,52 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     displayOrder: 9,
   },
 ];
+
+/** 出厂默认布局（恢复「默认布局」时使用） */
+export const DOCK_INITIAL_LAYOUT_SNAPSHOT: DockLayoutSnapshot = {
+  panels: structuredClone(DEFAULT_PANELS),
+  activePanelId: null,
+  nextZIndex: 100,
+  leftUpperPanelTab: "tracks",
+  leftLowerPanelTab: "electro-optical",
+  rightUpperPanelTab: "target-profile",
+  rightLowerPanelTab: "chat",
+  leftPartitions: [
+    {
+      id: "left-0",
+      side: "left",
+      index: 0,
+      heightRatio: 1,
+      currentPanelId: "tracks",
+    },
+  ],
+  rightPartitions: [
+    {
+      id: "right-0",
+      side: "right",
+      index: 0,
+      heightRatio: 1 / 3,
+      currentPanelId: "target-profile",
+    },
+    {
+      id: "right-1",
+      side: "right",
+      index: 1,
+      heightRatio: 2 / 3,
+      currentPanelId: "chat",
+    },
+  ],
+  leftSidebarOpen: true,
+  rightSidebarOpen: true,
+  leftSidebarSplitRatio: 0.5,
+  rightSidebarSplitRatio: 1 / 3,
+  leftSidebarWidth: DEFAULT_LEFT_SIDEBAR_WIDTH,
+  rightSidebarWidth: DEFAULT_RIGHT_SIDEBAR_WIDTH,
+};
+
+export function getDockInitialLayoutSnapshot(): DockLayoutSnapshot {
+  return structuredClone(DOCK_INITIAL_LAYOUT_SNAPSHOT);
+}
 
 // ============ Store 创建 ============
 
@@ -1362,7 +1409,7 @@ export function getAllPanelConfigs(): PanelConfig[] {
  * 在应用启动时自动调用，从固定区域迁移到动态分区
  */
 /** 将 DEFAULT_PANELS 中尚未出现在持久化布局里的面板补进 panels（如新增 knowledge-base） */
-function mergeMissingDefaultPanels() {
+export function mergeMissingDefaultPanels() {
   const state = useDockStore.getState();
   const existingIds = new Set(state.panels.map((p) => p.id));
   const missing = DEFAULT_PANELS.filter((p) => !existingIds.has(p.id));

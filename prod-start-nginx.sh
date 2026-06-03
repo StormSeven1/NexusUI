@@ -3,7 +3,7 @@
 # - 外部访问: https://<host>:22401
 # - 内部前端: http://127.0.0.1:22411 (next start)
 # - 后端保持: http://127.0.0.1:27004
-# - public/app-config.json 的 websocket / http.backendUrl 由本脚本自动写入（可选 APP_CONFIG_LAN_HOST）
+# - public/app-config.prod.json 的 websocket / http.backendUrl 由本脚本写入（与 dev 的 app-config.dev.json 分离）
 
 set -euo pipefail
 
@@ -17,7 +17,7 @@ BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 # 航迹明文 WS upstream（Nginx `location /wss-track/` → 该主机端口上的 `/ws`）。
 # 默认 **等于 BACKEND_PORT**（生产 xk_docker_prod 内 Custombackend 与航迹同源 **27004**；与 `dev-start.sh` 单机 **27003** 不同属刻意分工）。
 # 若航迹单独起在其它端口：`export TRACK_WS_BACKEND_PORT=26003` 等覆盖。
-# 须与 `public/app-config.json` → `websocket.url` / `http.backendUrl` 端口一致，否则 502 或 HTTPS 混合内容拦截。
+# 须与 `public/app-config.prod.json` → `websocket.url` / `http.backendUrl` 端口一致，否则 502 或 HTTPS 混合内容拦截。
 TRACK_WS_BACKEND_PORT="${TRACK_WS_BACKEND_PORT:-${BACKEND_PORT}}"
 MQTT_WS_BACKEND_PORT="${MQTT_WS_BACKEND_PORT:-8083}"
 EO_DETECTION_WS_BACKEND_PORT="${EO_DETECTION_WS_BACKEND_PORT:-2088}"
@@ -41,8 +41,8 @@ echo "   TRACK_WS_BACKEND_PORT=${TRACK_WS_BACKEND_PORT}（/wss-track upstream �
 
 chmod +x "$ROOT/docker/apply-app-config-endpoints.sh" 2>/dev/null || true
 _cfg_host="${APP_CONFIG_LAN_HOST:-${_tunnel_ip}}"
-echo "== 写入 nexus-ui/public/app-config.json（生产: API ${BACKEND_PORT} / 航迹 WS ${TRACK_WS_BACKEND_PORT} @ ${_cfg_host}）=="
-"$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BACKEND_PORT" "$TRACK_WS_BACKEND_PORT"
+echo "== 写入 nexus-ui/public/app-config.prod.json（生产: API ${BACKEND_PORT} / 航迹 WS ${TRACK_WS_BACKEND_PORT} @ ${_cfg_host}）=="
+APP_CONFIG_OUT=app-config.prod.json "$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BACKEND_PORT" "$TRACK_WS_BACKEND_PORT"
 
 NGINX_DIR="$ROOT/docker/nginx"
 CERT_DIR="$NGINX_DIR/certs"

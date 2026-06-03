@@ -20,6 +20,44 @@ const WORK_MODE_ENUM: Record<string, number> = {
 };
 
 const SYSTEM_STATUS_PATH = /^\/api\/system\/status\/?$/;
+const TASK_STATUS_PATH = /^\/api\/alarms\/([^/]+)\/task-status\/?$/;
+
+function previewRequestBody(buf: Buffer, maxLen = 512): string {
+  if (buf.length === 0) return "(empty)";
+  const s = buf.toString("utf8");
+  return s.length > maxLen ? `${s.slice(0, maxLen)}…` : s;
+}
+
+function previewVerifyFields(parsed: unknown): Record<string, unknown> | null {
+  if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const o = parsed as Record<string, unknown>;
+  const keys = [
+    "EntityId",
+    "entityId",
+    "entity_id",
+    "ownerEntityId",
+    "owner_entity_id",
+    "cameraEntityId",
+    "camera_entity_id",
+    "cameraIndex",
+    "camera_index",
+    "CameraIndex",
+    "trackID",
+    "track_id",
+    "trackId",
+    "taskStatus",
+    "task_status",
+  ];
+  const pick: Record<string, unknown> = {};
+  for (const k of keys) {
+    if (k in o) pick[k] = o[k];
+  }
+  return Object.keys(pick).length > 0 ? pick : null;
+}
+
+function logVerifyHttp(event: string, detail: Record<string, unknown>): void {
+  console.info(`[task-status][http] ${event}`, detail);
+}
 
 function backendBaseUrl(): string {
   const u =
@@ -309,28 +347,42 @@ export function startTaskStatusHttpListener(): void {
       return;
     }
 
-    const m = pathname.match(/^\/api\/alarms\/([^/]+)\/task-status\/?$/);
+    const m = pathname.match(TASK_STATUS_PATH);
     if (!m) {
+      if (/task-status|\/api\/alarms/i.test(pathname)) {
+        console.warn("[task-status][http] 路径不匹配 404", {
+          method,
+          pathname,
+          url: req.url ?? "",
+          remote: req.socket.remoteAddress ?? null,
+        });
+      }
       sendJson(res, 404, { code: 404, message: "请求的资源不存在", data: null });
       return;
     }
 
+    const alarmId = decodeURIComponent(m[1]);
+    const remote = req.socket.remoteAddress ?? null;
+
+    logVerifyHttp("请求到达", { method, pathname, alarmId, remote });
+
     if (method !== "PUT" && method !== "POST") {
+      console.warn("[task-status][http] Method 不允许", { method, pathname, alarmId, remote });
       sendJson(res, 405, { code: 405, message: "Method Not Allowed", data: null });
       return;
     }
 
     if (!verifySecret(req.headers)) {
+      console.warn("[task-status][http] 鉴权失败", { method, pathname, alarmId, remote });
       sendJson(res, 401, { code: 401, message: "unauthorized", data: null });
       return;
     }
-
-    const alarmId = decodeURIComponent(m[1]);
 
     let bodyBuf: Buffer;
     try {
       bodyBuf = await readBody(req);
     } catch {
+      console.warn("[task-status][http] 读取请求体失败", { alarmId, remote });
       sendJson(res, 400, { code: 400, message: "读取请求体失败", data: null });
       return;
     }
@@ -340,16 +392,35 @@ export function startTaskStatusHttpListener(): void {
       try {
         parsed = JSON.parse(bodyBuf.toString("utf8"));
       } catch {
+        console.warn("[task-status][http] JSON 解析失败", {
+          alarmId,
+          remote,
+          bodyBytes: bodyBuf.length,
+          bodyPreview: previewRequestBody(bodyBuf),
+        });
         sendJson(res, 400, { code: 400, message: "JSON格式不正确", data: null });
         return;
       }
     }
 
+    logVerifyHttp("已解析 JSON", {
+      alarmId,
+      remote,
+      bodyBytes: bodyBuf.length,
+      fields: previewVerifyFields(parsed),
+    });
+
     const result = await processTaskStatusIngest(alarmId, parsed);
     if (!result.ok) {
+      const msg =
+        result.body && typeof result.body === "object" && "message" in result.body
+          ? String((result.body as { message?: unknown }).message ?? "")
+          : "";
+      logVerifyHttp("业务拒绝", { alarmId, remote, status: result.status, message: msg });
       sendJson(res, result.status, result.body);
       return;
     }
+    logVerifyHttp("响应 200", { alarmId, remote });
     sendJson(res, 200, result.body);
   });
 

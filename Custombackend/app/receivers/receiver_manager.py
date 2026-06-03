@@ -27,6 +27,7 @@ TRACK_LAYER_KEY_BY_RECEIVER = {
     "dds_forward_radar_track1": "radar_wharf",
     "dds_forward_radar_track2": "radar_jingzi",
     "dds_forward_ais_track": "ais_track",
+    "dds_forward_uav_pose_track": "uav_pose_track",
 }
 
 

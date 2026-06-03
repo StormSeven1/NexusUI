@@ -38,7 +38,7 @@ export function ChatMessageList({
         <Bot size={20} className="text-sky-400" />
       </div>
       <div>
-        <p className="text-xs font-medium text-nexus-text-secondary">Nexus AI 助手</p>
+        <p className="text-xs font-medium text-nexus-text-secondary">作管智能体 助手</p>
         <p className="mt-1 text-[10px] leading-relaxed text-nexus-text-muted">
           输入指令与 AI 交互，支持态势查询、地图导航、目标分析等操作
         </p>

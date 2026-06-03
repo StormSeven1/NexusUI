@@ -58,8 +58,8 @@ export function resolveTrackFromAlarmTrackId(
 }
 
 /**
- * GIS 双击航迹查证：打开目标档案 + 智能助手，下发 POS 与重点关注采集任务。
- * 与 `Map2D` 航迹 `dblclick` 行为一致。
+ * GIS 双击航迹查证：聚焦目标档案并下发 POS / 重点关注采集任务（不自动切到智能助手）。
+ * 与 `Map2D` 航迹 `dblclick` 行为一致；查证 SSE 由 `TaskStatusVerifyChatHost` 写入会话。
  */
 async function dispatchThirdPartyPosTaskLogged(
   posFields: NonNullable<ReturnType<typeof buildThirdPartyPosFieldsFromTrack>>,
@@ -98,7 +98,6 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
   useTargetProfileStore.getState().setFocusedShowId(track.showID);
   const dock = useDockStore.getState();
   dock.assignPanelToPartition("target-profile", "right-0");
-  dock.assignPanelToPartition("chat", "right-1");
 
   const cfg = await useAppConfigStore.getState().ensureLoaded();
   const target = buildImportantTrackTargetFromTrack(track);
@@ -117,7 +116,7 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
     course: track.course ?? track.heading,
   });
   console.log(
-    "[map-track-dblclick] 分路说明：① ThirdPartyCamPosTask=高速相机 UDP 引导（targetId=uniqueID）；② TargetCollectionIMChildTask=各 PTZ 主相机重点关注（trackID=trackId）",
+    "[map-track-dblclick] 分路说明：① ThirdPartyCamPosTask=第三方高速相机 POS（targetId=uniqueID）；② TargetCollectionIMChildTask=光电 PTZ 主相机（hasPtz、无 parent、非第三方）",
   );
   console.log("[map-track-dblclick] ② IM 任务 targetcollection 预览", target);
 
@@ -150,7 +149,7 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
   const owners = listTrackTaskOwnerEntityIds();
   if (owners.length === 0) {
     console.warn(
-      "[map-track-dblclick] ② 无可用 owner（需 hasPtz=1 且 parent_device_id 为空），未发送 IM 任务",
+      "[map-track-dblclick] ② 无可用光电 PTZ 主相机（需 hasPtz、无 parent、非第三方），未发送 IM 任务",
     );
     await posPromise;
     console.groupEnd();

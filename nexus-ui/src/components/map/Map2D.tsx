@@ -103,9 +103,16 @@ import {
   THIRD_PARTY_PTZ_FOV_LAYER_IDS,
 } from "@/components/map/modules/third-party-ptz-fov-maplibre";
 import { useThirdPartyCameraGlobalMapFeed } from "@/hooks/useThirdPartyCameraGlobalMapFeed";
-import { resolveThirdPartyPtzFovRows } from "@/lib/third-party-ptz-fov";
+import {
+  collectThirdPartyEntityIdsForFov,
+  registerThirdPartyPtzFovFlushListener,
+  resolveThirdPartyPtzFovRows,
+} from "@/lib/third-party-ptz-fov";
 import { useEoThirdPartyUdpDevStatusStore } from "@/stores/eo-third-party-udp-dev-status-store";
+import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
+import { useDroneDeviceLayerStore } from "@/stores/drone-device-layer-store";
+import { useRadarDeviceLayerStore } from "@/stores/radar-device-layer-store";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import { TowerMaplibre, TOWER_LAYER_IDS, TOWER_ICON_LAYER } from "@/components/map/modules/tower-maplibre";
 import { DistanceMeasureMaplibre, DIST_MEASURE_LAYER_IDS } from "@/components/map/modules/distance-measure-maplibre";
@@ -643,7 +650,6 @@ export function Map2D() {
 
         const thirdPartyPtzFov = new ThirdPartyPtzFovModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
         thirdPartyPtzFov.install();
-        thirdPartyPtzFov.setDefaultRangeM(preCfg?.cameras?.defaultRange ?? 15000);
         thirdPartyPtzFovRef.current = thirdPartyPtzFov;
 
         /* 电侦（tower）：独立渲染模块，不与光电共用任何图层 */
@@ -673,7 +679,6 @@ export function Map2D() {
         radarCov.setAssetDispositionAccent(assetIconAccent);
         optoFov.setAssetDispositionAccent(assetIconAccent);
         optoFov.applyCamerasBundle(appCfg.cameras);
-        thirdPartyPtzFovRef.current?.setDefaultRangeM(appCfg.cameras?.defaultRange ?? 15000);
         towerMod.setAssetDispositionAccent(assetIconAccent);
         towerMod.applyFovStyleFromBundle(appCfg.tower);
         airportStatic.setAssetDispositionAccent(assetIconAccent);
@@ -689,7 +694,7 @@ export function Map2D() {
         /* `map.addImage` 预注册各图层 `layout["icon-image"]` 用到的位图；`hasImage` 为真则跳过。并行加载以缩短首帧等待 */
         await Promise.all([
           /* 航迹点符号：空/海/潜 × 敌我中（`getAllMarkerSymbolKeys`），供 `TRACK_SYMBOL` 等 */
-          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill, airBird, airFuse, opticallyVerified }) => {
+          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill, airBird, airFuse, seaFuse, opticallyVerified }) => {
             if (!map.hasImage(id)) {
               map.addImage(
                 id,
@@ -704,6 +709,7 @@ export function Map2D() {
                     airBird === true,
                     airFuse === true,
                     opticallyVerified === true,
+                    seaFuse === true,
                   ),
                   64,
                 ),
@@ -984,7 +990,7 @@ export function Map2D() {
               }
               const owners = listTrackTaskOwnerEntityIds();
               if (owners.length === 0) {
-                console.warn("[map-look-at-dblclick] 无可用 owner（需 hasPtz=1 且 parent_device_id 为空）");
+                console.warn("[map-look-at-dblclick] 无可用光电 PTZ 主相机（需 hasPtz、无 parent、非第三方）");
                 return;
               }
               const lookAt = {
@@ -1480,12 +1486,50 @@ export function Map2D() {
     };
   }, []);
 
+  /* 无人机：按设备自报位 / 航线 → GeoJSON */
+  useEffect(() => {
+    const flushDronePerDevice = () => {
+      const vis = useDroneDeviceLayerStore.getState().deviceVisibility;
+      dronesRef.current?.setPerDeviceVisibility(vis);
+      const adapted = adaptAssetsForMap(useAssetStore.getState().assets);
+      dronesRef.current?.setStaticDroneSitesFromAssets(adapted, assetDispositionAccentRef.current);
+    };
+    const unsubVis = useDroneDeviceLayerStore.subscribe(flushDronePerDevice);
+    flushDronePerDevice();
+    return () => {
+      unsubVis();
+    };
+  }, []);
+
+  /* 雷达：按设备距离环 / GIS 图标 → GeoJSON */
+  useEffect(() => {
+    const flushRadarPerDevice = () => {
+      const vis = useRadarDeviceLayerStore.getState().deviceVisibility;
+      radarCovRef.current?.setPerDeviceVisibility(vis);
+    };
+    const unsubVis = useRadarDeviceLayerStore.subscribe(flushRadarPerDevice);
+    flushRadarPerDevice();
+    return () => {
+      unsubVis();
+    };
+  }, []);
+
   /* 光电装备：按设备视场 / GIS 图标 + 面板白名单 → GeoJSON */
   useEffect(() => {
     const flushOptoPerDevice = () => {
       const vis = useOptoDeviceLayerStore.getState().deviceVisibility;
       const cam = useMapGisCameraMenuStore.getState();
       const panelIds = cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
+      optoFovRef.current?.setExcludeFromOptoFovIds(
+        new Set(
+          collectThirdPartyEntityIdsForFov(
+            cam.rows,
+            useAssetStore.getState().assets,
+            useEoCameraDdsStatusStore.getState().byEntityId,
+            useEoThirdPartyUdpDevStatusStore.getState().byEntityId,
+          ),
+        ),
+      );
       optoFovRef.current?.setPerDeviceVisibility(vis, panelIds);
       thirdPartyPtzFovRef.current?.setPerDeviceVisibility(vis, panelIds);
     };
@@ -1497,6 +1541,7 @@ export function Map2D() {
       const rows = resolveThirdPartyPtzFovRows(
         cam.rows,
         useAssetStore.getState().assets,
+        useEoCameraDdsStatusStore.getState().byEntityId,
         useEoThirdPartyUdpDevStatusStore.getState().byEntityId,
       );
       thirdPartyPtzFovRef.current?.setFromRows(rows);
@@ -1508,15 +1553,22 @@ export function Map2D() {
     });
     const unsubAssets = useAssetStore.subscribe(flushThirdPartyPtzFov);
     const unsubUdp = useEoThirdPartyUdpDevStatusStore.subscribe(flushThirdPartyPtzFov);
+    const unsubDds = useEoCameraDdsStatusStore.subscribe(flushThirdPartyPtzFov);
     const ttlTimer = setInterval(flushThirdPartyPtzFov, 1000);
     flushOptoPerDevice();
+    registerThirdPartyPtzFovFlushListener(flushThirdPartyPtzFov);
+    void useMapGisCameraMenuStore.getState().ensureLoaded().then(() => {
+      flushOptoPerDevice();
+      flushThirdPartyPtzFov();
+    });
     flushThirdPartyPtzFov();
-    void useMapGisCameraMenuStore.getState().ensureLoaded();
     return () => {
+      registerThirdPartyPtzFovFlushListener(null);
       unsubVis();
       unsubCam();
       unsubAssets();
       unsubUdp();
+      unsubDds();
       clearInterval(ttlTimer);
     };
   }, []);
@@ -1568,10 +1620,21 @@ export function Map2D() {
       }
 
       try {
+        radarCovRef.current?.setPerDeviceVisibility(useRadarDeviceLayerStore.getState().deviceVisibility);
         radarCovRef.current?.setFromAssets(adapted, assetSnap);
         {
           const cam = useMapGisCameraMenuStore.getState();
           const panelIds = cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
+          optoFovRef.current?.setExcludeFromOptoFovIds(
+        new Set(
+          collectThirdPartyEntityIdsForFov(
+            cam.rows,
+            useAssetStore.getState().assets,
+            useEoCameraDdsStatusStore.getState().byEntityId,
+            useEoThirdPartyUdpDevStatusStore.getState().byEntityId,
+          ),
+        ),
+      );
           optoFovRef.current?.setPerDeviceVisibility(
             useOptoDeviceLayerStore.getState().deviceVisibility,
             panelIds,
@@ -1580,6 +1643,7 @@ export function Map2D() {
         optoFovRef.current?.setFromAssets(adapted);
         towerModRef.current?.setFromAssets(adapted);
         airportStaticRef.current?.setFromAssets(adapted);
+        dronesRef.current?.setPerDeviceVisibility(useDroneDeviceLayerStore.getState().deviceVisibility);
         dronesRef.current?.setStaticDroneSitesFromAssets(adapted, assetDispositionAccentRef.current);
       } catch {
         /* style 过渡 / 切片加载中间态 */

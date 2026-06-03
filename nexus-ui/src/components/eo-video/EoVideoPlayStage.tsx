@@ -671,11 +671,22 @@ export function EoVideoPlayStage({
       }
 
       const video = videoRef.current;
-      const vw = video?.videoWidth ?? 0;
-      const vh = video?.videoHeight ?? 0;
+      const wc = webCodecsPresentationRef.current;
+      const vw =
+        (video?.videoWidth ?? 0) > 0
+          ? video!.videoWidth
+          : wc.active && wc.width > 0
+            ? wc.width
+            : overlayIntrinsic.w ?? 0;
+      const vh =
+        (video?.videoHeight ?? 0) > 0
+          ? video!.videoHeight
+          : wc.active && wc.height > 0
+            ? wc.height
+            : overlayIntrinsic.h ?? 0;
       if (vw <= 0 || vh <= 0) {
         setTaskHint("视频分辨率未就绪，稍后重试");
-        logClient(`中止：video 未就绪 vw=${vw} vh=${vh}`);
+        logClient(`中止：画面未就绪 vw=${vw} vh=${vh}`);
         return;
       }
 
@@ -753,7 +764,7 @@ export function EoVideoPlayStage({
         setTaskBusy(false);
       }
     },
-    [canSendSingleTrack, detectionBoxes, logClient, onSingleTrackTask, trimmedEntityId, videoRef],
+    [canSendSingleTrack, detectionBoxes, logClient, onSingleTrackTask, overlayIntrinsic.h, overlayIntrinsic.w, trimmedEntityId, videoRef],
   );
 
   useEffect(() => {

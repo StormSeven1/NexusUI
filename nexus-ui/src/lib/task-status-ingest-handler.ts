@@ -1,9 +1,9 @@
 import { getTaskStatusBridge } from "@/lib/task-status-bridge";
 import { taskStatusResponseLabel } from "@/lib/task-status-chat-format";
 import {
-  accumulateVerifyObjectKeyFromDescription,
+  accumulateVerifyObjectKeyFromDescriptionForSession,
   buildMinioPathStyleBrowserUrl,
-  resetVerifyObjectKeyAccumulator,
+  resetVerifyObjectKeyAccumulatorForSession,
 } from "@/lib/task-status-minio-acc.server";
 import {
   isTaskStatusMinioPresignConfigured,
@@ -11,6 +11,10 @@ import {
 } from "@/lib/task-status-minio-presign.server";
 import { resolveScreenshotMetadataFromDb } from "@/lib/task-status-minio-metadata-db.server";
 import type { TaskStatusRequestBody } from "@/lib/task-status-types";
+import {
+  buildVerifySessionKey,
+  resolveVerifyEntityRef,
+} from "@/lib/task-status-verify-entity-ref";
 
 function normalizeObjectKeySegments(k: string): string {
   return k.replace(/\/+/g, "/").replace(/^\//, "").replace(/\/$/, "");
@@ -37,21 +41,25 @@ function pickExplicitObjectKeyFromBody(o: Record<string, unknown>): string | und
  * - Next 路由 `/api/alarms/:id/task-status`
  * - 独立端口 `task-status-http-listener`（默认 7774）
  *
- * `minioBucket` / `minioObjectKey`（或别名 `bucket` / `objectKey`）可由业务写入 Body；
+ * `EntityId` / `entityId`：上报方实体 id（`camera_004`、`uav-007` 等），用于会话分组与实体识别；
+ * 标准光电可由此推导 `cameraIndex`；未带时仍接受 legacy `cameraIndex`。
  * 未带时若配置 `NEXUS_POSTGRES_URL`（或兼容旧名），则按 Qt `getLatestScreenshotMetadata` 查 `minio_multi_metadata`。
  * MinIO 凭证用于同源 `/api/task-status-image-proxy` 或预签名。
  */
 export async function processTaskStatusIngest(alarmId: string, body: unknown): Promise<TaskStatusIngestResult> {
   if (!alarmId.trim()) {
+    console.warn("[task-status][verify] 拒绝：alarmId 为空");
     return { ok: false, status: 400, body: { code: 400, message: "invalid alarmId", data: null } };
   }
 
   if (body == null || typeof body !== "object" || Array.isArray(body)) {
+    console.warn("[task-status][verify] 拒绝：请求体非 JSON 对象", { alarmId: alarmId.trim() });
     return { ok: false, status: 400, body: { code: 400, message: "请求体必须是JSON对象", data: null } };
   }
 
   const o = body as Record<string, unknown>;
   if (!("taskStatus" in o) && !("task_status" in o)) {
+    console.warn("[task-status][verify] 拒绝：缺少 taskStatus", { alarmId: alarmId.trim() });
     return { ok: false, status: 400, body: { code: 400, message: "缺少taskStatus字段", data: null } };
   }
 
@@ -68,6 +76,10 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
 
   const taskStatus = Number(o.taskStatus ?? o.task_status);
   if (!Number.isFinite(taskStatus)) {
+    console.warn("[task-status][verify] 拒绝：taskStatus 无效", {
+      alarmId: alarmId.trim(),
+      raw: o.taskStatus ?? o.task_status,
+    });
     return { ok: false, status: 400, body: { code: 400, message: "taskStatus 无效", data: null } };
   }
 
@@ -78,7 +90,9 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
       : taskIDL != null && taskIDL !== ""
         ? String(taskIDL)
         : undefined;
-  const cameraIndex = numField("cameraIndex", "camera_index", "CameraIndex");
+  const cameraIndexRaw = numField("cameraIndex", "camera_index", "CameraIndex");
+  const entityRef = resolveVerifyEntityRef(o, cameraIndexRaw);
+  const { entityId, cameraIndex } = entityRef;
   const trackID = numField("trackID", "track_id", "trackId", "TrackID");
   const verifyTargetId = numField("verifyTargetId", "verify_target_id", "targetId", "target_id");
   const uniqueIdFromBody = numField("uniqueId", "unique_id", "uniqueID");
@@ -124,11 +138,14 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
 
   const trackOk = trackID != null && Number.isFinite(trackID);
   const camOk = cameraIndex != null && Number.isFinite(cameraIndex);
-  if (taskStatus === 4 && trackOk && camOk) {
-    resetVerifyObjectKeyAccumulator(trackID!, cameraIndex!);
+  const sessionKey = trackOk ? buildVerifySessionKey(trackID!, entityRef) : null;
+
+  if (taskStatus === 4 && sessionKey) {
+    resetVerifyObjectKeyAccumulatorForSession(sessionKey);
   }
 
   let downloadUrl = pickImageUrl();
+  let imageSource: string | undefined = downloadUrl ? "bodyUrl" : undefined;
 
   const envBucket = process.env.TASK_STATUS_VERIFY_IMAGE_BUCKET?.trim();
   const bodyBucket = pickBucketFromBody(o);
@@ -139,14 +156,18 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
   const explicitKey = explicitKeyRaw ? normalizeObjectKeySegments(explicitKeyRaw) : undefined;
 
   let mergedKeySuffix: string | undefined;
-  if (trackOk && camOk) {
-    mergedKeySuffix = accumulateVerifyObjectKeyFromDescription(trackID!, cameraIndex!, taskStatus, description);
+  if (sessionKey) {
+    mergedKeySuffix = accumulateVerifyObjectKeyFromDescriptionForSession(
+      sessionKey,
+      taskStatus,
+      description,
+    );
     if (!mergedKeySuffix) mergedKeySuffix = undefined;
   }
 
   let objectKeyForUrl = explicitKey ?? mergedKeySuffix;
 
-  /** 与 Qt 一致：未带 bucket/key 时读 PostgreSQL `minio_multi_metadata` */
+  /** 与 Qt 一致：未带 bucket/key 时读 PostgreSQL `minio_multi_metadata`（需可解析的 cameraIndex） */
   if (!downloadUrl && camOk) {
     const dbRow = await resolveScreenshotMetadataFromDb({
       uniqueId: uniqueIdFromBody ?? undefined,
@@ -160,8 +181,12 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
       /** 库内常为 HTTP 直链：HTTPS 页面会混合内容拦截；若已配 MinIO 代理则优先走同源代理 */
       if (/^https:\/\//i.test(du)) {
         downloadUrl = du;
+        imageSource = "postgres";
       } else if (/^http:\/\//i.test(du) && !isTaskStatusMinioPresignConfigured()) {
         downloadUrl = du;
+        imageSource = "postgres";
+      } else if (du) {
+        imageSource = "postgresMeta";
       }
     }
   }
@@ -175,12 +200,15 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
   if (!downloadUrl && bucketForUrl && objectKeyForUrl && isTaskStatusMinioPresignConfigured()) {
     const bp = process.env.NEXT_PUBLIC_BASE_PATH?.replace(/\/$/, "") ?? "";
     downloadUrl = `${bp}/api/task-status-image-proxy?bucket=${encodeURIComponent(bucketForUrl)}&objectKey=${encodeURIComponent(objectKeyForUrl)}`;
+    imageSource = "minioProxy";
   }
   if (!downloadUrl && bucketForUrl && objectKeyForUrl) {
     downloadUrl = (await presignTaskStatusGetUrl(bucketForUrl, objectKeyForUrl)) ?? undefined;
+    if (downloadUrl) imageSource = "minioPresign";
   }
   if (!downloadUrl && bucketForUrl && objectKeyForUrl) {
     downloadUrl = buildMinioPathStyleBrowserUrl(bucketForUrl, objectKeyForUrl) ?? undefined;
+    if (downloadUrl) imageSource = "minioPath";
   }
 
   const imageMediaType =
@@ -194,7 +222,8 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
   const payload: TaskStatusRequestBody = {
     taskStatus,
     taskID,
-    cameraIndex: cameraIndex != null && Number.isFinite(cameraIndex) ? cameraIndex : undefined,
+    entityId,
+    cameraIndex: camOk ? cameraIndex : undefined,
     trackID: trackID != null && Number.isFinite(trackID) ? trackID : undefined,
     uniqueId: uniqueIdFromBody != null && Number.isFinite(uniqueIdFromBody) ? uniqueIdFromBody : undefined,
     description: description || undefined,
@@ -221,6 +250,22 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
 
   const updateTime = new Date().toLocaleString("zh-CN", { hour12: false });
   const statusDesc = taskStatusResponseLabel(taskStatus);
+
+  console.info("[task-status][verify] 查证上报", {
+    alarmId: alarmId.trim(),
+    taskStatus,
+    statusDesc,
+    entityId: entityId ?? null,
+    cameraIndex: camOk ? cameraIndex : null,
+    trackID: trackOk ? trackID : null,
+    uniqueId: uniqueIdFromBody ?? null,
+    taskID: taskID ?? null,
+    sessionKey,
+    hasImage: Boolean(downloadUrl),
+    imageSource: imageSource ?? (downloadUrl ? "resolved" : "none"),
+    descriptionLen: description.length,
+    receivedAt,
+  });
 
   return {
     ok: true,

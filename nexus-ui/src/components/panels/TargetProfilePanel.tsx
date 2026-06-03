@@ -6,7 +6,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Crosshair, Plane, Ship, Anchor } from "lucide-react";
+import { ChevronLeft, ChevronRight, Crosshair } from "lucide-react";
+import { TrackMarkerIcon } from "@/components/military/TrackMarkerIcon";
 import { cn } from "@/lib/utils";
 import type { Track } from "@/lib/map-entity-model";
 import { useTrackStore } from "@/stores/track-store";
@@ -46,30 +47,6 @@ function isDigitsUniqueId(s: string | undefined | null): boolean {
 function urlsEqual(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((u, i) => u === b[i]);
-}
-
-/** 对空 / 对海 / 水下 小标（目标 ID 旁） */
-function TrackDomainIcon({ type }: { type: Track["type"] }) {
-  const cls = "size-[15px] shrink-0 opacity-95";
-  if (type === "air") {
-    return (
-      <span title="对空">
-        <Plane className={cn(cls, "text-sky-300")} strokeWidth={2} aria-hidden />
-      </span>
-    );
-  }
-  if (type === "underwater") {
-    return (
-      <span title="水下">
-        <Anchor className={cn(cls, "text-indigo-300")} strokeWidth={2} aria-hidden />
-      </span>
-    );
-  }
-  return (
-    <span title="对海">
-      <Ship className={cn(cls, "text-teal-300")} strokeWidth={2} aria-hidden />
-    </span>
-  );
 }
 
 /** 半宽一格：一行里展示「一项」信息（两列并排即一行两项） */
@@ -251,8 +228,8 @@ export function TargetProfilePanel() {
     >
       <div className="shrink-0 border-b border-white/10 px-2.5 py-1.5">
         <div className="flex min-w-0 items-start gap-2">
-          <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
-            <TrackDomainIcon type={t.type} />
+          <div className="mt-0.5 flex shrink-0 items-center">
+            <TrackMarkerIcon track={t} size={28} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">

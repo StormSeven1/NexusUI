@@ -15,7 +15,10 @@ import { canonicalEntityId } from "@/lib/camera-entity-id";
 import { buildImportantTrackTargetFromTrack, numericTrackIdForCameraTask } from "@/lib/map-gis-camera-task";
 import { uavFlightTaskTargetSourceId } from "@/lib/map-gis-uav-track-task";
 import { fetchMapGisEoMenuContext, type MapGisEoMenuContext } from "@/lib/map-gis-eo-menu-context";
-import { buildMapGisCameraMenuRows } from "@/lib/map-gis-camera-menu-rows";
+import {
+  buildMapGisCameraMenuRows,
+  type MapGisCameraMenuRow,
+} from "@/lib/map-gis-camera-menu-rows";
 import {
   collectMapGisDroneRowsSync,
   mapGisDroneEoFallbackLabel,
@@ -27,7 +30,6 @@ import type { Track } from "@/lib/map-entity-model";
 import {
   ensureEntitiesTrackTaskCache,
   listTrackTaskOwnerRows,
-  type EntityTaskRow,
 } from "@/lib/entities-track-task-cache";
 import { postUavSpotFlyToTask } from "@/lib/eo-video/uavSpotFlyClient";
 import { postUavTrackFollowTask } from "@/lib/eo-video/uavTrackFollowClient";
@@ -35,6 +37,7 @@ import { useAssetStore } from "@/stores/asset-store";
 import { useEoFocusedUavAirportSnStore } from "@/stores/eo-focused-uav-airport-sn-store";
 import { useDroneStore } from "@/stores/drone-store";
 import { useTrackStore } from "@/stores/track-store";
+import { resolveUniqueIdFromTrack, sendAlarmConfirmRequest } from "@/lib/alarm-confirm-api";
 import { useAppConfigStore } from "@/stores/app-config-store";
 
 export type MapGisMenuState = {
@@ -243,7 +246,7 @@ export function MapGisContextMenu({
     [syncDroneRows, eoMenuCtx],
   );
 
-  const cameraMenuLabel = (c: EntityTaskRow) => {
+  const cameraMenuLabel = (c: Pick<MapGisCameraMenuRow, "entityId" | "label">) => {
     const id = canonicalEntityId(c.entityId.trim());
     const fromEo = eoMenuCtx?.cameraLabelByEntityId.get(id);
     if (fromEo?.trim()) return fromEo.trim();
@@ -268,12 +271,7 @@ export function MapGisContextMenu({
 
   const cameras = useMemo(() => {
     void trackOwnersEpoch;
-    return buildMapGisCameraMenuRows(listTrackTaskOwnerRows(), eoMenuCtx).map((r) => ({
-      entityId: r.entityId,
-      label: r.label,
-      hasPtz: true,
-      parentDeviceId: "",
-    }));
+    return buildMapGisCameraMenuRows(listTrackTaskOwnerRows(), eoMenuCtx);
   }, [trackOwnersEpoch, eoMenuCtx]);
 
   const toggleCascade = (key: SubKey, el: HTMLElement) => {
@@ -434,6 +432,20 @@ export function MapGisContextMenu({
             onClick={() => {
               useTrackStore.getState().setManualTrackAffiliation(tr.showID, k);
               toast.success(`已设为：${label}`);
+              if (k === "blue") {
+                const uniqueId = resolveUniqueIdFromTrack(tr);
+                if (uniqueId == null) {
+                  toast.error("确认告警失败：航迹缺少 uniqueId");
+                } else {
+                  void sendAlarmConfirmRequest(uniqueId).then((result) => {
+                    if (result.ok) {
+                      toast.success("已确认告警", { description: `uniqueId ${uniqueId}` });
+                    } else {
+                      toast.error("确认告警失败", { description: result.message ?? "告警服务无响应" });
+                    }
+                  });
+                }
+              }
               onClose();
             }}
           >

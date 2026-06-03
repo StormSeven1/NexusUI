@@ -1,3 +1,4 @@
+import { shouldCutEoVideoHardwarePassthrough } from "@/lib/eo-video/eoVideoHardwarePassthrough";
 import { createSyncHeaderFromEncodedFrame } from "@/lib/eo-video/detectionSyncUtils";
 
 /** 编码帧数据（从 Insertable Streams 拦截后拷贝） */
@@ -121,9 +122,34 @@ type ReceiverWithStreams = RTCRtpReceiver & {
   };
 };
 
+function pushEncodedFrameSideEffects(
+  encodedFrame: RTCEncodedVideoFrame,
+  hub: EoEncodedSyncHub,
+  onEncodedFrame?: (frame: EncodedFrameData) => void,
+): void {
+  hub.pushFromEncodedFrame(encodedFrame);
+  if (!onEncodedFrame) return;
+  try {
+    const raw = encodedFrame.data;
+    if (raw == null) return;
+    const buf = raw instanceof ArrayBuffer ? raw : (raw as ArrayBufferView).buffer;
+    const byteOffset = raw instanceof ArrayBuffer ? 0 : (raw as ArrayBufferView).byteOffset;
+    const byteLength = raw instanceof ArrayBuffer ? buf.byteLength : (raw as ArrayBufferView).byteLength;
+    const copied = buf.slice(byteOffset, byteOffset + byteLength) as ArrayBuffer;
+    onEncodedFrame({
+      data: copied,
+      timestamp: encodedFrame.timestamp ?? 0,
+      type: (encodedFrame as unknown as { type?: string }).type === "key" ? "key" : "delta",
+      receivedAt: Date.now(),
+    });
+  } catch {
+    /* ignore copy errors */
+  }
+}
+
 /**
  * WebRTC Insertable Streams：拦截编码帧写入 hub 的 syncHeader 环，并可选拷贝到 `onEncodedFrame`（WebCodecs Canvas）。
- * Transform 仍将帧 enqueue 到 writable，`<video>` 可正常硬件解码作回退或辅助（当前主画面可由 Canvas 或 video 展示）。
+ * 默认仍将帧 enqueue 到 writable（`<video>` 硬件解码）；`NEXT_PUBLIC_EO_VIDEO_HARDWARE_PASSTHROUGH=false` 且 WebCodecs 时仅读环、不写 writable。
  */
 export function attachEncodedVideoFrameSync(
   receiver: RTCRtpReceiver,
@@ -149,36 +175,41 @@ export function attachEncodedVideoFrameSync(
     };
   }
 
-  const transform = new TransformStream<RTCEncodedVideoFrame, RTCEncodedVideoFrame>({
-    transform(encodedFrame, controller) {
-      hub.pushFromEncodedFrame(encodedFrame);
+  const cutPassthrough = shouldCutEoVideoHardwarePassthrough(Boolean(onEncodedFrame));
+  const ac = new AbortController();
 
-      if (onEncodedFrame) {
+  if (cutPassthrough) {
+    void (async () => {
+      const reader = readable.getReader();
+      try {
+        while (!ac.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          pushEncodedFrameSideEffects(value, hub, onEncodedFrame);
+        }
+      } catch {
+        /* abort / teardown */
+      } finally {
         try {
-          const raw = encodedFrame.data;
-          if (raw != null) {
-            const buf = raw instanceof ArrayBuffer ? raw : (raw as ArrayBufferView).buffer;
-            const byteOffset = raw instanceof ArrayBuffer ? 0 : (raw as ArrayBufferView).byteOffset;
-            const byteLength = raw instanceof ArrayBuffer ? buf.byteLength : (raw as ArrayBufferView).byteLength;
-            const copied = buf.slice(byteOffset, byteOffset + byteLength) as ArrayBuffer;
-            onEncodedFrame({
-              data: copied,
-              timestamp: encodedFrame.timestamp ?? 0,
-              type: (encodedFrame as unknown as { type?: string }).type === "key" ? "key" : "delta",
-              receivedAt: Date.now(),
-            });
-          }
+          reader.releaseLock();
         } catch {
-          /* ignore copy errors */
+          /* ignore */
         }
       }
+    })();
+    return () => {
+      ac.abort();
+      hub.clear();
+    };
+  }
 
-      // 仍然 passthrough，让 <video> 也能作为回退显示
+  const transform = new TransformStream<RTCEncodedVideoFrame, RTCEncodedVideoFrame>({
+    transform(encodedFrame, controller) {
+      pushEncodedFrameSideEffects(encodedFrame, hub, onEncodedFrame);
       controller.enqueue(encodedFrame);
     },
   });
 
-  const ac = new AbortController();
   void readable.pipeThrough(transform).pipeTo(writable, { signal: ac.signal }).catch(() => {
     /* abort / teardown */
   });

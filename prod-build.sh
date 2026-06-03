@@ -50,6 +50,13 @@ echo "仓库: $ROOT"
 echo "构建时 BACKEND_URL=${BU} （Next rewrites /api/backend → 该地址）"
 echo "构建时 NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}"
 echo "构建时 NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}"
+echo "构建时 NEXT_PUBLIC_APP_CONFIG_URL=${NEXT_PUBLIC_APP_CONFIG_URL:-/app-config.prod.json}"
+
+_cfg_host="${APP_CONFIG_LAN_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+[[ -n "${_cfg_host:-}" ]] || _cfg_host="127.0.0.1"
+chmod +x "$ROOT/docker/apply-app-config-endpoints.sh" 2>/dev/null || true
+APP_CONFIG_OUT=app-config.prod.json "$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BP" "$BP"
+export NEXT_PUBLIC_APP_CONFIG_URL="${NEXT_PUBLIC_APP_CONFIG_URL:-/app-config.prod.json}"
 
 if [[ "$USE_DOCKER" -eq 1 ]]; then
   if ! command -v docker >/dev/null 2>&1; then
@@ -63,6 +70,7 @@ if [[ "$USE_DOCKER" -eq 1 ]]; then
   echo "== Docker 内构建（${IMG}）=="
   docker run --rm \
     -e "BACKEND_URL=${BU}" \
+    -e "NEXT_PUBLIC_APP_CONFIG_URL=${NEXT_PUBLIC_APP_CONFIG_URL}" \
     -e "NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}" \
     -e "NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}" \
     -v "${ROOT}:/workspace" \
@@ -77,7 +85,8 @@ else
   echo "== 宿主机构建 =="
   cd "$UI"
   npm install
-  NEXT_PUBLIC_WS_USE_NGINX_TUNNEL="${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}" \
+  NEXT_PUBLIC_APP_CONFIG_URL="${NEXT_PUBLIC_APP_CONFIG_URL}" \
+    NEXT_PUBLIC_WS_USE_NGINX_TUNNEL="${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}" \
     NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT="${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}" \
     BACKEND_URL="$BU" npm run build
 fi

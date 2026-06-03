@@ -10,6 +10,7 @@ import { shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
 import {
   useTrackDisplayStore,
   neutralFusionColorForTrack,
+  uavPoseTrackDotColor,
   trailLengthSecondsForTrack,
   vectorLengthSecondsForTrack,
 } from "@/stores/track-display-store";
@@ -393,6 +394,9 @@ async function syncCesiumTrackBillboards(
   const fullMap = new Map(allTracks.map((t) => [t.id, t]));
 
   const pickTrackPointCss = (t: Track, eff: ReturnType<typeof getTrackDispositionForRendering>, friendlyFill?: string) => {
+    if (resolveTrackLayerKey(t) === "uav_pose_track") {
+      return resolveVerifiedTrackPointFill(t, uavPoseTrackDotColor(td));
+    }
     const base =
       eff === "neutral"
         ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor)
@@ -481,6 +485,7 @@ async function syncCesiumTrackBillboards(
               isAirTrackBirdGlyph(track),
               resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
               opticallyVerified,
+              resolveTrackLayerKey(track) === "fuse_sea" && track.type === "sea",
             ),
             scale: 0.90,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
@@ -526,6 +531,7 @@ async function syncCesiumTrackBillboards(
         isAirTrackBirdGlyph(t),
         resolveTrackLayerKey(t) === "fuse_air" && isAirTrackBirdGlyph(t),
         opticallyVerified,
+        resolveTrackLayerKey(t) === "fuse_sea" && t.type === "sea",
       );
       ent.billboard.image = new Cesium.ConstantProperty(image);
       ent.billboard.rotation = new Cesium.ConstantProperty(trackBillboardRotationRad(t, Cesium));

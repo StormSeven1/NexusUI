@@ -52,7 +52,7 @@ export function resolveTrackIsVirtual(
   return false;
 }
 
-/** 态势军标是否按虚兵样式绘制（底部虚线） */
+/** 态势军标是否按虚兵样式绘制（底部虚线/双线标识） */
 export function isTrackVirtualTroop(t: TrackRealityFields): boolean {
   return resolveTrackIsVirtual(t.realityType, null, t.isVirtual === true);
 }

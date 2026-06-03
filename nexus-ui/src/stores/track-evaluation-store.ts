@@ -25,6 +25,7 @@ import type {
 import { getTrackEvalMapHandlers } from "@/lib/track-eval-map-bridge";
 import { getMapMeasureHandlers } from "@/stores/map-measure-bridge";
 import { useMapMeasureUi } from "@/stores/map-measure-bridge";
+import { fetchTrackEvalQuality, isTrackEvalGrpcEnabled } from "@/lib/system-eval-track-api";
 
 export type QueryStatusType = "" | "loading" | "success" | "error" | "info";
 
@@ -87,9 +88,10 @@ interface TrackEvaluationState {
   endTime: string;
   sensorIdsForQuery: number[];
   directDownload: boolean;
+  /** 页面级定时自动查询（`useTrackEvalAutoQuery`） */
+  autoAnalysisEnabled: boolean;
   realtimeTracking: boolean;
   queryStatus: QueryStatus;
-  queryStats: QueryStats;
 
   regionType: TrackEvalRegionKind;
   regionInfo: string;
@@ -97,8 +99,12 @@ interface TrackEvaluationState {
   bounding_box: TrackEvalBoundingBox | null;
   polygon: TrackEvalPolygonQuery | null;
 
-  /** 查询累积航迹点（不绘制到地图，仅用于指标计算） */
+  /** 已展示：上次完成评估的航迹点与统计 */
   queryFeatures: EvalTrackFeature[];
+  queryStats: QueryStats;
+  /** 当前进行中的查询缓冲，完成后才写入 queryFeatures / queryStats */
+  pendingQueryFeatures: EvalTrackFeature[];
+  pendingQueryStats: QueryStats;
   metrics: TrackEvalMetricsResult | null;
   metricsComputing: boolean;
 
@@ -110,6 +116,7 @@ interface TrackEvaluationState {
   setEndTime: (v: string) => void;
   toggleSensorForQuery: (id: number) => void;
   setDirectDownload: (v: boolean) => void;
+  setAutoAnalysisEnabled: (v: boolean) => void;
   selectRegionType: (type: "rect" | "polygon") => void;
   clearRegion: () => void;
   applyRegionResult: (r: TrackEvalRegionResult) => void;
@@ -117,7 +124,7 @@ interface TrackEvaluationState {
   connectWs: () => void;
   disconnectWs: () => void;
   sendQuery: () => void;
-  /** 定时任务：刷新近 1 小时时间窗、恢复默认传感器并发送查询 */
+  /** 定时任务：以当前时间为结束、最近 N 分钟为开始，恢复默认传感器并发送查询 */
   runScheduledQuery: () => void;
   cancelQuery: () => void;
   toggleRealtime: () => void;
@@ -142,8 +149,25 @@ function formatTimeForQuery(datetimeLocal: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function emptyMetricsState(): Pick<TrackEvaluationState, "queryFeatures" | "metrics"> {
-  return { queryFeatures: [], metrics: null };
+function emptyPendingQueryState(): Pick<
+  TrackEvaluationState,
+  "pendingQueryFeatures" | "pendingQueryStats"
+> {
+  return {
+    pendingQueryFeatures: [],
+    pendingQueryStats: { total: 0, bySensor: {} },
+  };
+}
+
+function emptyDisplayedEvalState(): Pick<
+  TrackEvaluationState,
+  "queryFeatures" | "queryStats" | "metrics"
+> {
+  return {
+    queryFeatures: [],
+    queryStats: { total: 0, bySensor: {} },
+    metrics: null,
+  };
 }
 
 function runMetrics(set: (p: Partial<TrackEvaluationState>) => void, get: () => TrackEvaluationState) {
@@ -212,15 +236,15 @@ function handleInbound(
     const rows = msg.data as Record<string, unknown>[];
     const newFeatures = rows.map(wsTrackRowToFeature);
     set((s) => {
-      const bySensor = { ...s.queryStats.bySensor };
+      const bySensor = { ...s.pendingQueryStats.bySensor };
       for (const f of newFeatures) {
         const sid = String(f.sensorId);
         bySensor[sid] = (bySensor[sid] ?? 0) + 1;
       }
-      const total = s.queryStats.total + newFeatures.length;
+      const total = s.pendingQueryStats.total + newFeatures.length;
       return {
-        queryFeatures: [...s.queryFeatures, ...newFeatures],
-        queryStats: { total, bySensor },
+        pendingQueryFeatures: [...s.pendingQueryFeatures, ...newFeatures],
+        pendingQueryStats: { total, bySensor },
         queryStatus: {
           type: "loading",
           message: `接收数据中… 已累计 ${total} 条`,
@@ -236,6 +260,8 @@ function handleInbound(
 
   if (msg.status === "complete") {
     set((s) => ({
+      queryFeatures: [...s.pendingQueryFeatures],
+      queryStats: { ...s.pendingQueryStats },
       queryStatus: {
         type: "loading",
         message: "查询完成，正在计算质量指标…",
@@ -254,6 +280,7 @@ function handleInbound(
         details: "",
       },
       metricsComputing: false,
+      ...emptyPendingQueryState(),
     });
     return;
   }
@@ -299,9 +326,9 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   endTime: defaultDatetimeLocal(0),
   sensorIdsForQuery: [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
   directDownload: false,
+  autoAnalysisEnabled: true,
   realtimeTracking: false,
   queryStatus: { type: "", message: "", details: "" },
-  queryStats: { total: 0, bySensor: {} },
 
   regionType: "",
   regionInfo: "",
@@ -310,6 +337,9 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   polygon: null,
 
   queryFeatures: [],
+  queryStats: { total: 0, bySensor: {} },
+  pendingQueryFeatures: [],
+  pendingQueryStats: { total: 0, bySensor: {} },
   metrics: null,
   metricsComputing: false,
 
@@ -320,6 +350,7 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   setStartTime: (v) => set({ startTime: v }),
   setEndTime: (v) => set({ endTime: v }),
   setDirectDownload: (v) => set({ directDownload: v }),
+  setAutoAnalysisEnabled: (v) => set({ autoAnalysisEnabled: v }),
   toggleSensorForQuery: (id) =>
     set((s) => {
       const has = s.sensorIdsForQuery.includes(id);
@@ -417,6 +448,66 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
 
   sendQuery: () => {
     const s = get();
+    if (isTrackEvalGrpcEnabled() && !s.directDownload) {
+      set({
+        ...emptyPendingQueryState(),
+        queryStatus: {
+          type: "loading",
+          message: "正在通过 gRPC 评估航迹质量…",
+          details: s.regionInfo || "",
+        },
+        metricsComputing: true,
+      });
+      void (async () => {
+        try {
+          const { metrics, status, error, trackPointCount } = await fetchTrackEvalQuality({
+            start_time: formatTimeForQuery(get().startTime),
+            end_time: formatTimeForQuery(get().endTime),
+            sensor_ids:
+              get().sensorIdsForQuery.length > 0
+                ? [...get().sensorIdsForQuery]
+                : [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
+            region_type: get().regionType || "",
+            bounding_box: get().bounding_box ?? undefined,
+            polygon: get().polygon ?? undefined,
+          });
+          if (!metrics || status !== "OK") {
+            set({
+              metrics: null,
+              metricsComputing: false,
+              queryStatus: {
+                type: "error",
+                message: error || status || "gRPC 评估失败",
+                details: "",
+              },
+            });
+            return;
+          }
+          set({
+            metrics,
+            metricsComputing: false,
+            mainTab: "quality",
+            queryStats: { total: trackPointCount, bySensor: {} },
+            queryStatus: {
+              type: "success",
+              message: "质量指标计算完成（gRPC）",
+              details: `共 ${trackPointCount} 条航迹点参与计算`,
+            },
+          });
+        } catch (e) {
+          set({
+            metricsComputing: false,
+            queryStatus: {
+              type: "error",
+              message: "gRPC 评估异常",
+              details: e instanceof Error ? e.message : String(e),
+            },
+          });
+        }
+      })();
+      return;
+    }
+
     const client = s.client ?? sharedClient;
     if (!client?.isOpen) {
       set({
@@ -441,8 +532,7 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
       payload.polygon = s.polygon;
     }
     set({
-      ...emptyMetricsState(),
-      queryStats: { total: 0, bySensor: {} },
+      ...emptyPendingQueryState(),
       queryStatus: {
         type: "loading",
         message: s.directDownload ? "正在发送下载请求…" : "正在发送查询请求…",
@@ -463,8 +553,7 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
     }
     set({
       queryStatus: { type: "info", message: "查询已取消", details: "" },
-      queryStats: { total: 0, bySensor: {} },
-      ...emptyMetricsState(),
+      ...emptyPendingQueryState(),
       metricsComputing: false,
     });
   },
@@ -487,8 +576,8 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
       client.send({ type: "startsend" });
       set({
         realtimeTracking: true,
-        ...emptyMetricsState(),
-        queryStats: { total: 0, bySensor: {} },
+        ...emptyDisplayedEvalState(),
+        ...emptyPendingQueryState(),
         queryStatus: { type: "success", message: "实时航迹已启动", details: "约每 2 秒推送并刷新指标" },
       });
     }

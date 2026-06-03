@@ -83,7 +83,7 @@ export async function fetchCameraRegistryFromPublic(): Promise<EoCameraRegistryR
   );
 }
 
-export async function fetchDroneDevicesFromPublic(): Promise<EoDroneDeviceRow[]> {
+async function fetchDroneDevicesFromStaticFile(): Promise<EoDroneDeviceRow[]> {
   try {
     const r = await fetch("/config/eo-video.drone-devices.json", { cache: "no-store" });
     if (!r.ok) return [];
@@ -92,6 +92,46 @@ export async function fetchDroneDevicesFromPublic(): Promise<EoDroneDeviceRow[]>
   } catch {
     return [];
   }
+}
+
+/** 8090 实时无人机列表（`NEXUS_ENTITIES_LIST_URL`，`indicators.simulated === false`） */
+export async function fetchDroneDevicesFromApi(): Promise<EoDroneDeviceRow[]> {
+  try {
+    const r = await fetch("/api/nexus-entities/drones", { cache: "no-store" });
+    if (!r.ok) return [];
+    const j = (await r.json()) as { ok?: boolean; devices?: EoDroneDeviceRow[] };
+    if (j.ok !== true || !Array.isArray(j.devices)) return [];
+    return j.devices;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 光电右键「无人机」：优先 8090 实时列表（排除 `indicators.simulated !== false`），
+ * 静态 `eo-video.drone-devices.json` 作回退。
+ */
+export async function fetchDroneDevicesFromPublic(): Promise<EoDroneDeviceRow[]> {
+  const [live, staticRows] = await Promise.all([
+    fetchDroneDevicesFromApi(),
+    fetchDroneDevicesFromStaticFile(),
+  ]);
+  if (live.length) {
+    const byId = new Map<string, EoDroneDeviceRow>();
+    for (const d of staticRows) byId.set(d.entityId, d);
+    for (const d of live) {
+      const prev = byId.get(d.entityId);
+      byId.set(d.entityId, {
+        ...prev,
+        ...d,
+        name: d.name?.trim() || prev?.name || d.entityId,
+      });
+    }
+    return [...byId.values()].sort((a, b) =>
+      a.entityId.localeCompare(b.entityId, undefined, { numeric: true }),
+    );
+  }
+  return staticRows;
 }
 
 /** 服务端走 `NEXUS_ENTITIES_LIST_URL`（见 `/api/nexus-entities/third-party-cameras`） */

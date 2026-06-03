@@ -30,6 +30,11 @@ import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import { MAP_FRIENDLY_COLOR_PROP, MAP_LABEL_FONT_COLOR_PROP } from "@/lib/map-icons";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
+import {
+  buildHttpChatUrlsFromTaskManagementOrigin,
+  DEFAULT_TASK_MANAGEMENT_ORIGIN,
+  overlayHttpChatFromTaskManagementEnv,
+} from "@/lib/task-management-url";
 import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import {
   mapRadarPayload,
@@ -79,10 +84,27 @@ function finiteNumberOrNull(v: unknown): number | null {
  *   - "DRONE" / "UAV"                                         → "drone"
  *   - "LASER" / "激光" / "激光武器"                           → "laser"
  *   - "TDOA"                                                   → "tdoa"
+ *   - "SYSTEM"（8090 虚兵/系统设备）→ 从 entityId `system-{KIND}-*` 解析：
+ *       TDOA → tdoa，LASER → laser，RADAR → radar，…；MUNITION 等非地图子类 → "unknown"（静默）
  *   - "SURVEILLANCE_AREA" / "RESTRICTED_AREA" / "AREA" / "AREA_TYPE_*" / "SURVEILLANCE" / "FIXED_WING" / "FRAME"
  *     → "unknown"（非地图资产类型，跳过不入库，不报错）
  *   - 其余回退：尝试 r.asset_type / r.type，仍无法识别 → "unknown"
  */
+/** 8090 `ontology.specificType=SYSTEM` 时，子类型在 entityId：`system-{KIND}-*` */
+function wsEntityTypeFromSystemEntityId(entityId: string): string | null {
+  const m = /^system-([^-]+)-/i.exec(entityId.trim());
+  if (!m) return null;
+  const kind = m[1].toUpperCase();
+  if (kind === "TDOA") return "tdoa";
+  if (kind === "LASER") return "laser";
+  if (kind === "RADAR") return "radar";
+  if (kind === "CAMERA" || kind === "OPTO" || kind === "OPTICAL" || kind === "光电") return "camera";
+  if (kind === "TOWER" || kind === "ESM" || kind === "电侦") return "tower";
+  if (kind === "DOCK" || kind === "AIRPORT" || kind === "GATEWAY") return "airport";
+  if (kind === "DRONE" || kind === "UAV") return "drone";
+  return null;
+}
+
 function wsEntityTypeRaw(r: Record<string, unknown>): string {
   /* ── 第1步：提取 specificType（按优先级尝试多个可能的字段位置）── */
   const ontology = asRecord(r.ontology);
@@ -131,6 +153,12 @@ function wsEntityTypeRaw(r: Record<string, unknown>): string {
   if (stu === "LASER" || stu === "激光" || stu === "激光武器") return "laser";
   // TDOA
   if (stu === "TDOA") return "tdoa";
+  // 8090 系统/虚兵设备：specificType=SYSTEM，子类型编码在 entityId（如 system-TDOA-001）
+  if (stu === "SYSTEM") {
+    const fromId = wsEntityTypeFromSystemEntityId(eid);
+    if (fromId) return fromId;
+    return "unknown";
+  }
   // 无人船/平台携带雷达：navigationParameters.with_radar=1 或 radarParameters 存在
   const navParams = asRecord(r.navigationParameters);
   if (navParams?.with_radar === 1 || navParams?.with_radar === true || hasRadarParams) {
@@ -665,10 +693,10 @@ export const DEFAULT_TRACK_RENDERING: AppConfigTrackRendering = {
   },
   trackTimeout: {
     enabled: true,
-    seconds: 30,
-    fusionSeconds: 120,
-    fusionAirSeconds: 6,
-    uavSeconds: 60,
+    seconds: 10,
+    fusionSeconds: 90,
+    fusionAirSeconds: 90,
+    uavSeconds: 10,
     checkIntervalMs: 2000,
   },
   airIconHeadingOffsetDeg: 45,
@@ -986,15 +1014,16 @@ const DEFAULT_HTTP: AppConfigHttp = {
   imageFetchTimeoutMs: 1000,
 };
 
+const DEFAULT_HTTP_CHAT_TASK_URLS = buildHttpChatUrlsFromTaskManagementOrigin(
+  DEFAULT_TASK_MANAGEMENT_ORIGIN,
+);
+
 const DEFAULT_HTTP_CHAT: AppConfigHttpChat = {
-  disposalPlanWsUrl: "ws://192.168.18.103:9000/api/v1/ws/workflow-stream",
-  disposalManualGeneratePlanUrl: "http://192.168.18.103:9000/api/v1/tasks/target-engagement/manual-generate-plan",
-  disposalExecuteUrl: "http://192.168.18.103:9000/api/v1/tasks/grpc-disposal/execute",
+  ...DEFAULT_HTTP_CHAT_TASK_URLS,
   disposalEndUrl: "http://192.168.18.110:8019/api/alarm_filter",
   disposalHttpTimeoutMs: 5000,
   disposalExecuteTimeoutMs: 5000,
   autoDisposalWsConnectTimeoutMs: 5000,
-  quickWorkflowUrl: "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
   quickWorkflowTimeoutMs: 5000,
   dailyVerificationWorkflowId: "auto_duty_workflow-quick-1",
   dailyVerificationSchemaId: "",
@@ -1054,6 +1083,7 @@ function applyResolvedNewConfigs(root: Record<string, unknown>) {
         ),
         dailyVerificationSchemaId: str(ch.dailyVerificationSchemaId, DEFAULT_HTTP_CHAT.dailyVerificationSchemaId),
       };
+      resolvedHttpChatConfig = overlayHttpChatFromTaskManagementEnv(resolvedHttpChatConfig);
     }
   }
 
@@ -1078,7 +1108,7 @@ export function getHttpConfig(): AppConfigHttp {
 }
 
 export function getHttpChatConfig(): AppConfigHttpChat {
-  return resolvedHttpChatConfig;
+  return overlayHttpChatFromTaskManagementEnv(resolvedHttpChatConfig);
 }
 
 export function getTrackIdModeConfig(): AppConfigTrackIdMode {

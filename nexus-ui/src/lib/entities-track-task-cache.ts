@@ -99,7 +99,7 @@ export function listHasPtzCameraRows(): EntityTaskRow[] {
   return rows.sort((a, b) => a.entityId.localeCompare(b.entityId, undefined, { numeric: true }));
 }
 
-/** 所有可下发光电航迹元任务的 owner（hasPtz 且 parent_device_id 为空），按 entityId 排序 */
+/** 可下发光电 TargetCollectionIM 的 PTZ 主相机（hasPtz、无 parent、非第三方），按 entityId 排序 */
 export function listTrackTaskOwnerEntityIds(): string[] {
   if (!cached) return [];
   const out: string[] = [];

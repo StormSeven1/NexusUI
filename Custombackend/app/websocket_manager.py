@@ -82,24 +82,21 @@ class WebSocketManager:
 
         return client_id
     
-    def disconnect(self, client_id: str):
-        """断开连接"""
-        async def _disconnect():
-            async with self._connections_lock:
-                if client_id in self.connections:
-                    del self.connections[client_id]
-                    logger.info(f"WebSocket客户端已断开: {client_id}, 当前连接数: {len(self.connections)}")
-        
-        # 如果已经在锁中，直接执行；否则创建任务
+    async def _remove_client(self, client_id: str) -> None:
+        """从连接表移除客户端（须在事件循环内 await）。"""
+        async with self._connections_lock:
+            if client_id in self.connections:
+                del self.connections[client_id]
+                logger.info(f"WebSocket客户端已断开: {client_id}, 当前连接数: {len(self.connections)}")
+
+    def disconnect(self, client_id: str) -> None:
+        """断开连接（同步入口：在已运行的事件循环中调度 _remove_client）。"""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(_disconnect())
-            else:
-                loop.run_until_complete(_disconnect())
-        except:
-            # 同步上下文，直接执行
-            asyncio.run(_disconnect())
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self._remove_client(client_id))
+            return
+        loop.create_task(self._remove_client(client_id))
     
     async def _send_to_client(self, client_id: str, message: Dict[str, Any]) -> bool:
         """发送消息到指定客户端"""
@@ -134,7 +131,7 @@ class WebSocketManager:
         
         for client_id in disconnected:
             logger.info(f"broadcast调用disconnect: {client_id}")
-            await self.disconnect(client_id)
+            await self._remove_client(client_id)
     
     async def broadcast_command(self, command: Dict[str, Any]):
         """广播地图指令到所有客户端（MCP服务使用）"""
@@ -195,13 +192,13 @@ class WebSocketManager:
         区分对空融合、探鸟与对海/雷达，避免仅靠 source_name 导致全为对海、前端全画船标。
         """
         tlk = str(track_data.get("track_layer_key", "") or "").strip().lower().replace("-", "_")
-        if tlk in ("fuse_air", "bird_radar"):
+        if tlk in ("fuse_air", "bird_radar", "uav_pose_track"):
             track_data["is_air_track"] = True
         elif tlk in ("fuse_sea", "radar_wharf", "radar_jingzi"):
             track_data["is_air_track"] = False
 
         dds = str(track_data.get("dds_source_id", "") or "").strip().lower()
-        if dds in ("dds_forward_fuse_bird_radar_track", "dds_forward_bird_radar_track"):
+        if dds in ("dds_forward_fuse_bird_radar_track", "dds_forward_bird_radar_track", "dds_forward_uav_pose_track"):
             track_data["is_air_track"] = True
         elif dds in ("dds_forward_fuse_track", "dds_forward_radar_track1", "dds_forward_radar_track2"):
             track_data["is_air_track"] = False

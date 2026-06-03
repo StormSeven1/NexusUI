@@ -1,5 +1,9 @@
 import { create } from "zustand";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
+import {
+  isThirdPartyCameraEntityId,
+  normThirdPartyEntityId,
+} from "@/lib/eo-video/thirdPartyEntityId";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -48,12 +52,18 @@ export interface EoCameraDdsStatusRow {
   speed?: unknown;
   /** 距离 m（与 Qt `rectTrackDis` 一致时标牌换算 NM = /1852） */
   distance?: unknown;
-  /** 云台水平角 P（°），常见 `ptz.pan` / `p` */
+  /** 云台水平角 P（°），常见 `ptz.pan` / `p`（叠加 panoOffset 后的显示角） */
   ptzPanDeg?: number;
+  /** 原始云台水平角 P（°），DDS `originPtz.pan`；第三方相机 2D 视场以此为准 */
+  originPtzPanDeg?: number;
   /** 云台俯仰（°），常见 `ptz.tilt` */
   ptzTiltDeg?: number;
+  /** 原始云台俯仰（°），DDS `originPtz.tilt` */
+  originPtzTiltDeg?: number;
   /** 变倍 / Z，常见 `ptz.zoom` */
   ptzZoom?: number;
+  /** 原始变倍，DDS `originPtz.zoom` */
+  originPtzZoom?: number;
   /** 全景方位补偿（°），与地图 `parseCameraBearingDeg` 中 panoOffset 一致 */
   panoOffsetDeg?: number;
   executionTimeMs?: unknown;
@@ -71,12 +81,20 @@ function parseFiniteNumber(v: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function resolveCameraDdsStoreKey(rawEntity: string): string {
+  const trimmed = rawEntity.trim();
+  if (!trimmed) return "";
+  if (isThirdPartyCameraEntityId(trimmed)) return normThirdPartyEntityId(trimmed);
+  return canonicalEntityId(trimmed) || trimmed;
+}
+
 export const useEoCameraDdsStatusStore = create<EoCameraDdsStatusState>((set, get) => ({
   byEntityId: {},
   ingestCameraPayload: (d) => {
     const rawEntity = String(d.entityId ?? d.cameraId ?? d.deviceId ?? "").trim();
     if (!rawEntity) return;
-    const entityId = canonicalEntityId(rawEntity) || rawEntity;
+    const entityId = resolveCameraDdsStoreKey(rawEntity);
+    if (!entityId) return;
     const prev = get().byEntityId[entityId];
     const execIn =
       d.executionState !== undefined
@@ -134,15 +152,21 @@ export const useEoCameraDdsStatusStore = create<EoCameraDdsStatusState>((set, ge
     const distRaw = pickFromCameraPayload(d, ["distance", "trackDis", "track_dis", "rectTrackDis", "range", "rangeM"]);
     const distIn = distRaw !== undefined ? distRaw : undefined;
     const ptzRec = asRecord(d.ptz);
+    const originPtzRec = asRecord(d.originPtz);
     const panFromPtz = ptzRec ? parseFiniteNumber(ptzRec.pan) : undefined;
+    const panFromOriginPtz = originPtzRec ? parseFiniteNumber(originPtzRec.pan) : undefined;
     const panPick = pickFromCameraPayload(d, ["pan", "p", "Pan", "P", "headingPan"]);
     const panMerged = panFromPtz ?? parseFiniteNumber(panPick);
     const tiltMerged =
       (ptzRec ? parseFiniteNumber(ptzRec.tilt) : undefined) ??
       parseFiniteNumber(pickFromCameraPayload(d, ["tilt", "T"]));
+    const tiltFromOriginPtz = originPtzRec ? parseFiniteNumber(originPtzRec.tilt) : undefined;
     const zoomMerged =
       (ptzRec ? parseFiniteNumber(ptzRec.zoom ?? ptzRec.z) : undefined) ??
       parseFiniteNumber(pickFromCameraPayload(d, ["zoom", "z", "Zoom"]));
+    const zoomFromOriginPtz = originPtzRec
+      ? parseFiniteNumber(originPtzRec.zoom ?? originPtzRec.z)
+      : undefined;
     const panoMerged = parseFiniteNumber(d.panoOffset);
     const next: EoCameraDdsStatusRow = {
       taskType: d.taskType !== undefined ? d.taskType : d.task_type !== undefined ? d.task_type : prev?.taskType,
@@ -163,8 +187,11 @@ export const useEoCameraDdsStatusStore = create<EoCameraDdsStatusState>((set, ge
       speed: speedIn !== undefined ? speedIn : prev?.speed,
       distance: distIn !== undefined ? distIn : prev?.distance,
       ptzPanDeg: panMerged !== undefined ? panMerged : prev?.ptzPanDeg,
+      originPtzPanDeg: panFromOriginPtz !== undefined ? panFromOriginPtz : prev?.originPtzPanDeg,
       ptzTiltDeg: tiltMerged !== undefined ? tiltMerged : prev?.ptzTiltDeg,
+      originPtzTiltDeg: tiltFromOriginPtz !== undefined ? tiltFromOriginPtz : prev?.originPtzTiltDeg,
       ptzZoom: zoomMerged !== undefined ? zoomMerged : prev?.ptzZoom,
+      originPtzZoom: zoomFromOriginPtz !== undefined ? zoomFromOriginPtz : prev?.originPtzZoom,
       panoOffsetDeg: panoMerged !== undefined ? panoMerged : prev?.panoOffsetDeg,
       executionTimeMs: d.executionTimeMs !== undefined ? d.executionTimeMs : prev?.executionTimeMs,
       updatedAt: Date.now(),

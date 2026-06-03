@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EncodedFrameData } from "@/lib/eo-video/eoWebrtcEncodedSync";
 
-const FRAME_BUFFER_SIZE = 16;
+/** 直播低延迟：2 帧即可开解；原 16 帧在 25fps 下约 +640ms，叠加 Insertable Streams 易体感数秒延迟 */
+const FRAME_BUFFER_SIZE = 2;
 
 const CODECS = [
   "avc1.640028",

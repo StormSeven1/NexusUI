@@ -18,7 +18,8 @@
 #   NEXUS_DOCKER_NO_KILL=1  不尝试 fuser 释放 FRONTEND_PORT
 #   NEXT_PUBLIC_WS_USE_NGINX_TUNNEL  默认 false；HTTPS+Nginx 生产见 prod-start-nginx.sh（会在构建时写入前端包）
 #   NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT  如 192.168.18.141:22401（与浏览器访问的 host: HTTPS 端口一致）
-#   APP_CONFIG_LAN_HOST  可选，写入 public/app-config.json 的主机（默认 hostname -I 首地址）
+#   APP_CONFIG_LAN_HOST  可选，写入 public/app-config.prod.json 的主机（默认 hostname -I 首地址）
+#   开发/生产并行：端点写入 app-config.prod.json，不覆盖 app-config.dev.json（见 dev-start.sh）
 
 set -euo pipefail
 
@@ -91,8 +92,8 @@ chmod +x "$ROOT/docker/apply-app-config-endpoints.sh" 2>/dev/null || true
 
 _cfg_host="${APP_CONFIG_LAN_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
 [[ -n "${_cfg_host:-}" ]] || _cfg_host="127.0.0.1"
-echo "== 写入 nexus-ui/public/app-config.json（生产容器: ${_cfg_host}:${BP}）=="
-"$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BP"
+echo "== 写入 nexus-ui/public/app-config.prod.json（生产容器: ${_cfg_host}:${BP}）=="
+APP_CONFIG_OUT=app-config.prod.json "$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BP"
 
 echo "== 重建容器并挂载 /workspace（生产模式，无 DEV_MODE）=="
 docker rm -f "$NAME" 2>/dev/null || true
@@ -117,6 +118,7 @@ docker run -d \
   -e "NEXUS_PY_UPGRADE=${DO_REBUILD}" \
   -e "NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}" \
   -e "NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}" \
+  -e "NEXT_PUBLIC_APP_CONFIG_URL=/app-config.prod.json" \
   -v "${ROOT}:/workspace" \
   -v "${START_SH}:/start.sh:ro" \
   --shm-size=64m \
@@ -138,7 +140,7 @@ echo "  前端:     http://127.0.0.1:${FP}/"
 echo "  后端 API: http://127.0.0.1:${BP}/api  WebSocket: ws://127.0.0.1:${BP}/ws"
 echo ""
 echo "说明: 容器内会执行 npm run build（若尚无可用 .next）与 next start，并拉起 Custombackend。"
-echo "      public/app-config.json 的 websocket / http.backendUrl 已在启动前由脚本写入（与 ${BP} 一致）。"
+echo "      浏览器读 public/app-config.prod.json（与开发 app-config.dev.json 互不覆盖）。"
 echo "      若路由/API 异常，请确认本机构建时 BACKEND_URL 与上述一致，必要时先 ./prod-build.sh 再重启。"
 echo "查看日志: docker logs -f ${NAME}"
 echo "进入容器: docker exec -it ${NAME} bash"

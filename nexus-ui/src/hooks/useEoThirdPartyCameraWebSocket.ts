@@ -55,7 +55,7 @@ export function useEoThirdPartyCameraWebSocket(
       onDevStatusBasic: (rec) => {
         useEoThirdPartyUdpDevStatusStore.getState().ingestDevStatusBasic(rec);
       },
-      onBinaryFrame: (parsed) => {
+      onBinaryFrameVideo: (parsed) => {
         const from = normThirdPartyEntityId(parsed.entityId);
         if (want && from !== want) return;
         recordThirdPartyCameraReceived(parsed.entityId || undefined);
@@ -66,7 +66,10 @@ export function useEoThirdPartyCameraWebSocket(
         const stack = stackRefBox.current?.current;
         if (stack?.applyLiveFrame) {
           stack.applyLiveFrame({
-            yuv420: parsed.yuv420,
+            yuv420:
+              parsed.yuv420.byteOffset === 0 && parsed.yuv420.byteLength === parsed.yuv420.buffer.byteLength
+                ? parsed.yuv420
+                : parsed.yuv420.slice(),
             videoWidth: parsed.videoWidth,
             videoHeight: parsed.videoHeight,
             strideY: parsed.strideY,

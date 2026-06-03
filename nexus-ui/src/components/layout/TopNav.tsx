@@ -3,14 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { useAppStore } from "@/stores/app-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import {
   Map,
-  Package,
-  ClipboardList,
-  FolderOpen,
-
   ChevronDown,
   User,
   LogOut,
@@ -18,35 +13,8 @@ import {
 import { cn } from "@/lib/utils";
 import { TopNavQuickActions } from "@/components/layout/TopNavQuickActions";
 import { TopNavWeatherStrip } from "@/components/layout/TopNavWeatherStrip";
+import { DockLayoutMenu } from "@/components/layout/DockLayoutMenu";
 import { getHttpConfig } from "@/lib/map-app-config";
-
-// 顶部Tab配置
-const TOP_TABS = [
-  {
-    id: "situation" as const,
-    label: "态势",
-    icon: Map,
-    description: "战场态势与目标监控"
-  },
-  {
-    id: "assets" as const,
-    label: "资产",
-    icon: Package,
-    description: "物资与装备管理"
-  },
-  {
-    id: "tasks" as const,
-    label: "任务",
-    icon: ClipboardList,
-    description: "任务规划与执行"
-  },
-  {
-    id: "layers" as const,
-    label: "图层",
-    icon: FolderOpen,
-    description: "图层管理与显示"
-  },
-] as const;
 
 const WORK_MODE_STORAGE_KEY = "nexus-system-work-mode";
 
@@ -323,8 +291,6 @@ function formatNowLabel(now: Date, formatter: Intl.DateTimeFormat): string {
 }
 
 export function TopNav() {
-  const { topTab, setTopTab } = useAppStore();
-
   const [workMode, setWorkMode] = useState<SystemWorkModeValue>("normal");
   const [workModePosting, setWorkModePosting] = useState(false);
   /** 用户已手动选过模式后，勿被异步 GET /system/work-mode 覆盖（否则会回到「平时」） */
@@ -471,11 +437,6 @@ export function TopNav() {
     }
   };
 
-  // 点击Tab的处理函数
-  const handleTabClick = (tabId: typeof topTab) => {
-    setTopTab(tabId);
-  };
-
   return (
     <header
       className="relative z-[100] flex h-12 shrink-0 items-center border-b border-nexus-border"
@@ -494,33 +455,11 @@ export function TopNav() {
         </div>
       </div>
 
-      {/* 主要导航标签 - 4个主要tab */}
-      <nav className="flex h-full flex-1 items-center gap-0.5 px-2">
-        {TOP_TABS.slice(0, 4).map((tab) => {
-          const isActive = topTab === tab.id;
-
-          return (
-            <button
-              key={tab.id}
-              onClick={() => handleTabClick(tab.id)}
-              className={cn(
-                "group relative flex h-full items-center gap-2 px-4 text-sm font-medium transition-all duration-200",
-                isActive
-                  ? "bg-nexus-accent-glow text-nexus-text-primary border-b-2 border-nexus-accent"
-                  : "text-nexus-text-muted hover:bg-white/5 hover:text-nexus-text-secondary"
-              )}
-              title={tab.description}
-            >
-              <tab.icon size={16} />
-              <span>{tab.label}</span>
-
-            </button>
-          );
-        })}
-      </nav>
+      <div className="flex-1" aria-hidden />
 
       {/* 右侧功能区 */}
       <div className="flex h-full shrink-0 items-center justify-end gap-4 border-l border-nexus-border px-2 sm:px-3">
+        <DockLayoutMenu />
         <TopNavQuickActions />
         <div className="hidden h-4 w-px shrink-0 bg-nexus-border md:block" aria-hidden />
         <label className="flex min-w-0 items-center gap-2 text-[11px] whitespace-nowrap">

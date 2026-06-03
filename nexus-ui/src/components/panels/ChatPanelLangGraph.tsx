@@ -15,59 +15,26 @@ import { ChatInput, type ChatInputHandle } from "@/components/chat/ChatInput";
 import { LangGraphInterruptDialog } from "@/components/chat/LangGraphInterruptDialog";
 import { useVlmChatInjectStore } from "@/stores/vlm-chat-inject-store";
 import {
+  consumeLangGraphSseStream,
   extractLangGraphDisplayChunks,
-  forEachLangGraphSseLine,
   parseLangGraphInterruptEvent,
   type LangGraphInterruptUiPayload,
 } from "@/lib/langgraph-chat-sse";
 import { executeLangGraphToolCallFromData } from "@/lib/langgraph-tool-dispatch";
+import { clearTaskStatusVerifyChatSession } from "@/lib/task-status-verify-chat-ingest";
 import {
-  buildTaskStatusVerifyBannerMarkdown,
-  formatTaskStatusAssistantMarkdown,
-  taskStatusImageFilePart,
-  taskStatusVerifySessionKey,
-} from "@/lib/task-status-chat-format";
-import {
-  mergeVerifyJudgmentState,
-  type TaskVerifyJudgmentState,
-} from "@/lib/task-status-judgment-ui";
-import type { TaskStatusChatPayload } from "@/lib/task-status-types";
-import { subscribeTaskStatusChat } from "@/lib/task-status-chat-feed-bus";
-import {
-  getAssistantLangGraphThreadId,
   useAssistantPanelMessages,
   useAssistantPanelSessionStore,
 } from "@/stores/assistant-panel-session-store";
-import { useAppStore } from "@/stores/app-store";
-import { toast } from "sonner";
 import { Bot, ChevronRight, Trash2, Zap } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-
-/** 上游 JSON 偶发把 taskStatus/trackID 等打成字符串，与严格 `=== 4` 分支对齐 */
-function normalizeTaskStatusPayload(raw: TaskStatusChatPayload): TaskStatusChatPayload {
-  const ts = Number(raw.taskStatus);
-  const _rawTrackID = Number(raw.trackID);
-  const trackID =
-    raw.trackID != null &&
-    String(raw.trackID).trim() !== "" &&
-    Number.isFinite(_rawTrackID) &&
-    _rawTrackID > 0  // 0 不是合法航迹 ID
-      ? _rawTrackID
-      : undefined;
-  const cameraIndex =
-    raw.cameraIndex != null &&
-    String(raw.cameraIndex).trim() !== "" &&
-    Number.isFinite(Number(raw.cameraIndex))
-      ? Number(raw.cameraIndex)
-      : undefined;
-  return {
-    ...raw,
-    taskStatus: Number.isFinite(ts) ? ts : raw.taskStatus,
-    trackID,
-    cameraIndex,
-    alarmId: String(raw.alarmId ?? "").trim(),
-  };
-}
+import {
+  logLangGraphChatRequest,
+  logLangGraphChatResponse,
+  logLangGraphChatSendBlocked,
+  logLangGraphChatStreamEnd,
+} from "@/lib/langgraph-chat-http-log";
 
 /** 闪电菜单与空状态区共用的快捷问题文案 */
 const QUICK_PROMPTS: readonly string[] = [
@@ -76,29 +43,6 @@ const QUICK_PROMPTS: readonly string[] = [
   "使用无人机对搜索区1和搜索区2进行搜索",
   "无人机返航",
 ];
-
-/** 查证气泡：查证文案 → 图片 → 研判文案（与 Qt 顺序一致） */
-function rewriteVerifyAssistantBubble(
-  setMessages: Dispatch<SetStateAction<UIMessage[]>>,
-  assistantId: string,
-  banner: string,
-  judgment: TaskVerifyJudgmentState,
-  extraImage?: FileUIPart | null,
-) {
-  const jt = judgment.body?.trim() ?? "";
-  setMessages((msgs) =>
-    msgs.map((msg) => {
-      if (msg.id !== assistantId) return msg;
-      const existingFiles = msg.parts.filter((p) => p.type === "file") as FileUIPart[];
-      const seen = new Set(existingFiles.map((f) => f.url));
-      const extra: FileUIPart[] =
-        extraImage && !seen.has(extraImage.url) ? [extraImage] : [];
-      const parts: UIMessage["parts"] = [{ type: "text", text: banner }, ...existingFiles, ...extra];
-      if (jt) parts.push({ type: "text", text: judgment.body });
-      return { ...msg, parts };
-    }),
-  );
-}
 
 /** 向指定助手气泡追加正文（与 Qt `appendTextToSession` 对齐） */
 function appendTextToAssistantMessageById(
@@ -153,12 +97,6 @@ export function ChatPanelLangGraph() {
   const abortRef = useRef<AbortController | null>(null);
   const chatInputRef = useRef<ChatInputHandle>(null);
   const leadingToolbarRef = useRef<HTMLDivElement | null>(null);
-  /** Qt `m_mapTrackSession`：`trackId_cameraIndex` → 当前轮查证助手消息 id（供 taskStatus 5/6/7 追加研判） */
-  const verifySessionRef = useRef<Map<string, string>>(new Map());
-  /** 由 taskStatus=4（目标信息）创建或升级为 4 的气泡 id；用于区分「仅 5 占位」与「已完成一轮 4」以支持同一目标多次查证各一条气泡 */
-  const verifyFourBubbleIdsRef = useRef<Set<string>>(new Set());
-  const verifyBannerRef = useRef<Map<string, string>>(new Map());
-  const judgmentStateRef = useRef<Map<string, TaskVerifyJudgmentState>>(new Map());
   const vlmInjectSeq = useVlmChatInjectStore((s) => s.injectSeq);
   const [interruptPrompt, setInterruptPrompt] = useState<LangGraphInterruptUiPayload | null>(null);
 
@@ -200,94 +138,6 @@ export function ChatPanelLangGraph() {
     ]);
   }, [vlmInjectSeq]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (process.env.NEXT_PUBLIC_TASK_STATUS_CHAT_FEED === "false") return;
-
-    const onPayload = (raw: TaskStatusChatPayload) => {
-      try {
-        const payload = normalizeTaskStatusPayload(raw);
-        const sessionKey = taskStatusVerifySessionKey(
-          payload.trackID ?? undefined,
-          payload.cameraIndex ?? undefined,
-        );
-
-        const app = useAppStore.getState();
-        app.setRightPanelTab("chat");
-        if (!app.rightSidebarOpen) app.toggleRightSidebar();
-
-        const ts = payload.taskStatus;
-
-        // trackId + cameraIndex 定位「当前轮」：每次 taskStatus=4（目标信息）新开一条助手气泡；5/6/7 只追加到该 key 下最新一条。
-        if (sessionKey && ts === 4) {
-          const banner = buildTaskStatusVerifyBannerMarkdown(payload);
-          const img = taskStatusImageFilePart(payload);
-          const reuseId = verifySessionRef.current.get(sessionKey);
-          const fromTargetInfo = reuseId ? verifyFourBubbleIdsRef.current.has(reuseId) : false;
-
-          // 仅当占位气泡来自「先到的 5/6/7」且尚未有过 4 时，才把本条 4 合并进该气泡，避免两条碎片。
-          if (reuseId && !fromTargetInfo) {
-            verifyFourBubbleIdsRef.current.add(reuseId);
-            verifyBannerRef.current.set(reuseId, banner);
-            const jst = judgmentStateRef.current.get(reuseId) ?? { introShown: false, body: "" };
-            judgmentStateRef.current.set(reuseId, jst);
-            rewriteVerifyAssistantBubble(setMessages, reuseId, banner, jst, img);
-            toast.message("相机查证", { description: `告警 ${payload.alarmId} · 航迹 ${payload.trackID}` });
-            return;
-          }
-
-          const asstId = generateId();
-          verifySessionRef.current.set(sessionKey, asstId);
-          verifyFourBubbleIdsRef.current.add(asstId);
-          verifyBannerRef.current.set(asstId, banner);
-          judgmentStateRef.current.set(asstId, { introShown: false, body: "" });
-          const parts: UIMessage["parts"] = [{ type: "text", text: banner }];
-          if (img) parts.push(img);
-          setMessages((m) => [...m, { id: asstId, role: "assistant", parts }]);
-          toast.message("相机查证", { description: `告警 ${payload.alarmId} · 航迹 ${payload.trackID}` });
-          return;
-        }
-
-        if (sessionKey && (ts === 5 || ts === 6 || ts === 7)) {
-          const img = taskStatusImageFilePart(payload);
-          let bubbleId = verifySessionRef.current.get(sessionKey);
-          if (!bubbleId) {
-            bubbleId = generateId();
-            verifySessionRef.current.set(sessionKey, bubbleId);
-            const fb = buildTaskStatusVerifyBannerMarkdown(payload);
-            verifyBannerRef.current.set(bubbleId, fb);
-            judgmentStateRef.current.set(bubbleId, { introShown: false, body: "" });
-            setMessages((m) => [...m, { id: bubbleId!, role: "assistant", parts: [{ type: "text", text: fb }] }]);
-            toast.message("相机查证（仅有研判）", { description: `告警 ${payload.alarmId}` });
-          }
-
-          const banner = buildTaskStatusVerifyBannerMarkdown(payload);
-          verifyBannerRef.current.set(bubbleId, banner);
-          const merged = mergeVerifyJudgmentState(judgmentStateRef.current.get(bubbleId), payload.description ?? "");
-          judgmentStateRef.current.set(bubbleId, merged);
-          rewriteVerifyAssistantBubble(setMessages, bubbleId, banner, merged, img);
-          return;
-        }
-
-        // ts=5/6/7 且没有有效 sessionKey：研判结果孤包（trackID 无效如 0），直接丢弃，
-        // 避免产生 "正在查证ID为0的目标" 的垃圾气泡。
-        if (ts === 5 || ts === 6 || ts === 7) return;
-
-        const text = formatTaskStatusAssistantMarkdown(payload);
-        const asstId = generateId();
-        const parts: UIMessage["parts"] = [{ type: "text", text }];
-        const imgOther = taskStatusImageFilePart(payload);
-        if (imgOther) parts.push(imgOther);
-        setMessages((m) => [...m, { id: asstId, role: "assistant", parts }]);
-        toast.message("相机查证更新", { description: `告警 ${payload.alarmId}` });
-      } catch {
-        /* ignore malformed */
-      }
-    };
-
-    return subscribeTaskStatusChat(onPayload);
-  }, []);
-
   const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -298,10 +148,7 @@ export function ChatPanelLangGraph() {
     stop();
     setQuickMenuOpen(false);
     setInterruptPrompt(null);
-    verifySessionRef.current.clear();
-    verifyFourBubbleIdsRef.current.clear();
-    verifyBannerRef.current.clear();
-    judgmentStateRef.current.clear();
+    clearTaskStatusVerifyChatSession();
     clearSession("chat");
   }, [stop, clearSession]);
 
@@ -340,10 +187,21 @@ export function ChatPanelLangGraph() {
         interrupt_id: p.mainInterruptId,
         thread_id: p.threadId,
       };
+      const chatUrl = "/api/langgraph-chat";
+      const chatHeaders = { "Content-Type": "application/json", Accept: "text/event-stream" };
+      const reqStarted = performance.now();
+      const seq = logLangGraphChatRequest({
+        kind: "interrupt_resume",
+        url: chatUrl,
+        method: "POST",
+        headers: chatHeaders,
+        body,
+        userTextPreview: `[interrupt] ${p.mainInterruptId}`,
+      });
       try {
-        const res = await fetch("/api/langgraph-chat", {
+        const res = await fetch(chatUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+          headers: chatHeaders,
           body: JSON.stringify(body),
           signal: ac.signal,
         });
@@ -356,11 +214,42 @@ export function ChatPanelLangGraph() {
           } catch {
             detail = raw.trim();
           }
+          logLangGraphChatResponse({
+            kind: "interrupt_resume",
+            url: chatUrl,
+            status: res.status,
+            statusText: res.statusText,
+            ok: false,
+            seq,
+            durationMs: Math.round(performance.now() - reqStarted),
+            errorDetail: detail || raw.slice(0, 500),
+          });
           throw new Error(detail || `HTTP ${res.status}`);
         }
+        logLangGraphChatResponse({
+          kind: "interrupt_resume",
+          url: chatUrl,
+          status: res.status,
+          statusText: res.statusText,
+          ok: true,
+          seq,
+          durationMs: Math.round(performance.now() - reqStarted),
+        });
         const reader = res.body?.getReader();
         if (!reader) throw new Error("无响应体");
-        await forEachLangGraphSseLine(reader, processLangGraphParsedLine);
+        const streamStarted = performance.now();
+        const streamResult = await consumeLangGraphSseStream(reader, processLangGraphParsedLine, {
+          kind: "interrupt_resume",
+          logSeq: seq,
+          signal: ac.signal,
+        });
+        logLangGraphChatStreamEnd({
+          kind: "interrupt_resume",
+          seq,
+          reason: streamResult.reason,
+          eventCount: streamResult.eventCount,
+          durationMs: Math.round(performance.now() - streamStarted),
+        });
       } catch (e) {
         if ((e as Error).name === "AbortError") {
           appendToLastAssistantText(setMessages, "\n\n[已停止]");
@@ -390,17 +279,29 @@ export function ChatPanelLangGraph() {
       { id: asstId, role: "assistant", parts: [{ type: "text", text: "" }] },
     ]);
 
+    // 与 Qt `GPTInterfaceWgt::sendChatToServer`（m_nWorkFlowMode==1）一致：普通对话不传 thread_id，由上游每次处理；
+    // thread_id 仅在中断恢复（interrupt_feedback）时使用。
     const body: Record<string, unknown> = {
       messages: [{ role: "user", content: userText }],
       user_context: {} as Record<string, unknown>,
     };
-    const existingThread = getAssistantLangGraphThreadId();
-    if (existingThread) body.thread_id = existingThread;
+
+    const chatUrl = "/api/langgraph-chat";
+    const chatHeaders = { "Content-Type": "application/json", Accept: "text/event-stream" };
+    const reqStarted = performance.now();
+    const seq = logLangGraphChatRequest({
+      kind: "chat",
+      url: chatUrl,
+      method: "POST",
+      headers: chatHeaders,
+      body,
+      userTextPreview: userText.slice(0, 200),
+    });
 
     try {
-      const res = await fetch("/api/langgraph-chat", {
+      const res = await fetch(chatUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        headers: chatHeaders,
         body: JSON.stringify(body),
         signal: ac.signal,
       });
@@ -414,12 +315,43 @@ export function ChatPanelLangGraph() {
         } catch {
           detail = raw.trim();
         }
+        logLangGraphChatResponse({
+          kind: "chat",
+          url: chatUrl,
+          status: res.status,
+          statusText: res.statusText,
+          ok: false,
+          seq,
+          durationMs: Math.round(performance.now() - reqStarted),
+          errorDetail: detail || raw.slice(0, 500),
+        });
         throw new Error(detail || `HTTP ${res.status}`);
       }
+      logLangGraphChatResponse({
+        kind: "chat",
+        url: chatUrl,
+        status: res.status,
+        statusText: res.statusText,
+        ok: true,
+        seq,
+        durationMs: Math.round(performance.now() - reqStarted),
+      });
 
       const reader = res.body?.getReader();
       if (!reader) throw new Error("无响应体");
-      await forEachLangGraphSseLine(reader, processLangGraphParsedLine);
+      const streamStarted = performance.now();
+      const streamResult = await consumeLangGraphSseStream(reader, processLangGraphParsedLine, {
+        kind: "chat",
+        logSeq: seq,
+        signal: ac.signal,
+      });
+      logLangGraphChatStreamEnd({
+        kind: "chat",
+        seq,
+        reason: streamResult.reason,
+        eventCount: streamResult.eventCount,
+        durationMs: Math.round(performance.now() - streamStarted),
+      });
     } catch (e) {
       if ((e as Error).name === "AbortError") {
         appendToLastAssistantText(setMessages, "\n\n[已停止]");
@@ -449,8 +381,16 @@ export function ChatPanelLangGraph() {
         toast.message("当前模式仅支持文字", { description: "暂未开放附件上传" });
       }
       const t = text.trim();
-      if (!t || isStreaming) return;
+      if (!t) return;
+      if (isStreaming) {
+        logLangGraphChatSendBlocked("上一轮仍在流式响应中 (isStreaming=true)");
+        return;
+      }
       if (interruptPrompt) {
+        logLangGraphChatSendBlocked("存在未处理的任务中断弹窗", {
+          threadId: interruptPrompt.threadId,
+          interruptId: interruptPrompt.interruptId,
+        });
         toast.message("请先处理任务确认弹窗", { description: "继续执行、取消任务或关闭弹窗后再发送" });
         return;
       }

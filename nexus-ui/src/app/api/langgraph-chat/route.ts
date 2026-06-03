@@ -1,23 +1,12 @@
 import { NextResponse } from "next/server";
+import { logLangGraphChatUpstreamProxy } from "@/lib/langgraph-chat-http-log";
+import { resolveTaskManagementOrigin } from "@/lib/task-management-url";
 
 export const runtime = "nodejs";
 
-function assistantUpstreamBase(): string {
-  const ip =
-    process.env.LangGraphIp?.trim() ||
-    process.env.LANGGRAPH_IP?.trim() ||
-    "192.168.18.103";
-  const portRaw =
-    process.env.LangGraphPort?.trim() ||
-    process.env.LANGGRAPH_PORT?.trim() ||
-    "8000";
-  const port = /^\d+$/.test(portRaw) ? portRaw : "8000";
-  return `http://${ip}:${port}`;
-}
-
 /**
  * 代理助手对话流式接口 → `POST {upstream}/api/v1/chat/stream`
- * 地址由服务端环境变量 LangGraphIp / LangGraphPort（或 LANGGRAPH_*）配置。
+ * 地址与处置/快捷工作流同源：`NEXT_PUBLIC_NEXUS_TASK_MANAGEMENT_URL`（或 `NEXUS_TASK_MANAGEMENT_URL`、LangGraphIp/Port）。
  */
 export async function POST(req: Request) {
   let bodyText: string;
@@ -27,7 +16,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
 
-  const upstreamUrl = `${assistantUpstreamBase()}/api/v1/chat/stream`;
+  const upstreamUrl = `${resolveTaskManagementOrigin()}/api/v1/chat/stream`;
   let upstream: Response;
   try {
     upstream = await fetch(upstreamUrl, {
@@ -41,16 +30,20 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    logLangGraphChatUpstreamProxy(upstreamUrl, bodyText, 0, false, msg);
     return NextResponse.json({ error: "upstream fetch failed", detail: msg }, { status: 502 });
   }
 
   if (!upstream.ok || !upstream.body) {
     const errText = await upstream.text().catch(() => "");
+    logLangGraphChatUpstreamProxy(upstreamUrl, bodyText, upstream.status, false, errText.slice(0, 2000));
     return NextResponse.json(
       { error: "upstream error", detail: errText.slice(0, 2000) },
       { status: upstream.status >= 400 ? upstream.status : 502 },
     );
   }
+
+  logLangGraphChatUpstreamProxy(upstreamUrl, bodyText, upstream.status, true);
 
   const ct = upstream.headers.get("content-type") ?? "text/event-stream";
   return new Response(upstream.body, {

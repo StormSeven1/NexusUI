@@ -5,11 +5,8 @@
  *   - 选中航迹/资产 → appStore.selectedTrackId / selectedAssetId
  *   → 本组件从 track-store / asset-store 取数据 → 展示属性
  *
- * 【一键处置】
- *   - 点击「一键处置」按钮 → buildTargetInfoFromTrack 构建请求体
- *   → fetchDisposalPlansHttp POST disposalManualGeneratePlanUrl
- *   → disposalPlanStore.appendFromNormalized(_, "http")
- *   → DisposalPlanFeed 展示方案卡片
+ * 【查证目标】
+ *   - 与地图双击航迹一致 → runGisTrackVerification
  *
  * 【消灭关联】
  *   - AlertPanel「消灭」后若当前选中的是被消灭航迹 → appStore.selectTrack(null)
@@ -19,24 +16,16 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useAppConfigStore } from "@/stores/app-config-store";
-import { buildTargetInfoFromTrack } from "@/lib/disposal/target-info-from-track";
-import { fetchDisposalPlansHttp } from "@/lib/disposal/disposal-api";
-import { useAppStore } from "@/stores/app-store";
-import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
+import { runGisTrackVerification } from "@/lib/run-gis-track-verification";
 import {
   buildAssetSymbolDataUrl,
-  buildMarkerSymbolDataUrl,
   assetFriendlyColorFromProperties,
-  getFusionTrackMarkerFill,
   resolveTrackPointFill,
-  isAirTrackBirdGlyph,
 } from "@/lib/map-icons";
+import { useTrackMarkerSymbolUrl } from "@/components/military/TrackMarkerIcon";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
-import { isTrackVirtualTroop } from "@/lib/track-reality-type";
 import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
-import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import { useAlertStore } from "@/stores/alert-store";
 import { useAssetStore } from "@/stores/asset-store";
 import {
@@ -44,7 +33,6 @@ import {
   isTrackMatchedByAlarm,
   getTrackDispositionForRendering,
 } from "@/stores/track-store";
-import { shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
 import { formatTrackSpeed } from "@/lib/track-speed-format";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -84,10 +72,15 @@ function DispositionBadge({ d }: { d: ForceDisposition }) {
   );
 }
 
-function SectionTitle({ children }: { children: string }) {
+function SectionTitle({ children, accent }: { children: string; accent?: boolean }) {
   return (
     <div className="mt-2 flex items-center justify-between">
-      <div className="text-[10px] font-semibold tracking-wider text-nexus-text-muted">
+      <div
+        className={cn(
+          "text-[10px] font-semibold tracking-wider",
+          accent ? "text-[#c9a835]" : "text-nexus-text-muted",
+        )}
+      >
         {children}
       </div>
     </div>
@@ -112,11 +105,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const asset = allAssets.find((a) => a.id === id);
   // console.log("[TargetPlacard] id=", id, "kind=", kind, "asset=", asset ? { id: asset.id, asset_type: asset.asset_type, name: asset.name } : null, "allAssetIds=", allAssets.map(a => `${a.id}(${a.asset_type})`));
   const alerts = useAlertStore((s) => s.alerts);
-  const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
-  const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar);
-  const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
-  const appendDisposalFromHttp = useDisposalPlanStore((s) => s.appendFromNormalized);
-  const [oneClickLoading, setOneClickLoading] = useState(false);
+  const [verifyLoading, setVerifyLoading] = useState(false);
 
   /* 目标丢失时自动关闭属性框 */
   useEffect(() => {
@@ -147,24 +136,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const title = mapDisplayName;
   const subtitle = kind === "track" ? "航迹" : "资产";
 
-  const trackSymbolUrl = useMemo(() => {
-    if (kind !== "track" || !track) return null;
-    const tr = getTrackRenderingConfig();
-    const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
-    const eff = getTrackDispositionForRendering(track);
-    const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
-    return buildMarkerSymbolDataUrl(
-      track.type,
-      eff,
-      undefined,
-      isTrackVirtualTroop(track),
-      friendlyFill,
-      eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
-      isAirTrackBirdGlyph(track),
-      resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
-      shouldApplyVerifiedTrackGreen(track),
-    );
-  }, [kind, track]);
+  const trackSymbolUrl = useTrackMarkerSymbolUrl(kind === "track" ? track : null);
 
   const trackDispBadge = kind === "track" && track ? getTrackDispositionForRendering(track) : null;
 
@@ -202,35 +174,19 @@ export function TargetPlacard(props: TargetPlacardProps) {
         ? assetIconLoaded.url
         : null;
 
-  const handleOneClickDisposal = useCallback(async () => {
+  const handleVerifyTarget = useCallback(async () => {
     if (kind !== "track" || !track) return;
-    await useAppConfigStore.getState().ensureLoaded();
-    setOneClickLoading(true);
+    setVerifyLoading(true);
     try {
-      const targetInfo = buildTargetInfoFromTrack(track);
-      const normalized = await fetchDisposalPlansHttp({ targetInfo });
-      if (!normalized?.items?.length) {
-        console.warn("[TargetPlacard] 响应中未解析到处置方案");
-        return;
-      }
-      appendDisposalFromHttp(normalized, "http");
-      if (!rightSidebarOpen) toggleRightSidebar();
-      setRightPanelTab("chat");
+      await runGisTrackVerification(track);
     } catch (e) {
-      console.error("[TargetPlacard] 一键处置失败", e);
-      const msg = e instanceof Error ? e.message : "网络不通畅，请检查网络后重试";
-      toast.error("一键处置失败", { description: msg });
+      console.error("[TargetPlacard] 查证目标失败", e);
+      const msg = e instanceof Error ? e.message : "查证失败，请稍后重试";
+      toast.error("查证目标失败", { description: msg });
     } finally {
-      setOneClickLoading(false);
+      setVerifyLoading(false);
     }
-  }, [
-    kind,
-    track,
-    appendDisposalFromHttp,
-    setRightPanelTab,
-    toggleRightSidebar,
-    rightSidebarOpen,
-  ]);
+  }, [kind, track]);
 
   const headerColor = (() => {
     if (kind !== "track" || !track) {
@@ -316,14 +272,15 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
       {kind === "track" ? (
         <>
-          <SectionTitle>概况</SectionTitle>
+          <SectionTitle accent>概况</SectionTitle>
           <div className="mt-1 flex flex-col gap-y-1.5">
+            <Row k="名称" v={track?.trackAlias?.trim() || "-"} />
             <Row k="来源" v={track?.sensor ?? "-"} />
             <Row k="最后更新" v={track?.lastUpdate ?? "-"} />
             <Row k="坐标" v={formatLatLng(track?.lat, track?.lng)} />
           </div>
 
-          <SectionTitle>运动</SectionTitle>
+          <SectionTitle accent>运动</SectionTitle>
           <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1.5">
             <Row k="航速" v={track ? formatTrackSpeed(track.speed) : "-"} />
             <Row
@@ -340,18 +297,17 @@ export function TargetPlacard(props: TargetPlacardProps) {
             <Row k="高度" v={track?.altitude != null ? `${track.altitude.toFixed(1)}` : "-"} />
           </div>
 
-          <SectionTitle>处置</SectionTitle>
+          <SectionTitle accent>查证</SectionTitle>
           <div className="mt-1">
             <button
               type="button"
-              disabled={oneClickLoading}
-              onClick={() => void handleOneClickDisposal()}
+              disabled={verifyLoading}
+              onClick={() => void handleVerifyTarget()}
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 py-2 text-[11px] font-semibold text-sky-300 transition hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {oneClickLoading ? <Loader2 size={12} className="animate-spin" /> : null}
-              一键处置
+              {verifyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
+              查证目标
             </button>
-            <p className="mt-1 text-[9px] text-nexus-text-muted">拉取方案并显示在右侧「AI 助手」面板</p>
           </div>
 
           <SectionTitle>关联告警</SectionTitle>
@@ -422,7 +378,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
         </>
       ) : (
         <>
-          <SectionTitle>概况</SectionTitle>
+          <SectionTitle accent>概况</SectionTitle>
           <div className="mt-1 space-y-1.5">
             <Row k="状态" v={asset?.status ?? "-"} />
             <Row k="类型" v={asset?.asset_type ?? "-"} />

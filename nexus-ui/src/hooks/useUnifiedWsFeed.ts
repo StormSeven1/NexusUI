@@ -132,7 +132,7 @@
  *         (名称从第1步解析的 displayName 取，坐标从 relationships 取)
  */
 
-import { useEffect, startTransition } from "react";
+import { useEffect } from "react";
 import { toast } from "sonner";
 import { useTrackStore } from "@/stores/track-store";
 import { useAlertStore } from "@/stores/alert-store";
@@ -160,6 +160,10 @@ import { normalizeAssetType, type PublicMapAssetType, type Track } from "@/lib/m
 import { recordTrackReceived, recordAlertReceived, recordZoneReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived, recordHighFreqReceived, recordWsHeartbeat, recordEntityStatusFrame, recordAssetBatchReceived, recordAssetEventReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
+import {
+  isThirdPartyCameraEntityId,
+  normThirdPartyEntityId,
+} from "@/lib/eo-video/thirdPartyEntityId";
 import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
 import {
   apply8090CameraPositionsToAssets,
@@ -215,11 +219,9 @@ function scheduleTrackFlush() {
     _trackAccumulator.clear();
     const ts = _trackFlushTimestamp;
     _trackFlushTimestamp = undefined;
-    /* 航迹合并为低优先级过渡更新，让光电/资产等更「急」的渲染与 input 先跑 */
-    startTransition(() => {
-      useTrackStore.getState().setTracks(batch, ts !== undefined ? { lastUpdate: ts } : undefined);
-      for (const t of batch) recordTrackReceived(!!t.isAirTrack);
-    });
+    /* 同步写入 store，避免 startTransition 推迟 ingest 导致与 prune 竞态、整片闪灭 */
+    useTrackStore.getState().setTracks(batch, ts !== undefined ? { lastUpdate: ts } : undefined);
+    for (const t of batch) recordTrackReceived(!!t.isAirTrack);
   }, TRACK_FLUSH_INTERVAL_MS);
 }
 
@@ -337,6 +339,37 @@ let cameraDefaultRangeKmCache: number | undefined;
 
 const CAMERA8090_REFRESH_MS = 10 * 60 * 1000;
 let camera8090RefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * 光电 DDS camera 帧可达 10–30Hz；每帧 `setAssets` + Map2D 全量 FOV 重绘会占满主线程，
+ * 与光电视频 WebRTC/WebCodecs 抢时间片，表现为画面延迟数秒。合并为 ≤10Hz 提交地图。
+ */
+const CAMERA_MAP_COMMIT_MS = 100;
+let cameraMapCommitTimer: ReturnType<typeof setTimeout> | null = null;
+const pendingCameraMergePatches = new Map<string, Partial<AssetData>>();
+
+function flushCameraMapAssetUpdates() {
+  cameraMapCommitTimer = null;
+  if (!lastWsAssetList.length && pendingCameraMergePatches.size === 0) return;
+  rebuildAndCommitAssetSnapshot();
+  if (pendingCameraMergePatches.size === 0) return;
+  const snap = useAssetStore.getState().assets;
+  for (const [entityId, direct] of pendingCameraMergePatches) {
+    if (!snap.some((a) => a.id === entityId)) continue;
+    useAssetStore.getState().mergeAssetFields(entityId, direct);
+    logWsCamera("mergeAssetFields", { entityId, keys: Object.keys(direct), batched: true });
+  }
+  pendingCameraMergePatches.clear();
+}
+
+function scheduleCameraMapAssetUpdates(entityId: string, mergePatch: Partial<AssetData>) {
+  pendingCameraMergePatches.set(entityId, {
+    ...pendingCameraMergePatches.get(entityId),
+    ...mergePatch,
+  });
+  if (cameraMapCommitTimer != null) return;
+  cameraMapCommitTimer = setTimeout(flushCameraMapAssetUpdates, CAMERA_MAP_COMMIT_MS);
+}
 
 function filterAssetsForDisplay(assets: AssetData[]): AssetData[] {
   return assets.filter((a) => shouldDisplayAssetId(a.asset_type, a.id, a.name));
@@ -515,10 +548,16 @@ function extractCameraLatLng(d: Record<string, unknown>): { lat: number; lng: nu
   return null;
 }
 
-/** DDS 全景：地图方位 ≈ `ptz.pan + panoOffset`（与常见帧里 `originPtz.pan` 一致）；缺 `panoOffset` 时用 origin→ptz。 */
-function parseCameraBearingDeg(d: Record<string, unknown>): number | undefined {
+/** DDS 全景：普通光电 ≈ `ptz.pan + panoOffset`；第三方相机视场仅用 `originPtz.pan`。 */
+function parseCameraBearingDeg(d: Record<string, unknown>, entityId?: string): number | undefined {
   const originPtz = d.originPtz as Record<string, unknown> | undefined;
   const ptz = d.ptz as Record<string, unknown> | undefined;
+
+  if (entityId && isThirdPartyCameraEntityId(entityId)) {
+    const n = Number(originPtz?.pan);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
   const pPan = Number(ptz?.pan);
   const pano = Number(d.panoOffset);
   if (Number.isFinite(pPan) && Number.isFinite(pano)) {
@@ -853,10 +892,8 @@ function dispatchWsMessageSync(raw: string) {
         const t = normalizeIncomingTrack(msg.data ?? msg);
         if (t) {
           const ts = msg.timestamp ? String(msg.timestamp) : undefined;
-          startTransition(() => {
-            useTrackStore.getState().setTracks([t], ts !== undefined ? { lastUpdate: ts } : undefined);
-            recordTrackReceived(!!t.isAirTrack);
-          });
+          useTrackStore.getState().setTracks([t], ts !== undefined ? { lastUpdate: ts } : undefined);
+          recordTrackReceived(!!t.isAirTrack);
         }
         break;
       }
@@ -1035,10 +1072,16 @@ function dispatchWsMessageSync(raw: string) {
         if (rawForDds) {
           useEoCameraDdsStatusStore.getState().ingestCameraPayload({
             ...d,
-            entityId: canonicalEntityId(rawForDds),
+            entityId: isThirdPartyCameraEntityId(rawForDds)
+              ? normThirdPartyEntityId(rawForDds)
+              : canonicalEntityId(rawForDds),
           });
         }
-        const entityId = rawId ? canonicalEntityId(rawId) : "";
+        const entityId = rawId
+          ? isThirdPartyCameraEntityId(rawId)
+            ? normThirdPartyEntityId(rawId)
+            : canonicalEntityId(rawId)
+          : "";
         if (!entityId) {
           logWsCamera("skip:no-entityId", { rawId, keys: Object.keys(d).slice(0, 24) });
           break;
@@ -1057,7 +1100,7 @@ function dispatchWsMessageSync(raw: string) {
             logWsCamera("skip:shouldDisplayAssetId=false", { entityId, atType });
             break;
           }
-          const bearing = parseCameraBearingDeg(d);
+          const bearing = parseCameraBearingDeg(d, entityId);
           const fovDeg = parseCameraHorizontalFovDeg(d);
 
           const rawRange = d.range_km;
@@ -1138,34 +1181,19 @@ function dispatchWsMessageSync(raw: string) {
               },
             ];
           }
-          rebuildAndCommitAssetSnapshot();
           recordCameraReceived(entityId);
-          const assetsSnap = useAssetStore.getState().assets;
-          const row = assetsSnap.find((a) => a.id === entityId);
-          const cameraIdsOnMap = assetsSnap.filter((a) => a.asset_type === "camera").map((a) => a.id);
-          logWsCamera("after-rebuild", {
+          const direct: Partial<AssetData> = { status };
+          if (bearing !== undefined) direct.heading = bearing;
+          if (fovDeg !== undefined) direct.fov_angle = fovDeg;
+          if (effectiveRangeKm !== undefined) direct.range_km = effectiveRangeKm;
+          scheduleCameraMapAssetUpdates(entityId, direct);
+          logWsCamera("scheduled-map-commit", {
             entityId,
             lastWsHadPrevRow: !!prev,
-            lastWsCameraRows: lastWsAssetList.filter((r) => r.asset_type === "camera").map((r) => r.id),
-            inStore: !!row,
-            storeHeading: row?.heading ?? "(null)",
-            storeFov: row?.fov_angle ?? "(null)",
-            storeRangeKm: row?.range_km ?? "(null)",
-            cameraIdsInStore: cameraIdsOnMap,
+            bearing,
+            fovDeg,
+            effectiveRangeKm,
           });
-          /* 与 C2 行为对齐：重建快照后再直接 patch store，避免 lastWsAssetList/合并链路与屏上 id 不一致时扇区不刷新 */
-          const canMerge = assetsSnap.some((a) => a.id === entityId);
-          if (canMerge) {
-            const direct: Partial<AssetData> = {};
-            if (bearing !== undefined) direct.heading = bearing;
-            if (fovDeg !== undefined) direct.fov_angle = fovDeg;
-            if (effectiveRangeKm !== undefined) direct.range_km = effectiveRangeKm;
-            direct.status = status;
-            useAssetStore.getState().mergeAssetFields(entityId, direct);
-            logWsCamera("mergeAssetFields", { entityId, keys: Object.keys(direct) });
-          } else {
-            logWsCamera("skip:mergeAssetFields(no row in store after rebuild)", { entityId, cameraIdsInStore: cameraIdsOnMap });
-          }
         }
         break;
       }

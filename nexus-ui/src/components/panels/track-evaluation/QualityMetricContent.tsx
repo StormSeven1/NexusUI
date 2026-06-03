@@ -291,7 +291,7 @@ export function QualityMetricContent() {
   const metricsComputing = useTrackEvaluationStore((s) => s.metricsComputing);
   const queryStats = useTrackEvaluationStore((s) => s.queryStats);
 
-  if (metricsComputing) {
+  if (metricsComputing && !metrics) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-center">
         <Loader2 className="h-6 w-6 animate-spin text-nexus-accent" aria-hidden />

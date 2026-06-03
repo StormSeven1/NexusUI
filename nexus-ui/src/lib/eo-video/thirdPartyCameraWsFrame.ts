@@ -12,7 +12,17 @@ export type ParsedThirdPartyWsFrame = {
   boxes: ThirdPartyCameraBox[];
 };
 
-export function parseThirdPartyWsFrame(buf: ArrayBuffer): ParsedThirdPartyWsFrame | null {
+export type ParseThirdPartyWsFrameOptions = {
+  /**
+   * 默认 true。地图/告警等仅需检测框时设 false，避免每帧 memcpy 整幅 YUV（会拖垮其它光电视频 WebRTC）。
+   */
+  copyYuv?: boolean;
+};
+
+export function parseThirdPartyWsFrame(
+  buf: ArrayBuffer,
+  options?: ParseThirdPartyWsFrameOptions,
+): ParsedThirdPartyWsFrame | null {
   const u8 = new Uint8Array(buf);
   if (u8.byteLength < 20) return null;
   if (u8[0] !== 0x4e || u8[1] !== 0x58 || u8[2] !== 0x54 || u8[3] !== 0x31) return null;
@@ -51,6 +61,9 @@ export function parseThirdPartyWsFrame(buf: ArrayBuffer): ParsedThirdPartyWsFram
   const yuvLen = dv.getUint32(o, true);
   o += 4;
   if (o + yuvLen > u8.byteLength || yuvLen < 1) return null;
-  const yuv420 = new Uint8Array(buf, o, yuvLen).slice();
+  const yuv420 =
+    options?.copyYuv === false
+      ? new Uint8Array(buf, o, yuvLen)
+      : new Uint8Array(buf, o, yuvLen).slice();
   return { entityId, videoWidth, videoHeight, strideY, yuv420, boxes };
 }

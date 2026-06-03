@@ -15,6 +15,7 @@ export function TrackFilterSection() {
   const endTime = useTrackEvaluationStore((s) => s.endTime);
   const sensorIdsForQuery = useTrackEvaluationStore((s) => s.sensorIdsForQuery);
   const directDownload = useTrackEvaluationStore((s) => s.directDownload);
+  const autoAnalysisEnabled = useTrackEvaluationStore((s) => s.autoAnalysisEnabled);
   const realtimeTracking = useTrackEvaluationStore((s) => s.realtimeTracking);
   const queryStatus = useTrackEvaluationStore((s) => s.queryStatus);
   const queryStats = useTrackEvaluationStore((s) => s.queryStats);
@@ -28,6 +29,7 @@ export function TrackFilterSection() {
   const setEndTime = useTrackEvaluationStore((s) => s.setEndTime);
   const toggleSensorForQuery = useTrackEvaluationStore((s) => s.toggleSensorForQuery);
   const setDirectDownload = useTrackEvaluationStore((s) => s.setDirectDownload);
+  const setAutoAnalysisEnabled = useTrackEvaluationStore((s) => s.setAutoAnalysisEnabled);
   const sendQuery = useTrackEvaluationStore((s) => s.sendQuery);
   const cancelQuery = useTrackEvaluationStore((s) => s.cancelQuery);
   const toggleRealtime = useTrackEvaluationStore((s) => s.toggleRealtime);
@@ -41,6 +43,24 @@ export function TrackFilterSection() {
 
   return (
     <div className="space-y-3 overflow-y-auto pr-1">
+      <section>
+        <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
+          智能分析
+        </h4>
+        <label className="flex cursor-pointer items-center gap-2 rounded-md border border-nexus-border bg-nexus-bg-elevated/40 px-2.5 py-2 text-[11px] text-nexus-text-secondary">
+          <input
+            type="checkbox"
+            checked={autoAnalysisEnabled}
+            onChange={(e) => setAutoAnalysisEnabled(e.target.checked)}
+            className="accent-nexus-accent"
+          />
+          <span className="text-nexus-text-primary">
+            {autoAnalysisEnabled ? "开启自动分析" : "关闭自动分析"}
+          </span>
+          <span className="ml-auto text-[9px] text-nexus-text-muted">每 3 分钟</span>
+        </label>
+      </section>
+
       <section>
         <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
           数据库筛选

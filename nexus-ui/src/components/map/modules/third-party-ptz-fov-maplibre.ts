@@ -2,24 +2,37 @@ import type maplibregl from "maplibre-gl";
 import { geoSectorCoords } from "@/lib/map-icons";
 import {
   isOptoCameraAllowedOnMap,
-  isOptoDeviceFovVisible,
   type OptoDeviceVisibilityMap,
 } from "@/lib/opto-device-layer-visibility";
-import { THIRD_PARTY_PTZ_FOV_DEG, type ThirdPartyPtzFovRow } from "@/lib/third-party-ptz-fov";
+import {
+  THIRD_PARTY_PTZ_FOV_DEG,
+  THIRD_PARTY_PTZ_FOV_FILL_COLOR,
+  THIRD_PARTY_PTZ_FOV_LINE_COLOR,
+  THIRD_PARTY_PTZ_FOV_RANGE_M,
+  type ThirdPartyPtzFovRow,
+} from "@/lib/third-party-ptz-fov";
+import { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
 
-export const THIRD_PARTY_PTZ_FOV_SOURCE = "third-party-ptz-fov-source";
-export const THIRD_PARTY_PTZ_FOV_FILL = "third-party-ptz-fov-fill";
-export const THIRD_PARTY_PTZ_FOV_LINE = "third-party-ptz-fov-line";
+/** v2：与旧版青色图层 id 区分，避免 HMR/缓存后仍显示 #22d3ee */
+export const THIRD_PARTY_PTZ_FOV_SOURCE = "third-party-ptz-fov-src-v2";
+export const THIRD_PARTY_PTZ_FOV_FILL = "third-party-ptz-fov-fill-v2";
+export const THIRD_PARTY_PTZ_FOV_LINE = "third-party-ptz-fov-line-v2";
 
 export const THIRD_PARTY_PTZ_FOV_LAYER_IDS = [
   THIRD_PARTY_PTZ_FOV_FILL,
   THIRD_PARTY_PTZ_FOV_LINE,
 ] as const;
 
-const NORMAL_FILL = "#22d3ee";
-const NORMAL_LINE = "#06b6d4";
-const ALERT_FILL = "#ef4444";
-const ALERT_LINE = "#f87171";
+const LEGACY_LAYER_IDS = ["third-party-ptz-fov-fill", "third-party-ptz-fov-line"] as const;
+const LEGACY_SOURCE_ID = "third-party-ptz-fov-source";
+
+/** 删除旧版青色扇形图层（每次刷新都调用，避免与 v2 绿色层叠） */
+export function purgeLegacyThirdPartyFovLayers(m: maplibregl.Map) {
+  for (const id of LEGACY_LAYER_IDS) {
+    if (m.getLayer(id)) m.removeLayer(id);
+  }
+  if (m.getSource(LEGACY_SOURCE_ID)) m.removeSource(LEGACY_SOURCE_ID);
+}
 
 function buildGeoJSON(rows: ThirdPartyPtzFovRow[], rangeKm: number): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
@@ -30,7 +43,6 @@ function buildGeoJSON(rows: ThirdPartyPtzFovRow[], rangeKm: number): GeoJSON.Fea
       geometry: { type: "Polygon", coordinates: [ring] },
       properties: {
         id: r.entityId,
-        hasTarget: r.hasTarget ? 1 : 0,
       },
     });
   }
@@ -40,10 +52,8 @@ function buildGeoJSON(rows: ThirdPartyPtzFovRow[], rangeKm: number): GeoJSON.Fea
 export class ThirdPartyPtzFovModule {
   private map: maplibregl.Map;
   private insertBeforeLayerId?: string;
-  private rangeKm = 15;
+  private rangeKm = THIRD_PARTY_PTZ_FOV_RANGE_M / 1000;
   private lastRows: ThirdPartyPtzFovRow[] = [];
-  private blinkTimer: ReturnType<typeof setInterval> | null = null;
-  private blinkOn = true;
   private deviceVisibility: OptoDeviceVisibilityMap = {};
   private panelIds: ReadonlySet<string> | null = null;
 
@@ -54,19 +64,12 @@ export class ThirdPartyPtzFovModule {
 
   install() {
     const m = this.map;
+    purgeLegacyThirdPartyFovLayers(m);
     if (!m.getSource(THIRD_PARTY_PTZ_FOV_SOURCE)) {
       m.addSource(THIRD_PARTY_PTZ_FOV_SOURCE, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       });
-    }
-  }
-
-  setDefaultRangeM(rangeM: number) {
-    const km = rangeM > 0 ? rangeM / 1000 : 15;
-    if (Math.abs(km - this.rangeKm) > 1e-6) {
-      this.rangeKm = km;
-      this.refreshLayers();
     }
   }
 
@@ -82,10 +85,31 @@ export class ThirdPartyPtzFovModule {
   }
 
   private filterRows(rows: ThirdPartyPtzFovRow[]): ThirdPartyPtzFovRow[] {
+    const panelNorm =
+      this.panelIds === null
+        ? null
+        : new Set([...this.panelIds].map((id) => normThirdPartyEntityId(id)));
     return rows.filter((r) => {
-      if (!isOptoCameraAllowedOnMap(r.entityId, this.panelIds)) return false;
-      return isOptoDeviceFovVisible(r.entityId, this.deviceVisibility);
+      const id = normThirdPartyEntityId(r.entityId);
+      if (!isOptoCameraAllowedOnMap(id, panelNorm)) return false;
+      const vis = this.deviceVisibility;
+      const fovOff = vis[id]?.fov === false || vis[r.entityId]?.fov === false;
+      return !fovOff;
     });
+  }
+
+  /** 每次刷新都写 paint，避免 HMR 后图层仍保留旧色；有目标时仍保持绿色常态（不标红） */
+  private applyPaintStyle() {
+    const m = this.map;
+    if (!m.getLayer(THIRD_PARTY_PTZ_FOV_FILL)) return;
+    try {
+      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_FILL, "fill-color", THIRD_PARTY_PTZ_FOV_FILL_COLOR);
+      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_FILL, "fill-opacity", 0.22);
+      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-color", THIRD_PARTY_PTZ_FOV_LINE_COLOR);
+      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-opacity", 0.65);
+    } catch {
+      /* style 过渡 */
+    }
   }
 
   private ensureLayers() {
@@ -100,18 +124,8 @@ export class ThirdPartyPtzFovModule {
           type: "fill",
           source: THIRD_PARTY_PTZ_FOV_SOURCE,
           paint: {
-            "fill-color": [
-              "case",
-              ["==", ["get", "hasTarget"], 1],
-              ALERT_FILL,
-              NORMAL_FILL,
-            ] as maplibregl.ExpressionSpecification,
-            "fill-opacity": [
-              "case",
-              ["==", ["get", "hasTarget"], 1],
-              0.55,
-              0.18,
-            ] as maplibregl.ExpressionSpecification,
+            "fill-color": THIRD_PARTY_PTZ_FOV_FILL_COLOR,
+            "fill-opacity": 0.22,
           },
         },
         before,
@@ -124,98 +138,34 @@ export class ThirdPartyPtzFovModule {
           type: "line",
           source: THIRD_PARTY_PTZ_FOV_SOURCE,
           paint: {
-            "line-color": [
-              "case",
-              ["==", ["get", "hasTarget"], 1],
-              ALERT_LINE,
-              NORMAL_LINE,
-            ] as maplibregl.ExpressionSpecification,
+            "line-color": THIRD_PARTY_PTZ_FOV_LINE_COLOR,
             "line-width": 2,
-            "line-opacity": [
-              "case",
-              ["==", ["get", "hasTarget"], 1],
-              0.95,
-              0.55,
-            ] as maplibregl.ExpressionSpecification,
+            "line-opacity": 0.65,
           },
         },
         before,
       );
     }
+    this.applyPaintStyle();
   }
 
   private refreshLayers() {
     const m = this.map;
+    purgeLegacyThirdPartyFovLayers(m);
     const src = m.getSource(THIRD_PARTY_PTZ_FOV_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
 
     const filtered = this.filterRows(this.lastRows);
     src.setData(buildGeoJSON(filtered, this.rangeKm) as GeoJSON.FeatureCollection);
     this.ensureLayers();
-
-    const anyTarget = filtered.some((r) => r.hasTarget);
-    if (anyTarget) this.startBlink();
-    else this.stopBlink();
-  }
-
-  private startBlink() {
-    if (this.blinkTimer) return;
-    this.blinkOn = true;
-    this.blinkTimer = setInterval(() => {
-      this.blinkOn = !this.blinkOn;
-      const m = this.map;
-      if (!m.getLayer(THIRD_PARTY_PTZ_FOV_FILL)) return;
-      const op = this.blinkOn ? 0.55 : 0.12;
-      try {
-        m.setPaintProperty(THIRD_PARTY_PTZ_FOV_FILL, "fill-opacity", [
-          "case",
-          ["==", ["get", "hasTarget"], 1],
-          op,
-          0.18,
-        ] as maplibregl.ExpressionSpecification);
-        m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-opacity", [
-          "case",
-          ["==", ["get", "hasTarget"], 1],
-          this.blinkOn ? 0.95 : 0.35,
-          0.55,
-        ] as maplibregl.ExpressionSpecification);
-      } catch {
-        /* style 过渡 */
-      }
-    }, 450);
-  }
-
-  private stopBlink() {
-    if (this.blinkTimer) {
-      clearInterval(this.blinkTimer);
-      this.blinkTimer = null;
-    }
-    const m = this.map;
-    if (!m.getLayer(THIRD_PARTY_PTZ_FOV_FILL)) return;
-    try {
-      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_FILL, "fill-opacity", [
-        "case",
-        ["==", ["get", "hasTarget"], 1],
-        0.55,
-        0.18,
-      ] as maplibregl.ExpressionSpecification);
-      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-opacity", [
-        "case",
-        ["==", ["get", "hasTarget"], 1],
-        0.95,
-        0.55,
-      ] as maplibregl.ExpressionSpecification);
-    } catch {
-      /* ignore */
-    }
   }
 
   dispose() {
-    this.stopBlink();
     const m = this.map;
     for (const id of [THIRD_PARTY_PTZ_FOV_LINE, THIRD_PARTY_PTZ_FOV_FILL]) {
       if (m.getLayer(id)) m.removeLayer(id);
     }
     if (m.getSource(THIRD_PARTY_PTZ_FOV_SOURCE)) m.removeSource(THIRD_PARTY_PTZ_FOV_SOURCE);
+    purgeLegacyThirdPartyFovLayers(m);
   }
 }

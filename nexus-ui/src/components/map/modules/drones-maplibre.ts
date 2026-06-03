@@ -64,6 +64,11 @@ import type { DroneTelemetry } from "@/stores/drone-store";
 import { useDroneStore } from "@/stores/drone-store";
 import { useAssetStore } from "@/stores/asset-store";
 import type { ForceDisposition } from "@/lib/theme-colors";
+import {
+  shouldRenderDronePosition,
+  shouldRenderDroneRoute,
+  type DroneDeviceVisibilityMap,
+} from "@/lib/drone-device-layer-visibility";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
@@ -228,11 +233,13 @@ function assetStatusFromLabel(s: string | undefined): AssetStatus {
 export function buildStaticDroneSitesGeoJSON(
   assetList: Asset[],
   accent: AssetDispositionIconAccent | null,
+  perDevice?: Readonly<DroneDeviceVisibilityMap>,
 ): GeoJSON.FeatureCollection {
   const liveDrones = useDroneStore.getState().drones;
   const features: GeoJSON.Feature[] = [];
   for (const a of assetList) {
     if (a.type !== "drone") continue;
+    if (!shouldRenderDronePosition(a.id, perDevice ?? {})) continue;
     if (a.centerIconVisible === false) continue;
     // 有实时遥测数据的无人机由实时层渲染，跳过静态图标
     const live = liveDrones[a.id];
@@ -256,6 +263,7 @@ export function buildStaticDroneSitesGeoJSON(
   }
   for (const a of assetList) {
     if (a.type !== "drone") continue;
+    if (!shouldRenderDronePosition(a.id, perDevice ?? {})) continue;
     if (a.nameLabelVisible === false || !String(a.name ?? "").trim()) continue;
     // 有实时遥测数据的无人机由实时层渲染标签，跳过静态标签
     const liveLbl = liveDrones[a.id];
@@ -411,6 +419,7 @@ function extractWaypoints(task: Record<string, unknown>): unknown[] | null {
 function waypointsLineString(
   task: Record<string, unknown> | null,
   virtualTroop: boolean,
+  sn: string,
 ): GeoJSON.Feature<GeoJSON.LineString> | null {
   if (!task) return null;
   const wps = extractWaypoints(task);
@@ -435,7 +444,7 @@ function waypointsLineString(
   if (coords.length < 2) return null;
   return {
     type: "Feature",
-    properties: { kind: "route", virt: virtualTroop ? 1 : 0 },
+    properties: { kind: "route", virt: virtualTroop ? 1 : 0, sn },
     geometry: { type: "LineString", coordinates: coords },
   };
 }
@@ -482,20 +491,28 @@ export function mergedDronePose(t: DroneTelemetry): {
   return null;
 }
 
-function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.FeatureCollection {
+function buildDroneGeoJSON(
+  drones: Record<string, DroneTelemetry>,
+  perDevice?: Readonly<DroneDeviceVisibilityMap>,
+): GeoJSON.FeatureCollection {
   const cfg = getDroneMapRenderingConfig();
+  const vis = perDevice ?? {};
   const features: GeoJSON.Feature[] = [];
   const droneCount = Object.keys(drones).length;
   let renderedCount = 0;
   for (const [sn, tele] of Object.entries(drones)) {
     const pose = mergedDronePose(tele);
-    if (!pose) continue;
-    renderedCount++;
+    const routeVisible = shouldRenderDroneRoute(sn, vis);
+    const positionVisible = shouldRenderDronePosition(sn, vis);
 
-    if (cfg.showPlannedRoute) {
-      const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
+    if (routeVisible && cfg.showPlannedRoute) {
+      const route = waypointsLineString(tele.flightPath, tele.virtualTroop, sn);
       if (route) features.push(route);
     }
+
+    if (!pose || !positionVisible) continue;
+    renderedCount++;
+
     const trail = trailLineString(tele);
     if (trail) features.push(trail);
 
@@ -548,6 +565,7 @@ export class DronesMaplibre {
   /** 渲染节流：与 V2 DroneRenderer.scheduleRender 一致，避免高频更新导致标签闪烁 */
   private renderScheduled = false;
   private renderRafId: number | null = null;
+  private perDeviceVisibility: DroneDeviceVisibilityMap = {};
 
   constructor(map: maplibregl.Map, options?: { insertBeforeLayerId?: string }) {
     this.map = map;
@@ -817,12 +835,19 @@ export class DronesMaplibre {
     this.startTimeoutPrune();
   }
 
+  setPerDeviceVisibility(map: Readonly<DroneDeviceVisibilityMap>) {
+    this.perDeviceVisibility = { ...map };
+    this.scheduleRender();
+  }
+
   /** 由 `Map2D` 在资产 store 更新时调用：仅刷新 **`asset_type: drone`** 的配置/WS 合并站址（与 `useDroneStore` 无关） */
   setStaticDroneSitesFromAssets(assets: Asset[], accent: AssetDispositionIconAccent | null) {
     const m = this.map;
     const src = m.getSource(DRONES_STATIC_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
-    src.setData(buildStaticDroneSitesGeoJSON(assets, accent) as GeoJSON.FeatureCollection);
+    src.setData(
+      buildStaticDroneSitesGeoJSON(assets, accent, this.perDeviceVisibility) as GeoJSON.FeatureCollection,
+    );
   }
 
   /**
@@ -871,7 +896,8 @@ export class DronesMaplibre {
       for (const sn of Object.keys(drones)) {
         const tele = drones[sn];
         if (!tele?.flightPath) continue;
-        const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
+        if (!shouldRenderDroneRoute(sn, this.perDeviceVisibility)) continue;
+        const route = waypointsLineString(tele.flightPath, tele.virtualTroop, sn);
         if (!route) continue;
         const lastCoord = route.geometry.coordinates[route.geometry.coordinates.length - 1];
         if (!lastCoord) continue;
@@ -929,7 +955,7 @@ export class DronesMaplibre {
       if (!m.getSource(DRONES_SOURCE)) return;
       const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource;
       const drones = useDroneStore.getState().drones;
-      src.setData(buildDroneGeoJSON(drones));
+      src.setData(buildDroneGeoJSON(drones, this.perDeviceVisibility));
     });
   }
 
@@ -974,7 +1000,7 @@ export class DronesMaplibre {
     const m = this.map;
     const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
-    src.setData(buildDroneGeoJSON(useDroneStore.getState().drones));
+    src.setData(buildDroneGeoJSON(useDroneStore.getState().drones, this.perDeviceVisibility));
   }
 
   dispose() {

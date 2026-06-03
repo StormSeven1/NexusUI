@@ -33,6 +33,7 @@ import type { ForceDisposition } from "@/lib/theme-colors";
 
 /** 地图右键设置的演练方 / 判定：用于覆盖默认告警着色逻辑 */
 export type ManualTrackAffiliation = "unknown" | "red" | "blue" | "white";
+import { refreshAlarmTrackMapDebugSnapshot } from "@/lib/alarm-track-map-debug";
 import { isTrackMatchedByAlarmKeys } from "@/lib/alarm-track-match";
 import { maxStoredTrailPointsPerTrack, mergeIncomingTrackWithStickyAirClassification } from "@/lib/ws-track-normalize";
 import { getTrackRenderingConfig, getTrackStaleTimeoutMs } from "@/lib/map-app-config";
@@ -125,6 +126,8 @@ interface TrackState {
   /** 递增以使航迹图层指纹失效并重绘 */
   mapManualAffiliationRev: number;
   setManualTrackAffiliation: (showID: string, v: ManualTrackAffiliation) => void;
+  /** 删除告警等场景：清除右键手动敌我属性，恢复默认着色 */
+  clearManualTrackAffiliation: (showID: string) => void;
 }
 
 export const useTrackStore = create<TrackState>((set, get) => ({
@@ -142,6 +145,20 @@ export const useTrackStore = create<TrackState>((set, get) => ({
       manualAffiliationByShowId: { ...s.manualAffiliationByShowId, [id]: v },
       mapManualAffiliationRev: s.mapManualAffiliationRev + 1,
     }));
+  },
+
+  clearManualTrackAffiliation: (showID) => {
+    const id = String(showID ?? "").trim();
+    if (!id) return;
+    set((s) => {
+      if (!(id in s.manualAffiliationByShowId)) return s;
+      const next = { ...s.manualAffiliationByShowId };
+      delete next[id];
+      return {
+        manualAffiliationByShowId: next,
+        mapManualAffiliationRev: s.mapManualAffiliationRev + 1,
+      };
+    });
   },
 
   setTracks: (incoming, options) => {
@@ -192,6 +209,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
       const partial: Partial<TrackState> = { tracks: buildDisplayTracks(shadow) };
       if (options?.lastUpdate !== undefined) partial.lastUpdate = options.lastUpdate;
       set(partial);
+      if (needsRenderUpdate) refreshAlarmTrackMapDebugSnapshot("setTracks");
     } else if (options?.lastUpdate !== undefined) {
       set({ lastUpdate: options.lastUpdate });
     }
@@ -228,6 +246,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
 
     if (changed) {
       set({ tracks: buildDisplayTracks(shadow) });
+      refreshAlarmTrackMapDebugSnapshot("syncWithAlarms");
     }
     return changed;
   },
@@ -268,6 +287,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
 
     if (changed) {
       set({ tracks: buildDisplayTracks(get().shadowTracks) });
+      refreshAlarmTrackMapDebugSnapshot("pruneStaleTracks");
     }
     return changed;
   },

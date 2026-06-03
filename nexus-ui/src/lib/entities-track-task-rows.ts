@@ -1,7 +1,13 @@
 import { canonicalEntityId } from "@/lib/camera-entity-id";
 import { extractEntityRecords } from "@/lib/eo-video/mapEntitiesToDroneDevices";
-import { isCameraEntityId } from "@/lib/eo-video/mapEntitiesToCameraDevices";
-
+import {
+  isCameraEntityId,
+  isThirdPartyCameraOntologyRow,
+} from "@/lib/eo-video/mapEntitiesToCameraDevices";
+import {
+  isThirdPartyCameraEntityId,
+  normThirdPartyEntityId,
+} from "@/lib/eo-video/thirdPartyEntityId";
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -31,13 +37,16 @@ export type EntityTaskRow = {
   hasPtz: boolean;
   /** `aliases.auth.parent_device_id` */
   parentDeviceId: string;
+  /** 8090 第三方相机（ontology 或 `camera-hs-*` 等）；不走 TargetCollectionIMChildTask */
+  isThirdParty: boolean;
 };
 
 /**
- * 航迹任务 owner 规则：`hasPtz` 且主设备（`aliases.auth.parent_device_id` 为空）。
+ * 光电 PTZ 主相机航迹任务 owner：`hasPtz`、无 parent、且非第三方相机。
+ * 第三方相机仅走 `ThirdPartyCamPosTask`（双击航迹等）。
  */
 export function isTrackTaskOwnerRowAllowed(row: EntityTaskRow): boolean {
-  return row.hasPtz && row.parentDeviceId.length === 0;
+  return row.hasPtz && row.parentDeviceId.length === 0 && !row.isThirdParty;
 }
 
 /** 从 `/api/v1/entities` 分页 JSON 提取全部 `camera_*` 任务相关字段 */
@@ -47,8 +56,11 @@ export function buildEntityTaskRowsFromEntitiesPayload(payload: unknown): Entity
   for (const raw of records) {
     if (!isRecord(raw)) continue;
     const rawId = pickStr(raw, ["entityId", "entity_id", "id"]);
-    if (!rawId || !isCameraEntityId(rawId)) continue;
-    const entityId = canonicalEntityId(rawId);
+    if (!rawId) continue;
+    const ontologyThirdParty = isThirdPartyCameraOntologyRow(raw);
+    if (!isCameraEntityId(rawId) && !ontologyThirdParty) continue;
+    const entityId = ontologyThirdParty ? normThirdPartyEntityId(rawId) : canonicalEntityId(rawId);
+    if (!entityId) continue;
     let parentDeviceId = "";
     const aliases = raw.aliases;
     if (isRecord(aliases)) {
@@ -66,11 +78,13 @@ export function buildEntityTaskRowsFromEntitiesPayload(payload: unknown): Entity
         hasPtz = hp === 1 || hp === true || hp === "1";
       }
     }
+    const isThirdParty = ontologyThirdParty || isThirdPartyCameraEntityId(entityId);
     byId.set(entityId, {
       entityId,
       label: rowLabel(raw, entityId),
       hasPtz,
       parentDeviceId: parentDeviceId ? canonicalEntityId(parentDeviceId) : "",
+      isThirdParty,
     });
   }
   return [...byId.values()].sort((a, b) =>
