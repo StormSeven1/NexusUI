@@ -57,6 +57,7 @@ __pycache__/
 *.db
 
 # Local / secrets / large artifacts
+gittoken
 .cursor/
 Custombackend/app/data/
 Custombackend/app/DDSReferences/Camera/build2/
