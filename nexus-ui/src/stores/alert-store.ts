@@ -96,24 +96,7 @@ function alarmTrackMatchKey(domain: "air" | "sea", trackId: string): string {
   return `${domain}:${trackId}`;
 }
 
-function dumpAlarmMatchDebug(alerts: AlertData[], alarmTrackIds: Set<string>): void {
-  if (typeof console === "undefined") return;
-  console.groupCollapsed(`[alert-match] alerts=${alerts.length} keys=${alarmTrackIds.size}`);
-  console.log("alarmTrackIds", [...alarmTrackIds]);
-  console.table(
-    alerts.map((a) => ({
-      id: a.id,
-      trackId: a.trackId,
-      targetType: a.targetType,
-      type: a.type,
-      uniqueID: a.uniqueID,
-      domain: alertDomain(a),
-      alarmType: a.alarmType,
-      message: a.message,
-    })),
-  );
-  console.groupEnd();
-}
+function dumpAlarmMatchDebug(): void {}
 
 /** 去重键：按业务 trackId */
 function alarmDedupeKey(item: AlertData): string | null {

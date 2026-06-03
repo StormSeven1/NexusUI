@@ -1,6 +1,16 @@
 """
 配置模块 - 数据接收和服务配置
 """
+# EO 视频/检测框链路说明
+# - 后端本身不代理实时 WebRTC 视频流。
+# - 实体实时数据里会携带 `videoAddress` 或 `media.address`。
+# - 前端会把这两个字段归一化成 `sensor_video_url`，然后直接发起 WebRTC 播放。
+# - 后端负责把 DDS 检测结果转发给前端 WebSocket 客户端。
+# - EO 弹窗当前依赖的检测 DDS 主题有两类：
+#   - `dds_shore_multi_detection` -> `MultiTrackResultTopic`
+#   - `dds_shore_single_detection` -> `SingleTrackResultTopic`
+# - 注册区域/航线由后端存库后统一广播给前端，广播消息类型是 `DbAreas`。
+
 from typing import List, Dict, Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +31,51 @@ class Settings(BaseSettings):
     DATABASE_NAME: str = "watchsystem"
     DATABASE_USER: str = "postgres"
     DATABASE_PASSWORD: str = "123456"
+    # 实体注册地址，只允许 Custombackend 在后端侧调用。
+    # 完整流程：
+    # 1. 前端把新建区域/航线提交到 Custombackend `/api/areas`
+    # 2. Custombackend 先写入 `area_table`
+    # 3. Custombackend 再根据数据库行构造区域/航线实体 payload
+    # 4. 最后由 Custombackend 向这个地址发起 POST 完成实体注册
+    # 浏览器前端不应该知道这个地址，也不应该直接调用它。
+    ENTITY_PUBLISH_URL: str = "http://192.168.18.141:8090/api/v1/publishEntity"
+
+    # 实体删除地址模板，也只允许 Custombackend 在后端侧调用。
+    # `{entityId}` 会在运行时替换成：
+    # - `area-<groupId>-<areaId>`
+    # - `route-<groupId>-<areaId>`
+    # 删除流程：
+    # 1. 前端先请求 Custombackend 删除区域/航线
+    # 2. Custombackend 先调这个地址删除已发布实体
+    # 3. 再删除 `area_table` 里的数据库行
+    # 4. 最后刷新后端缓存，并广播最新 `DbAreas` 快照给所有客户端
+    ENTITY_DELETE_URL_TEMPLATE: str = "http://192.168.18.141:8090/api/v1/entities/{entityId}"
+
+    # 注册区域/航线的 WebSocket 广播消息类型。
+    # 这是数据库区域在前端的唯一正式事实来源：
+    # - 后端启动时先从 Postgres 加载一次当前快照
+    # - 每个客户端连上 WebSocket 后先收到一份全量快照
+    # - 每次新增/删除区域后，后端重新构建快照并再次广播
+    # 前端 `db-area-store` 只依赖这个消息类型渲染，不再直接轮询数据库。
+    DB_AREA_BROADCAST_TYPE: str = "DbAreas"
+
+    # EO 视频截图保存根目录。
+    # 前端 EO 弹窗会把当前画面抓成图片，再通过
+    # `POST /eo-video/capture/save?kind=snapshot`
+    # 把二进制内容上传到后端。
+    # 后端最终会把文件保存到：
+    # `<EO_VIDEO_CAPTURE_PIC_DIR>/<streamLabel>/<fileName>`
+    # 这只是本地归档路径，不参与实时 WebRTC 播放。
+    EO_VIDEO_CAPTURE_PIC_DIR: str = r".\data\eo-video\snapshot"
+
+    # EO 视频录像保存根目录。
+    # 前端浏览器会先在内存里录制 WebM 片段，再通过
+    # `POST /eo-video/capture/save?kind=record`
+    # 上传给后端保存。
+    # 后端最终会把文件保存到：
+    # `<EO_VIDEO_CAPTURE_VIDEO_DIR>/<streamLabel>/<fileName>`
+    # 这同样只是导出/归档路径，不参与实时视频播放。
+    EO_VIDEO_CAPTURE_VIDEO_DIR: str = r".\data\eo-video\record"
     
     # WebSocket配置
     HEARTBEAT_INTERVAL: int = 10
@@ -555,6 +610,18 @@ HTTP_POLLERS: List[Dict[str, Any]] = [
         "data_format": "EntityStatus",
         "headers": {},
         "params": {"page": 1, "size": 1000},
+        "auth": None
+    },
+    {
+        "id": "entity_relationships_poller",
+        "name": "实体关系轮询",
+        "url": "http://192.168.18.141:8090/api/v1/relationships",
+        "method": "GET",
+        "poll_interval": 5.0,
+        "enabled": True,
+        "data_format": "EntityRelationships",
+        "headers": {},
+        "params": {"page": 1, "size": 2000},
         "auth": None
     },
 ]

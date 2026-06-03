@@ -78,9 +78,6 @@ import type { LeftPanelTab, RightPanelTab } from "@/stores/app-store";
 
 type ToolOutput = Record<string, unknown>;
 
-let _routeIdSeq = 0;
-let _areaIdSeq = 0;
-
 /**
  * action 字符串 → 客户端副作用函数。
  * 键名必须与工具输出里的 `output.action` 完全一致（区分大小写）。
@@ -131,19 +128,8 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
     store.requestFlyTo(lat, lng, zoom);
   },
 
-  draw_route: (output) => {
-    const { points, color, label } = output as {
-      points: Array<{ lat: number; lng: number }>;
-      color?: string;
-      label?: string;
-    };
-    if (!points?.length) return;
-    useAppStore.getState().addRouteLine({
-      id: `route-${++_routeIdSeq}`,
-      points,
-      color: (color as string) || "#38bdf8",
-      label: label as string | undefined,
-    });
+  draw_route: () => {
+    /* 航线注册已切换到 `Custombackend WS DbAreas + db-area-store`，这里不再创建前端临时航线 */
   },
 
   measure_distance: () => {
@@ -171,25 +157,8 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
   },
 
   /* 写入 `app-store.drawnAreas`；颜色由工具输出决定，缺省琥珀色（与 `Map2D.commitPolyArea` 手写蓝色不同） */
-  draw_area: (output) => {
-    if (!output.success) return;
-    const { zone_id, points, color, fillColor, fillOpacity, label } = output as {
-      zone_id?: string;
-      points: Array<{ lat: number; lng: number }>;
-      color?: string;
-      fillColor?: string;
-      fillOpacity?: number;
-      label?: string;
-    };
-    if (!points?.length) return;
-    useAppStore.getState().addDrawnArea({
-      id: zone_id ?? `area-${++_areaIdSeq}`,
-      points,
-      color: color ?? "#f59e0b",
-      fillColor: fillColor ?? color ?? "#f59e0b",
-      fillOpacity: fillOpacity ?? 0.15,
-      label,
-    });
+  draw_area: () => {
+    /* 区域注册已切换到 `Custombackend WS DbAreas + db-area-store`，这里不再创建前端临时区域 */
   },
 
   plan_route: () => {

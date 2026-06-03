@@ -8,7 +8,7 @@
  * 本模块是前端所有实时数据的唯一入口，负责：
  *   1. 建立 WebSocket 连接（地址、心跳间隔等从 app-config.json 的 websocket 节读取）
  *   2. 接收消息 → JSON.parse → 按 msg.type 分发
- *   3. 解析后的数据写入对应的 Zustand store（track-store / alert-store / asset-store / drone-store / zone-store）
+ *   3. 解析后的数据写入对应的 Zustand store（track-store / alert-store / asset-store / db-area-store）
  *
  * ── 各资产类型全链路数据流 ──
  *
@@ -148,22 +148,26 @@
 
 import { useEffect } from "react";
 import { toast } from "sonner";
-import { useTrackStore } from "@/stores/track-store";
+import { getRenderCache, useTrackStore } from "@/stores/track-store";
 import { useAlertStore } from "@/stores/alert-store";
-import type { AssetData } from "@/stores/asset-store";
+import type {
+  AssetData,
+  AssetRelationshipEdge,
+  AssetRelationshipGraph,
+  AssetRelationshipNode,
+} from "@/stores/asset-store";
 import { useAssetStore } from "@/stores/asset-store";
-import type { ZoneData } from "@/stores/zone-store";
-import { useZoneStore } from "@/stores/zone-store";
-import { useDroneStore, resolveDroneSn } from "@/stores/drone-store";
+import { readVirtualTroop } from "@/lib/drone-runtime-utils";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import {
   mapEntitiesPayload,
   mergeDynamicAndStaticAssets,
+  getDroneMapRenderingConfig,
   getTrackRenderingConfig,
   getWebSocketConfig,
   getHttpConfig,
   shouldDisplayAssetId,
-  shouldDisplayZone,
+  shouldDisplayDbArea,
   assetStatusFromDeviceState,
   deviceStatePropsFromPayload,
   preserveDeviceStateFromPrev,
@@ -173,7 +177,7 @@ import {
 import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
 import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
 import { normalizeAssetType, type Track } from "@/lib/map-entity-model";
-import { recordTrackReceived, recordAlertReceived, recordZoneReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived } from "@/stores/network-stats-store";
+import { recordTrackReceived, recordAlertReceived, recordEntityReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived, recordDbAreasReceived, recordEoDetectionReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import {
   applyMunitionWsPayload,
@@ -182,16 +186,545 @@ import {
 } from "@/lib/munition/munition-runtime";
 import { applyUsvWsPayload } from "@/lib/usv/usv-runtime";
 import { applyLaserWsPayload, applyTdoaWsPayload } from "@/lib/weapon/weapon-device-runtime";
-import { isHsCamera, applyHsCameraFovProps, onHsCameraDetection, tickHsCameraDetection } from "@/lib/speed-camera/hs-camera";
+import { applyHsCameraFovProps, onHsCameraDetection, tickHsCameraDetection } from "@/lib/speed-camera/hs-camera";
+import type { AreaTableRow } from "@/lib/area-table-geometry";
+import { useDbAreaStore } from "@/stores/db-area-store";
+import { useEoDetectionStore } from "@/stores/eo-detection-store";
 
 /** 与 WS 全量资产列表合并：先静态后动态，同 id 以 WS 为准 */
 let configAssetBaseCache: AssetData[] = [];
 let lastWsAssetList: AssetData[] = [];
-let relationshipAssetsCache: AssetData[] = [];
 let cameraDefaultRangeKmCache: number | undefined;
+const droneHistoryTrailCache = new Map<string, Array<[number, number]>>();
 
+type DroneRuntimeOverlay = {
+  lat?: number;
+  lng?: number;
+  heading?: number | null;
+  status?: string;
+  properties: Record<string, unknown>;
+};
+
+const droneRuntimeOverlayById = new Map<string, DroneRuntimeOverlay>();
+const TAKEOFF_DISTANCE_M = 50;
+const BOTH_DATA_RECENT_MS = 3000;
+
+function logDroneDebug(
+  _phase: string,
+  _payload: Record<string, unknown>,
+  _extra?: Record<string, unknown>,
+) {
+  void _phase;
+  void _payload;
+  void _extra;
+  return;
+}
+
+function logDroneStoredState(_phase: string, _entityId: string) {
+  void _phase;
+  void _entityId;
+  return;
+}
+
+function patchExistingCameraAsset(
+  entityId: string,
+  patch: Partial<AssetData>,
+): boolean {
+  const existing = useAssetStore.getState().assets.find((item) => item.id === entityId);
+  if (!existing) return false;
+  const existingProps =
+    existing.properties && typeof existing.properties === "object"
+      ? (existing.properties as Record<string, unknown>)
+      : {};
+  const patchProps =
+    patch.properties && typeof patch.properties === "object"
+      ? (patch.properties as Record<string, unknown>)
+      : {};
+  useAssetStore.getState().mergeAssetFields(entityId, {
+    ...patch,
+    properties: {
+      ...existingProps,
+      ...patchProps,
+    },
+  });
+  return true;
+}
+
+/**
+ * Keep only assets that should be visible under the current app-config rules.
+ * This runs after normalization so hidden items do not leak into map rendering,
+ * while upstream merge logic can still work on a consistent asset shape.
+ */
 function filterAssetsForDisplay(assets: AssetData[]): AssetData[] {
   return assets.filter((a) => shouldDisplayAssetId(a.asset_type, a.id, a.name));
+}
+
+/**
+ * Rebuild the WS relationship graph into the normalized structure stored in `asset-store`.
+ * Later consumers use it for airport/drone hierarchy, asset trees, and drone ownership lookups.
+ */
+function buildRelationshipGraphFromWs(msg: Record<string, unknown>): AssetRelationshipGraph | null {
+  const entities = Array.isArray(msg.entities) ? (msg.entities as Record<string, unknown>[]) : [];
+  const rel =
+    msg.relationships && typeof msg.relationships === "object"
+      ? (msg.relationships as Record<string, unknown>)
+      : null;
+  const rawNodes = Array.isArray(rel?.nodes) ? (rel.nodes as Record<string, unknown>[]) : [];
+  const rawEdges = Array.isArray(rel?.edges) ? (rel.edges as Record<string, unknown>[]) : [];
+
+  if (entities.length === 0 && rawNodes.length === 0 && rawEdges.length === 0) return null;
+
+  const nodeMap = new Map<string, AssetRelationshipNode>();
+  const upsertNode = (partial: Partial<AssetRelationshipNode> & { id: string }) => {
+    const prev = nodeMap.get(partial.id);
+    nodeMap.set(partial.id, {
+      id: partial.id,
+      name: partial.name ?? prev?.name,
+      assetType: partial.assetType ?? prev?.assetType,
+      latitude: partial.latitude ?? prev?.latitude,
+      longitude: partial.longitude ?? prev?.longitude,
+      deviceSn: partial.deviceSn ?? prev?.deviceSn,
+      gatewaySn: partial.gatewaySn ?? prev?.gatewaySn,
+      virtualTroop: partial.virtualTroop ?? prev?.virtualTroop ?? false,
+      disposition: partial.disposition ?? prev?.disposition,
+    });
+  };
+
+  for (const row of entities) {
+    const id = String(row.entityId ?? row.id ?? "").trim();
+    if (!id) continue;
+    const lat = Number(row.lat ?? row.latitude);
+    const lng = Number(row.lng ?? row.longitude ?? row.lon);
+    upsertNode({
+      id,
+      name: String(row.name ?? row.entityName ?? row.entityId ?? "").trim() || undefined,
+      assetType: String(row.assetType ?? row.asset_type ?? "").trim() || undefined,
+      latitude: Number.isFinite(lat) ? lat : undefined,
+      longitude: Number.isFinite(lng) ? lng : undefined,
+      deviceSn: String(row.deviceSn ?? row.device_sn ?? "").trim() || undefined,
+      gatewaySn: String(row.gatewaySn ?? row.gateway_sn ?? "").trim() || undefined,
+      virtualTroop: readVirtualTroop(row),
+      disposition: parseForceDisposition(row.disposition, undefined),
+    });
+  }
+
+  for (const row of rawNodes) {
+    const id = String(row.id ?? row.entityId ?? "").trim();
+    if (!id) continue;
+    const lat = Number(row.lat ?? row.latitude);
+    const lng = Number(row.lng ?? row.longitude ?? row.lon);
+    upsertNode({
+      id,
+      name: String(row.name ?? row.entityName ?? "").trim() || undefined,
+      assetType: String(row.assetType ?? row.asset_type ?? "").trim() || undefined,
+      latitude: Number.isFinite(lat) ? lat : undefined,
+      longitude: Number.isFinite(lng) ? lng : undefined,
+      deviceSn: String(row.deviceSn ?? row.device_sn ?? "").trim() || undefined,
+      gatewaySn: String(row.gatewaySn ?? row.gateway_sn ?? "").trim() || undefined,
+      virtualTroop: readVirtualTroop(row),
+      disposition: parseForceDisposition(row.disposition, undefined),
+    });
+  }
+
+  const seenEdges = new Set<string>();
+  const edges: AssetRelationshipEdge[] = [];
+  for (const row of rawEdges) {
+    const parent = String(row.parent ?? row.parentId ?? "").trim();
+    const child = String(row.child ?? row.childId ?? "").trim();
+    if (!parent || !child) continue;
+    const key = `${parent}=>${child}`;
+    if (seenEdges.has(key)) continue;
+    seenEdges.add(key);
+    if (!nodeMap.has(parent)) upsertNode({ id: parent, virtualTroop: false });
+    if (!nodeMap.has(child)) upsertNode({ id: child, virtualTroop: false });
+    edges.push({
+      parent,
+      child,
+      relationshipId: String(row.relationshipId ?? row.id ?? "").trim() || undefined,
+    });
+  }
+
+  return { nodes: [...nodeMap.values()], edges };
+}
+
+function buildEntityMappingsFromRelationships(relationships: AssetRelationshipGraph | null): {
+  entityIdToDeviceSn: Record<string, string>;
+  deviceSnToEntityId: Record<string, string>;
+  dockSnToEntityId: Record<string, string>;
+} {
+  /**
+   * The relationship graph keeps ids and serial numbers side by side.
+   * We precompute both directions here because downstream WS payloads are inconsistent:
+   * some packets identify drones by entity id, others by device serial number.
+   *
+   * These maps let later handlers patch the correct asset row without duplicating
+   * lookup logic in every message type branch.
+   */
+  const entityIdToDeviceSn: Record<string, string> = {};
+  const deviceSnToEntityId: Record<string, string> = {};
+  const dockSnToEntityId: Record<string, string> = {};
+
+  for (const node of relationships?.nodes ?? []) {
+    const type = String(node.assetType ?? "").trim().toLowerCase();
+    const deviceSn = String(node.deviceSn ?? "").trim();
+    if (type === "drone" && deviceSn) {
+      entityIdToDeviceSn[node.id] = deviceSn;
+      deviceSnToEntityId[deviceSn] = node.id;
+    }
+    if (type === "airport" && deviceSn) {
+      dockSnToEntityId[deviceSn] = node.id;
+    }
+  }
+
+  for (const asset of useAssetStore.getState().assets) {
+    if (normalizeAssetType(asset.asset_type) !== "drone") continue;
+    const props =
+      asset.properties && typeof asset.properties === "object"
+        ? (asset.properties as Record<string, unknown>)
+        : null;
+    const deviceSn = String(props?.deviceSn ?? props?.device_sn ?? "").trim();
+    if (!deviceSn) continue;
+    if (!entityIdToDeviceSn[asset.id]) entityIdToDeviceSn[asset.id] = deviceSn;
+    if (!deviceSnToEntityId[deviceSn]) deviceSnToEntityId[deviceSn] = asset.id;
+  }
+
+  return { entityIdToDeviceSn, deviceSnToEntityId, dockSnToEntityId };
+}
+
+function resolveDroneEntityIdFromAssets(data: Record<string, unknown>): string | null {
+  /**
+   * Resolve the canonical drone asset id used in `asset-store`.
+   *
+   * Resolution order:
+   * 1. explicit entity id in the payload
+   * 2. serial number -> entity id mapping
+   * 3. nested drone/uav payloads reused by some message types
+   *
+   * Returning `null` is intentional: callers should skip patching instead of
+   * creating a speculative drone asset from partial runtime data.
+   */
+  const state = useAssetStore.getState();
+  const eid = String(data.entityId ?? data.entity_id ?? "").trim();
+  if (eid) {
+    const asset = state.assets.find((item) => item.id === eid);
+    if (asset) return eid;
+    const mapped = state.deviceSnToEntityId[eid];
+    if (mapped) return mapped;
+    const byDeviceSn = state.assets.find((item) => {
+      if (item.asset_type !== "drone") return false;
+      const props =
+        item.properties && typeof item.properties === "object"
+          ? (item.properties as Record<string, unknown>)
+          : null;
+      return String(props?.deviceSn ?? props?.device_sn ?? "").trim() === eid;
+    });
+    if (byDeviceSn) return byDeviceSn.id;
+  }
+  const directSn = String(data.deviceSn ?? data.drone_sn ?? data.sn ?? data.device_sn ?? data.droneSn ?? "").trim();
+  if (directSn) {
+    const mapped = state.deviceSnToEntityId[directSn];
+    if (mapped) return mapped;
+    const byDeviceSn = state.assets.find((item) => {
+      if (item.asset_type !== "drone") return false;
+      const props =
+        item.properties && typeof item.properties === "object"
+          ? (item.properties as Record<string, unknown>)
+          : null;
+      return String(props?.deviceSn ?? props?.device_sn ?? "").trim() === directSn;
+    });
+    if (byDeviceSn) return byDeviceSn.id;
+  }
+  const drone = data.drone ?? data.uav;
+  if (drone && typeof drone === "object") {
+    return resolveDroneEntityIdFromAssets(drone as Record<string, unknown>);
+  }
+  logDroneDebug("resolve-miss", data, {
+    reason: "no matching drone asset",
+  });
+  return null;
+}
+
+function resolveDockEntityIdFromAssets(data: Record<string, unknown>): string | null {
+  /**
+   * Airports are resolved the same way as drones, but with dock serial mappings.
+   * Runtime dock packets are treated as updates to existing assets only.
+   */
+  const state = useAssetStore.getState();
+  const eid = String(data.entityId ?? data.entity_id ?? "").trim();
+  if (eid) {
+    const asset = state.assets.find((item) => item.id === eid);
+    if (asset) return eid;
+    const mapped = state.dockSnToEntityId[eid];
+    if (mapped) return mapped;
+  }
+  const dockSn = String(data.dock_sn ?? data.sn ?? data.deviceSn ?? "").trim();
+  if (dockSn) {
+    const mapped = state.dockSnToEntityId[dockSn];
+    if (mapped) return mapped;
+  }
+  return null;
+}
+
+function relationshipNodeById(
+  relationships: AssetRelationshipGraph | null,
+  id: string,
+): AssetRelationshipNode | null {
+  return relationships?.nodes.find((node) => node.id === id) ?? null;
+}
+
+function readLatLngFromRuntimePayload(data: Record<string, unknown>): { lat: number; lng: number } | null {
+  /**
+   * Live payloads are not fully consistent on field naming.
+   * This helper centralizes the accepted aliases and returns `null` instead of
+   * fabricating coordinates when the packet is incomplete.
+   */
+  const lat = Number(data.latitude ?? data.lat);
+  const lng = Number(data.longitude ?? data.lng ?? data.lon);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  return null;
+}
+
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+function appendDroneHistoryTrail(
+  entityId: string,
+  prevProps: Record<string, unknown>,
+  lat: number,
+  lng: number,
+): Array<[number, number]> {
+  /**
+   * History trail is stored directly on the asset's runtime properties so:
+   * - 2D and 3D renderers can share it
+   * - trail rendering survives snapshot rebuilds
+   * - we do not need a second in-memory drone-specific runtime store
+   *
+   * The 1-meter dedupe threshold prevents very noisy high-frequency packets from
+   * exploding the trail length without adding visible value.
+   */
+  const cfg = getDroneMapRenderingConfig();
+  if (!cfg.showHistoryTrail) return [];
+  const rawTrail = droneHistoryTrailCache.get(entityId) ?? (Array.isArray(prevProps.history_trail) ? prevProps.history_trail : []);
+  const trail: Array<[number, number]> = rawTrail
+    .map((item) =>
+      Array.isArray(item) && item.length >= 2 && Number.isFinite(Number(item[0])) && Number.isFinite(Number(item[1]))
+        ? [Number(item[0]), Number(item[1])] as [number, number]
+        : null,
+    )
+    .filter((item): item is [number, number] => item != null);
+  const last = trail[trail.length - 1];
+  if (last) {
+    const [prevLng, prevLat] = last;
+    if (haversineMeters(prevLat, prevLng, lat, lng) < 1) return trail;
+  }
+  trail.push([lng, lat]);
+  const max = Math.max(2, Math.floor(cfg.maxHistoryPoints));
+  while (trail.length > max) trail.shift();
+  droneHistoryTrailCache.set(entityId, [...trail]);
+  return trail;
+}
+
+function readDroneRuntimeOverlayProps(entityId: string): Record<string, unknown> {
+  const asset = useAssetStore.getState().assets.find((item) => item.id === entityId);
+  const assetProps =
+    asset?.properties && typeof asset.properties === "object"
+      ? (asset.properties as Record<string, unknown>)
+      : {};
+  const overlayProps = droneRuntimeOverlayById.get(entityId)?.properties ?? {};
+  return {
+    ...assetProps,
+    ...overlayProps,
+  };
+}
+
+function patchDroneRuntimeOverlay(
+  entityId: string,
+  patch: {
+    lat?: number;
+    lng?: number;
+    heading?: number | null;
+    status?: string;
+    properties?: Record<string, unknown>;
+  },
+) {
+  const prev = droneRuntimeOverlayById.get(entityId);
+  const next: DroneRuntimeOverlay = {
+    lat: patch.lat ?? prev?.lat,
+    lng: patch.lng ?? prev?.lng,
+    heading: patch.heading !== undefined ? patch.heading : prev?.heading,
+    status: patch.status ?? prev?.status,
+    properties: {
+      ...(prev?.properties ?? {}),
+      ...(patch.properties ?? {}),
+    },
+  };
+  droneRuntimeOverlayById.set(entityId, next);
+
+  const existing = useAssetStore.getState().assets.find((item) => item.id === entityId);
+  if (!existing) return;
+  const existingProps =
+    existing.properties && typeof existing.properties === "object"
+      ? (existing.properties as Record<string, unknown>)
+      : {};
+  const assetPatch: Partial<AssetData> = {
+    properties: {
+      ...existingProps,
+      ...next.properties,
+    },
+  };
+  if (Number.isFinite(next.lat)) assetPatch.lat = next.lat;
+  if (Number.isFinite(next.lng)) assetPatch.lng = next.lng;
+  if (next.heading !== undefined) assetPatch.heading = next.heading;
+  if (next.status) assetPatch.status = next.status;
+  useAssetStore.getState().mergeAssetFields(entityId, assetPatch);
+}
+
+function baseDronePositionFromAsset(entityId: string): { lat: number; lng: number } | null {
+  const row = [...lastWsAssetList, ...configAssetBaseCache].find((item) => item.id === entityId);
+  if (row && Number.isFinite(row.lat) && Number.isFinite(row.lng)) {
+    return { lat: row.lat, lng: row.lng };
+  }
+  return null;
+}
+
+function baseDronePositionFromDock(entityId: string): { lat: number; lng: number } | null {
+  const state = useAssetStore.getState();
+  const relationships = state.relationships;
+  if (!relationships) return null;
+  const edge = relationships.edges.find((item) => item.child === entityId);
+  if (!edge) return null;
+  const parentNode = relationships.nodes.find((node) => node.id === edge.parent);
+  if (!parentNode) return null;
+  if (!Number.isFinite(parentNode.latitude) || !Number.isFinite(parentNode.longitude)) return null;
+  return {
+    lat: Number(parentNode.latitude),
+    lng: Number(parentNode.longitude),
+  };
+}
+
+function baseDronePosition(entityId: string): { lat: number; lng: number } | null {
+  return baseDronePositionFromAsset(entityId) ?? baseDronePositionFromDock(entityId);
+}
+
+function readDroneFlightStatusFromAsset(entityId: string): number | null {
+  const asset = useAssetStore.getState().assets.find((item) => item.id === entityId);
+  const props =
+    asset?.properties && typeof asset.properties === "object"
+      ? (asset.properties as Record<string, unknown>)
+      : null;
+  const flightParameters =
+    props?.flightParameters && typeof props.flightParameters === "object"
+      ? (props.flightParameters as Record<string, unknown>)
+      : null;
+  const n = Number(flightParameters?.flightStatus ?? props?.flightStatus ?? props?.flight_status);
+  return Number.isFinite(n) ? n : null;
+}
+
+function readDroneRuntimeMeta(entityId: string): {
+  isTakingOff: boolean;
+  wasLanded: boolean;
+  lastStatusAcceptedAt: number | null;
+  lastHighFreqAcceptedAt: number | null;
+} {
+  const props = readDroneRuntimeOverlayProps(entityId);
+  const isTakingOff = props.isTakingOff === true;
+  const wasLanded = props.wasLanded === true;
+  const lastStatusAcceptedAt = Number(props.lastStatusAcceptedAt);
+  const lastHighFreqAcceptedAt = Number(props.lastHighFreqAcceptedAt);
+  return {
+    isTakingOff,
+    wasLanded,
+    lastStatusAcceptedAt: Number.isFinite(lastStatusAcceptedAt) ? lastStatusAcceptedAt : null,
+    lastHighFreqAcceptedAt: Number.isFinite(lastHighFreqAcceptedAt) ? lastHighFreqAcceptedAt : null,
+  };
+}
+
+function shouldStartTakeoff(entityId: string): boolean {
+  const meta = readDroneRuntimeMeta(entityId);
+  if (meta.isTakingOff) return true;
+  if (meta.wasLanded) return true;
+  if (meta.lastStatusAcceptedAt == null && meta.lastHighFreqAcceptedAt == null) return true;
+  const flightStatus = readDroneFlightStatusFromAsset(entityId);
+  return flightStatus === 14;
+}
+
+function shouldDiscardByTakeoff(
+  entityId: string,
+  lng: number,
+  lat: number,
+  dataType: "high_freq" | "status",
+): boolean {
+  const meta = readDroneRuntimeMeta(entityId);
+  if (!meta.isTakingOff && !shouldStartTakeoff(entityId)) return false;
+  const base = baseDronePosition(entityId);
+  if (!base) return dataType === "high_freq";
+  const dist = haversineMeters(base.lat, base.lng, lat, lng);
+  if (dist <= TAKEOFF_DISTANCE_M) return false;
+  if (dataType === "status") return false;
+  return true;
+}
+
+function updateTakeoffState(entityId: string, currentTime: number): Record<string, unknown> {
+  const props = readDroneRuntimeOverlayProps(entityId);
+  const meta = readDroneRuntimeMeta(entityId);
+  const isTakingOff = meta.isTakingOff || shouldStartTakeoff(entityId);
+  if (!isTakingOff) return {};
+  const base = baseDronePosition(entityId);
+  const statusPayload =
+    props.drone_status && typeof props.drone_status === "object"
+      ? (props.drone_status as Record<string, unknown>)
+      : null;
+  if (base && statusPayload) {
+    const statusPos = readLatLngFromRuntimePayload(statusPayload);
+    if (statusPos) {
+      const dist = haversineMeters(base.lat, base.lng, statusPos.lat, statusPos.lng);
+      if (dist > TAKEOFF_DISTANCE_M) {
+        return { isTakingOff: false, wasLanded: false };
+      }
+    }
+  }
+  const statusOk = meta.lastStatusAcceptedAt != null && currentTime - meta.lastStatusAcceptedAt <= BOTH_DATA_RECENT_MS;
+  const highFreqOk = meta.lastHighFreqAcceptedAt != null && currentTime - meta.lastHighFreqAcceptedAt <= BOTH_DATA_RECENT_MS;
+  if (statusOk && highFreqOk) {
+    return { isTakingOff: false, wasLanded: false };
+  }
+  return { isTakingOff: true, wasLanded: false };
+}
+
+function isHighFreqFresh(entityId: string, currentTime: number): boolean {
+  const props = readDroneRuntimeOverlayProps(entityId);
+  const receivedAt = Number(props.high_freq_received_at_ms);
+  if (!Number.isFinite(receivedAt)) return false;
+  return currentTime - receivedAt <= Math.max(0, getDroneMapRenderingConfig().highFreqPositionMaxAgeMs);
+}
+
+function applyDroneRuntimeOverlayToRow(row: AssetData): AssetData {
+  if (normalizeAssetType(row.asset_type) !== "drone") return row;
+  const overlay = droneRuntimeOverlayById.get(row.id);
+  if (!overlay) return row;
+  const rowProps =
+    row.properties && typeof row.properties === "object"
+      ? (row.properties as Record<string, unknown>)
+      : {};
+  return {
+    ...row,
+    ...(Number.isFinite(overlay.lat) ? { lat: overlay.lat } : {}),
+    ...(Number.isFinite(overlay.lng) ? { lng: overlay.lng } : {}),
+    ...(overlay.heading !== undefined ? { heading: overlay.heading } : {}),
+    ...(overlay.status ? { status: overlay.status } : {}),
+    properties: {
+      ...rowProps,
+      ...overlay.properties,
+    },
+  };
 }
 
 async function reloadAppConfigAssetBase() {
@@ -205,32 +738,95 @@ async function reloadAppConfigAssetBase() {
   rebuildAndCommitAssetSnapshot();
 }
 
-function mergeAssetRowsById(base: AssetData[], overlays: AssetData[]): AssetData[] {
-  if (!overlays.length) return base;
-  const byId = new Map<string, AssetData>(base.map((a) => [a.id, a]));
-  for (const row of overlays) {
-    const prev = byId.get(row.id);
-    byId.set(row.id, prev ? preserveDeviceStateFromPrev(prev, row) : row);
-  }
-  return [...byId.values()];
-}
-
-/** 资产总入口：静态配置 + WS 实体 + relationships 机场/无人机 统一合并后一次性写入 */
+/** 资产总入口：静态配置 + WS 实体统一合并后一次性写入 */
 function rebuildAndCommitAssetSnapshot() {
   const mergedStaticAndWs = mergeDynamicAndStaticAssets(
     filterOutDestroyedMunitions(configAssetBaseCache),
     filterOutDestroyedMunitions(lastWsAssetList),
   );
+  const state = useAssetStore.getState();
+  const aliasToCanonical = new Map<string, string>();
+  for (const row of mergedStaticAndWs) {
+    if (normalizeAssetType(row.asset_type) !== "drone") continue;
+    const props =
+      row.properties && typeof row.properties === "object"
+        ? (row.properties as Record<string, unknown>)
+        : null;
+    const deviceSn = String(props?.deviceSn ?? props?.device_sn ?? "").trim();
+    if (deviceSn && deviceSn !== row.id) aliasToCanonical.set(deviceSn, row.id);
+  }
+  for (const [entityId, deviceSn] of Object.entries(state.entityIdToDeviceSn)) {
+    if (entityId && deviceSn) aliasToCanonical.set(deviceSn, entityId);
+  }
+  const dedupedRows = new Map<string, AssetData>();
+  for (const row of mergedStaticAndWs) {
+    if (normalizeAssetType(row.asset_type) !== "drone") {
+      dedupedRows.set(row.id, row);
+      continue;
+    }
+    const props =
+      row.properties && typeof row.properties === "object"
+        ? (row.properties as Record<string, unknown>)
+        : null;
+    const deviceSn = String(props?.deviceSn ?? props?.device_sn ?? "").trim();
+    const canonicalId = aliasToCanonical.get(row.id) ?? (deviceSn ? aliasToCanonical.get(deviceSn) : undefined) ?? row.id;
+    const normalizedRow =
+      canonicalId === row.id
+        ? row
+        : {
+            ...row,
+            id: canonicalId,
+            properties: {
+              ...(props ?? {}),
+              entityId: canonicalId,
+              entity_id: canonicalId,
+              ...(deviceSn ? { deviceSn, device_sn: deviceSn } : {}),
+            },
+          };
+    const prev = dedupedRows.get(canonicalId);
+    if (!prev) {
+      dedupedRows.set(canonicalId, normalizedRow);
+      continue;
+    }
+    const prevProps =
+      prev.properties && typeof prev.properties === "object"
+        ? (prev.properties as Record<string, unknown>)
+        : null;
+    const nextProps =
+      normalizedRow.properties && typeof normalizedRow.properties === "object"
+        ? (normalizedRow.properties as Record<string, unknown>)
+        : null;
+    dedupedRows.set(canonicalId, {
+      ...prev,
+      ...normalizedRow,
+      name:
+        String(normalizedRow.name ?? "").trim() && String(normalizedRow.name ?? "").trim() !== normalizedRow.id
+          ? normalizedRow.name
+          : prev.name,
+      lat: Number.isFinite(normalizedRow.lat) ? normalizedRow.lat : prev.lat,
+      lng: Number.isFinite(normalizedRow.lng) ? normalizedRow.lng : prev.lng,
+      heading:
+        normalizedRow.heading != null && Number.isFinite(Number(normalizedRow.heading))
+          ? Number(normalizedRow.heading)
+          : prev.heading,
+      fov_angle:
+        normalizedRow.fov_angle != null && Number.isFinite(Number(normalizedRow.fov_angle))
+          ? Number(normalizedRow.fov_angle)
+          : prev.fov_angle,
+      range_km:
+        normalizedRow.range_km != null && Number.isFinite(Number(normalizedRow.range_km))
+          ? Number(normalizedRow.range_km)
+          : prev.range_km,
+      properties: {
+        ...(prevProps ?? {}),
+        ...(nextProps ?? {}),
+      },
+    });
+  }
   const liveById = new Map(
-    useAssetStore
-      .getState()
-      .assets.filter((a) => !isMunitionDestroyed(a.id))
-      .map((a) => [a.id, a]),
+    state.assets.filter((a) => !isMunitionDestroyed(a.id)).map((a) => [a.id, a]),
   );
-  let mergedAll = mergeAssetRowsById(
-    mergedStaticAndWs,
-    filterOutDestroyedMunitions(relationshipAssetsCache),
-  );
+  let mergedAll = [...dedupedRows.values()];
   mergedAll = mergedAll.filter(
     (row) => !(normalizeAssetType(row.asset_type) === "missile" && isMunitionDestroyed(row.id)),
   );
@@ -239,12 +835,12 @@ function rebuildAndCommitAssetSnapshot() {
     const live = liveById.get(row.id);
     if (!live) return row;
     const at = normalizeAssetType(row.asset_type);
-    if (at === "drone" || at === "airport") {
+    if (at === "airport") {
       return preserveDeviceStateFromPrev(live, row);
     }
     return preserveDdsDynamicFieldsOnRebuild(live, row) ?? row;
   });
-  const stamped = mergedAll.map(stampDeviceStateOnAsset);
+  const stamped = mergedAll.map((row) => stampDeviceStateOnAsset(applyDroneRuntimeOverlayToRow(row)));
   useAssetStore.getState().setAssets(filterAssetsForDisplay(stamped));
 }
 
@@ -281,8 +877,17 @@ function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows:
       ...(prevProps ?? {}),
       ...(rowProps ?? {}),
     });
+    const preservePrevCoords =
+      Number.isFinite(prev.lat) &&
+      Number.isFinite(prev.lng) &&
+      !(prev.lat === 0 && prev.lng === 0) &&
+      Number.isFinite(row.lat) &&
+      Number.isFinite(row.lng) &&
+      row.lat === 0 &&
+      row.lng === 0;
     const merged = {
       ...row,
+      ...(preservePrevCoords ? { lat: prev.lat, lng: prev.lng } : {}),
       ...(mergedProps ? { properties: mergedProps } : {}),
       heading:
         row.heading != null && Number.isFinite(Number(row.heading))
@@ -297,7 +902,13 @@ function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows:
           ? Number(row.range_km)
           : prev.range_km,
     };
-    return preserveDeviceStateFromPrev(prev, merged);
+    const preserved = preserveDeviceStateFromPrev(prev, merged);
+    const nextName = String(preserved.name ?? "").trim();
+    const prevName = String(prev.name ?? "").trim();
+    if ((!nextName || nextName === preserved.id) && prevName && prevName !== prev.id) {
+      return { ...preserved, name: prev.name };
+    }
+    return preserved;
   });
 }
 
@@ -313,25 +924,25 @@ function mergeWsRowsPreserveNullableNumeric(prevRows: AssetData[], incomingRows:
  * @param list - mapEntitiesPayload 解析后的 AssetData 数组（已通过 specificType 识别类型）
  */
 function applyAssetListFromWs(list: AssetData[], options?: { commit?: boolean }) {
-  /* 无人机由 syncDroneAndAirportAssetsFromRelationships 统一管理（用 deviceSn 做 key），
-   * 此处过滤掉 WS 实体列表中的无人机（用 entityId 做 key），防止同一无人机出现两条记录 */
-  const nonDroneList = filterOutDestroyedMunitions(
-    list
-      .filter((a) => a.asset_type !== "drone")
-      .map((a) => {
-        if (a.asset_type !== "camera") return a;
-        // entity_status 里的 camera 行不含实时 PTZ，只更新属性；高速相机在此补 fov_sector_visible
-        const props = { ...((a.properties as Record<string, unknown> | null) ?? {}) };
-        applyHsCameraFovProps(a.id, props);
-        return {
-          ...a,
-          heading: null,
-          fov_angle: null,
-          range_km: null,
-          properties: props,
-        };
-      }),
-  );
+  const normalizedIncoming = list.map((a) => {
+    if (a.asset_type !== "camera") return a;
+    // entity_status 里的 camera 行不含实时 PTZ，只更新属性；高速相机在此补 fov_sector_visible
+    const props = { ...((a.properties as Record<string, unknown> | null) ?? {}) };
+    applyHsCameraFovProps(a.id, props);
+    return {
+      ...a,
+      heading: null,
+      fov_angle: null,
+      range_km: null,
+      properties: props,
+    };
+  });
+  const incomingIds = new Set(normalizedIncoming.map((item) => item.id));
+  const preservedMissingRows = lastWsAssetList.filter((asset) => !incomingIds.has(asset.id));
+  const nonDroneList = filterOutDestroyedMunitions([
+    ...normalizedIncoming,
+    ...preservedMissingRows,
+  ]);
   lastWsAssetList = mergeWsRowsPreserveNullableNumeric(lastWsAssetList, nonDroneList);
   if (options?.commit !== false) rebuildAndCommitAssetSnapshot();
 }
@@ -344,6 +955,7 @@ const ws = {
   heartbeatTimer: null as ReturnType<typeof setInterval> | null,
   readyNotified: false,
   trackPruneTimer: null as ReturnType<typeof setInterval> | null,
+  droneRuntimePruneTimer: null as ReturnType<typeof setInterval> | null,
   alarmCleanupTimer: null as ReturnType<typeof setInterval> | null,
   speedCameraPruneTimer: null as ReturnType<typeof setInterval> | null,
   alertRevisionUnsub: null as (() => void) | null,
@@ -369,10 +981,6 @@ function clearHeartbeat() {
 function backoffMs(): number {
   const cfg = getWebSocketConfig();
   return Math.min(cfg.maxReconnectMs, cfg.initialReconnectMs * Math.pow(2, Math.min(ws.reconnectAttempt, 4)));
-}
-
-function isoNow() {
-  return new Date().toISOString();
 }
 
 /** 光电 WS 载荷中解析 WGS84；支持 `position` 嵌套或顶层 lat/lng */
@@ -426,109 +1034,6 @@ function cameraDefaultRangeKm(entityId: string): number | undefined {
 
 // ── Zone 解析 ──
 
-function inferZoneType(name: string): "no-fly" | "warning" | "exercise" {
-  const n = name || "";
-  if (n.includes("禁飞") || n.includes("拒止") || /no-fly/i.test(n)) return "no-fly";
-  if (n.includes("警告") || n.includes("驱离") || /warning/i.test(n)) return "warning";
-  return "exercise";
-}
-
-function toLngLatPair(v: unknown): [number, number] | null {
-  if (Array.isArray(v) && typeof v[0] === "number" && typeof v[1] === "number") {
-    return [v[0], v[1]];
-  }
-  if (v && typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    const lng = o.lng ?? o.longitude ?? o.lon;
-    const lat = o.lat ?? o.latitude;
-    const ln = typeof lng === "number" ? lng : Number(lng);
-    const la = typeof lat === "number" ? lat : Number(lat);
-    if (Number.isFinite(ln) && Number.isFinite(la)) return [ln, la];
-  }
-  return null;
-}
-
-function normalizePolygonRing(raw: unknown): Array<[number, number]> | null {
-  if (!Array.isArray(raw) || raw.length < 3) return null;
-  const ring: Array<[number, number]> = [];
-  for (const p of raw) {
-    const c = toLngLatPair(p);
-    if (c) ring.push(c);
-  }
-  if (ring.length < 3) return null;
-  const [fx, fy] = ring[0]!;
-  const [lx, ly] = ring[ring.length - 1]!;
-  if (fx !== lx || fy !== ly) ring.push([fx, fy]);
-  return ring;
-}
-
-function circleToRingMeters(cx: number, cy: number, radiusM: number, segments = 36): Array<[number, number]> {
-  const R = Math.max(1, radiusM);
-  const mPerDegLat = 111_320;
-  const ring: Array<[number, number]> = [];
-  for (let i = 0; i <= segments; i++) {
-    const ang = (i / segments) * Math.PI * 2;
-    const northM = R * Math.cos(ang);
-    const eastM = R * Math.sin(ang);
-    const dLat = northM / mPerDegLat;
-    const dLng = eastM / (mPerDegLat * Math.max(0.2, Math.cos((cy * Math.PI) / 180)));
-    ring.push([cx + dLng, cy + dLat]);
-  }
-  return ring;
-}
-
-function vueZoneItemToZoneData(z: Record<string, unknown>): ZoneData | null {
-  const id = String(z.id ?? z.areaId ?? "");
-  if (!id) return null;
-  const name = String(z.name ?? z.areaName ?? id);
-  const geometryType = String(z.geometryType ?? "Polygon");
-  const now = isoNow();
-
-  let coordinates: Array<[number, number]> | null = null;
-  if (geometryType === "Circle") {
-    const c = z.center;
-    const r = Number(z.radius);
-    const center = Array.isArray(c) ? toLngLatPair(c) : null;
-    if (center && Number.isFinite(r) && r > 0) {
-      coordinates = circleToRingMeters(center[0], center[1], r);
-    }
-  } else {
-    coordinates = normalizePolygonRing(z.coordinates);
-  }
-  if (!coordinates || coordinates.length < 4) return null;
-
-  const zt = inferZoneType(name);
-  const line = (z.strokeColor as string) ?? "#3b82f6";
-  const fill = (z.fillColor as string) ?? line;
-  const rawFo = z.fillOpacity ?? z.fill_opacity;
-  let fill_opacity = 0.25;
-  if (typeof rawFo === "number" && Number.isFinite(rawFo)) fill_opacity = Math.min(1, Math.max(0, rawFo));
-  else if (rawFo != null && String(rawFo).trim() !== "") {
-    const n = Number(rawFo);
-    if (Number.isFinite(n)) fill_opacity = Math.min(1, Math.max(0, n));
-  }
-  return {
-    id, name, zone_type: zt, source: "websocket", coordinates,
-    color: line, fill_color: fill,
-    fill_opacity,
-    properties: { geometryType, areaType: z.areaType, isActive: z.isActive },
-    created_at: now, updated_at: now,
-  };
-}
-
-function mapZonesPayload(payload: unknown): ZoneData[] {
-  if (!Array.isArray(payload)) return [];
-  const out: ZoneData[] = [];
-  for (const item of payload) {
-    if (!item || typeof item !== "object") continue;
-    const zd = vueZoneItemToZoneData(item as Record<string, unknown>);
-    if (zd) out.push(zd);
-  }
-  return out;
-}
-
-// ── 资产事件 ──
-
 function applyAssetWsEvent(ev: Record<string, unknown>) {
   if (ev.type !== "asset_arrived") return;
   const id = String(ev.assetId ?? "");
@@ -548,103 +1053,7 @@ function payloadArray(msg: Record<string, unknown>): unknown[] | null {
   if (Array.isArray(msg.data)) return msg.data as unknown[];
   if (Array.isArray(msg.assets)) return msg.assets as unknown[];
   if (Array.isArray(msg.entities)) return msg.entities as unknown[];
-  if (Array.isArray(msg.zones)) return msg.zones as unknown[];
   return null;
-}
-
-/**
- * 【entity_status 第3步】遍历 drone-store.relationships，将机场和无人机 upsert 进 asset-store。
- *
- * 【关键】机场/无人机沿用 dockSn/deviceSn 作为资产 ID（与 drone-store 一致），
- * 在统一快照阶段一次性覆盖进 asset-store，避免「先 setAssets 再 upsert」双入口写入。
- *
- * 数据来源：drone-store.relationships 由第1步 applyEntityStatusMessage() 解析得到。
- */
-function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
-  const ds = useDroneStore.getState();
-  const now = isoNow();
-  const rows: AssetData[] = [];
-
-  for (const ap of ds.relationships?.airports ?? []) {
-    if (!ap.dockSn) continue;
-
-    // ── 机场：用 dockSn 作为资产 key（机场没有 entityId）──
-    const airportId = ap.dockSn;
-    if (shouldDisplayAssetId("airport", airportId)) {
-      const airportName = ds.docks[ap.dockSn]?.displayName ?? "机场";
-      const dockPayload = ds.docks[ap.dockSn]?.payload as Record<string, unknown> | undefined;
-      const dockDs = dockPayload?.deviceState;
-      const lat = ap.latitude ?? null;
-      const lng = ap.longitude ?? null;
-      if (lat == null || lng == null) continue;
-      rows.push({
-        id: airportId,
-        name: airportName,
-        asset_type: "airport",
-        status: assetStatusFromDeviceState(dockDs),
-        disposition: "friendly",
-        lat,
-        lng,
-        range_km: null,
-        heading: null,
-        fov_angle: null,
-        properties: {
-          virtual_troop: ap.virtualTroop,
-          is_virtual: ap.virtualTroop,
-          virtualTroop: ap.virtualTroop,
-          dock_sn: ap.dockSn,
-          ...(dockDs != null ? deviceStatePropsFromPayload(dockPayload!) : {}),
-        },
-        mission_status: "monitoring",
-        assigned_target_id: null,
-        target_lat: null,
-        target_lng: null,
-        created_at: now,
-        updated_at: now,
-      });
-    }
-
-    // ── 无人机：用 deviceSn 作为资产 key（与机场用 dockSn 一致，与地图点击返回的 sn 一致）──
-    for (const dr of ap.drones) {
-      if (!dr.deviceSn) continue;
-      const droneAssetId = dr.deviceSn;
-      if (!shouldDisplayAssetId("drone", droneAssetId, dr.name)) continue;
-      const droneName = dr.name || dr.deviceSn;
-      const statusPayload = ds.drones[dr.deviceSn]?.status as Record<string, unknown> | undefined;
-      const droneDs = statusPayload?.deviceState;
-      const lat = dr.latitude ?? null;
-      const lng = dr.longitude ?? null;
-      if (lat == null || lng == null) continue;
-      rows.push({
-        id: droneAssetId,
-        name: droneName,
-        asset_type: "drone",
-        status: assetStatusFromDeviceState(droneDs),
-        disposition: "friendly",
-        lat,
-        lng,
-        range_km: null,
-        heading: null,
-        fov_angle: null,
-        properties: {
-          virtual_troop: dr.virtualTroop,
-          is_virtual: dr.virtualTroop,
-          virtualTroop: dr.virtualTroop,
-          dock_sn: ap.dockSn,
-          device_sn: dr.deviceSn,
-          entity_id: dr.entityId ?? "",
-          ...(droneDs != null ? deviceStatePropsFromPayload(statusPayload!) : {}),
-        },
-        mission_status: "monitoring",
-        assigned_target_id: null,
-        target_lat: null,
-        target_lng: null,
-        created_at: now,
-        updated_at: now,
-      });
-    }
-  }
-  return rows;
 }
 
 // ── 告警 taskStatus 判断 ──
@@ -676,7 +1085,7 @@ function handleAlarmItem(raw: Record<string, unknown>) {
  * ┌─ type ─────────────┬─ 处理说明 ────────────────────────────────────────────────────────┐
  * │ trackbatch / track │ 航迹数据 → normalizeIncomingTrack → track-store.setTracks       │
  * │ alarm / alert      │ 告警数据 → normalizeWsAlertItem → alert-store.upsertAlarm/Threat │
- * │ zones              │ 区域数据 → normalizePolygonRing → zone-store.setZones            │
+ * │ DbAreas            │ 区域/航线数据 → shouldDisplayDbArea → db-area-store.setRows       │
  * │ entity_status      │ 【核心】实体状态（雷达/相机/无人机/机场），见下方详细流程           │
  * │ camera / optoelec  │ 光电实时数据（PTZ朝向/视场角/坐标）→ 更新 asset-store 已有光电    │
  * │ dock_status        │ 机场状态 → 更新 drone-store.docks + asset-store 已有机场         │
@@ -794,13 +1203,27 @@ function dispatchWsMessage(raw: string) {
       }
 
       // ── 区域 ──
-      case "zones": {
-        const arr = payloadArray(msg);
-        if (arr?.length) {
-          const zones = mapZonesPayload(arr).filter((z) => shouldDisplayZone(z));
-          useZoneStore.getState().setZones(zones);
-          recordZoneReceived();
-        }
+      case "dbareas":
+      case "db_areas": {
+        const rows = Array.isArray(msg.data)
+          ? (msg.data as AreaTableRow[]).filter((row) => shouldDisplayDbArea(row))
+          : [];
+        useDbAreaStore.getState().setRows(rows, null);
+        recordDbAreasReceived();
+        break;
+      }
+      case "multitrackresult":
+      case "singletrackresult": {
+        const detectionData = msg.data as Record<string, unknown> | undefined;
+        useEoDetectionStore.getState().pushDetectionEnvelope({
+          type: type === "multitrackresult" ? "MultiTrackResult" : "SingleTrackResult",
+          data: detectionData,
+        });
+        recordEoDetectionReceived(
+          typeof detectionData?.cameraId === "string" || typeof detectionData?.cameraId === "number"
+            ? String(detectionData.cameraId)
+            : "",
+        );
         break;
       }
 
@@ -857,7 +1280,9 @@ function dispatchWsMessage(raw: string) {
        */
       case "entity_status": {
         /* ── 第1步：解析 relationships，提取机场/无人机关系到 drone-store ── */
-        useDroneStore.getState().applyEntityStatusMessage(msg);
+        const relationships = buildRelationshipGraphFromWs(msg);
+        useAssetStore.getState().setRelationships(relationships);
+        useAssetStore.getState().setEntityMappings(buildEntityMappingsFromRelationships(relationships));
 
         /* ── 第2步：解析实体（雷达、相机等），写入 asset-store ── */
         const rawEntities: unknown[] | null =
@@ -872,8 +1297,6 @@ function dispatchWsMessage(raw: string) {
           console.warn(`[entity_status] 无实体数据`);
         }
 
-        /* ── 第3步：将第1步解析的机场/无人机并入统一资产快照 ── */
-        relationshipAssetsCache = collectDroneAndAirportAssetsFromRelationships();
         rebuildAndCommitAssetSnapshot();
         break;
       }
@@ -932,6 +1355,7 @@ function dispatchWsMessage(raw: string) {
             if (d.executionState != null) baseProps.executionState = d.executionState;
 
             const patch: Partial<AssetData> = {
+              status,
               mission_status: "monitoring",
               properties: baseProps,
             };
@@ -945,58 +1369,7 @@ function dispatchWsMessage(raw: string) {
             }
 
             /* 合并进 lastWsAssetList 后触发地图刷新（OptoelectronicFovModule 画扇形） */
-            const now = isoNow();
-            const wsIdx = lastWsAssetList.findIndex((a) => a.id === entityId);
-            if (wsIdx >= 0) {
-              const prev = lastWsAssetList[wsIdx]!;
-              const nextWs = [...lastWsAssetList];
-              nextWs[wsIdx] = {
-                ...prev,
-                status,
-                properties: { ...(prev.properties as Record<string, unknown> | null ?? {}), ...baseProps },
-                ...(patch.heading !== undefined ? { heading: patch.heading } : {}),
-                ...(patch.fov_angle !== undefined ? { fov_angle: patch.fov_angle } : {}),
-                ...(patch.range_km !== undefined ? { range_km: patch.range_km } : {}),
-                ...(patch.lat !== undefined ? { lat: patch.lat } : {}),
-                ...(patch.lng !== undefined ? { lng: patch.lng } : {}),
-                updated_at: now,
-              };
-              lastWsAssetList = nextWs;
-            } else {
-              lastWsAssetList = [
-                ...lastWsAssetList,
-                {
-                  id: entityId,
-                  name: String(d.name ?? d.entityName ?? entityId),
-                  asset_type: atType,
-                  status,
-                  disposition: parseForceDisposition(d.disposition, "friendly"),
-                  lat: ll?.lat ?? 0,
-                  lng: ll?.lng ?? 0,
-                  range_km: effectiveRangeKm ?? null,
-                  heading: bearing ?? null,
-                  fov_angle: fovDeg ?? null,
-                  properties: {
-                    ...baseProps,
-                    ...(!ll
-                      ? {
-                          center_icon_visible: false,
-                          ws_camera_pending_position: true,
-                          // 尚无坐标时不画 FOV；高速相机显式关扇形，避免用 0,0 误画
-                          ...(isHsCamera(entityId) ? { fov_sector_visible: false } : {}),
-                        }
-                      : {}),
-                  },
-                  mission_status: "monitoring",
-                  assigned_target_id: null,
-                  target_lat: null,
-                  target_lng: null,
-                  created_at: now,
-                  updated_at: now,
-                },
-              ];
-            }
-            rebuildAndCommitAssetSnapshot();
+            patchExistingCameraAsset(entityId, patch);
           }
         }
         break;
@@ -1017,22 +1390,23 @@ function dispatchWsMessage(raw: string) {
       case "dockstatus":
       case "dock_status": {
         const d = msg.data as Record<string, unknown> | undefined;
-        // console.log("dockstatus:",d)
         if (!d || d.latitude == null || d.longitude == null) break;
-        const dockSn = String(d.dock_sn ?? d.sn ?? "").trim();
-        if (!dockSn) break;
-        useDroneStore.getState().setDockStatus(d);
         recordDockReceived();
-        /* dock_status 只更新已有机场资产，不新增。
-         * 机场用 dockSn 做 key（机场没有 entityId） */
-        const existingAsset = useAssetStore.getState().assets.find((x) => x.id === dockSn);
+        const dockEntityId = resolveDockEntityIdFromAssets(d);
+        if (!dockEntityId) break;
+        const existingAsset = useAssetStore.getState().assets.find((x) => x.id === dockEntityId);
         if (!existingAsset) break;
-        const airportName = useDroneStore.getState().docks[dockSn]?.displayName ?? "机场";
+        const airportName =
+          relationshipNodeById(useAssetStore.getState().relationships, dockEntityId)?.name ??
+          existingAsset.name ??
+          "机场";
         const prevProps =
           existingAsset.properties && typeof existingAsset.properties === "object"
             ? ({ ...(existingAsset.properties as Record<string, unknown>) } as Record<string, unknown>)
             : {};
-        useAssetStore.getState().mergeAssetFields(dockSn, {
+        const batteryPercent = Number(d.battery_capacity_percent);
+        const modeCode = Number(d.mode_code);
+        useAssetStore.getState().mergeAssetFields(dockEntityId, {
           lat: Number(d.latitude),
           lng: Number(d.longitude),
           name: airportName,
@@ -1042,6 +1416,8 @@ function dispatchWsMessage(raw: string) {
             dock: d,
             map_label: airportName,
             virtual_troop: existingAsset.properties?.virtual_troop ?? false,
+            dock_battery_percent: Number.isFinite(batteryPercent) ? batteryPercent : prevProps.dock_battery_percent,
+            dock_mode_code: Number.isFinite(modeCode) ? modeCode : prevProps.dock_mode_code,
             ...deviceStatePropsFromPayload(d),
           },
         });
@@ -1051,24 +1427,69 @@ function dispatchWsMessage(raw: string) {
       case "drone_status": {
         const d = msg.data as Record<string, unknown> | undefined;
         if (d) {
-          useDroneStore.getState().setDroneStatus(d);
           recordDroneReceived();
-          const droneSn = resolveDroneSn(d);
-          if (droneSn) {
-            const existing = useAssetStore.getState().assets.find((a) => a.id === droneSn);
+          const droneEntityId = resolveDroneEntityIdFromAssets(d);
+          if (droneEntityId) {
+            const existing = useAssetStore.getState().assets.find((a) => a.id === droneEntityId);
             if (existing) {
-              const prevProps =
-                existing.properties && typeof existing.properties === "object"
-                  ? ({ ...(existing.properties as Record<string, unknown>) } as Record<string, unknown>)
-                  : {};
-              useAssetStore.getState().mergeAssetFields(droneSn, {
+              const prevProps = readDroneRuntimeOverlayProps(droneEntityId);
+              const statusPayload = { ...d };
+              const pos = readLatLngFromRuntimePayload(statusPayload);
+              const now = Date.now();
+              const highFreqFresh = isHighFreqFresh(droneEntityId, now);
+              const discardStatus = pos ? shouldDiscardByTakeoff(droneEntityId, pos.lng, pos.lat, "status") : false;
+              const acceptedStatusAt =
+                pos && !discardStatus ? now : readDroneRuntimeMeta(droneEntityId).lastStatusAcceptedAt;
+              const heading = Number(
+                statusPayload.heading ??
+                statusPayload.attitude_head ??
+                statusPayload.course ??
+                statusPayload.yaw
+              );
+              const nextHistoryTrail =
+                pos && !discardStatus && !highFreqFresh && !readVirtualTroop(statusPayload)
+                  ? appendDroneHistoryTrail(droneEntityId, prevProps, pos.lat, pos.lng)
+                  : (Array.isArray(prevProps.history_trail) ? prevProps.history_trail : []);
+              logDroneDebug("drone_status", statusPayload, {
+                resolvedDroneEntityId: droneEntityId,
+                prevLat: existing.lat,
+                prevLng: existing.lng,
+                prevHeading: existing.heading,
+                highFreqFresh,
+                nextHistoryTrailLength: nextHistoryTrail.length,
+              });
+              patchDroneRuntimeOverlay(droneEntityId, {
                 status: assetStatusFromDeviceState(d.deviceState),
+                ...(!discardStatus && pos && !highFreqFresh ? { lat: pos.lat, lng: pos.lng } : {}),
+                ...(Number.isFinite(heading) && !highFreqFresh ? { heading } : {}),
                 properties: {
                   ...prevProps,
-                  drone_status: d,
+                  drone_status: statusPayload,
+                  entityId: droneEntityId,
+                  entity_id: droneEntityId,
+                  deviceSn:
+                    statusPayload.deviceSn ??
+                    statusPayload.device_sn ??
+                    statusPayload.drone_sn ??
+                    prevProps.deviceSn,
+                  device_sn:
+                    statusPayload.deviceSn ??
+                    statusPayload.device_sn ??
+                    statusPayload.drone_sn ??
+                    prevProps.device_sn,
+                  last_packet_at_ms: now,
+                  status_received_at_ms: now,
+                  lastStatusAcceptedAt: acceptedStatusAt,
+                  ...updateTakeoffState(droneEntityId, now),
+                  history_trail: nextHistoryTrail,
+                  munition_quantity:
+                    statusPayload.munitionQuantity ??
+                    statusPayload.munition_quantity ??
+                    prevProps.munition_quantity,
                   ...deviceStatePropsFromPayload(d),
                 },
               });
+              logDroneStoredState("drone_status_stored", droneEntityId);
             }
           }
         }
@@ -1078,8 +1499,31 @@ function dispatchWsMessage(raw: string) {
       case "drone_flight_path": {
         const d = msg.data as Record<string, unknown> | undefined;
         if (d && typeof d === "object") {
-          useDroneStore.getState().setDroneFlightPath(d);
           recordDroneFlightPathReceived();
+          const droneEntityId = resolveDroneEntityIdFromAssets(d);
+          if (droneEntityId) {
+            const existing = useAssetStore.getState().assets.find((a) => a.id === droneEntityId);
+            if (existing) {
+              const prevProps = readDroneRuntimeOverlayProps(droneEntityId);
+              const execState = d.executionState ?? d.execution_state;
+              const isComplete = execState === 1 || execState === "1" || execState === "completed";
+              patchDroneRuntimeOverlay(droneEntityId, {
+                properties: {
+                  ...prevProps,
+                  drone_flight_path: isComplete ? null : { ...d },
+                  entityId: droneEntityId,
+                  entity_id: droneEntityId,
+                  deviceSn: d.deviceSn ?? d.device_sn ?? d.drone_sn ?? prevProps.deviceSn,
+                  device_sn: d.deviceSn ?? d.device_sn ?? d.drone_sn ?? prevProps.device_sn,
+                  munition_quantity:
+                    d.munitionQuantity ??
+                    d.munition_quantity ??
+                    prevProps.munition_quantity,
+                },
+              });
+              logDroneStoredState("drone_flight_path_stored", droneEntityId);
+            }
+          }
         }
         break;
       }
@@ -1087,8 +1531,51 @@ function dispatchWsMessage(raw: string) {
       case "high_freq": {
         const d = msg.data as Record<string, unknown> | undefined;
         if (d && typeof d === "object") {
-          useDroneStore.getState().setHighFreq(d);
           recordDroneReceived();
+          const droneEntityId = resolveDroneEntityIdFromAssets(d);
+          if (droneEntityId) {
+            const existing = useAssetStore.getState().assets.find((a) => a.id === droneEntityId);
+            if (existing) {
+              const prevProps = readDroneRuntimeOverlayProps(droneEntityId);
+              const lat = Number(d.latitude ?? d.lat);
+              const lng = Number(d.longitude ?? d.lng ?? d.lon);
+              const posValid = Number.isFinite(lat) && Number.isFinite(lng);
+              const discardHighFreq = posValid ? shouldDiscardByTakeoff(droneEntityId, lng, lat, "high_freq") : false;
+              const prevTrail =
+                Array.isArray(prevProps.history_trail) ? prevProps.history_trail : [];
+              const acceptedHighFreqAt =
+                posValid && !discardHighFreq ? Date.now() : readDroneRuntimeMeta(droneEntityId).lastHighFreqAcceptedAt;
+              const nextHistoryTrail =
+                posValid && !discardHighFreq && !readVirtualTroop(d)
+                  ? appendDroneHistoryTrail(droneEntityId, prevProps, lat, lng)
+                  : prevTrail;
+              logDroneDebug("high_freq", d, {
+                resolvedDroneEntityId: droneEntityId,
+                prevLat: existing.lat,
+                prevLng: existing.lng,
+                prevHeading: existing.heading,
+                nextHistoryTrailLength: nextHistoryTrail.length,
+              });
+              patchDroneRuntimeOverlay(droneEntityId, {
+                ...(!discardHighFreq && Number.isFinite(lat) ? { lat } : {}),
+                ...(!discardHighFreq && Number.isFinite(lng) ? { lng } : {}),
+                properties: {
+                  ...prevProps,
+                  high_freq: d,
+                  entityId: droneEntityId,
+                  entity_id: droneEntityId,
+                  deviceSn: d.deviceSn ?? d.device_sn ?? d.drone_sn ?? prevProps.deviceSn,
+                  device_sn: d.deviceSn ?? d.device_sn ?? d.drone_sn ?? prevProps.device_sn,
+                  last_packet_at_ms: Date.now(),
+                  high_freq_received_at_ms: Date.now(),
+                  lastHighFreqAcceptedAt: acceptedHighFreqAt,
+                  ...updateTakeoffState(droneEntityId, Date.now()),
+                  history_trail: nextHistoryTrail,
+                },
+              });
+              logDroneStoredState("high_freq_stored", droneEntityId);
+            }
+          }
         }
         break;
       }
@@ -1137,8 +1624,8 @@ function dispatchWsMessage(raw: string) {
       }
       case "cleardrones":
       case "cleartracks":
-        useDroneStore.getState().clearDrones();
-        relationshipAssetsCache = [];
+        useAssetStore.getState().setRelationships(null);
+        useAssetStore.getState().setEntityMappings({});
         rebuildAndCommitAssetSnapshot();
         if (type === "cleartracks") useTrackStore.getState().clearAllTracks();
         break;
@@ -1254,6 +1741,78 @@ function startTrackStalePrune() {
   }, tick());
 }
 
+function startDroneRuntimePrune() {
+  if (ws.droneRuntimePruneTimer) clearInterval(ws.droneRuntimePruneTimer);
+  ws.droneRuntimePruneTimer = setInterval(() => {
+    const cfg = getDroneMapRenderingConfig();
+    const staleMs = Math.max(1000, cfg.timeoutSeconds * 1000);
+    const now = Date.now();
+    for (const asset of useAssetStore.getState().assets) {
+      if (normalizeAssetType(asset.asset_type) !== "drone") continue;
+      const props =
+        asset.properties && typeof asset.properties === "object"
+          ? ({ ...(asset.properties as Record<string, unknown>) } as Record<string, unknown>)
+          : {};
+      const highFreqAt = Number(props.high_freq_received_at_ms);
+      const statusAt = Number(props.status_received_at_ms);
+      const highFreqFresh = Number.isFinite(highFreqAt) && now - highFreqAt <= cfg.highFreqPositionMaxAgeMs;
+      const statusFresh = Number.isFinite(statusAt) && now - statusAt <= staleMs;
+      if (highFreqFresh || statusFresh) continue;
+      const historyTrail = Array.isArray(props.history_trail) ? props.history_trail : [];
+      if (
+        historyTrail.length === 0 &&
+        props.high_freq == null &&
+        props.drone_status == null &&
+        props.drone_flight_path == null &&
+        props.last_packet_at_ms == null
+      ) {
+        continue;
+      }
+      droneHistoryTrailCache.delete(asset.id);
+      droneRuntimeOverlayById.set(asset.id, {
+        properties: {
+          ...props,
+          history_trail: [],
+          high_freq: null,
+          drone_status: null,
+          drone_flight_path: null,
+          high_freq_received_at_ms: null,
+          status_received_at_ms: null,
+          last_packet_at_ms: null,
+          lastStatusAcceptedAt: null,
+          lastHighFreqAcceptedAt: null,
+          isTakingOff: false,
+          wasLanded: true,
+        },
+      });
+      useAssetStore.getState().mergeAssetFields(asset.id, {
+        properties: {
+          ...props,
+          history_trail: [],
+          high_freq: null,
+          drone_status: null,
+          drone_flight_path: null,
+          high_freq_received_at_ms: null,
+          status_received_at_ms: null,
+          last_packet_at_ms: null,
+          lastStatusAcceptedAt: null,
+          lastHighFreqAcceptedAt: null,
+          isTakingOff: false,
+          wasLanded: true,
+        },
+      });
+      logDroneDebug("runtime_pruned", {
+        entityId: asset.id,
+        deviceSn: String(props.deviceSn ?? props.device_sn ?? "").trim(),
+      }, {
+        staleMs,
+        clearedHistoryTrailLength: historyTrail.length,
+        clearedPlannedRoute: props.drone_flight_path != null,
+      });
+    }
+  }, 1000);
+}
+
 function startAlarmCleanup() {
   if (ws.alarmCleanupTimer) clearInterval(ws.alarmCleanupTimer);
   ws.alarmCleanupTimer = setInterval(() => {
@@ -1304,12 +1863,11 @@ function stopAlertRevisionSync() {
 function startImagePolling() {
   if (ws.imagePollTimer) clearInterval(ws.imagePollTimer);
   const httpCfg = getHttpConfig();
-  const { getRenderCache } = require("@/stores/track-store") as { getRenderCache: () => Map<string, import("@/lib/map-entity-model").Track> };
   const { updateTrackImage } = useTrackStore.getState();
 
   ws.imagePollTimer = setInterval(async () => {
     const cache = getRenderCache();
-    for (const [showID, track] of cache) {
+    for (const [showID] of cache) {
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), httpCfg.imageFetchTimeoutMs);
@@ -1345,6 +1903,7 @@ function startUnifiedWs() {
   notify("正在连接 WebSocket", "", "info");
   openConnection();
   startTrackStalePrune();
+  startDroneRuntimePrune();
   startAlarmCleanup();
   startSpeedCameraDetectionPrune();
   startAlertRevisionSync();
@@ -1354,6 +1913,7 @@ function startUnifiedWs() {
 function stopUnifiedWs() {
   ws.running = false;
   if (ws.trackPruneTimer) { clearInterval(ws.trackPruneTimer); ws.trackPruneTimer = null; }
+  if (ws.droneRuntimePruneTimer) { clearInterval(ws.droneRuntimePruneTimer); ws.droneRuntimePruneTimer = null; }
   stopAlarmCleanup();
   stopSpeedCameraDetectionPrune();
   stopAlertRevisionSync();

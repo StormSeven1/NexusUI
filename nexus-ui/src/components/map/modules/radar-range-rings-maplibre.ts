@@ -389,7 +389,7 @@ export function mapRadarPayload(payload: unknown, globals?: RadarMapGlobals | nu
     try {
       const a = mapRadarRowToAssetData(item as Record<string, unknown>, globals);
       if (a) out.push(a);
-    } catch (e) {
+    } catch {
     }
   }
   return out;
@@ -438,7 +438,6 @@ export function buildRadarCoverageGeoJSON(
 ): GeoJSON.FeatureCollection {
   const defaults = getRadarDefaults();
   const features: GeoJSON.Feature[] = [];
-  const radarRows = rows.filter((r) => String(r.asset_type ?? "").toLowerCase() === "radar");
   for (const row of rows) {
     if (String(row.asset_type ?? "").toLowerCase() !== "radar") continue;
     const p = (row.properties ?? {}) as Record<string, unknown>;

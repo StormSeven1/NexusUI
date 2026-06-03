@@ -1,11 +1,11 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import { NxCard, NxBadge } from "@/components/nexus";
+import { NxCard } from "@/components/nexus";
 import { cn } from "@/lib/utils";
 import { useDisposalPlanStore, type DisposalPlanBlock, type DisposalPlanCardRow } from "@/stores/disposal-plan-store";
 import type { MappedDisposalScheme } from "@/lib/disposal/disposal-types";
-import { Crosshair, Loader2, Radio, CheckCircle2, Zap } from "lucide-react";
+import { Loader2, Radio, CheckCircle2, Zap } from "lucide-react";
 
 /**
  * 单个方案卡片行：展示方案名称 + P0/P1/P2 优先级徽章 + 描述 + 任务列表 + 执行按钮。

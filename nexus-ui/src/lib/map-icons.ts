@@ -443,12 +443,6 @@ export function getAllAlertRingKeys(): Array<{ id: string; severity: AlertSeveri
 
 /* ── 资产图标（Asset icons）48x48 SVG ── */
 
-const ASSET_STATUS_COLORS: Record<AssetStatus, string> = {
-  online: "#34d399",
-  offline: "#f87171",
-  degraded: "#fbbf24",
-};
-
 function resolveAssetIconAccentFill(
   disposition: ForceDisposition,
   _status: AssetStatus,

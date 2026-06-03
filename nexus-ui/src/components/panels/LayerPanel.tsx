@@ -16,6 +16,7 @@ import {
 import {
   LYR_TRACKS_AIR,
   LYR_TRACKS_SEA,
+  LYR_DB_AREAS,
   LYR_DRONES,
   LYR_RADAR_COVERAGE,
   LYR_OPTO_FOV,
@@ -25,7 +26,6 @@ import {
   LYR_MISSILE,
   LYR_LASER,
   LYR_TDOA,
-  LYR_ZONES,
   normalizeAssetType,
   type PublicMapAssetType,
 } from "@/lib/map-entity-model";
@@ -293,11 +293,10 @@ export function LayerPanel() {
     if (assetTypes.has("missile")) rows.push({ id: LYR_MISSILE, name: "飞弹" });
     if (assetTypes.has("laser")) rows.push({ id: LYR_LASER, name: "激光武器" });
     if (assetTypes.has("tdoa")) rows.push({ id: LYR_TDOA, name: "TDOA" });
-    rows.push({ id: LYR_ZONES, name: "限制区域" });
+    rows.push({ id: LYR_DB_AREAS, name: "区域" });
     return rows;
   }, [assetTypes]);
 
-  /* ── 矢量图层子面板 ── */
   const renderVectorSub = (idx: number) => {
     const id: MapSubLayerId = "vector";
     const collapsed = collapsedGroups.has("vector-root");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Map,
   BarChart3,
@@ -30,25 +30,23 @@ export function TopNav() {
   const runMode = useDisposalPlanStore((s) => s.runMode);
   const setRunMode = useDisposalPlanStore((s) => s.setRunMode);
 
-  const timeFormatter = useMemo(
-    () =>
-      new Intl.DateTimeFormat("zh-CN", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-        timeZoneName: "short",
-      }),
-    []
-  );
-
   const [nowLabel, setNowLabel] = useState<string>("");
 
   useEffect(() => {
+    const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZoneName: "short",
+    });
     // 避免 SSR/CSR 首屏时间不一致导致 hydration mismatch：
     // 首屏渲染时先输出占位符，挂载后再异步更新真实时间。
     // Avoid hydration mismatch by rendering a placeholder on first paint, then updating async after mount.
-    const update = () => setNowLabel(formatNowLabel(new Date(), timeFormatter));
+    const update = () => {
+      const nextLabel = formatNowLabel(new Date(), timeFormatter);
+      setNowLabel((prev) => (prev === nextLabel ? prev : nextLabel));
+    };
 
     const t0 = window.setTimeout(update, 0);
     const timer = window.setInterval(update, 1000);
@@ -56,7 +54,7 @@ export function TopNav() {
       window.clearTimeout(t0);
       window.clearInterval(timer);
     };
-  }, [timeFormatter]);
+  }, []);
 
   return (
     <header

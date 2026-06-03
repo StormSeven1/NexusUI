@@ -146,6 +146,21 @@ export function recordZoneReceived() {
   bump("zone");
 }
 
+/** 记录注册区域/航线轮询数据 */
+export function recordDbAreasReceived() {
+  ensureEntry("db-area", "注册区域", "区域");
+  bump("db-area");
+}
+
+/** 记录 EO 检测框数据（主 WS 收到的 MultiTrackResult / SingleTrackResult） */
+export function recordEoDetectionReceived(cameraId?: string) {
+  const normalizedCameraId = String(cameraId ?? "").trim();
+  const key = normalizedCameraId ? `eo-detection:${normalizedCameraId}` : "eo-detection:unknown";
+  const label = normalizedCameraId ? `检测框 ${normalizedCameraId}` : "检测框 未知相机";
+  ensureEntry(key, label, "光电");
+  bump(key);
+}
+
 /** 记录相机/光电数据 */
 export function recordCameraReceived(entityId?: string) {
   const key = entityId ? `camera:${entityId}` : "camera";

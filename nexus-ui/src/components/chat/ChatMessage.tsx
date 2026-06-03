@@ -18,7 +18,6 @@ import type { SensorFeedData } from "@/components/chat/SurveillanceFeedCard";
 import { AgentPlanCard } from "@/components/chat/AgentPlanCard";
 import type { PlanStep } from "@/components/chat/AgentPlanCard";
 import { ApprovalCard, ApprovalResultCard } from "@/components/chat/ApprovalCard";
-import type { ApprovalCardProps } from "@/components/chat/ApprovalCard";
 import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";

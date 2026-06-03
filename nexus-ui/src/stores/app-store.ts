@@ -48,33 +48,6 @@ export interface AgentMessage {
   read: boolean;
 }
 
-export interface RouteLine {
-  id: string;
-  points: Array<{ lat: number; lng: number }>;
-  color: string;
-  label?: string;
-}
-
-/**
- * 用户或工具在地图上叠加的闭合多边形（与 zone-store / WS 的「业务限制区」数据源不同，见 Map2D 中注释）。
- *
- * **颜色如何生效**：`Map2D` 在首次把条目同步为 MapLibre 图层时，把本结构里的 `color` / `fillColor` / `fillOpacity`
- * 原样写入 `paint`（线框、填充、标签字色）；之后除非改写 store 或删了重加，地图不会单独再「约束」调色。
- * - 手动画完确认：命名弹窗里可选描边/填充色与填充透明度，再 `commitPolyArea` 写入本结构。
- * - 智能体 `draw_area`：`chat-tool-bridge` 用工具返回值，缺省为琥珀色描边/填充与固定透明度。
- */
-export interface DrawnArea {
-  id: string;
-  points: Array<{ lat: number; lng: number }>;
-  /** 边线、虚线轮廓与标签 `text-color` */
-  color: string;
-  /** `fill-color`；可与 `color` 同系或带 alpha 的 rgba */
-  fillColor: string;
-  /** `fill-opacity`，与 `fillColor` 中的 alpha 相乘为最终填充透明度 */
-  fillOpacity: number;
-  label?: string;
-}
-
 export interface FlyToRequest {
   lat: number;
   lng: number;
@@ -101,6 +74,7 @@ interface AppState {
   selectedTrackId: string | null;
   /** 当前选中的资产 id */
   selectedAssetId: string | null;
+  eoVideoModalOpen: boolean;
 
   /** 当前地图缩放级别（整数，与地图 zoomend 同步） */
   zoomLevel: number;
@@ -112,11 +86,6 @@ interface AppState {
 
   /** 需要高亮的多条航迹 id（如批量关注） */
   highlightedTrackIds: string[];
-  /** 在地图上叠加绘制的航线列表 */
-  routeLines: RouteLine[];
-  /** 用户绘制的闭合区域（多边形）列表 */
-  drawnAreas: DrawnArea[];
-
   /** 待执行的飞行请求；含 `seq`，Map2D/Map3D 消费后按序 `flyTo` */
   flyToRequest: FlyToRequest | null;
 
@@ -159,6 +128,7 @@ interface AppState {
   selectTrack: (id: string | null) => void;
   /** 设置当前选中资产 */
   selectAsset: (id: string | null) => void;
+  setEoVideoModalOpen: (open: boolean) => void;
   /** 地图缩放变化时更新 */
   setZoomLevel: (level: number) => void;
   /** 更新地图中心（常与飞行、工具联动） */
@@ -166,11 +136,7 @@ interface AppState {
 
   /** 批量设置需要高亮的航迹 id */
   setHighlightedTrackIds: (ids: string[]) => void;
-  /** 追加一条叠加航线 */
-  addRouteLine: (route: RouteLine) => void;
-  /** 追加一块用户绘制区域 */
-  addDrawnArea: (area: DrawnArea) => void;
-  /** 清空高亮、航线与绘制区域 */
+  /** 清空高亮等临时标注状态 */
   clearAnnotations: () => void;
   /** 请求飞行到指定经纬度；递增 `seq` 并写入 `mapCenter` */
   requestFlyTo: (lat: number, lng: number, zoom?: number) => void;
@@ -210,12 +176,11 @@ export const useAppStore = create<AppState>((set) => ({
   mapViewMode: "2d",
   selectedTrackId: null,
   selectedAssetId: null,
+  eoVideoModalOpen: false,
   zoomLevel: 8,
   mapCenter: null,
 
   highlightedTrackIds: [],
-  routeLines: [],
-  drawnAreas: [],
   flyToRequest: null,
 
   layerVisibility: Object.fromEntries(ALL_DATA_LAYER_IDS.map((id) => [id, true])),
@@ -240,23 +205,20 @@ export const useAppStore = create<AppState>((set) => ({
   setMapViewMode: (mode) => set({ mapViewMode: mode }),
   selectTrack: (id) => set({ selectedTrackId: id, highlightedTrackIds: id ? [id] : [] }),
   selectAsset: (id) => set({ selectedAssetId: id }),
+  setEoVideoModalOpen: (open) => set({ eoVideoModalOpen: open }),
   setZoomLevel: (level) => set({ zoomLevel: level }),
   setMapCenter: (center) => set({ mapCenter: center }),
 
   setHighlightedTrackIds: (ids) => set({ highlightedTrackIds: ids }),
-  addRouteLine: (route) =>
-    set((s) => ({ routeLines: [...s.routeLines, route] })),
-  addDrawnArea: (area) =>
-    set((s) => ({ drawnAreas: [...s.drawnAreas, area] })),
   clearAnnotations: () =>
-    set({ highlightedTrackIds: [], routeLines: [], drawnAreas: [] }),
+    set({ highlightedTrackIds: [] }),
 
   requestFlyTo: (lat, lng, zoom) =>
     set({ flyToRequest: { lat, lng, zoom, seq: ++_flyToSeq }, mapCenter: { lat, lng } }),
 
   toggleLayerVisibility: (layerId) =>
     set((s) => ({
-      layerVisibility: { ...s.layerVisibility, [layerId]: !s.layerVisibility[layerId] },
+      layerVisibility: { ...s.layerVisibility, [layerId]: !(s.layerVisibility[layerId] ?? true) },
     })),
 
   setBasemapVectorInfo: ({ name, layers }) =>

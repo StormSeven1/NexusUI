@@ -4,6 +4,7 @@
 import base64
 import io
 import os
+from dataclasses import dataclass
 
 import aiohttp
 import asyncpg
@@ -384,6 +385,149 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"获取区域表数据失败: {e}")
             return None
+
+    async def get_area_table_rows(self) -> Optional[List[Dict[str, Any]]]:
+        """返回前端 db-area-store 直接使用的 area_table 原始字段。"""
+        if not self.pool:
+            logger.error("Cannot query area_table rows: database pool is not connected")
+            return None
+
+        try:
+            async with self.pool.acquire() as conn:
+                logger.info("Querying area_table rows for DbAreas snapshot...")
+                records = await conn.fetch(
+                    """
+                    SELECT
+                      group_id,
+                      area_id,
+                      COALESCE(group_name, '') AS group_name,
+                      COALESCE(area_name, '') AS area_name,
+                      area_type,
+                      COALESCE(start_point, '') AS start_point,
+                      COALESCE(end_point, '') AS end_point,
+                      COALESCE(area_rect, '') AS area_rect,
+                      COALESCE(area_points, '') AS area_points,
+                      COALESCE(line_color, '') AS line_color,
+                      COALESCE(line_width, 2) AS line_width
+                    FROM area_table
+                    ORDER BY group_id, area_id
+                    """
+                )
+                rows = [dict(record) for record in records]
+                logger.info(f"Query area_table rows succeeded for DbAreas snapshot: {len(rows)} rows")
+                return rows
+        except Exception as e:
+            logger.exception(f"Query area_table rows failed for DbAreas snapshot: {e}")
+            return None
+
+    async def create_area(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """创建注册区域/航线，后端统一分配 group_id / area_id。"""
+        if not self.pool:
+            raise RuntimeError("数据库未连接")
+
+        area_type = int(payload["area_type"])
+        area_name = str(payload["area_name"]).strip()
+        if area_type not in {1, 2, 3, 4}:
+            raise ValueError("area_type 必须是 1/2/3/4")
+        if not area_name:
+            raise ValueError("area_name 不能为空")
+
+        line_color = str(payload.get("line_color") or "#3b82f6").strip() or "#3b82f6"
+        line_width = max(1, min(12, int(payload.get("line_width") or 2)))
+        start_point = str(payload.get("start_point") or "")
+        end_point = str(payload.get("end_point") or "")
+        area_rect = str(payload.get("area_rect") or "")
+        area_points = str(payload.get("area_points") or "")
+
+        if area_type == 1 and not area_rect.strip():
+            raise ValueError("矩形缺少 area_rect")
+        if area_type == 2 and (not start_point.strip() or not end_point.strip()):
+            raise ValueError("圆形缺少 start_point / end_point")
+        if area_type == 3 and not area_points.strip():
+            raise ValueError("多边形缺少 area_points")
+        if area_type == 4 and (not start_point.strip() or not area_points.strip()):
+            raise ValueError("航线缺少 start_point / area_points")
+
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                group_id_raw = payload.get("group_id")
+                group_id = int(group_id_raw) if group_id_raw is not None else None
+                group_name = ""
+
+                if group_id is None:
+                    new_group_name = str(payload.get("new_group_name") or "").strip() or "新分组"
+                    row = await conn.fetchrow(
+                        "SELECT COALESCE(MAX(group_id), 0) + 1 AS next_id FROM area_table"
+                    )
+                    group_id = int(row["next_id"])
+                    group_name = new_group_name
+                else:
+                    row = await conn.fetchrow(
+                        "SELECT COALESCE(MAX(group_name), '') AS group_name FROM area_table WHERE group_id = $1",
+                        group_id,
+                    )
+                    group_name = str(row["group_name"]).strip() or f"分组{group_id}"
+
+                row = await conn.fetchrow(
+                    "SELECT COALESCE(MAX(area_id), 0) + 1 AS next_id FROM area_table WHERE group_id = $1",
+                    group_id,
+                )
+                area_id = int(row["next_id"])
+
+                await conn.execute(
+                    """
+                    INSERT INTO area_table (
+                      group_id, area_id, group_name, area_name, area_type,
+                      start_point, end_point, area_rect, area_points,
+                      line_width, line_color, check_state, waring_type, waring_time
+                    ) VALUES (
+                      $1, $2, $3, $4, $5,
+                      $6, $7, $8, $9,
+                      $10, $11, 1, 0, 0
+                    )
+                    """,
+                    group_id,
+                    area_id,
+                    group_name,
+                    area_name,
+                    area_type,
+                    start_point if area_type in {2, 4} else "",
+                    end_point if area_type == 2 else "",
+                    area_rect if area_type in {1, 2} else "",
+                    area_points if area_type in {2, 3, 4} else "",
+                    line_width,
+                    line_color,
+                )
+
+                return {
+                    "group_id": group_id,
+                    "area_id": area_id,
+                    "group_name": group_name,
+                    "area_name": area_name,
+                    "area_type": area_type,
+                    "start_point": start_point if area_type in {2, 4} else "",
+                    "end_point": end_point if area_type == 2 else "",
+                    "area_rect": area_rect if area_type in {1, 2} else "",
+                    "area_points": area_points if area_type in {2, 3, 4} else "",
+                    "line_color": line_color,
+                    "line_width": line_width,
+                }
+
+    async def delete_area(self, group_id: int, area_id: int) -> int:
+        """删除 area_table 记录。"""
+        if not self.pool:
+            raise RuntimeError("数据库未连接")
+
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM area_table WHERE group_id = $1 AND area_id = $2",
+                group_id,
+                area_id,
+            )
+            try:
+                return int(str(result).split()[-1])
+            except Exception:
+                return 0
 
     async def get_alarm_schemes(self) -> Optional[List[Dict[str, Any]]]:
         """

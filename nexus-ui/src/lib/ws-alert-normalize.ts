@@ -19,15 +19,7 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
-function dumpAlertNormalizeDebug(raw: unknown, normalized: AlertData | null, reason?: string): void {
-  if (typeof console === "undefined") return;
-  console.groupCollapsed(
-    `[alert-normalize] ${normalized ? "ok" : "null"} trackId=${normalized?.trackId ?? "-"} targetType=${normalized?.targetType ?? "-"} type=${normalized?.type ?? "-"}${reason ? ` reason=${reason}` : ""}`,
-  );
-  console.log("raw", raw);
-  console.log("normalized", normalized);
-  console.groupEnd();
-}
+function dumpAlertNormalizeDebug(): void {}
 
 /** V2 `alert_type` / 通用 `severity` / V2 `alarmLevel`（数字 0-4）→ store 用的三档 */
 export function wsAlertTypeToSeverity(

@@ -17,15 +17,14 @@
  * - **机场 Dock 默认**：**`airports.centerIconVisible` / `airports.centerNameVisible`** → `getAirportMapDefaults()`；**虚兵/实兵**仍只认 WS 报文。
  */
 
- import type { AssetData } from "@/stores/asset-store";
+import type { AssetData } from "@/stores/asset-store";
  import {
-   isVirtualFromProperties,
    normalizeAssetType,
    parseMapAssetTypeStrict,
    PUBLIC_MAP_ASSET_TYPES,
    type PublicMapAssetType,
    type Track,
- } from "@/lib/map-entity-model";
+} from "@/lib/map-entity-model";
  import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
  import { mergeRootAndDeviceVisible } from "@/lib/utils";
  import type { AssetDispositionIconAccent } from "@/lib/map-icons";
@@ -160,23 +159,29 @@ export function formatAssetDeviceStateDisplay(asset?: AssetData | null): string 
  }
  
  /** 与资产列表同源：按 store 主键查找，兼容 entityId → deviceSn */
- export function findAssetInStore(
-   assets: AssetData[],
-   id: string,
-   entityIdToDeviceSn?: Record<string, string>,
- ): AssetData | undefined {
+export function findAssetInStore(
+  assets: AssetData[],
+  id: string,
+  entityIdToDeviceSn?: Record<string, string>,
+): AssetData | undefined {
    const key = String(id ?? "").trim();
    if (!key) return undefined;
    const direct = assets.find((a) => a.id === key);
    if (direct) return direct;
    const sn = entityIdToDeviceSn?.[key];
-   if (sn) return assets.find((a) => a.id === sn);
-   return assets.find((a) => {
-     const p = a.properties as Record<string, unknown> | null;
-     const eid = p?.entity_id ?? p?.entityId;
-     return eid != null && String(eid) === key;
-   });
- }
+   if (sn) return assets.find((a) => a.id === sn || String((a.properties as Record<string, unknown> | null)?.device_sn ?? (a.properties as Record<string, unknown> | null)?.deviceSn ?? "") === sn);
+  return assets.find((a) => {
+    const p = a.properties as Record<string, unknown> | null;
+    const eid = p?.entity_id ?? p?.entityId;
+    const deviceSn = p?.device_sn ?? p?.deviceSn;
+    const dockSn = p?.dock_sn ?? p?.dockSn;
+    return (
+      (eid != null && String(eid) === key) ||
+      (deviceSn != null && String(deviceSn) === key) ||
+      (dockSn != null && String(dockSn) === key)
+    );
+  });
+}
  
  export type AssetDeviceStateTag = { label: string; color: string };
  
@@ -215,29 +220,100 @@ export function getAssetDeviceStateTags(asset: AssetData | null | undefined): As
   * entity_status / relationships 合并时保留已有设备状态（camera/dock_status/drone_status 写入）。
   * 若 `row` 已带 `properties.deviceState`（实时消息），以 `row` 为准，不拿 `prev` 覆盖。
   */
- export function preserveDeviceStateFromPrev(prev: AssetData, row: AssetData): AssetData {
-   const rowProps =
-     row.properties && typeof row.properties === "object"
-       ? (row.properties as Record<string, unknown>)
+export function preserveDeviceStateFromPrev(prev: AssetData, row: AssetData): AssetData {
+  const rowProps =
+    row.properties && typeof row.properties === "object"
+      ? (row.properties as Record<string, unknown>)
        : null;
+  const rowName = String(row.name ?? "").trim();
+  const keepPrevName = (!rowName || rowName === row.id) && !!prev.name && prev.name !== prev.id;
    if (rowProps?.deviceState !== undefined && rowProps?.deviceState !== null) {
-     return row;
+     return keepPrevName ? { ...row, name: prev.name } : row;
    }
-   const prevProps =
-     prev.properties && typeof prev.properties === "object"
-       ? (prev.properties as Record<string, unknown>)
-       : null;
-   if (prevProps?.deviceState === undefined || prevProps?.deviceState === null) {
-     return row;
-   }
-   const mergedProps: Record<string, unknown> = {
-     ...(rowProps ?? {}),
-     deviceState: prevProps.deviceState,
-     ...(prevProps.deviceStateLabel != null ? { deviceStateLabel: prevProps.deviceStateLabel } : {}),
-   };
+  const prevProps =
+    prev.properties && typeof prev.properties === "object"
+      ? (prev.properties as Record<string, unknown>)
+      : null;
+  const hasDeviceState = prevProps?.deviceState !== undefined && prevProps?.deviceState !== null;
+  const hasDroneRuntime =
+    prevProps?.drone_status != null ||
+    prevProps?.high_freq != null ||
+    prevProps?.drone_flight_path != null ||
+    prevProps?.last_packet_at_ms != null ||
+    prevProps?.status_received_at_ms != null ||
+    prevProps?.high_freq_received_at_ms != null;
+  const hasDockRuntime =
+    prevProps?.dock != null ||
+    prevProps?.dock_battery_percent != null ||
+    prevProps?.dock_mode_code != null;
+  if (!hasDeviceState && !hasDroneRuntime && !hasDockRuntime) {
+    return keepPrevName ? { ...row, name: prev.name } : row;
+  }
+  const mergedProps: Record<string, unknown> = { ...(rowProps ?? {}) };
+  if (hasDeviceState) {
+    mergedProps.deviceState = prevProps?.deviceState;
+    if (prevProps?.deviceStateLabel != null) mergedProps.deviceStateLabel = prevProps.deviceStateLabel;
+  }
+  if (hasDroneRuntime) {
+    for (const key of [
+      "drone_status",
+      "high_freq",
+      "drone_flight_path",
+      "last_packet_at_ms",
+      "status_received_at_ms",
+      "high_freq_received_at_ms",
+      "history_trail",
+      "munition_quantity",
+    ] as const) {
+      if (prevProps?.[key] != null) mergedProps[key] = prevProps[key];
+    }
+  }
+  if (hasDockRuntime) {
+    for (const key of ["dock", "dock_battery_percent", "dock_mode_code", "map_label"] as const) {
+      if (prevProps?.[key] != null) mergedProps[key] = prevProps[key];
+    }
+  }
+  for (const key of [
+    "sensor_video_url",
+    "sensor_video_source_path",
+    "videoAddress",
+    "entity_media",
+    "detection_camera_id",
+    "cameraId",
+    "camera_id",
+    "deviceSn",
+    "device_sn",
+    "entityId",
+    "entity_id",
+  ] as const) {
+    if (mergedProps[key] == null && prevProps?.[key] != null) mergedProps[key] = prevProps[key];
+  }
+  if (hasDroneRuntime && typeof window !== "undefined") {
+    console.log("[drone-debug]", {
+      phase: "entity_status_rebuild_preserve",
+      entityId: row.id,
+      rowLat: row.lat,
+      rowLng: row.lng,
+      rowHeading: row.heading,
+      prevLat: prev.lat,
+      prevLng: prev.lng,
+      prevHeading: prev.heading,
+      historyTrailLength: Array.isArray(prevProps?.history_trail) ? prevProps.history_trail.length : 0,
+    });
+  }
   return {
     ...row,
-    status: prev.status,
+    ...(keepPrevName ? { name: prev.name } : {}),
+    ...(hasDroneRuntime ? {
+      lat: Number.isFinite(prev.lat) ? prev.lat : row.lat,
+      lng: Number.isFinite(prev.lng) ? prev.lng : row.lng,
+      heading:
+        prev.heading != null && Number.isFinite(Number(prev.heading))
+          ? Number(prev.heading)
+          : row.heading,
+    } : {}),
+    ...(hasDockRuntime ? { lat: prev.lat, lng: prev.lng } : {}),
+    ...(hasDeviceState ? { status: prev.status } : {}),
     properties: mergedProps,
   };
 }
@@ -262,6 +338,13 @@ export function preserveDdsDynamicFieldsOnRebuild(
   live: AssetData,
   row: AssetData,
 ): AssetData | null {
+  /**
+   * Rebuild policy note:
+   * - `entity_status` may replace the normalized base asset row
+   * - some runtime-only DDS fields are written by other topics between rebuilds
+   * - this helper preserves those runtime fields so a full snapshot rebuild does not
+   *   accidentally erase live overlays already merged into `asset-store`
+   */
   const at = normalizeAssetType(row.asset_type);
   const lp = assetPropertiesRecord(live);
 
@@ -319,8 +402,7 @@ export function stampDeviceStateOnAsset(a: AssetData): AssetData {
       properties: { ...props, munitionStateLabel: formatMunitionStateDisplay(a) },
     };
   }
-  const at = normalizeAssetType(a.asset_type);
-  const ds = at === "radar" || at === "camera" ? 1 : resolveDeviceStateValue(props.deviceState);
+  const ds = resolveDeviceStateValue(props.deviceState);
   const dsProps = deviceStatePropsFromPayload({ deviceState: ds });
   return {
     ...a,
@@ -344,10 +426,94 @@ export function stampDeviceStateOnAsset(a: AssetData): AssetData {
    return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
  }
  
- function finiteNumberOrNull(v: unknown): number | null {
-   if (v == null) return null;
-   const n = Number(v);
+function finiteNumberOrNull(v: unknown): number | null {
+  if (v == null) return null;
+  const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+function readVirtualTroopLikeRow(row: Record<string, unknown>): boolean {
+  const raw =
+    row.virtualTroop ??
+    row.virtual_troop ??
+    row.is_virtual ??
+    row.isVirtual ??
+    row.virtual;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  if (typeof raw === "string") {
+    const s = raw.trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes" || s === "virtual" || s === "虚兵";
+  }
+  const indicators = asRecord(row.indicators);
+  if (typeof indicators?.simulated === "boolean") return indicators.simulated;
+  return false;
+}
+
+function readMediaVideoUrlFromMediaObject(mediaObj: Record<string, unknown> | null): string {
+  if (!mediaObj) return "";
+  const directAddress = mediaObj.address;
+  if (typeof directAddress === "string" && directAddress.trim()) {
+    return directAddress.trim();
+  }
+  const mediaList = Array.isArray(mediaObj.media) ? mediaObj.media : [];
+  for (const item of mediaList) {
+    const row = asRecord(item);
+    if (!row) continue;
+    const type = String(row.type ?? "").trim().toUpperCase();
+    if (type !== "MEDIA_TYPE_VIDEO") continue;
+    const address = row.address;
+    if (typeof address === "string" && address.trim()) {
+      return address.trim();
+    }
+    const relativePath = row.relativePath;
+    if (typeof relativePath === "string" && relativePath.trim()) {
+      return relativePath.trim();
+    }
+  }
+  return "";
+}
+
+function resolveEntityVideoUrl(
+  assetType: string,
+  row: Record<string, unknown>,
+): { videoUrl: string; sourcePath: string; mediaObject: Record<string, unknown> | null } {
+  const topLevelMedia = asRecord(row.media);
+  const relationship = asRecord(row.relationship);
+  const relationshipMedia = asRecord(relationship?.media);
+
+  if (assetType === "camera") {
+    const videoUrl = readMediaVideoUrlFromMediaObject(topLevelMedia);
+    return {
+      videoUrl,
+      sourcePath: videoUrl ? "media.address|media.media[]" : "",
+      mediaObject: topLevelMedia,
+    };
+  }
+
+  if (assetType === "drone") {
+    const relationshipVideoUrl = readMediaVideoUrlFromMediaObject(relationshipMedia);
+    if (relationshipVideoUrl) {
+      return {
+        videoUrl: relationshipVideoUrl,
+        sourcePath: "relationship.media.address|relationship.media.media[]",
+        mediaObject: relationshipMedia,
+      };
+    }
+    const topLevelVideoUrl = readMediaVideoUrlFromMediaObject(topLevelMedia);
+    return {
+      videoUrl: topLevelVideoUrl,
+      sourcePath: topLevelVideoUrl ? "media.address|media.media[]" : "",
+      mediaObject: relationshipMedia ?? topLevelMedia,
+    };
+  }
+
+  const fallbackVideoUrl = readMediaVideoUrlFromMediaObject(topLevelMedia);
+  return {
+    videoUrl: fallbackVideoUrl,
+    sourcePath: fallbackVideoUrl ? "media.address|media.media[]" : "",
+    mediaObject: topLevelMedia,
+  };
 }
 
 /**
@@ -470,7 +636,7 @@ export function stampDeviceStateOnAsset(a: AssetData): AssetData {
   * @param r - WebSocket 实体行原始对象（已 JSON.parse）
   * @returns AssetData 或 null（无 ID 或无坐标时返回 null）
   */
- export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
+export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
    /* ── 1. 提取实体 ID ── */
    /* 【重要】所有资产统一使用 entityId 字段作为唯一 key；
     * entityId 是后端为每个实体分配的唯一标识符，贯穿 WS 消息、航迹关联、资产渲染全流程。
@@ -503,11 +669,23 @@ export function stampDeviceStateOnAsset(a: AssetData): AssetData {
    /* ── 3. 提取名称 ── */
    /* 优先级：r.name → r.entityName → aliases.name → 回退为 ID */
    const aliases = asRecord(r.aliases);
-   const name = String(r.name ?? r.entityName ?? aliases?.name ?? id);
+   const name = String(
+     r.name ??
+     r.entityName ??
+     r.entity_name ??
+     r.displayName ??
+     r.display_name ??
+     r.deviceName ??
+     r.device_name ??
+     r.assetName ??
+     r.asset_name ??
+     aliases?.name ??
+     id,
+   );
  
    /* ── 4. 提取朝向（度）与视场角（度）── */
    /* entity_status 仅做通用实体字段解析；相机 PTZ 专用解析在 useUnifiedWsFeed 的 camera/optoelectronic 分支 */
-   const headingDeg = finiteNumberOrNull(r.heading ?? r.bearing ?? r.azimuth);
+   const headingDeg = finiteNumberOrNull(r.headingDeg ?? r.heading ?? r.bearing ?? r.azimuth);
    const fovDeg = finiteNumberOrNull(r.fov_angle ?? r.fovAngle ?? r.openingDeg ?? r.angle);
  
    /* ── 5. 雷达专用参数提取 ── */
@@ -566,16 +744,35 @@ export function stampDeviceStateOnAsset(a: AssetData): AssetData {
     *   - specificType == "CAMERA"      → "camera"
     *   - 其他类型见 wsEntityTypeRaw 注释
     * 再经 normalizeAssetType() 确保落入 PUBLIC_MAP_ASSET_TYPES 集合 */
-   const rawType = wsEntityTypeRaw(r);
-   if (rawType === "unknown") {
-     return null;
-   }
-   const assetType = normalizeAssetType(rawType);
-   /* 雷达为全向扫描，fov_angle 强制 360° */
-   const effectiveFovDeg = assetType === "radar" ? 360 : fovDeg;
+  const rawType = String(r.assetType ?? "").trim() || wsEntityTypeRaw(r);
+  if (rawType === "unknown") {
+    return null;
+  }
+  const assetType = normalizeAssetType(rawType);
+  const detectionCameraId = String(
+    r.cameraId ??
+      r.camera_id ??
+      r.deviceSn ??
+      r.device_sn ??
+      id,
+  ).trim();
+  const directVideoUrl = typeof r.videoAddress === "string" ? r.videoAddress.trim() : "";
+  /**
+   * EO 视频地址来源说明：
+   * - 优先取实体顶层 `videoAddress`
+   * - 否则从 `media.address` / `media.media[]` 里找视频地址
+   * - 归一化后统一写进 `properties.sensor_video_url`
+   *
+   * 后续 EO 视频弹窗只认 `sensor_video_url`，不再重复解析实体结构。
+   */
+  const { videoUrl, sourcePath: videoSourcePath, mediaObject } = directVideoUrl
+    ? { videoUrl: directVideoUrl, sourcePath: "videoAddress", mediaObject: null }
+    : resolveEntityVideoUrl(assetType, r);
+  /* 雷达为全向扫描，fov_angle 强制 360° */
+  const effectiveFovDeg = assetType === "radar" ? 360 : fovDeg;
  
    /* ── 9. 组装 AssetData ── */
-   const virtualTroop = isVirtualFromProperties(r as Record<string, unknown>);
+   const virtualTroop = readVirtualTroopLikeRow(r);
 
    const result: AssetData = {
      id,
@@ -588,13 +785,27 @@ export function stampDeviceStateOnAsset(a: AssetData): AssetData {
      range_km: rangeKm,
      heading: headingDeg,
      fov_angle: effectiveFovDeg,
-     properties: {
-       ...((r.properties as Record<string, unknown> | null) ?? { ...r }),
-       ...radarParams,
-       ...radarExtraProps,
-       virtual_troop: virtualTroop,
-       is_virtual: virtualTroop,
-     },
+    properties: {
+      ...((r.properties as Record<string, unknown> | null) ?? {}),
+      ...r,
+      ...radarParams,
+      ...radarExtraProps,
+      ...(mediaObject ? { entity_media: mediaObject } : {}),
+      ...(videoSourcePath ? { sensor_video_source_path: videoSourcePath } : {}),
+      ...(videoUrl ? { sensor_video_url: videoUrl } : {}),
+      ...(detectionCameraId ? { detection_camera_id: detectionCameraId } : {}),
+      entityId: id,
+      entity_id: id,
+      deviceSn: r.deviceSn,
+      device_sn: r.deviceSn,
+      gatewaySn: r.gatewaySn,
+      gateway_sn: r.gatewaySn,
+      videoAddress: directVideoUrl || videoUrl,
+      disposition: r.disposition ?? milView?.disposition,
+      virtualTroop,
+      virtual_troop: virtualTroop,
+      is_virtual: virtualTroop,
+    },
      mission_status: String(r.mission_status ?? "monitoring"),
      assigned_target_id: r.assigned_target_id != null ? String(r.assigned_target_id) : null,
      target_lat: r.target_lat != null ? Number(r.target_lat) : null,
@@ -892,7 +1103,8 @@ export type AppConfigSectorBundle = {
  };
  
  /** `drones-maplibre` + `drone-store` 实际读取的子集（根键 **`drones`**） */
- export type AppConfigDroneMapRendering = {
+/** `drones-maplibre` + `asset-store` 实际读取的配置子集（根键 **`drones`**）。 */
+export type AppConfigDroneMapRendering = {
    maxFovRange: number;
    horizontalFov: number;
    showFovSector: boolean;
@@ -1558,7 +1770,7 @@ export function getAssetLabelFontColorForAssetType(t: PublicMapAssetType): strin
   return typeof c === "string" && c.trim() ? c.trim() : undefined;
 }
 
-export { shouldDisplayAssetId, shouldDisplayZone } from "./map-display-filters";
+export { shouldDisplayAssetId, shouldDisplayDbArea } from "./map-display-filters";
 
 /** 资产列表 / 地图标签 / 属性框：统一显示 `name`（entity_status 或静态配置），无 name 时用 id */
 export function assetUiDisplayName(a: Pick<AssetData, "id" | "name">): string {
@@ -1569,13 +1781,32 @@ export function assetUiDisplayName(a: Pick<AssetData, "id" | "name">): string {
  /**
   * 合并静态与 WS 时：`heading` / `fov_angle` / `range_km` 若动态侧为 `null`（载荷缺字段），保留静态值，避免光电扇区朝向被覆盖丢失。
   */
- function mergeNullableNumericPreferLive(
-   live: number | null | undefined,
-   prev: number | null,
- ): number | null {
-   if (live != null && Number.isFinite(Number(live))) return Number(live);
-   return prev;
- }
+function mergeNullableNumericPreferLive(
+  live: number | null | undefined,
+  prev: number | null,
+): number | null {
+  if (live != null && Number.isFinite(Number(live))) return Number(live);
+  return prev;
+}
+
+function shouldPreservePrevCoords(
+  prev: Pick<AssetData, "lat" | "lng">,
+  next: Pick<AssetData, "lat" | "lng">,
+): boolean {
+  const prevLat = Number(prev.lat);
+  const prevLng = Number(prev.lng);
+  const nextLat = Number(next.lat);
+  const nextLng = Number(next.lng);
+  return (
+    Number.isFinite(prevLat) &&
+    Number.isFinite(prevLng) &&
+    !(prevLat === 0 && prevLng === 0) &&
+    Number.isFinite(nextLat) &&
+    Number.isFinite(nextLng) &&
+    nextLat === 0 &&
+    nextLng === 0
+  );
+}
  
  /** 先铺 `configAssetBase`（静态配置解析结果），再按 id 合并动态侧列表（如 `useAssetStore.assets`，来源可为 WS 等）；同 id 以动态侧字段覆盖；`heading`/`fov_angle`/`range_km` 仅在有有限数值时覆盖静态 */
  export function mergeDynamicAndStaticAssets(configAssetBase: AssetData[], fromWs: AssetData[]): AssetData[] {
@@ -1590,13 +1821,15 @@ export function assetUiDisplayName(a: Pick<AssetData, "id" | "name">): string {
    for (const w of fromWs) {
      if (!w.id) continue;
      const prev = byId.get(w.id);
-     if (prev) {
-       byId.set(w.id, {
-         ...prev,
-         ...w,
-         heading: mergeNullableNumericPreferLive(w.heading, prev.heading),
-         fov_angle: mergeNullableNumericPreferLive(w.fov_angle, prev.fov_angle),
-         range_km: mergeNullableNumericPreferLive(w.range_km, prev.range_km),
+      if (prev) {
+      const keepPrevCoords = shouldPreservePrevCoords(prev, w);
+        byId.set(w.id, {
+          ...prev,
+          ...w,
+          ...(keepPrevCoords ? { lat: prev.lat, lng: prev.lng } : {}),
+          heading: mergeNullableNumericPreferLive(w.heading, prev.heading),
+          fov_angle: mergeNullableNumericPreferLive(w.fov_angle, prev.fov_angle),
+          range_km: mergeNullableNumericPreferLive(w.range_km, prev.range_km),
          properties: mergeProperties(prev.properties, mergeProperties(w.properties, { data_source: "live" as const })),
          disposition:
            w.disposition !== undefined && w.disposition !== null
@@ -1677,7 +1910,7 @@ export function assetUiDisplayName(a: Pick<AssetData, "id" | "name">): string {
         : undefined;
   return {
     assetFriendlyColor: typeof o.assetFriendlyColor === "string" ? o.assetFriendlyColor : undefined,
-    defaultAngle: Number.isFinite(da) && da > 0 ? da : undefined,
+    defaultAngle: typeof da === "number" && Number.isFinite(da) && da > 0 ? da : undefined,
     defaultRange: dr,
      scan:
        o.scan !== undefined && o.scan !== null && typeof o.scan === "object"

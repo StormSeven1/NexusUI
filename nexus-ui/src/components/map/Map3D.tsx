@@ -4,12 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { useTrackStore } from "@/stores/track-store";
-import type { RestrictedZone, Track } from "@/lib/map-entity-model";
-import { mergeZoneFillColor } from "@/components/map/modules/polygon-draw-maplibre";
-import { useZoneStore } from "@/stores/zone-store";
+import { LYR_DB_AREAS, type Track } from "@/lib/map-entity-model";
 import { useAssetStore } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
-import type { ZoneData } from "@/stores/zone-store";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { installDronesCesium } from "@/components/map/modules/drones-cesium";
 import { installTracksCesium } from "@/components/map/modules/tracks-cesium";
@@ -27,6 +24,9 @@ import { AlertTriangle } from "lucide-react";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 import { createCesiumBaseImageryProvider, getMap3DInitialViewFromEnv } from "@/lib/map-3d-config";
 import { registerExplosionViewer3D, unregisterExplosionViewer3D } from "@/lib/map/explosion-effect";
+import { buildDbAreasFeatureCollection } from "@/lib/build-db-areas-geojson";
+import { dbAreaVisibilityKey, type AreaTableRow } from "@/lib/area-table-geometry";
+import { useDbAreaStore } from "@/stores/db-area-store";
 
 type CesiumModule = typeof import("cesium");
 type CesiumViewer = import("cesium").Viewer;
@@ -38,12 +38,6 @@ type MotionEvent = import("cesium").ScreenSpaceEventHandler.MotionEvent;
  * RGBA 元组 [r,g,b,a]，用于 Cesium.Color，分量范围 0–1
  */
 type RGBA = [number, number, number, number];
-
-const ZONE_STYLES: Record<string, { fill: RGBA; line: RGBA }> = {
-  "no-fly":  { fill: [0.94, 0.27, 0.27, 0.18], line: [0.94, 0.27, 0.27, 0.7] },
-  exercise:  { fill: [0.23, 0.51, 0.96, 0.15], line: [0.23, 0.51, 0.96, 0.7] },
-  warning:   { fill: [0.98, 0.75, 0.14, 0.15], line: [0.98, 0.75, 0.14, 0.7] },
-};
 
 const COVERAGE_STYLES: Record<string, { fill: RGBA; line: RGBA }> = {
   camera: { fill: [0.58, 0.2, 0.92, 0.12], line: [0.58, 0.2, 0.92, 0.4] },
@@ -69,19 +63,7 @@ type GroupKey =
   | "optoFov"
   | "airportFov"
   | "droneFov"
-  | "zones";
-
-function adaptZones(zones: ZoneData[]): RestrictedZone[] {
-  return zones.map((z) => ({
-    id: z.id,
-    name: z.name,
-    type: z.zone_type as RestrictedZone["type"],
-    coordinates: z.coordinates,
-    fillColor: z.fill_color,
-    lineColor: z.color,
-    fillOpacity: z.fill_opacity,
-  }));
-}
+  | "dbAreas";
 
 /**
  * 说明：
@@ -93,52 +75,108 @@ function adaptZones(zones: ZoneData[]): RestrictedZone[] {
  */
 
 /** 批量创建/刷新 3D 区域实体（先清旧再建新） */
-function syncCesiumZones(
+function syncCesiumDbAreas(
   viewer: CesiumViewer,
   C: CesiumModule,
-  groups: { zones: CesiumEntity[] },
-  zones: RestrictedZone[],
+  groups: { dbAreas: CesiumEntity[] },
+  rows: AreaTableRow[],
+  areaVisibility: Record<string, boolean>,
 ) {
-  for (const e of groups.zones) viewer.entities.remove(e);
-  groups.zones.length = 0;
+  for (const entity of groups.dbAreas) viewer.entities.remove(entity);
+  groups.dbAreas.length = 0;
 
-  const rgba = (c: RGBA) => new C.Color(c[0], c[1], c[2], c[3]);
-  for (const zone of zones) {
-    const style = ZONE_STYLES[zone.type] ?? ZONE_STYLES["warning"];
-    const coords = zone.coordinates.slice(0, -1);
-    const positions = coords.map(([lng, lat]) => C.Cartesian3.fromDegrees(lng, lat));
-    const centerLng = coords.reduce((s, c) => s + c[0], 0) / coords.length;
-    const centerLat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+  const data = buildDbAreasFeatureCollection(
+    rows,
+    (row) => areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] !== false,
+  );
 
-    const hasWsFill = zone.fillColor != null && String(zone.fillColor).trim() !== "";
-    const fillMat = hasWsFill
-      ? C.Color.fromCssColorString(mergeZoneFillColor(zone.fillColor, zone.fillOpacity ?? 0.25))
-      : rgba(style.fill);
-    const lineCss = zone.lineColor?.trim();
-    const labelFill = lineCss ? C.Color.fromCssColorString(lineCss) : rgba(style.line);
+  for (const feature of data.features) {
+    const props = (feature.properties ?? {}) as Record<string, unknown>;
+    const lineColorCss = String(props.lineColor ?? "#93c5fd");
+    const baseColor = C.Color.fromCssColorString(lineColorCss);
+    const lineOpacity = Number.isFinite(Number(props.lineOpacity)) ? Number(props.lineOpacity) : 1;
+    const labelOpacity = Number.isFinite(Number(props.labelOpacity)) ? Number(props.labelOpacity) : 0.95;
+    const lineWidth = Number.isFinite(Number(props.lineWidth)) ? Number(props.lineWidth) : 2;
+    const lineStyle = String(props.lineStyle ?? "solid");
+    const solidColor = baseColor.withAlpha(lineOpacity);
+    const lineMaterial =
+      lineStyle === "solid"
+        ? solidColor
+        : new C.PolylineDashMaterialProperty({
+            color: solidColor,
+            dashLength: lineStyle === "dotted" ? 4 : 16,
+          });
 
-    const ent = viewer.entities.add({
-      polygon: {
-        hierarchy: new C.PolygonHierarchy(positions),
-        material: fillMat,
-        outline: false,
-        heightReference: C.HeightReference.CLAMP_TO_GROUND,
-      },
-      label: {
-        text: zone.name,
-        font: '12px Roboto, "Noto Sans SC", sans-serif',
-        fillColor: labelFill,
-        outlineColor: C.Color.fromCssColorString("#09090b"),
-        outlineWidth: 2,
-        style: C.LabelStyle.FILL_AND_OUTLINE,
-        verticalOrigin: C.VerticalOrigin.CENTER,
-        scaleByDistance: new C.NearFarScalar(1e4, 1, 5e5, 0.4),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-      position: C.Cartesian3.fromDegrees(centerLng, centerLat, 100),
-      properties: { zoneId: zone.id },
-    });
-    groups.zones.push(ent);
+    if (feature.geometry.type === "Polygon") {
+      const ring = feature.geometry.coordinates[0] ?? [];
+      if (ring.length < 2) continue;
+      const positions = ring.map(([lng, lat]) => C.Cartesian3.fromDegrees(lng, lat));
+      groups.dbAreas.push(
+        viewer.entities.add({
+          polyline: {
+            positions,
+            width: lineWidth,
+            clampToGround: true,
+            material: lineMaterial,
+          },
+          properties: {
+            dbAreaId: props.id,
+            groupId: props.groupId,
+            areaId: props.areaId,
+          },
+        }),
+      );
+      continue;
+    }
+
+    if (feature.geometry.type === "LineString") {
+      const coords = feature.geometry.coordinates;
+      if (coords.length < 2) continue;
+      const positions = coords.map(([lng, lat]) => C.Cartesian3.fromDegrees(lng, lat));
+      groups.dbAreas.push(
+        viewer.entities.add({
+          polyline: {
+            positions,
+            width: lineWidth,
+            clampToGround: true,
+            material: lineMaterial,
+          },
+          properties: {
+            dbAreaId: props.id,
+            groupId: props.groupId,
+            areaId: props.areaId,
+          },
+        }),
+      );
+      continue;
+    }
+
+    if (feature.geometry.type === "Point") {
+      const [lng, lat] = feature.geometry.coordinates;
+      const text = String(props.labelText ?? "").trim();
+      if (!text) continue;
+      groups.dbAreas.push(
+        viewer.entities.add({
+          position: C.Cartesian3.fromDegrees(lng, lat, 100),
+          label: {
+            text,
+            font: '12px Roboto, "Noto Sans SC", sans-serif',
+            fillColor: baseColor.withAlpha(labelOpacity),
+            outlineColor: C.Color.fromCssColorString("#09090b"),
+            outlineWidth: 2,
+            style: C.LabelStyle.FILL_AND_OUTLINE,
+            verticalOrigin: C.VerticalOrigin.CENTER,
+            scaleByDistance: new C.NearFarScalar(1e4, 1, 5e5, 0.4),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          properties: {
+            dbAreaId: props.id,
+            groupId: props.groupId,
+            areaId: props.areaId,
+          },
+        }),
+      );
+    }
   }
 }
 
@@ -207,8 +245,6 @@ export function Map3D() {
   const selectedGlowEntityRef = useRef<CesiumEntity | null>(null);
   const lastFlySeqRef = useRef<number>(-1);
   const highlightEntitiesRef = useRef<CesiumEntity[]>([]);
-  const routeEntitiesRef = useRef<Map<string, CesiumEntity>>(new Map());
-  const areaEntitiesRef = useRef<Map<string, CesiumEntity[]>>(new Map());
   const entityGroupsRef = useRef<Record<GroupKey, CesiumEntity[]>>({
     tracks: [],
     trackTrails: [],
@@ -217,7 +253,7 @@ export function Map3D() {
     optoFov: [],
     airportFov: [],
     droneFov: [],
-    zones: [],
+    dbAreas: [],
   });
   /** 供 `syncCesiumTrackBillboards` 与订阅 flush 使用（`loadResolvedAppConfig` 的 `assetDispositionIconAccent`） */
   const cesiumTrackAccentRef = useRef<AssetDispositionIconAccent>({});
@@ -286,7 +322,8 @@ export function Map3D() {
 
         /* 1) 限制区 */
         const rgba = (c: RGBA) => new Cesium.Color(c[0], c[1], c[2], c[3]);
-        syncCesiumZones(v, Cesium, groups, adaptZones(useZoneStore.getState().zones));
+        const dbAreaState = useDbAreaStore.getState();
+        syncCesiumDbAreas(v, Cesium, groups, dbAreaState.rows, dbAreaState.areaVisibility);
 
         /* 2) 雷达覆盖（圆/扫描）与光电 FOV（扇形/圆）分开展示，与 2D 图层面板两项一致 */
         const _assets = adaptAssetsForMap(useAssetStore.getState().assets);
@@ -445,7 +482,7 @@ export function Map3D() {
         for (const ent of groups.optoFov) ent.show = layerOn("lyr-opto-fov");
         for (const ent of groups.airportFov) ent.show = layerOn("lyr-airport");
         for (const ent of groups.droneFov) ent.show = layerOn("lyr-drones");
-        for (const ent of groups.zones) ent.show = layerOn("lyr-zones");
+        for (const ent of groups.dbAreas) ent.show = layerOn(LYR_DB_AREAS);
         for (const ent of groups.assets) {
           const at = ent.properties?.assetType?.getValue() as string | undefined;
           const layerKey =
@@ -518,7 +555,7 @@ export function Map3D() {
         optoFov: [],
         airportFov: [],
         droneFov: [],
-        zones: [],
+        dbAreas: [],
       };
     };
   }, [selectTrack, selectAsset]);
@@ -602,7 +639,7 @@ export function Map3D() {
       : C.Color.fromCssColorString("#a5f3fc").withAlpha(0.9);
 
     selectedGlowEntityRef.current = v.entities.add({
-      position: new C.CallbackProperty(() => {
+      position: new C.CallbackPositionProperty(() => {
         const p = targetEntity.position;
         if (!p) return undefined;
         return p.getValue(v.clock.currentTime);
@@ -683,34 +720,6 @@ export function Map3D() {
     return unsub;
   }, []);
 
-  /* 同步 routeLines */
-  useEffect(() => {
-    const unsub = useAppStore.subscribe((state) => {
-      const v = viewerRef.current;
-      const C = cesiumRef.current;
-      if (!v || !C || v.isDestroyed()) return;
-      const currentIds = new Set(state.routeLines.map((r) => r.id));
-
-      for (const [id, ent] of routeEntitiesRef.current) {
-        if (!currentIds.has(id)) { v.entities.remove(ent); routeEntitiesRef.current.delete(id); }
-      }
-      for (const route of state.routeLines) {
-        if (routeEntitiesRef.current.has(route.id)) continue;
-        const positions = route.points.map((p) => C.Cartesian3.fromDegrees(p.lng, p.lat, 0));
-        const ent = v.entities.add({
-          polyline: {
-            positions, width: 3,
-            material: new C.PolylineDashMaterialProperty({ color: C.Color.fromCssColorString(route.color), dashLength: 16 }),
-            clampToGround: true,
-          },
-          properties: { _routeId: route.id },
-        });
-        routeEntitiesRef.current.set(route.id, ent);
-      }
-    });
-    return unsub;
-  }, []);
-
   /* 订阅 layerVisibility（与 Map2D `ALL_DATA_LAYER_IDS` 一致；资产 billboard 按 `assetType` 分键） */
   useEffect(() => {
     const unsub = useAppStore.subscribe((state) => {
@@ -723,7 +732,7 @@ export function Map3D() {
       for (const ent of g.optoFov) ent.show = layerOn("lyr-opto-fov");
       for (const ent of g.airportFov) ent.show = layerOn("lyr-airport");
       for (const ent of g.droneFov) ent.show = layerOn("lyr-drones");
-      for (const ent of g.zones) ent.show = layerOn("lyr-zones");
+      for (const ent of g.dbAreas) ent.show = layerOn(LYR_DB_AREAS);
       for (const ent of g.assets) {
         const at = ent.properties?.assetType?.getValue() as string | undefined;
         const layerKey =
@@ -774,13 +783,18 @@ export function Map3D() {
 
   /* 区域：响应式同步（WS 推送新区域时自动刷新） */
   useEffect(() => {
-    const unsub = useZoneStore.subscribe((s) => {
+    const flush = () => {
       const v = viewerRef.current;
       const C = cesiumRef.current;
       if (!v || !C || v.isDestroyed()) return;
-      syncCesiumZones(v, C, entityGroupsRef.current, adaptZones(s.zones));
-    });
-    return unsub;
+      const { rows, areaVisibility } = useDbAreaStore.getState();
+      syncCesiumDbAreas(v, C, entityGroupsRef.current, rows, areaVisibility);
+      const layerOn = useAppStore.getState().layerVisibility[LYR_DB_AREAS] !== false;
+      for (const ent of entityGroupsRef.current.dbAreas) ent.show = layerOn;
+    };
+
+    flush();
+    return useDbAreaStore.subscribe(flush);
   }, []);
 
   /* 航迹：store 全量 → billboard；折线按 `trackMapDrawHistoryTrails`（异步 flush） */
@@ -848,58 +862,6 @@ export function Map3D() {
       }),
     [],
   );
-
-  /* 同步 drawnAreas */
-  useEffect(() => {
-    const unsub = useAppStore.subscribe((state) => {
-      const v = viewerRef.current;
-      const C = cesiumRef.current;
-      if (!v || !C || v.isDestroyed()) return;
-
-      const currentIds = new Set(state.drawnAreas.map((a) => a.id));
-      for (const [id, ents] of areaEntitiesRef.current) {
-        if (!currentIds.has(id)) {
-          for (const e of ents) v.entities.remove(e);
-          areaEntitiesRef.current.delete(id);
-        }
-      }
-      for (const area of state.drawnAreas) {
-        if (areaEntitiesRef.current.has(area.id)) continue;
-        const positions = area.points.map((p) => C.Cartesian3.fromDegrees(p.lng, p.lat));
-        const ents: CesiumEntity[] = [];
-        const polyEnt = v.entities.add({
-          polygon: {
-            hierarchy: new C.PolygonHierarchy(positions),
-            material: C.Color.fromCssColorString(area.fillColor).withAlpha(area.fillOpacity),
-            outline: false,
-            heightReference: C.HeightReference.CLAMP_TO_GROUND,
-          },
-          properties: { _areaId: area.id },
-        });
-        ents.push(polyEnt);
-        if (area.label) {
-          const cLng = area.points.reduce((s, p) => s + p.lng, 0) / area.points.length;
-          const cLat = area.points.reduce((s, p) => s + p.lat, 0) / area.points.length;
-          const lblEnt = v.entities.add({
-            position: C.Cartesian3.fromDegrees(cLng, cLat, 100),
-            label: {
-              text: area.label,
-              font: '12px Roboto, "Noto Sans SC", sans-serif',
-              fillColor: C.Color.fromCssColorString(area.color),
-              outlineColor: C.Color.fromCssColorString("#09090b"),
-              outlineWidth: 2,
-              style: C.LabelStyle.FILL_AND_OUTLINE,
-              verticalOrigin: C.VerticalOrigin.CENTER,
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-            },
-          });
-          ents.push(lblEnt);
-        }
-        areaEntitiesRef.current.set(area.id, ents);
-      }
-    });
-    return unsub;
-  }, []);
 
   if (error) {
     return (

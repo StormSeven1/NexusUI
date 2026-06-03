@@ -48,7 +48,6 @@ import {
 } from "@/lib/asset-target-line";
 import { setLaserActivationEnabled, setTdoaActivationEnabled } from "@/lib/map-app-config";
 import { useAssetStore } from "@/stores/asset-store";
-import { useDroneStore } from "@/stores/drone-store";
 import { useTaskProgressStore } from "@/stores/task-progress-store";
 import {
   clearAllWeaponActivationSuppressions,
@@ -239,7 +238,7 @@ function resolveDisposalTargetLngLat(
  *
  * - 雷达/光电/激光/TDOA 等：资产行 `id` 即实体 id。
  * - 无人机：资产行 `id` 为 **deviceSn**，处置/告警里常为 **entityId**（如 `uav-102`），
- *   与 `properties.entity_id` 及 `drone-store.entityIdToDeviceSn` 一致（见 useUnifiedWsFeed.syncDroneAndAirportAssetsFromRelationships）。
+ *   与 `properties.entity_id` 及 `asset-store.entityIdToDeviceSn` 一致。
  */
 function assetIdExistsInStore(deviceId: string): boolean {
   const raw = String(deviceId ?? "").trim();
@@ -256,7 +255,7 @@ function assetIdExistsInStore(deviceId: string): boolean {
     if (typeof eid === "string" && (eid === raw || eid.toLowerCase() === low)) return true;
   }
 
-  const entityMap = useDroneStore.getState().entityIdToDeviceSn;
+  const entityMap = useAssetStore.getState().entityIdToDeviceSn;
   let sn: string | undefined = entityMap[raw];
   if (!sn) {
     for (const [eid, mappedSn] of Object.entries(entityMap)) {
@@ -269,7 +268,6 @@ function assetIdExistsInStore(deviceId: string): boolean {
   if (sn) {
     const sl = sn.toLowerCase();
     if (assets.some((a) => a.id === sn || a.id.toLowerCase() === sl)) return true;
-    if (useDroneStore.getState().drones[sn] != null) return true;
   }
 
   return false;

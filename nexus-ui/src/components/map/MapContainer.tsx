@@ -6,7 +6,8 @@ import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { getMapMeasureHandlers, useMapMeasureUi } from "@/stores/map-measure-bridge";
-import { Map as MapIcon, Globe, Pentagon, Ruler, DraftingCompass, BarChart3, Zap, Plane, Ship, Radio, Camera } from "lucide-react";
+import { AreaDrawSetupDialog } from "@/components/map/AreaDrawDialogs";
+import { Pentagon, Ruler, DraftingCompass, BarChart3, Zap, Plane, Ship, Radio, Camera, MonitorPlay } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WorkflowStatusOverlay } from "@/components/layout/WorkflowStatusOverlay";
 import { QuickWorkflowModal } from "@/components/layout/QuickWorkflowModal";
@@ -40,7 +41,7 @@ const mapToolBtn =
   "flex items-center justify-center h-7 w-7 rounded-md text-xs font-medium transition-colors border border-transparent";
 
 export function MapContainer() {
-  const { mapViewMode, setMapViewMode, zoomLevel } = useAppStore();
+  const { mapViewMode, zoomLevel, setEoVideoModalOpen } = useAppStore();
   const tracks = useTrackStore((s) => s.tracks);
   const mouseCoords = useMapPointerStore((s) => s.mouseCoords);
   const airCount = tracks.filter((t) => t.type === "air").length;
@@ -51,6 +52,7 @@ export function MapContainer() {
   const [networkStatsOpen, setNetworkStatsOpen] = useState(false);
   const [radarSettingsOpen, setRadarSettingsOpen] = useState(false);
   const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
+  const [areaDrawOpen, setAreaDrawOpen] = useState(false);
 
   return (
     <div className="relative h-full w-full">
@@ -60,20 +62,25 @@ export function MapContainer() {
 
       {/* 右上角工具栏：多边形/量算/角度/网络统计/快捷工作流 + 2D/3D 切换 */}
       <div className="absolute right-3 top-3 z-10 flex items-center gap-1.5">
+        <button
+          type="button"
+          title="新建光电视频窗口"
+          className={cn(mapToolBtn, "nexus-glass text-nexus-text-muted hover:bg-white/10 hover:text-nexus-text-secondary")}
+          onClick={() => setEoVideoModalOpen(true)}
+        >
+          <MonitorPlay size={14} />
+        </button>
         {/* 多边形 */}
         <button
           type="button"
-          title="多边形标绘：左键加点，双击闭合；右键取消"
+          title="区域/航线注册"
           className={cn(
             mapToolBtn,
-            measureUi.activeDrawTool === "polygon"
+            measureUi.activeDrawTool === "area"
               ? "border-nexus-border-accent bg-nexus-accent-glow/25 text-nexus-text-primary"
               : "nexus-glass text-nexus-text-muted hover:bg-white/10 hover:text-nexus-text-secondary",
           )}
-          onClick={() => {
-            const on = measureUi.activeDrawTool === "polygon";
-            h()?.setDrawTool(on ? null : "polygon");
-          }}
+          onClick={() => setAreaDrawOpen(true)}
         >
           <Pentagon size={14} />
         </button>
@@ -241,6 +248,7 @@ export function MapContainer() {
       <NetworkStatsDialog open={networkStatsOpen} onClose={() => setNetworkStatsOpen(false)} />
       <RadarDisplaySettingsDialog open={radarSettingsOpen} onClose={() => setRadarSettingsOpen(false)} />
       <CameraDisplaySettingsDialog open={cameraSettingsOpen} onClose={() => setCameraSettingsOpen(false)} />
+      <AreaDrawSetupDialog open={areaDrawOpen} onClose={() => setAreaDrawOpen(false)} />
     </div>
   );
 }

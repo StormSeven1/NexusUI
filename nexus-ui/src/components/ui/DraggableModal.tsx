@@ -3,7 +3,6 @@
 import React, {
   useState,
   useEffect,
-  useLayoutEffect,
   useRef,
   useCallback,
   type ReactNode,
@@ -21,6 +20,8 @@ export interface DraggableModalProps {
   children: ReactNode;
   footer?: ReactNode;
   className?: string;
+  headerClassName?: string;
+  contentClassName?: string;
   initialX?: number;
   initialY?: number;
   maxHeight?: number;
@@ -55,17 +56,24 @@ export function DraggableModal({
   children,
   footer,
   className,
+  headerClassName,
+  contentClassName,
   initialX,
   initialY,
   maxHeight,
   headerActions,
-  minWidth = 300,
-  minHeight = 200,
+  minWidth = 180,
+  minHeight = 120,
 }: DraggableModalProps) {
   const config = SIZE_CONFIG[size];
-  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [position, setPosition] = useState(() => {
+    if (typeof window === "undefined") return { x: initialX ?? 20, y: initialY ?? 20 };
+    return {
+      x: initialX ?? Math.max(20, Math.round((window.innerWidth - 380) / 2)),
+      y: initialY ?? Math.max(20, Math.round((window.innerHeight - 260) / 2)),
+    };
+  });
   /** 首次定位完成前隐藏，避免在 (0,0) 处闪烁 */
-  const [positioned, setPositioned] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [isResizing, setIsResizing] = useState(false);
@@ -85,19 +93,6 @@ export function DraggableModal({
   const [resizeDirection, setResizeDirection] = useState<ResizeDirection | null>(null);
 
   /** 同步（useLayoutEffect）定位，paint 前完成，彻底消除闪烁 */
-  useLayoutEffect(() => {
-    if (open && !positioned) {
-      setPosition({
-        x: initialX ?? Math.max(20, Math.round((window.innerWidth  - modalSize.width)  / 2)),
-        y: initialY ?? Math.max(20, Math.round((window.innerHeight - modalSize.height) / 2)),
-      });
-      setPositioned(true);
-    }
-    if (!open && positioned) {
-      setPositioned(false);
-    }
-  }, [open, positioned, initialX, initialY, modalSize.width, modalSize.height]);
-
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if ((e.target as HTMLElement).closest(".drag-handle")) {
@@ -189,7 +184,7 @@ export function DraggableModal({
     <div
       ref={dialogRef}
       className={cn(
-        "fixed z-50 rounded-lg border border-nexus-border shadow-xl",
+        "fixed z-50 flex flex-col rounded-lg border border-nexus-border shadow-xl",
         isResizing && "select-none",
         className,
       )}
@@ -198,7 +193,6 @@ export function DraggableModal({
         top:        `${position.y}px`,
         width:      `${modalSize.width}px`,
         height:     size === "auto" ? `${modalSize.height}px` : "auto",
-        visibility: positioned ? "visible" : "hidden",
         backgroundColor: "#212126",
       }}
       onMouseDown={handleMouseDown}
@@ -208,6 +202,7 @@ export function DraggableModal({
         className={cn(
           "drag-handle flex items-center justify-between border-b border-nexus-border select-none",
           UNIFIED_STYLES.titlePadding,
+          headerClassName,
         )}
         style={{ cursor: isDragging ? "grabbing" : "move" }}
       >
@@ -229,8 +224,8 @@ export function DraggableModal({
 
       {/* 内容区域 */}
       <div
-        className={cn("overflow-y-auto", UNIFIED_STYLES.contentPadding)}
-        style={{ maxHeight: effectiveMaxHeight }}
+        className={cn("min-h-0 flex-1 overflow-y-auto", UNIFIED_STYLES.contentPadding, contentClassName)}
+        style={size === "auto" ? undefined : { maxHeight: effectiveMaxHeight }}
       >
         {children}
       </div>

@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 /**
  * 告警面板 — 消费 alert-store 的实时数据。
  *
@@ -287,10 +289,13 @@ export function AlertPanel() {
                   </div>
                   {alert.imageUrl && (
                     <div className="mt-1.5 overflow-hidden rounded border border-white/[0.06]">
-                      <img
+                      <Image
                         src={alert.imageUrl}
                         alt="查证图片"
-                        className="w-full object-cover"
+                        width={640}
+                        height={360}
+                        className="h-auto w-full object-cover"
+                        unoptimized
                       />
                     </div>
                   )}

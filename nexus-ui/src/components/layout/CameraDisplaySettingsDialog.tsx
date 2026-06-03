@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAssetStore } from "@/stores/asset-store";
 import { Camera, Eye, EyeOff, Target, RefreshCw, ChevronDown } from "lucide-react";
@@ -50,31 +50,24 @@ export function CameraDisplaySettingsDialog({ open, onClose }: CameraDisplaySett
 
   const cameraAssets = assets.filter((a) => a.asset_type === "camera");
 
-  useEffect(() => {
-    if (open && cameraAssets.length > 0 && !selectedCameraId) {
-      setSelectedCameraId(cameraAssets[0]!.id);
-    }
-  }, [open, cameraAssets.length, selectedCameraId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!open) setSelectedCameraId("");
-  }, [open]);
-
-  const selectedCamera = cameraAssets.find((c) => c.id === selectedCameraId);
+  const effectiveSelectedCameraId = open
+    ? (selectedCameraId || cameraAssets[0]?.id || "")
+    : "";
+  const selectedCamera = cameraAssets.find((c) => c.id === effectiveSelectedCameraId);
   const assetProps = selectedCamera?.properties as Record<string, unknown> | null | undefined;
-  const overrides = displayOverrides[selectedCameraId];
+  const overrides = displayOverrides[effectiveSelectedCameraId];
 
   const get = <K extends keyof CamProps>(key: K) =>
     getCamProp(assetProps, overrides, key);
 
   const update = (patch: Partial<Record<keyof CamProps, unknown>>) => {
-    if (!selectedCameraId) return;
-    setDisplayOverride(selectedCameraId, patch as Record<string, unknown>);
+    if (!effectiveSelectedCameraId) return;
+    setDisplayOverride(effectiveSelectedCameraId, patch as Record<string, unknown>);
   };
 
   const handleReset = () => {
-    if (!selectedCameraId) return;
-    clearDisplayOverride(selectedCameraId);
+    if (!effectiveSelectedCameraId) return;
+    clearDisplayOverride(effectiveSelectedCameraId);
   };
 
   const footer = (

@@ -3,7 +3,7 @@
 import { NxCard } from "@/components/nexus";
 import {
   Sun, Cloud, CloudRain, CloudDrizzle, CloudLightning, CloudFog, Wind,
-  Thermometer, Droplets, Eye, Gauge,
+  Droplets, Eye, Gauge,
 } from "lucide-react";
 
 const ICON_MAP: Record<string, typeof Sun> = {

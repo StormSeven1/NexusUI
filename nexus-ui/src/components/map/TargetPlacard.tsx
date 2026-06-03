@@ -48,11 +48,11 @@ import {
 import { useAlertStore } from "@/stores/alert-store";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 import { useAssetStore } from "@/stores/asset-store";
-import { useDroneStore } from "@/stores/drone-store";
 import { useTrackStore, isTrackMatchedByAlarm } from "@/stores/track-store";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
+import { signalingUrlFromWebrtcUrl } from "@/lib/eo-video/buildSignalingUrl";
 
 export type PlacardKind = "track" | "asset";
 
@@ -99,16 +99,6 @@ function DispositionBadge({ d }: { d: ForceDisposition }) {
   );
 }
 
-function SectionTitle({ children }: { children: string }) {
-  return (
-    <div className="mt-2 flex items-center justify-between">
-      <div className="text-[10px] font-semibold tracking-wider text-nexus-text-muted">
-        {children}
-      </div>
-    </div>
-  );
-}
-
 function assetTypeDisplayLabel(t: PublicMapAssetType | string | undefined): string {
   const n = String(t ?? "").trim().toLowerCase();
   if (n === "usv") return "无人船";
@@ -136,19 +126,13 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const { kind, id, onClose, className } = props;
 
   const allAssets = useAssetStore((s) => s.assets);
-  const entityIdToDeviceSn = useDroneStore((s) => s.entityIdToDeviceSn);
+  const entityIdToDeviceSn = useAssetStore((s) => s.entityIdToDeviceSn);
   const track = useTrackStore((s) => s.tracks.find((t) => t.id === id)) as Track | undefined;
 
   const asset = useMemo(
     () => findAssetInStore(allAssets, id, entityIdToDeviceSn),
     [allAssets, id, entityIdToDeviceSn],
   );
-  const assetStoreKey = asset?.id ?? id;
-  const droneTele = useDroneStore((s) => s.drones[assetStoreKey]);
-  const dockTele = useDroneStore((s) => s.docks[assetStoreKey]);
-  const droneDisplayName = droneTele?.displayName ?? "";
-  const dockDisplayName = dockTele?.displayName ?? "";
-  const assetOrDroneResolved = asset ?? (droneTele || dockTele ? { id } : null);
   // console.log("[TargetPlacard] id=", id, "kind=", kind, "asset=", asset ? { id: asset.id, asset_type: asset.asset_type, name: asset.name } : null, "allAssetIds=", allAssets.map(a => `${a.id}(${a.asset_type})`));
   const alerts = useAlertStore((s) => s.alerts);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
@@ -158,29 +142,61 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const [oneClickLoading, setOneClickLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  /* 目标丢失时自动关闭属性框（无人机/机场可仅存在于 drone-store） */
+  /* 目标丢失时自动关闭属性框 */
   useEffect(() => {
     if (kind === "track" && !track) onClose();
-    if (kind === "asset" && !assetOrDroneResolved) onClose();
-  }, [kind, track, assetOrDroneResolved, onClose]);
+    if (kind === "asset" && !asset) onClose();
+  }, [kind, track, asset, onClose]);
 
-  const assetLat = asset?.lat ?? droneTele?.lat ?? null;
-  const assetLng = asset?.lng ?? droneTele?.lng ?? null;
+  const assetLat = asset?.lat ?? null;
+  const assetLng = asset?.lng ?? null;
+  const assetProperties =
+    asset?.properties && typeof asset.properties === "object"
+      ? (asset.properties as Record<string, unknown>)
+      : null;
+  const assetVideoUrl =
+    assetProperties && typeof assetProperties.sensor_video_url === "string"
+      ? assetProperties.sensor_video_url
+      : "";
+  const assetVideoSourcePath =
+    assetProperties && typeof assetProperties.sensor_video_source_path === "string"
+      ? assetProperties.sensor_video_source_path
+      : "";
+  const assetMediaJson = useMemo(() => {
+    const mediaObject = assetProperties?.entity_media;
+    if (!mediaObject) return "";
+    try {
+      return JSON.stringify(mediaObject, null, 2);
+    } catch {
+      return "";
+    }
+  }, [assetProperties]);
+  const assetPlaybackUrl = useMemo(() => {
+    if (!assetVideoUrl) return "";
+    try {
+      if (assetVideoUrl.startsWith("webrtc://")) {
+        return signalingUrlFromWebrtcUrl(assetVideoUrl);
+      }
+      if (assetVideoUrl.includes("/index/api/webrtc")) {
+        return assetVideoUrl;
+      }
+      if (assetVideoUrl.startsWith("rtsp://") || assetVideoUrl.startsWith("rtsps://")) {
+        return "当前前端播放器暂不支持直接播放 RTSP";
+      }
+      return "";
+    } catch {
+      return "";
+    }
+  }, [assetVideoUrl]);
   const assetHeading =
     asset?.heading != null && Number.isFinite(Number(asset.heading))
       ? Number(asset.heading)
-      : droneTele?.headingDeg != null && Number.isFinite(droneTele.headingDeg)
-        ? droneTele.headingDeg
-        : null;
+      : null;
   const assetUpdatedAt = asset?.updated_at;
   const assetTypeLabel =
     asset != null
       ? assetTypeDisplayLabel(normalizeAssetType(asset.asset_type))
-      : droneTele
-        ? "无人机"
-        : dockTele
-          ? "机场"
-          : "资产";
+      : "资产";
 
   /** 构建告警 trackId 集合，复用 isTrackMatchedByAlarm 逻辑匹配 */
   const relatedAlerts = useMemo(() => {
@@ -203,8 +219,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
       const alias = k ? useTrackAliasStore.getState().getOrCreate(k) : "";
       return alias || track?.name || track?.showID || id;
     }
-    return droneDisplayName || dockDisplayName || asset?.name || id;
-  }, [kind, track, id, droneDisplayName, dockDisplayName, asset?.name]);
+    return asset?.name || id;
+  }, [kind, track, id, asset?.name]);
 
   const [trackSymbolUrl, setTrackSymbolUrl] = useState<string | null>(null);
 
@@ -231,29 +247,24 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
   useEffect(() => {
     if (kind !== "asset") return;
-    if (!asset && !droneTele && !dockTele) return;
+    if (!asset) return;
     let cancelled = false;
     const aid = id;
-    const t = asset
-      ? normalizeAssetType(asset.asset_type)
-      : droneTele
-        ? ("drone" as const)
-        : ("airport" as const);
-    const assetFriendlyTint = asset
-      ? (assetFriendlyColorFromProperties(asset.properties as Record<string, unknown> | null) ??
-        getAssetFriendlyColorForAssetType(t) ??
-        FORCE_COLORS.friendly)
-      : (getAssetFriendlyColorForAssetType(t) ?? FORCE_COLORS.friendly);
+    const t = normalizeAssetType(asset.asset_type);
+    const assetFriendlyTint =
+      assetFriendlyColorFromProperties(asset.properties as Record<string, unknown> | null) ??
+      getAssetFriendlyColorForAssetType(t) ??
+      FORCE_COLORS.friendly;
     const status = (asset?.status ?? "online") as AssetStatus;
-    const virtual = asset ? isVirtualFromProperties(asset.properties) : (droneTele?.virtualTroop ?? dockTele?.virtualTroop ?? false);
-    const disposition = asset ? dispositionFromAssetData(asset) : ("friendly" as const);
+    const virtual = isVirtualFromProperties(asset.properties);
+    const disposition = dispositionFromAssetData(asset);
     void buildAssetSymbolDataUrl(t, status, virtual, disposition, undefined, assetFriendlyTint).then((url) => {
       if (!cancelled) setAssetIconLoaded({ id: aid, url });
     });
     return () => {
       cancelled = true;
     };
-  }, [kind, asset, droneTele, dockTele, id]);
+  }, [kind, asset, id]);
 
   const symbolUrl =
     kind === "track"
@@ -468,6 +479,43 @@ export function TargetPlacard(props: TargetPlacardProps) {
               <Row k="entityId" v={asset?.id ?? "-"} />
               {!isMunition ? <Row k="射程" v={asset?.range_km ? `${asset.range_km} km` : "-"} /> : null}
               <Row k="任务状态" v={asset?.mission_status ?? "-"} />
+              <Row k="取流字段" v={assetVideoSourcePath || "-"} />
+              <Row
+                k="原始流"
+                v={
+                  assetVideoUrl ? (
+                    <span className="block break-all text-[10px] leading-4 text-nexus-text-primary">
+                      {assetVideoUrl}
+                    </span>
+                  ) : (
+                    "-"
+                  )
+                }
+              />
+              <Row
+                k="播放流"
+                v={
+                  assetPlaybackUrl ? (
+                    <span className="block break-all text-[10px] leading-4 text-nexus-text-primary">
+                      {assetPlaybackUrl}
+                    </span>
+                  ) : (
+                    "-"
+                  )
+                }
+              />
+              <Row
+                k="Media"
+                v={
+                  assetMediaJson ? (
+                    <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-all rounded bg-black/30 p-1 text-[9px] leading-4 text-nexus-text-primary">
+                      {assetMediaJson}
+                    </pre>
+                  ) : (
+                    "-"
+                  )
+                }
+              />
             </div>
           )}
         </>

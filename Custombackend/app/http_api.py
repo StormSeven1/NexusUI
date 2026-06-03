@@ -1,6 +1,7 @@
 """
 HTTP API服务 - 提供REST接口
 """
+from pathlib import Path
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from datetime import datetime
@@ -9,10 +10,14 @@ from loguru import logger
 from pydantic import BaseModel
 from websocket_manager import ws_manager
 from track_simulator import track_simulator
+from config import get_settings
+from entity_area_service import map_entity_id, publish_area_entity, delete_area_entity
 import base64
 
 
 router = APIRouter()
+settings = get_settings()
+latest_entity_records = {}
 
 
 # 数据库管理器引用（由main.py注入）
@@ -23,6 +28,118 @@ def set_db_manager(manager):
     """设置数据库管理器"""
     global db_manager
     db_manager = manager
+
+
+async def refresh_db_area_cache_and_broadcast():
+    """注册区域/航线发生变化后，刷新后端缓存并通过 WS 广播。
+
+    这里是数据库区域/航线向前端扩散的唯一正式出口：
+    1. 从 `area_table` 重新读取最新行数据
+    2. 替换后端内存中的当前区域快照
+    3. 向所有已连接客户端广播一份新的 `DbAreas` 全量消息
+
+    前端不会直接读 Postgres，也不会自己轮询数据库。
+    所有浏览器最终都渲染这份后端持有的统一快照。
+    """
+    if not db_manager:
+        return
+    rows = await db_manager.get_area_table_rows()
+    ws_manager.set_db_area_rows(rows or [])
+    await ws_manager.broadcast_db_area_rows()
+
+
+def set_latest_entity_records(records):
+    """缓存最近一次 HTTP 轮询拿到的实体列表"""
+    global latest_entity_records
+    next_records = {}
+    if isinstance(records, list):
+      for item in records:
+        if not isinstance(item, dict):
+          continue
+        entity_id = str(item.get("entityId", "")).strip()
+        if entity_id:
+          next_records[entity_id] = item
+    latest_entity_records = next_records
+
+
+def _safe_capture_segment(value: str, fallback: str) -> str:
+    cleaned = value.strip().replace("\\", "_").replace("/", "_").replace(":", "_")
+    cleaned = cleaned.replace("*", "_").replace("?", "_").replace('"', "_")
+    cleaned = cleaned.replace("<", "_").replace(">", "_").replace("|", "_")
+    cleaned = "_".join(cleaned.split())
+    cleaned = cleaned[:80]
+    return cleaned or fallback
+
+
+def _safe_capture_file_name(value: str, fallback_ext: str) -> str:
+    cleaned = value.strip().replace("\\", "_").replace("/", "_").replace(":", "_")
+    cleaned = cleaned.replace("*", "_").replace("?", "_").replace('"', "_")
+    cleaned = cleaned.replace("<", "_").replace(">", "_").replace("|", "_")
+    cleaned = cleaned[:180]
+    if not cleaned:
+        return f"capture_{int(datetime.now().timestamp() * 1000)}.{fallback_ext}"
+    return cleaned
+
+
+@router.post('/eo-video/capture/save')
+async def save_eo_video_capture(request: Request):
+    """保存光电视频截图或录像文件。
+
+    EO 弹窗会先在浏览器侧生成截图或录像二进制，再上传到这个接口。
+    这个接口只负责把文件落到本地磁盘：
+    - 不代理实时 WebRTC 视频流
+    - 不参与检测框同步
+    - 不参与视频播放本身
+    """
+    kind = str(request.query_params.get("kind", "")).strip().lower()
+    stream_label = str(request.query_params.get("streamLabel", "")).strip()
+    file_name_raw = str(request.query_params.get("fileName", "")).strip()
+
+    if kind not in {"snapshot", "record"}:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_kind"})
+    if not stream_label:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "missing_stream_label"})
+
+    root_raw = settings.EO_VIDEO_CAPTURE_PIC_DIR if kind == "snapshot" else settings.EO_VIDEO_CAPTURE_VIDEO_DIR
+    if not root_raw.strip():
+        return JSONResponse(status_code=500, content={"ok": False, "error": "missing_capture_directory_config"})
+
+    stream_dir = _safe_capture_segment(stream_label, "eo-video")
+    fallback_ext = "png" if kind == "snapshot" else "webm"
+    file_name = _safe_capture_file_name(file_name_raw, fallback_ext)
+    body = await request.body()
+    if not body:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "empty_body"})
+
+    try:
+        target_dir = Path(root_raw) / stream_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        final_path = target_dir / file_name
+        final_path.write_bytes(body)
+        return JSONResponse(status_code=200, content={"ok": True, "path": str(final_path)})
+    except Exception as exc:
+        logger.error(f"保存光电视频文件失败: {exc}")
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": "save_capture_failed", "detail": str(exc)},
+        )
+
+
+@router.get('/entity-status/{entity_id}')
+async def get_entity_status_detail(entity_id: str):
+    """返回最近一帧实体状态中的单个实体详情"""
+    entity_key = entity_id.strip()
+    if not entity_key:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "missing_entity_id"})
+
+    entity = latest_entity_records.get(entity_key)
+    if entity is None:
+        return JSONResponse(
+            status_code=404,
+            content={"ok": False, "error": "entity_not_found", "entityId": entity_key},
+        )
+
+    return JSONResponse(status_code=200, content=entity)
 
 
 @router.get('/test')
@@ -222,6 +339,112 @@ async def get_areas():
                 "data": None
             }
         )
+
+
+class CreateAreaRequest(BaseModel):
+    group_id: Optional[int] = None
+    new_group_name: Optional[str] = None
+    area_name: str
+    area_type: int
+    start_point: Optional[str] = None
+    end_point: Optional[str] = None
+    area_rect: Optional[str] = None
+    area_points: Optional[str] = None
+    line_color: Optional[str] = None
+    line_width: Optional[int] = None
+
+
+@router.post('/areas')
+async def create_area(request: CreateAreaRequest):
+    """创建区域/航线：后端统一负责存库、实体注册、刷新缓存并广播。
+
+    完整流程：
+    1. 前端绘制界面把归一化后的几何数据提交到这个接口
+    2. 后端先插入 `area_table`
+    3. 后端再向外部实体服务注册对应的区域/航线实体
+    4. 后端刷新当前区域快照缓存
+    5. 后端通过 WebSocket 广播 `DbAreas`，让所有客户端一起刷新显示
+
+    这样数据库访问和实体注册都只发生在后端，不落到浏览器。
+    """
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "数据库未连接"})
+
+    try:
+        created = await db_manager.create_area(request.model_dump())
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(exc)})
+    except Exception as exc:
+        logger.error(f"创建区域失败: {exc}")
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+
+    try:
+        publish_result = await publish_area_entity(created)
+        if not publish_result.get("ok"):
+            logger.error(f"区域实体注册失败: {publish_result}")
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "ok": False,
+                    "error": publish_result.get("message") or "实体注册失败",
+                    "group_id": created["group_id"],
+                    "area_id": created["area_id"],
+                    "entityId": publish_result.get("entityId"),
+                    "publish": publish_result,
+                },
+            )
+
+        await refresh_db_area_cache_and_broadcast()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                **created,
+                "entityId": publish_result.get("entityId"),
+                "publish": publish_result,
+            },
+        )
+    except Exception as exc:
+        logger.error(f"区域存库后注册/广播失败: {exc}")
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": str(exc), **created},
+        )
+
+
+@router.delete('/areas')
+async def delete_area(group_id: int, area_id: int, area_type: int):
+    """删除区域/航线：先删实体，再删数据库，再广播最新快照。
+
+    删除顺序故意设计成这样：
+    1. 先删除已经发布出去的实体
+    2. 再删除 `area_table` 中的数据库行
+    3. 然后重建后端缓存
+    4. 最后广播新的 `DbAreas` 全量快照
+
+    这样可以保证前端看到的区域列表和外部实体服务状态尽量保持一致。
+    """
+    if not db_manager:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "数据库未连接"})
+
+    entity_id = map_entity_id(group_id, area_id, area_type)
+    entity_result = await delete_area_entity(entity_id)
+    if not entity_result.get("ok"):
+        return JSONResponse(
+            status_code=502,
+            content={"ok": False, "error": entity_result.get("message") or "实体删除失败", "entityId": entity_id},
+        )
+
+    try:
+        deleted = await db_manager.delete_area(group_id, area_id)
+        await refresh_db_area_cache_and_broadcast()
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "deleted": deleted, "entityId": entity_id},
+        )
+    except Exception as exc:
+        logger.error(f"删除区域失败: {exc}")
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc), "entityId": entity_id})
 
 
 @router.get('/status')

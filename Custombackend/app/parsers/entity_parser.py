@@ -1,148 +1,312 @@
 """
-实体状态解析器 - 解析实体API返回的数据
+Entity API parser helpers.
 """
-from typing import Dict, List, Optional, Any
-from loguru import logger
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from loguru import logger
 
 
-def _get_alt_id(entity: Dict[str, Any], id_type: str) -> Optional[str]:
-    """从实体的 alternateIds 中取指定类型的 id"""
-    aliases = entity.get("aliases") or {}
-    alt_ids = aliases.get("alternateIds") or []
-    for item in alt_ids:
-        if isinstance(item, dict) and item.get("type") == id_type:
-            return item.get("id")
+def _as_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> List[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _safe_str(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _safe_number(value: Any) -> Optional[float]:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    return num
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
     return None
 
 
-def _build_relationships(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    从实体列表构建 relationships，只保留 airports 一个结构。
-    每个 airport 的 drones 数组里放该机场下无人机的完整信息（deviceSn、name、位置等），
-    前端可从 airports 自行推导 drone_to_airport / airport_to_drones，无需后端再发。
-    机场 SN 与对应关系来自实体中同时带 DEVICE_SN 和 GATEWAY_SN 的 alternateIds；
-    机场位置取自关联 UAV 的 airportLatitudeDegrees/airportLongitudeDegrees（或经纬度）。
-    """
-    drone_to_airport: Dict[str, str] = {}
-    airport_to_drones: Dict[str, List[str]] = {}
-    # 无人机 SN -> 名称、位置等，便于后面给机场挂载无人机名称
-    drone_info: Dict[str, Dict[str, Any]] = {}
-    # 机场 SN -> 任选一个关联 UAV 的机场位置/状态（用于拼机场项）
-    airport_by_sn: Dict[str, Dict[str, Any]] = {}
-
-    # 第一轮：遍历所有实体，找出同时带有 DEVICE_SN 和 GATEWAY_SN 的（无人机↔机场关系）
-    for entity in records:
-        entity_id = (entity.get("entityId") or "").strip()
-        name = (entity.get("aliases") or {}).get("name") or ""
-        device_sn = _get_alt_id(entity, "DEVICE_SN")
-        gateway_sn = _get_alt_id(entity, "GATEWAY_SN")
-        if not device_sn or not gateway_sn:
+def _get_alt_id(entity: Dict[str, Any], id_type: str) -> str:
+    aliases = _as_dict(entity.get("aliases"))
+    alt_ids = _as_list(aliases.get("alternateIds"))
+    for item in alt_ids:
+        if not isinstance(item, dict):
             continue
-        drone_to_airport[device_sn] = gateway_sn
-        airport_to_drones.setdefault(gateway_sn, []).append(device_sn)
-        position = (entity.get("location") or {}).get("position") or {}
-        # 机场位置：优先用机场经纬度，否则用当前经纬度
-        lat = position.get("airportLatitudeDegrees") if position.get("airportLatitudeDegrees") is not None else position.get("latitudeDegrees")
-        lon = position.get("airportLongitudeDegrees") if position.get("airportLongitudeDegrees") is not None else position.get("longitudeDegrees")
-        drone_info[device_sn] = {
-            "deviceSn": device_sn,
-            "name": name or device_sn,
-            "gatewaySn": gateway_sn,
-            "entityId": entity_id,
-            "latitude": position.get("latitudeDegrees"),
-            "longitude": position.get("longitudeDegrees"),
-            "altitudeHaeMeters": position.get("altitudeHaeMeters"),
-        }
-        # 为每个机场 SN 保留一条“代表”数据（位置优先用机场经纬度，温湿度等从 flightParameters 取）
-        fp = entity.get("flightParameters") or {}
-        if gateway_sn not in airport_by_sn and (lat is not None or lon is not None):
-            airport_by_sn[gateway_sn] = {
-                "latitude": lat,
-                "longitude": lon,
-                "height": position.get("altitudeHaeMeters") or 0,
-                "droneInDock": fp.get("droneInDock", False),
-                "temperature": fp.get("airportTemperature"),
-                "humidity": fp.get("airportHumidity"),
+        if _safe_str(item.get("type")) == id_type:
+            return _safe_str(item.get("id"))
+    return ""
+
+
+def _normalize_asset_type(entity: Dict[str, Any]) -> str:
+    ontology = _as_dict(entity.get("ontology"))
+    specific = _safe_str(entity.get("specificType") or ontology.get("specificType")).upper()
+    platform = _safe_str(ontology.get("platformType")).upper()
+
+    if specific.startswith("RADAR") or "RADAR" in specific or "雷达" in specific:
+        return "radar"
+    if specific in {"CAMERA", "OPTOELECTRONIC", "OPTICAL"} or "CAMERA" in specific or "光电" in specific:
+        return "camera"
+    if specific in {"TOWER", "ESM", "EW", "RECON"} or "电侦" in specific:
+        return "tower"
+    if specific in {"DOCK", "AIRPORT", "GATEWAY"}:
+        return "airport"
+    if specific in {"DRONE", "UAV"}:
+        return "drone"
+    if specific in {"LASER"}:
+        return "laser"
+    if specific in {"TDOA"}:
+        return "tdoa"
+    if specific in {"MISSILE", "MUNITION"} or "飞弹" in specific or "导弹" in specific:
+        return "missile"
+    if specific in {"USV", "UNMANNED_SHIP"}:
+        return "usv"
+    if specific.endswith("AREA") or specific == "FRAME":
+        return "unknown"
+    if platform == "PLATFORM_TYPE_FIXED_GROUND" and specific == "GATEWAY":
+        return "airport"
+    return "unknown"
+
+
+def _read_video_address(entity: Dict[str, Any], asset_type: str) -> str:
+    media = _as_dict(entity.get("media"))
+    relationship = _as_dict(entity.get("relationship"))
+    relationship_media = _as_dict(relationship.get("media"))
+
+    def read_media_address(media_obj: Dict[str, Any]) -> str:
+        direct = _safe_str(media_obj.get("address"))
+        if direct:
+            return direct
+        for item in _as_list(media_obj.get("media")):
+            if not isinstance(item, dict):
+                continue
+            if _safe_str(item.get("type")).upper() != "MEDIA_TYPE_VIDEO":
+                continue
+            address = _safe_str(item.get("address")) or _safe_str(item.get("relativePath"))
+            if address:
+                return address
+        return ""
+
+    # 当前实体接口里，很多相机视频地址并不直接挂在 `media.address`，
+    # 而是挂在 `relationship.media.address`。
+    # 例如 `camera_001` / `camera_000` 在 entity.json 里就是这种结构。
+    # 所以相机不能只读 `media`，必须优先尝试 `relationship.media`，再回退到 `media`。
+    if asset_type == "camera":
+        return read_media_address(relationship_media) or read_media_address(media)
+    if asset_type == "drone":
+        return read_media_address(relationship_media) or read_media_address(media)
+    return read_media_address(media)
+
+
+def _normalize_entity_record(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    entity_id = _safe_str(entity.get("entityId"))
+    if not entity_id:
+        return None
+
+    asset_type = _normalize_asset_type(entity)
+    aliases = _as_dict(entity.get("aliases"))
+    location = _as_dict(entity.get("location"))
+    position = _as_dict(location.get("position"))
+    indicators = _as_dict(entity.get("indicators"))
+    mil_view = _as_dict(entity.get("milView"))
+    ontology = _as_dict(entity.get("ontology"))
+
+    lat = _safe_number(
+        _first_present(
+            entity.get("lat"),
+            entity.get("latitude"),
+            position.get("latitudeDegrees"),
+            position.get("latitude"),
+        )
+    )
+    lng = _safe_number(
+        _first_present(
+            entity.get("lng"),
+            entity.get("longitude"),
+            position.get("longitudeDegrees"),
+            position.get("longitude"),
+        )
+    )
+    altitude = _safe_number(_first_present(position.get("altitudeHaeMeters"), position.get("altitude")))
+    heading = _safe_number(_first_present(entity.get("headingDeg"), entity.get("heading"), entity.get("bearing")))
+
+    device_sn = _get_alt_id(entity, "DEVICE_SN")
+    gateway_sn = _get_alt_id(entity, "GATEWAY_SN")
+    virtual_troop = bool(indicators.get("simulated") is True)
+    disposition = _safe_str(mil_view.get("disposition"))
+    video_address = _read_video_address(entity, asset_type)
+
+    row: Dict[str, Any] = {
+        "entityId": entity_id,
+        "name": _safe_str(entity.get("name") or entity.get("entityName") or aliases.get("name") or entity_id),
+        "assetType": asset_type,
+        "virtualTroop": virtual_troop,
+        "disposition": disposition,
+        "lat": lat,
+        "lng": lng,
+        "altitudeHaeMeters": altitude,
+        "headingDeg": heading,
+        "deviceSn": device_sn,
+        "gatewaySn": gateway_sn,
+        "videoAddress": video_address,
+        "ontology": {
+            "specificType": _safe_str(ontology.get("specificType")),
+            "platformType": _safe_str(ontology.get("platformType")),
+        },
+        "milView": {
+            "disposition": disposition,
+            "environment": _safe_str(mil_view.get("environment")),
+        },
+        "indicators": {
+            "simulated": virtual_troop,
+        },
+    }
+
+    radar_params = _as_dict(entity.get("radarParameters"))
+    if radar_params:
+        row["radarParameters"] = radar_params
+
+    nav_params = _as_dict(entity.get("navigationParameters"))
+    if nav_params:
+        row["navigationParameters"] = nav_params
+
+    if altitude is not None or lat is not None or lng is not None:
+        row["location"] = {
+            "position": {
+                "latitudeDegrees": lat,
+                "longitudeDegrees": lng,
+                "altitudeHaeMeters": altitude,
             }
-        elif gateway_sn in airport_by_sn and position.get("airportLatitudeDegrees") is not None and position.get("airportLongitudeDegrees") is not None:
-            # 若已有记录但当前 UAV 带机场经纬度，则用机场经纬度覆盖
-            airport_by_sn[gateway_sn]["latitude"] = position.get("airportLatitudeDegrees")
-            airport_by_sn[gateway_sn]["longitude"] = position.get("airportLongitudeDegrees")
+        }
 
-    # 第二轮：为每个出现过的机场 SN 生成机场项，drones 里放完整无人机信息（可从 airports 推导出 drone_to_airport / airport_to_drones）
-    airports: List[Dict[str, Any]] = []
-    for dock_sn, base in airport_by_sn.items():
-        drone_sns = airport_to_drones.get(dock_sn, [])
-        drones_full = [drone_info[sn] for sn in drone_sns if sn in drone_info]
-        airports.append({
-            "dockSn": dock_sn,
-            "entityId": f"dock_{dock_sn}",
-            "name": dock_sn,
-            "latitude": base["latitude"],
-            "longitude": base["longitude"],
-            "height": base["height"],
-            "droneInDock": base["droneInDock"],
-            "temperature": base["temperature"],
-            "humidity": base["humidity"],
-            "drones": drones_full,
-        })
+    if video_address:
+        row["media"] = {"address": video_address}
 
-    return {"airports": airports}
+    return row
 
 
-def parse_entity_status(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    解析实体状态数据。不过滤，发送全部；不维护缓存；relationships 仅作为顶层字段下发。
-    """
+def parse_entities_response(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     try:
         if not isinstance(data, dict):
-            logger.warning("实体状态数据格式错误: 不是字典类型")
+            logger.warning("Entity API payload is not an object")
+            return None
+        if data.get("code") != 0:
+            logger.warning(f"Entity API returned error code={data.get('code')}, message={data.get('message')}")
             return None
 
-        code = data.get("code")
-        if code != 0:
-            logger.warning(f"实体状态API返回错误码: {code}, message: {data.get('message')}")
-            return None
+        data_section = _as_dict(data.get("data"))
+        records = _as_list(data_section.get("records"))
+        entities: List[Dict[str, Any]] = []
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            normalized = _normalize_entity_record(item)
+            if normalized is not None:
+                entities.append(normalized)
 
-        data_section = data.get("data", {})
-        if not isinstance(data_section, dict):
-            logger.warning("实体状态数据格式错误: data字段不是字典类型")
-            return None
-
-        records = data_section.get("records", [])
-        if not isinstance(records, list):
-            logger.warning("实体状态数据格式错误: records字段不是列表类型")
-            return None
-
-        # 构建完整关系（机场由无人机 GATEWAY_SN 推导，无 airport_ 前缀依赖）
-        relationships = _build_relationships(records)
-
-        total = data_section.get("total", 0)
-        current_page = data_section.get("current", 1)
-        total_pages = data_section.get("pages", 1)
-
-        airport_count = len(relationships.get("airports", []))
-        drone_count = sum(len(ap.get("drones") or []) for ap in relationships.get("airports", []))
-        logger.info(
-            f"解析实体状态成功: 共 {total} 个实体, "
-            f"当前页 {current_page}/{total_pages}, "
-            f"本次获取 {len(records)} 个实体, "
-            f"关系: {airport_count} 个机场, {drone_count} 个无人机"
-        )
-
-        # 只返回 entities + relationships，不缓存、不在 cache_info 里重复放 relationships
-        result = {
-            "type": "entity_status",
+        return {
             "timestamp": datetime.now().isoformat(),
-            "total": total,
-            "current_page": current_page,
-            "total_pages": total_pages,
-            "entities": records,
-            "relationships": relationships,
+            "total": int(data_section.get("total") or len(records)),
+            "current_page": int(data_section.get("current") or 1),
+            "total_pages": int(data_section.get("pages") or 1),
+            "entities": entities,
         }
-        return result
+    except Exception as exc:
+        logger.error(f"Failed to parse entity payload: {exc}", exc_info=True)
+        return None
 
-    except Exception as e:
-        logger.error(f"解析实体状态数据失败: {e}", exc_info=True)
+
+def _relationship_record_list(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    data_section = _as_dict(data.get("data"))
+    records = data_section.get("records")
+    if isinstance(records, list):
+        return [item for item in records if isinstance(item, dict)]
+    if isinstance(data_section, list):
+        return [item for item in data_section if isinstance(item, dict)]
+    if isinstance(records, dict):
+        nested = _as_list(records.get("records"))
+        return [item for item in nested if isinstance(item, dict)]
+    return []
+
+
+def _edge_parent_id(record: Dict[str, Any]) -> str:
+    return _safe_str(
+        record.get("parent")
+        or record.get("parentId")
+        or record.get("parentEntityId")
+        or record.get("sourceEntityId")
+        or record.get("sourceId")
+    )
+
+
+def _edge_child_id(record: Dict[str, Any]) -> str:
+    return _safe_str(
+        record.get("child")
+        or record.get("childId")
+        or record.get("childEntityId")
+        or record.get("targetEntityId")
+        or record.get("targetId")
+    )
+
+
+def parse_relationships_response(
+    data: Dict[str, Any],
+    entities_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    try:
+        if not isinstance(data, dict):
+            logger.warning("Relationship API payload is not an object")
+            return None
+        if data.get("code") != 0:
+            logger.warning(
+                f"Relationship API returned error code={data.get('code')}, message={data.get('message')}"
+            )
+            return None
+
+        entity_lookup = entities_by_id or {}
+        node_map: Dict[str, Dict[str, Any]] = {}
+        edges: List[Dict[str, Any]] = []
+
+        for record in _relationship_record_list(data):
+            parent_id = _edge_parent_id(record)
+            child_id = _edge_child_id(record)
+            if not parent_id or not child_id:
+                continue
+            relationship_id = _safe_str(record.get("relationshipId") or record.get("id"))
+            edges.append(
+                {
+                    "parent": parent_id,
+                    "child": child_id,
+                    "relationshipId": relationship_id or f"parent-{parent_id}-and-child-{child_id}",
+                }
+            )
+            for node_id in (parent_id, child_id):
+                if node_id in node_map:
+                    continue
+                entity = entity_lookup.get(node_id, {})
+                node_map[node_id] = {
+                    "id": node_id,
+                    "name": _safe_str(entity.get("name") or node_id),
+                    "assetType": _safe_str(entity.get("assetType")),
+                    "deviceSn": _safe_str(entity.get("deviceSn")),
+                    "virtualTroop": bool(entity.get("virtualTroop") is True),
+                    "disposition": _safe_str(entity.get("disposition")),
+                    "lat": entity.get("lat"),
+                    "lng": entity.get("lng"),
+                }
+
+        return {"nodes": list(node_map.values()), "edges": edges}
+    except Exception as exc:
+        logger.error(f"Failed to parse relationship payload: {exc}", exc_info=True)
         return None

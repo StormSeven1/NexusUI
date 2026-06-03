@@ -2,6 +2,7 @@
 接收器管理器 - 统一管理所有数据接收器
 """
 import asyncio
+import json
 from typing import Dict, List, Optional, Any
 from loguru import logger
 
@@ -14,7 +15,7 @@ from receivers.network import (
     DDS_AVAILABLE
 )
 from parsers import TrackParser
-from parsers.entity_parser import parse_entity_status
+from parsers.entity_parser import parse_entities_response, parse_relationships_response
 from websocket_manager import ws_manager
 
 # DDS接收器（可选）- 使用动态DDS接收器服务
@@ -37,6 +38,8 @@ class ReceiverManager:
         
         # 统计信息
         self._stats: Dict[str, Dict[str, int]] = {}
+        self._latest_entities_result: Optional[Dict[str, Any]] = None
+        self._latest_relationships_result: Optional[Dict[str, Any]] = None
     
     def _init_stats(self, receiver_id: str):
         """初始化统计信息"""
@@ -47,6 +50,70 @@ class ReceiverManager:
                 'failed': 0
             }
     
+    def _entity_lookup(self) -> Dict[str, Dict[str, Any]]:
+        entities = (self._latest_entities_result or {}).get("entities") or []
+        if not isinstance(entities, list):
+            return {}
+        lookup: Dict[str, Dict[str, Any]] = {}
+        for item in entities:
+            if not isinstance(item, dict):
+                continue
+            entity_id = str(item.get("entityId", "")).strip()
+            if entity_id:
+                lookup[entity_id] = item
+        return lookup
+
+    def _emit_unified_entity_status(self, source: str) -> bool:
+        if not self._latest_entities_result:
+            return False
+
+        entities_result = self._latest_entities_result
+        relationships_result = self._latest_relationships_result or {"nodes": [], "edges": []}
+        entities = entities_result.get("entities", [])
+
+        try:
+            from parsers.dds_parser import sync_dock_sn_map_from_relationships
+            from http_api import set_latest_entity_records
+
+            sync_dock_sn_map_from_relationships(relationships_result, self._entity_lookup())
+            set_latest_entity_records(entities)
+        except Exception as exc:
+            logger.error(f"同步统一实体缓存失败: {exc}")
+
+        # for entity in entities:
+        #     if not isinstance(entity, dict):
+        #         continue
+        #     entity_id = str(entity.get("entityId", "")).strip()
+        #     if not entity_id:
+        #         continue
+        #     logger.info(
+        #         f"[entity_status] {entity_id} => "
+        #         f"assetType={entity.get('assetType') or '-'} "
+        #         f"disposition={entity.get('disposition') or '-'} "
+        #         f"virtualTroop={bool(entity.get('virtualTroop') is True)} "
+        #         f"deviceSn={entity.get('deviceSn') or '-'} "
+        #         f"gatewaySn={entity.get('gatewaySn') or '-'} "
+        #         f"videoAddress={entity.get('videoAddress') or '-'}"
+        #     )
+
+        ws_manager.queue_message({
+            "type": "entity_status",
+            "source": source,
+            "timestamp": entities_result.get("timestamp"),
+            "total": entities_result.get("total", 0),
+            "current_page": entities_result.get("current_page", 1),
+            "total_pages": entities_result.get("total_pages", 1),
+            "entities": entities,
+            "relationships": relationships_result,
+        })
+        logger.info(
+            f"统一 entity_status 已发送 [{source}]: "
+            f"{len(entities)} 个实体, "
+            f"{len(relationships_result.get('nodes') or [])} 个节点, "
+            f"{len(relationships_result.get('edges') or [])} 条关系"
+        )
+        return True
+
     def _on_udp_data(self, data: bytes, addr: tuple, receiver_id: str):
         """UDP数据回调"""
         self._init_stats(receiver_id)
@@ -192,13 +259,17 @@ class ReceiverManager:
                         'data': parsed_data
                     })
                 elif data_type == 'multi_track_result':
-                    # 多目标检测框数据
+                    # 多目标检测框消息在后端这里不做重同步，只做转发。
+                    # 前端收到后会继续：
+                    # 1. 按 cameraId 过滤到当前视频对应的相机
+                    # 2. 再按 syncHeader 尽量对齐当前展示的 WebRTC 视频帧
                     ws_manager.queue_message({
                         'type': 'MultiTrackResult',
                         'data': parsed_data
                     })
                 elif data_type == 'single_track_result':
-                    # 单目标检测框数据
+                    # 单目标检测框和多目标检测框走同一条链路：
+                    # 后端负责转发，前端负责帧级同步和覆盖层绘制。
                     ws_manager.queue_message({
                         'type': 'SingleTrackResult',
                         'data': parsed_data
@@ -266,35 +337,39 @@ class ReceiverManager:
         # 检查是否是实体状态数据
         if data_format == 'EntityStatus':
             try:
-                import json
                 json_data = json.loads(data.decode('utf-8'))
-                result = parse_entity_status(json_data)
-                
-                if result:
-                    from parsers.dds_parser import sync_dock_sn_map_from_relationships
-                    sync_dock_sn_map_from_relationships(result.get('relationships'))
-                    # 准备发送到前端的数据（含 entities 全量 + relationships，不重复放在 cache_info 里）
-                    ws_data = {
-                        "type": "entity_status",
-                        "source": poller_id,
-                        "timestamp": result.get('timestamp'),
-                        "total": result.get('total', 0),
-                        "current_page": result.get('current_page', 1),
-                        "total_pages": result.get('total_pages', 1),
-                        "entities": result.get('entities', []),
-                        "relationships": result.get('relationships', {}),
-                    }
-                    # 通过WebSocket发送
-                    ws_manager.queue_message(ws_data)
+                result = parse_entities_response(json_data)
+                if not result:
+                    self._stats[poller_id]['failed'] += 1
+                    return
+
+                self._latest_entities_result = result
+                if self._latest_relationships_result is None:
+                    self._latest_relationships_result = {"nodes": [], "edges": []}
+                if self._emit_unified_entity_status(poller_id):
                     self._stats[poller_id]['parsed'] += 1
-                    rel = result.get('relationships') or {}
-                    airports = rel.get('airports') or []
-                    drone_count = sum(len(ap.get('drones') or []) for ap in airports)
-                    logger.info(f"实体状态数据已发送 [{poller_id}]: {drone_count} 个无人机")
                 else:
                     self._stats[poller_id]['failed'] += 1
             except Exception as e:
                 logger.error(f"处理实体状态数据失败 [{poller_id}]: {e}")
+                self._stats[poller_id]['failed'] += 1
+            return
+
+        if data_format == 'EntityRelationships':
+            try:
+                json_data = json.loads(data.decode('utf-8'))
+                result = parse_relationships_response(json_data, self._entity_lookup())
+                if not result:
+                    self._stats[poller_id]['failed'] += 1
+                    return
+
+                self._latest_relationships_result = result
+                if self._emit_unified_entity_status(poller_id):
+                    self._stats[poller_id]['parsed'] += 1
+                else:
+                    self._stats[poller_id]['parsed'] += 1
+            except Exception as e:
+                logger.error(f"处理实体关系数据失败 [{poller_id}]: {e}")
                 self._stats[poller_id]['failed'] += 1
             return
         

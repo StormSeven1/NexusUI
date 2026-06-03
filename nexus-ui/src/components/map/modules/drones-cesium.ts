@@ -2,8 +2,13 @@
  * 三维无人机渲染模块（仅三维，和二维层独立）。
  *
  * ========================= 文件头流程（先看这里） =========================
+ * Current source of truth:
+ * - there is no active `useDroneStore`
+ * - 3D rendering reads normalized drone rows from `asset-store`
+ * - shared selectors imported from `drones-maplibre` keep 2D and 3D behavior aligned
+ *
  * 1) 输入来源：
- *    useDroneStore -> mergedDronePose / latestPayloadForFov
+ *    asset-store -> mergedDronePose / latestPayloadForFov
  *    每帧拿到无人机位置(origin) + 相机姿态(yaw/pitch) + 视场(hfov/vfov) + maxRange
  *
  * 2) 先算四个角射线：
@@ -46,15 +51,23 @@
  *   - maxFovRange（默认 3000m）
  */
 
-import { useDroneStore } from "@/stores/drone-store";
 import { useAssetStore } from "@/stores/asset-store";
 import type { AssetData } from "@/stores/asset-store";
 import { useAppStore } from "@/stores/app-store";
 import { getDroneMapRenderingConfig } from "@/lib/map-app-config";
 import {
+  collectDroneRenderablesFromAssets,
   mergedDronePose,
   latestPayloadForFov,
 } from "@/components/map/modules/drones-maplibre";
+
+/**
+ * 3D reuse strategy:
+ * - do not parse websocket payloads again in the Cesium module
+ * - reuse the 2D adapter helpers so freshness, pose selection, and FOV source choice
+ *   stay consistent across both map engines
+ * - keep this file focused on Cesium geometry/entity lifecycle concerns
+ */
 
 type CesiumModule = typeof import("cesium");
 type CesiumViewer = import("cesium").Viewer;
@@ -562,7 +575,7 @@ export class DronesCesium {
     if (this.installed) return;
     this.installed = true;
     this.schedule();
-    this.unsubDrone = useDroneStore.subscribe(() => this.schedule());
+    this.unsubDrone = useAssetStore.subscribe(() => this.schedule());
     this.unsubLayer = useAppStore.subscribe(() => this.schedule());
   }
 
@@ -601,8 +614,9 @@ export class DronesCesium {
     const C = this.opts.getCesium();
     if (!v || !C || v.isDestroyed()) return;
 
-    const drones = useDroneStore.getState().drones;
-    const assets: AssetData[] = useAssetStore.getState().assets;
+    const assetState = useAssetStore.getState();
+    const drones = collectDroneRenderablesFromAssets(assetState.assets, assetState.relationships);
+    const assets: AssetData[] = assetState.assets;
     const cfg = getDroneMapRenderingConfig();
     const visible = this.isLayerOn();
     const seen = new Set<string>();
@@ -659,60 +673,11 @@ export class DronesCesium {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (set.model.label as any).text = new C.ConstantProperty(tele.displayName || sn);
       }
-      const frustum = updateDroneEntitySet(C, set, {
+      updateDroneEntitySet(C, set, {
         lat: pose.lat, lng: pose.lng, altM,
         headingDeg: pose.headingDeg -90, yawDeg, pitchDeg: normalizedPitchDeg,
         hfovDeg, vfovDeg, maxRangeM,
       });
-      const nowMs = Date.now();
-      if (nowMs - (this.lastFrustumLogAt.get(sn) ?? 0) >= 1000) {
-        this.lastFrustumLogAt.set(sn, nowMs);
-        const toLla = (p: Cartesian3) => {
-          const c = C.Cartographic.fromCartesian(p);
-          return {
-            经度: C.Math.toDegrees(c.longitude),
-            纬度: C.Math.toDegrees(c.latitude),
-            高度M: c.height,
-          };
-        };
-        const rawHfovSource = Number.isFinite(rawHfov) && rawHfov > 0 ? "载荷字段" : `默认值${DRONE_DEFAULT_HFOV_DEG}`;
-        const rawVfovSource = Number.isFinite(rawVfov) && rawVfov > 0 ? "载荷字段" : `默认值${DRONE_DEFAULT_VFOV_DEG}`;
-        const yawSource = Number.isFinite(gimbalYaw)
-          ? "gimbal_yaw/gimbal.yaw/attitude_head"
-          : "pose.headingDeg";
-        const pitchSource = Number.isFinite(gimbalPitch)
-          ? "gimbal_pitch/gimbal.pitch"
-          : Number.isFinite(attitudePitch)
-            ? "attitude_pitch"
-            : `默认值${DRONE_DEFAULT_PITCH_DEG}`;
-        console.log("[三维无人机四棱锥参数]", {
-          无人机SN: sn,
-          时间: new Date().toISOString(),
-          图层可见: visible,
-          位姿来源: raw ? "latestPayloadForFov" : "none",
-          模型朝向Deg: pose.headingDeg - 90,
-          相机水平角Deg: yawDeg,
-          相机水平角来源: yawSource,
-          相机俯仰角Deg_原始: pitchDeg,
-          相机俯仰角Deg_参与绘制: normalizedPitchDeg,
-          相机俯仰角来源: pitchSource,
-          水平视场角Deg: hfovDeg,
-          水平视场角来源: rawHfovSource,
-          垂直视场角Deg: vfovDeg,
-          垂直视场角来源: rawVfovSource,
-          最大距离M: maxRangeM,
-          构面分支: frustum.caseName,
-          原点: { 经度: pose.lng, 纬度: pose.lat, 高度M: altM },
-          中心射线命中距离M: frustum.centerHitDistanceM,
-          角射线: frustum.rays,
-          角点坐标: {
-            tl: toLla(frustum.corners[0]!),
-            tr: toLla(frustum.corners[1]!),
-            br: toLla(frustum.corners[2]!),
-            bl: toLla(frustum.corners[3]!),
-          },
-        });
-      }
       set.model.show = visible;
       set.frustumGroundCap.show = visible;
       set.frustumVerticalClosure.show = visible;

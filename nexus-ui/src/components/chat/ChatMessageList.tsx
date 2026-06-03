@@ -100,7 +100,7 @@ export function ChatMessageList({
   onHintClick?: (text: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const [mounted, setMounted] = useState(false);
+  const [mounted] = useState(true);
   const disposalBlocks = useDisposalPlanStore((s) => s.blocks);
   const hasContent = messages.length > 0 || disposalBlocks.length > 0;
 
@@ -125,10 +125,6 @@ export function ChatMessageList({
     items.sort((a, b) => a.order - b.order);
     return items;
   }, [messages, disposalBlocks]);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });

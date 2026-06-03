@@ -23,7 +23,6 @@
  */
 
 import { useAssetStore } from "@/stores/asset-store";
-import { useDroneStore } from "@/stores/drone-store";
 import type {
   DisposalInputParams,
   MappedDisposalScheme,
@@ -136,7 +135,7 @@ function groupKeyForMappedScheme(mapped: MappedDisposalScheme, fallbackTargetId:
  * 查找路径：
  *   1. asset-store.assets 按 id 精确匹配
  *   2. asset-store.assets 按 properties.entity_id 匹配（处置方案常用 entityId 如 uav-101）
- *   3. drone-store.entityIdToDeviceSn 映射 → 再按 deviceSn 查 asset-store
+ *   3. asset-store.entityIdToDeviceSn 映射 → 再按 deviceSn 查 asset-store
  * 找不到则回退到 fallbackName 或原始 ID。
  */
 function resolveDeviceNameById(deviceId: string, fallbackName: string): string {
@@ -159,8 +158,8 @@ function resolveDeviceNameById(deviceId: string, fallbackName: string): string {
     }
   }
 
-  // 3. 通过 drone-store entityIdToDeviceSn 映射
-  const entityMap = useDroneStore.getState().entityIdToDeviceSn as Record<string, string>;
+  // 3. 通过 asset-store entityIdToDeviceSn 映射
+  const entityMap = useAssetStore.getState().entityIdToDeviceSn as Record<string, string>;
   let sn: string | undefined = entityMap[sid];
   if (!sn) {
     for (const [eid, mappedSn] of Object.entries(entityMap)) {
@@ -171,7 +170,12 @@ function resolveDeviceNameById(deviceId: string, fallbackName: string): string {
     }
   }
   if (sn) {
-    const bySn = assets.find((x) => x.id === sn);
+    const bySn = assets.find((x) => {
+      if (x.id === sn) return true;
+      const p = x.properties && typeof x.properties === "object" ? (x.properties as Record<string, unknown>) : null;
+      const deviceSn = p?.device_sn ?? p?.deviceSn;
+      return typeof deviceSn === "string" && deviceSn === sn;
+    });
     if (bySn?.name) return bySn.name;
   }
 

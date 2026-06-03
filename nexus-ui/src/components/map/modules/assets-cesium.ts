@@ -354,7 +354,6 @@ export class AssetsCesium {
       const props = raw?.properties as Record<string, unknown> | null | undefined;
       const fovObj = props?.fov as Record<string, unknown> | undefined;
       const originPtz = props?.originPtz as Record<string, unknown> | undefined;
-      const posObj = props?.position as Record<string, unknown> | undefined;
       // const modelAltM = Number(props?.altitude ?? props?.alt ?? posObj?.altitude ?? posObj?.alt ?? 0);
       const modelAltM = 0;
       /* 视场起点：基座 + 传感器偏移（镜头/天线离基座距离） */

@@ -13,7 +13,7 @@
  * 【连线 key】`assetId::targetId`，同一对资产-目标只保留一条线
  *
  * 【坐标查找优先级】
- *   - 资产端：drone-store → asset-store → TDOA 设备 → 激光设备
+ *   - 资产端：asset-store → TDOA 设备 → 激光设备
  *   - 目标端：track-store 渲染层 → 蓝方坐标回退
  *
  * 【清理机制】
@@ -24,7 +24,6 @@
 
 import type maplibregl from "maplibre-gl";
 import { getMapModules } from "./map-module-registry";
-import { useDroneStore } from "@/stores/drone-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
 import type { Track } from "@/lib/map-entity-model";
@@ -54,13 +53,8 @@ function connKey(c: AssetTargetConnection): string {
 /* ── 坐标查找 ── */
 
 function resolveAssetCoords(entityId: string): { lng: number; lat: number } | null {
-  const droneStore = useDroneStore.getState();
-  const sn = droneStore.entityIdToDeviceSn[entityId] ?? entityId;
-  const drone = droneStore.drones[sn];
-  if (drone && drone.lat != null && drone.lng != null) {
-    return { lng: drone.lng, lat: drone.lat };
-  }
-  const asset = useAssetStore.getState().assets.find((a) => a.id === entityId);
+  const assetState = useAssetStore.getState();
+  const asset = assetState.assets.find((a) => a.id === entityId);
   if (asset) return { lng: asset.lng, lat: asset.lat };
   const mods = getMapModules();
   if (mods?.tdoa) {
@@ -119,7 +113,7 @@ function resolveTargetCoords(conn: AssetTargetConnection): { lng: number; lat: n
 
 /* ── 状态 ── */
 
-let activeConnections = new Map<string, AssetTargetConnection>();
+const activeConnections = new Map<string, AssetTargetConnection>();
 let animTimer: ReturnType<typeof setInterval> | null = null;
 let animPhase = 0;
 

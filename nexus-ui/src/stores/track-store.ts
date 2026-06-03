@@ -30,7 +30,8 @@
 import { create } from "zustand";
 import type { Track } from "@/lib/map-entity-model";
 import { maxStoredTrailPointsPerTrack } from "@/lib/ws-track-normalize";
-import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
+import { getTrackRenderingConfig } from "@/lib/map-app-config";
+import { useAlertStore } from "@/stores/alert-store";
 import { useDisposedStore } from "@/stores/disposed-store";
 
 /** 模块级渲染缓存 — 避免每次调用从 tracks 数组重建 Map */
@@ -41,36 +42,7 @@ export function getRenderCache(): ReadonlyMap<string, Track> {
   return _renderCache;
 }
 
-function compactTrackDebug(t: Track) {
-  return {
-    showID: t.showID,
-    id: t.id,
-    trackId: t.trackId,
-    uniqueID: t.uniqueID,
-    type: t.type,
-    isAirTrack: t.isAirTrack === true,
-    lat: t.lat,
-    lng: t.lng,
-    lastUpdate: t.lastUpdate,
-  };
-}
-
-function dumpTrackAlarmMatchDebug(label: string, alarmTrackIds: Set<string>, incoming: Track[] = []): void {
-  if (typeof console === "undefined") return;
-  const renderTracks = [..._renderCache.values()].map(compactTrackDebug);
-  const shadowTracks = [...useTrackStore.getState().shadowTracks.values()].map(compactTrackDebug);
-  const incomingTracks = incoming.map(compactTrackDebug);
-  const alertDebug = getCurrentAlertDebugSnapshot();
-  console.groupCollapsed(
-    `[track-alarm-match] ${label} alarmKeys=${alarmTrackIds.size} alerts=${alertDebug.alerts.length} render=${renderTracks.length} shadow=${shadowTracks.length} incoming=${incomingTracks.length}`,
-  );
-  console.log("alarmTrackIds", [...alarmTrackIds]);
-  console.table(alertDebug.alerts);
-  console.table(incomingTracks);
-  console.table(renderTracks);
-  console.table(shadowTracks);
-  console.groupEnd();
-}
+function dumpTrackAlarmMatchDebug(): void {}
 
 interface TrackState {
   /** 渲染层：只存匹配告警的航迹（含 historyTrail） */
@@ -250,41 +222,9 @@ export const useTrackStore = create<TrackState>((set, get) => ({
 let _alertStoreGetter: (() => Set<string>) | null = null;
 function getCurrentAlarmTrackIds(): Set<string> {
   if (!_alertStoreGetter) {
-    try {
-      const mod = require("@/stores/alert-store") as {
-        useAlertStore: { getState: () => { alarmTrackIds: Set<string> } };
-      };
-      _alertStoreGetter = () => mod.useAlertStore.getState().alarmTrackIds;
-    } catch {
-      return new Set<string>();
-    }
+    _alertStoreGetter = () => useAlertStore.getState().alarmTrackIds;
   }
   return _alertStoreGetter();
-}
-
-function getCurrentAlertDebugSnapshot(): {
-  alerts: Array<{ id: string; trackId?: string; targetType?: string | number; type?: string; alarmType?: string }>;
-} {
-  try {
-    const mod = require("@/stores/alert-store") as {
-      useAlertStore: {
-        getState: () => {
-          alerts: Array<{ id: string; trackId?: string; targetType?: string | number; type?: string; alarmType?: string }>;
-        };
-      };
-    };
-    return {
-      alerts: mod.useAlertStore.getState().alerts.map((a) => ({
-        id: a.id,
-        trackId: a.trackId,
-        targetType: a.targetType,
-        type: a.type,
-        alarmType: a.alarmType,
-      })),
-    };
-  } catch {
-    return { alerts: [] };
-  }
 }
 
 /**

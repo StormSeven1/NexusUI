@@ -454,21 +454,65 @@ def _parse_drone_status(dds_object) -> Optional[Dict]:
 _drone_dock_sn_map: Dict[str, str] = {}
 
 
-def sync_dock_sn_map_from_relationships(relationships: Optional[Dict[str, Any]]) -> None:
-    """HTTP entity_status 解析后更新无人机→机场映射，供 drone_task 弹药日志打印机场 SN。"""
+def sync_dock_sn_map_from_relationships(
+    relationships: Optional[Dict[str, Any]],
+    entities_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> None:
+    """同步 drone entityId/deviceSn -> airport dockSn/entityId 映射。"""
     if not relationships:
         return
-    for ap in relationships.get('airports') or []:
-        dock_sn = str(ap.get('dockSn') or ap.get('dock_sn') or '').strip()
+
+    entities = entities_by_id or {}
+
+    airports = relationships.get('airports') or []
+    if isinstance(airports, list) and airports:
+        for ap in airports:
+            dock_sn = str(ap.get('dockSn') or ap.get('dock_sn') or '').strip()
+            if not dock_sn:
+                continue
+            for dr in ap.get('drones') or []:
+                device_sn = str(dr.get('deviceSn') or dr.get('device_sn') or '').strip()
+                entity_id = str(dr.get('entityId') or dr.get('entity_id') or '').strip()
+                if device_sn:
+                    _drone_dock_sn_map[device_sn] = dock_sn
+                if entity_id:
+                    _drone_dock_sn_map[entity_id] = dock_sn
+        return
+
+    nodes = relationships.get('nodes') or []
+    edges = relationships.get('edges') or []
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        return
+
+    node_map: Dict[str, Dict[str, Any]] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_id = str(node.get('id') or '').strip()
+        if node_id:
+            node_map[node_id] = node
+
+    def airport_sn_for_node(node_id: str) -> str:
+        row = entities.get(node_id) or node_map.get(node_id) or {}
+        return str(row.get('deviceSn') or row.get('dockSn') or row.get('gatewaySn') or node_id).strip()
+
+    def drone_keys_for_node(node_id: str) -> List[str]:
+        row = entities.get(node_id) or node_map.get(node_id) or {}
+        keys = [node_id, str(row.get('deviceSn') or row.get('droneSn') or '').strip()]
+        return [key for key in keys if key]
+
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        parent_id = str(edge.get('parent') or edge.get('parentId') or '').strip()
+        child_id = str(edge.get('child') or edge.get('childId') or '').strip()
+        if not parent_id or not child_id:
+            continue
+        dock_sn = airport_sn_for_node(parent_id)
         if not dock_sn:
             continue
-        for dr in ap.get('drones') or []:
-            device_sn = str(dr.get('deviceSn') or dr.get('device_sn') or '').strip()
-            entity_id = str(dr.get('entityId') or dr.get('entity_id') or '').strip()
-            if device_sn:
-                _drone_dock_sn_map[device_sn] = dock_sn
-            if entity_id:
-                _drone_dock_sn_map[entity_id] = dock_sn
+        for key in drone_keys_for_node(child_id):
+            _drone_dock_sn_map[key] = dock_sn
 
 
 def _resolve_dock_sn_for_task(entity_id: str) -> str:
@@ -839,6 +883,8 @@ def _parse_multi_track_result(dds_object) -> Optional[Dict]:
                 }
                 result['boxes'].append(box_data)
         
+        # if(result['cameraId'] == 'camera_004'):
+            # print("multi_track_result",result['cameraId'],result['boxCount'],)
         return result
     except Exception as e:
         logger.error(f"解析多目标检测框失败: {e}")

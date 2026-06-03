@@ -275,21 +275,6 @@ let _fovLineColor = "#9333ea";
 let _fovLineDashVirtual: number[] = [6, 4];
 let _fovLineDashReal: number[] = [3, 3];
 
-const FOV_LINE_COLOR_BY_ASSET: maplibregl.ExpressionSpecification = [
-  "match",
-  ["get", "assetType"],
-  "camera",
-  "#9333ea",
-  "#9333ea",
-];
-
-const FOV_LINE_DASH_BY_VIRTUAL: maplibregl.ExpressionSpecification = [
-  "case",
-  ["==", ["get", "isVirtual"], 1],
-  ["literal", [6, 4]],
-  ["literal", [3, 3]],
-];
-
 export type OptoelectronicFovVisibility = {
   fovFillVisible: boolean;
   fovLineVisible: boolean;

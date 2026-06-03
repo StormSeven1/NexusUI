@@ -27,8 +27,28 @@
  *
  *   5. 超时: 无独立超时机制，依赖 drone-store 的 entityReady 状态
  */
+/**
+ * Architecture note:
+ * - This module no longer reads from a dedicated `drone-store`.
+ * - Live drone rendering is derived from `asset-store` plus the relationship graph.
+ * - The adapter helpers in this file intentionally reshape generic assets into
+ *   a drone-oriented view model so the rendering layer stays stable.
+ */
+/**
+ * Current authoritative overview:
+ * - this module renders both live drones and static drone sites in 2D
+ * - it reads `asset-store.assets` and `asset-store.relationships`
+ * - it derives `DroneRenderable` objects instead of reparsing websocket payloads
+ * - it emits GeoJSON for:
+ *   - live drone icon + label
+ *   - planned route
+ *   - history trail
+ *   - FOV sector
+ *   - battery badge anchor
+ *   - ammo badge anchor
+ */
 import type maplibregl from "maplibre-gl";
-import { parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
+import { isVirtualFromProperties, parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
 import type { AssetData } from "@/stores/asset-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
@@ -61,13 +81,44 @@ import {
   type AppConfigSectorBundle,
 } from "@/lib/map-app-config";
 import { HIDE_RENDER_DRONE_SNS } from "@/lib/map-display-filters";
-import type { DroneTelemetry } from "@/stores/drone-store";
-import { useDroneStore, readMunitionQuantityFromPayload } from "@/stores/drone-store";
-import { useAssetStore } from "@/stores/asset-store";
+import { readMunitionQuantityFromPayload } from "@/lib/drone-runtime-utils";
+import { useAssetStore, type AssetRelationshipGraph } from "@/stores/asset-store";
 import type { ForceDisposition } from "@/lib/theme-colors";
+
+/**
+ * DroneRenderable is the map-facing runtime view model.
+ *
+ * It intentionally separates:
+ * - `status`: lower-rate status payload
+ * - `highFreq`: high-rate pose payload
+ * - `flightPath`: planned route payload
+ *
+ * That separation lets the renderer choose the freshest source for each visual concern
+ * without repeatedly reparsing raw asset properties in every draw step.
+ */
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+}
+
+export interface DroneRenderable {
+  sn: string;
+  displayName: string;
+  virtualTroop: boolean;
+  disposition?: ForceDisposition;
+  status: Record<string, unknown> | null;
+  flightPath: Record<string, unknown> | null;
+  highFreq: Record<string, unknown> | null;
+  lat: number | null;
+  lng: number | null;
+  headingDeg: number | null;
+  updatedAt: string;
+  highFreqReceivedAt: number | null;
+  statusReceivedAt: number | null;
+  lastPacketAtMs: number | null;
+  historyTrail: Array<[number, number]>;
+  munitionQuantity: number | null;
+  batteryPercent: number | null;
 }
 
 /** 从 asset-store 查找无人机 disposition，默认 friendly */
@@ -85,6 +136,83 @@ function rootVisibilityField(vis: Record<string, unknown> | null | undefined, ke
 
 function isoNow() {
   return new Date().toISOString();
+}
+
+function readHistoryTrail(raw: unknown): Array<[number, number]> {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) =>
+      Array.isArray(item) && item.length >= 2 && Number.isFinite(Number(item[0])) && Number.isFinite(Number(item[1]))
+        ? [Number(item[0]), Number(item[1])] as [number, number]
+        : null,
+    )
+    .filter((item): item is [number, number] => item != null);
+}
+
+function findDockParentByDrone(
+  droneId: string,
+  relationships: AssetRelationshipGraph | null,
+): string | null {
+  for (const edge of relationships?.edges ?? []) {
+    if (edge.child === droneId) return edge.parent;
+  }
+  return null;
+}
+
+function dockBatteryPercentFromAsset(asset: AssetData | undefined): number | null {
+  const props = asRecord(asset?.properties);
+  const dock = asRecord(props?.dock);
+  const direct = Number(props?.dock_battery_percent ?? dock?.battery_capacity_percent);
+  return Number.isFinite(direct) ? direct : null;
+}
+
+/**
+ * Convert normalized asset rows into the compact structure consumed by drone renderers.
+ * This keeps map code insulated from raw WS payload shape and allows 2D/3D to share
+ * the same interpretation of freshness, headings, history trail, and payload metadata.
+ */
+export function collectDroneRenderablesFromAssets(
+  assets: AssetData[],
+  relationships: AssetRelationshipGraph | null,
+): Record<string, DroneRenderable> {
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+  const out: Record<string, DroneRenderable> = {};
+  for (const asset of assets) {
+    if (asset.asset_type !== "drone") continue;
+    const props = asRecord(asset.properties) ?? {};
+    const dockId = findDockParentByDrone(asset.id, relationships);
+    out[asset.id] = {
+      sn: asset.id,
+      displayName: asset.name || asset.id,
+      virtualTroop: isVirtualFromProperties(props),
+      disposition: asset.disposition,
+      status: asRecord(props.drone_status),
+      flightPath: asRecord(props.drone_flight_path),
+      highFreq: asRecord(props.high_freq),
+      lat: Number.isFinite(asset.lat) ? asset.lat : null,
+      lng: Number.isFinite(asset.lng) ? asset.lng : null,
+      headingDeg: Number.isFinite(Number(asset.heading)) ? Number(asset.heading) : null,
+      updatedAt: asset.updated_at ?? isoNow(),
+      highFreqReceivedAt: Number.isFinite(Number(props.high_freq_received_at_ms)) ? Number(props.high_freq_received_at_ms) : null,
+      statusReceivedAt: Number.isFinite(Number(props.status_received_at_ms)) ? Number(props.status_received_at_ms) : null,
+      lastPacketAtMs: Number.isFinite(Number(props.last_packet_at_ms)) ? Number(props.last_packet_at_ms) : null,
+      historyTrail: readHistoryTrail(props.history_trail),
+      munitionQuantity: Number.isFinite(Number(props.munition_quantity)) ? Number(props.munition_quantity) : null,
+      batteryPercent: dockBatteryPercentFromAsset(dockId ? assetById.get(dockId) : undefined),
+    };
+  }
+  return out;
+}
+
+export function isDroneRenderableFresh(tele: DroneRenderable): boolean {
+  /**
+   * Freshness gates live-drone visibility.
+   * We do not immediately delete stale drones from the store; instead the render layer
+   * stops drawing them once the latest packet is older than the configured timeout.
+   */
+  if (tele.lastPacketAtMs == null) return false;
+  const lim = Math.max(1, getDroneMapRenderingConfig().timeoutSeconds) * 1000;
+  return Date.now() - tele.lastPacketAtMs <= lim;
 }
 
 /** 与 `cameras` / `airports` 同形；仅用于本文件的 `drones.devices` 解析（不依赖光电模块） */
@@ -233,7 +361,8 @@ export function buildStaticDroneSitesGeoJSON(
   assetList: Asset[],
   accent: AssetDispositionIconAccent | null,
 ): GeoJSON.FeatureCollection {
-  const liveDrones = useDroneStore.getState().drones;
+  const assetState = useAssetStore.getState();
+  const liveDrones = collectDroneRenderablesFromAssets(assetState.assets, assetState.relationships);
   const features: GeoJSON.Feature[] = [];
   for (const a of assetList) {
     if (a.type !== "drone") continue;
@@ -241,7 +370,7 @@ export function buildStaticDroneSitesGeoJSON(
     if (a.centerIconVisible === false) continue;
     // 有实时遥测数据的无人机由实时层渲染，跳过静态图标
     const live = liveDrones[a.id];
-    if (live && live.lat != null && live.lng != null) continue;
+    if (live && mergedDronePose(live)) continue;
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [a.lng, a.lat] },
@@ -265,7 +394,7 @@ export function buildStaticDroneSitesGeoJSON(
     if (a.nameLabelVisible === false || !String(a.name ?? "").trim()) continue;
     // 有实时遥测数据的无人机由实时层渲染标签，跳过静态标签
     const liveLbl = liveDrones[a.id];
-    if (liveLbl && liveLbl.lat != null && liveLbl.lng != null) continue;
+    if (liveLbl && mergedDronePose(liveLbl)) continue;
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
     /* 友方无人机站名：只认 `drones.label.fontColor`（与 `applyDronesSectorLabelStyle` 一致），不用 `friendlyMapColor` 染字 */
@@ -314,7 +443,7 @@ function calculateCameraRange(
   return Math.min(Math.max(distance, 100), maxRangeM);
 }
 
-export function latestPayloadForFov(tele: DroneTelemetry): Record<string, unknown> | null {
+export function latestPayloadForFov(tele: DroneRenderable): Record<string, unknown> | null {
   const cfg = getDroneMapRenderingConfig();
   const now = Date.now();
   if (
@@ -328,7 +457,7 @@ export function latestPayloadForFov(tele: DroneTelemetry): Record<string, unknow
   return null;
 }
 
-function fovFeatureForDrone(tele: DroneTelemetry): GeoJSON.Feature<GeoJSON.Polygon> | null {
+function fovFeatureForDrone(tele: DroneRenderable): GeoJSON.Feature<GeoJSON.Polygon> | null {
   const cfg = getDroneMapRenderingConfig();
   if (!cfg.showFovSector) return null;
   const pose = mergedDronePose(tele);
@@ -446,7 +575,7 @@ function waypointsLineString(
   };
 }
 
-function trailLineString(tele: DroneTelemetry): GeoJSON.Feature<GeoJSON.LineString> | null {
+function trailLineString(tele: DroneRenderable): GeoJSON.Feature<GeoJSON.LineString> | null {
   const cfg = getDroneMapRenderingConfig();
   if (!cfg.showHistoryTrail || tele.historyTrail.length < 2) return null;
   return {
@@ -457,25 +586,40 @@ function trailLineString(tele: DroneTelemetry): GeoJSON.Feature<GeoJSON.LineStri
 }
 
 /** 与 V2 一致：在 `highFreqPositionMaxAgeMs` 内优先高频位置 */
-export function mergedDronePose(t: DroneTelemetry): {
+export function mergedDronePose(t: DroneRenderable): {
   lat: number;
   lng: number;
   headingDeg: number;
 } | null {
+  /**
+   * Pose selection policy:
+   * - use fresh high-frequency coordinates first for smooth motion
+   * - otherwise fall back to status payload coordinates
+   * - otherwise fall back to the normalized asset row coordinates
+   *
+   * This keeps the map stable when packet cadence fluctuates, while still taking
+   * advantage of high-rate telemetry whenever it is available.
+   */
   const cfg = getDroneMapRenderingConfig();
   const now = Date.now();
   const hf = t.highFreq;
   const st = t.status;
-
-  const hfFresh = t.highFreqReceivedAt != null && now - t.highFreqReceivedAt < cfg.highFreqPositionMaxAgeMs;
-  if (hf && hfFresh) {
+  const hfFresh =
+    hf != null &&
+    t.highFreqReceivedAt != null &&
+    now - t.highFreqReceivedAt <= cfg.highFreqPositionMaxAgeMs;
+  if (hfFresh) {
     const p = readLatLng(hf);
     if (p) {
       const h = readHeading(hf);
       return { ...p, headingDeg: h ?? t.headingDeg ?? 0 };
     }
   }
-  if (st) {
+  const statusFreshWindowMs = Math.max(1000, Math.max(cfg.highFreqPositionMaxAgeMs, cfg.timeoutSeconds * 1000));
+  const statusFresh =
+    st != null &&
+    (t.statusReceivedAt == null || now - t.statusReceivedAt <= statusFreshWindowMs);
+  if (statusFresh) {
     const p = readLatLng(st);
     if (p) {
       const h = readHeading(st);
@@ -573,7 +717,7 @@ function registerAmmoBadgeImages(map: maplibregl.Map) {
   }
 }
 
-function munitionQtyForRender(tele: DroneTelemetry): number | null {
+function munitionQtyForRender(tele: DroneRenderable): number | null {
   if (
     typeof tele.munitionQuantity === "number" &&
     Number.isFinite(tele.munitionQuantity) &&
@@ -584,7 +728,7 @@ function munitionQtyForRender(tele: DroneTelemetry): number | null {
   return readMunitionQuantityFromPayload(tele.flightPath);
 }
 
-function syncAmmoBadgeImages(map: maplibregl.Map, drones: Record<string, DroneTelemetry>) {
+function syncAmmoBadgeImages(map: maplibregl.Map, drones: Record<string, DroneRenderable>) {
   for (const tele of Object.values(drones)) {
     const q = munitionQtyForRender(tele);
     if (q == null) continue;
@@ -592,10 +736,23 @@ function syncAmmoBadgeImages(map: maplibregl.Map, drones: Record<string, DroneTe
   }
 }
 
-function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.FeatureCollection {
+/**
+ * Build the full live-drone feature collection for the 2D source.
+ *
+ * A single collection carries several visual layers worth of geometry:
+ * - route polylines
+ * - history trails
+ * - FOV sectors
+ * - drone points / labels
+ * - battery badge anchors
+ * - ammo badge anchors
+ *
+ * Keeping them in one pass ensures all derived features use the same resolved pose,
+ * freshness decision, and disposition/color context.
+ */
+function buildDroneGeoJSON(drones: Record<string, DroneRenderable>): GeoJSON.FeatureCollection {
   const cfg = getDroneMapRenderingConfig();
   const features: GeoJSON.Feature[] = [];
-  const storeState = useDroneStore.getState();
   for (const [, tele] of Object.entries(drones)) {
     if (HIDE_RENDER_DRONE_SNS.has(tele.sn)) continue;
     /* 航线不依赖无人机自身坐标，先于 pose 检查渲染，避免 drone_status 未到时航线迟迟不画 */
@@ -614,7 +771,7 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
     const fov = fovFeatureForDrone(tele);
     if (fov) features.push(fov);
 
-    const disp = droneDispositionFromAssetStore(tele.sn);
+    const disp = tele.disposition ?? droneDispositionFromAssetStore(tele.sn);
     features.push({
       type: "Feature",
       properties: {
@@ -643,9 +800,7 @@ function buildDroneGeoJSON(drones: Record<string, DroneTelemetry>): GeoJSON.Feat
     }
 
     // 电量进度条
-    const dockSn = storeState.droneToAirport[tele.sn];
-    const dock = dockSn ? storeState.docks[dockSn] : null;
-    const bp = dock?.batteryPercent;
+    const bp = tele.batteryPercent;
     if (typeof bp === "number" && Number.isFinite(bp)) {
       const step = Math.round(Math.max(0, Math.min(100, bp)) / 5) * 5;
       features.push({
@@ -971,7 +1126,7 @@ export class DronesMaplibre {
 
     this.applyPaintFromConfig();
     this.refreshFromStore();
-    this.unsub = useDroneStore.subscribe(() => {
+    this.unsub = useAssetStore.subscribe(() => {
       this.scheduleRender();
     });
 
@@ -985,7 +1140,7 @@ export class DronesMaplibre {
 
     registerAmmoBadgeImages(m);
 
-    const layout = {
+    const layout: maplibregl.SymbolLayerSpecification["layout"] = {
       "icon-image": ["concat", DRONE_AMMO_BADGE_PREFIX, ["to-string", ["get", "ammoCount"]]],
       "icon-size": 0.72,
       "icon-offset": [8, 3],
@@ -1064,7 +1219,8 @@ export class DronesMaplibre {
       const baseRadiusM = 50;
       const innerRadius = Math.max(20, baseRadiusM * 0.55);
       const outerRadius = Math.max(innerRadius + 10, baseRadiusM * pulseScale);
-      const drones = useDroneStore.getState().drones;
+      const assetState = useAssetStore.getState();
+      const drones = collectDroneRenderablesFromAssets(assetState.assets, assetState.relationships);
       const cfg = getDroneMapRenderingConfig();
       const features: GeoJSON.Feature[] = [];
       for (const sn of Object.keys(drones)) {
@@ -1105,16 +1261,7 @@ export class DronesMaplibre {
     if (this.timeoutTimer) clearInterval(this.timeoutTimer);
     const tickMs = Math.max(500, getDroneMapRenderingConfig().timeoutCheckIntervalMs);
     this.timeoutTimer = setInterval(() => {
-      const cfg = getDroneMapRenderingConfig();
-      const lim = Math.max(1, cfg.timeoutSeconds) * 1000;
-      const now = Date.now();
-      const state = useDroneStore.getState();
-      for (const sn of Object.keys(state.drones)) {
-        const d = state.drones[sn];
-        if (d && now - d.lastPacketAtMs > lim) {
-          state.removeDrone(sn);
-        }
-      }
+      this.scheduleRender();
     }, tickMs);
   }
 
@@ -1128,7 +1275,8 @@ export class DronesMaplibre {
       const m = this.map;
       if (!m.getSource(DRONES_SOURCE)) return;
       this.ensureAmmoLayer();
-      const drones = useDroneStore.getState().drones;
+      const assetState = useAssetStore.getState();
+      const drones = collectDroneRenderablesFromAssets(assetState.assets, assetState.relationships);
       syncAmmoBadgeImages(m, drones);
       const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource;
       src.setData(buildDroneGeoJSON(drones));
@@ -1175,7 +1323,8 @@ export class DronesMaplibre {
   refreshFromStore() {
     const m = this.map;
     this.ensureAmmoLayer();
-    const drones = useDroneStore.getState().drones;
+    const assetState = useAssetStore.getState();
+    const drones = collectDroneRenderablesFromAssets(assetState.assets, assetState.relationships);
     syncAmmoBadgeImages(m, drones);
     const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;

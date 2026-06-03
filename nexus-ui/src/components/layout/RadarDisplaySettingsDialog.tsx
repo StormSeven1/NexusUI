@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAssetStore } from "@/stores/asset-store";
 import {
@@ -60,31 +60,24 @@ export function RadarDisplaySettingsDialog({ open, onClose }: RadarDisplaySettin
 
   const radarAssets = assets.filter((a) => a.asset_type === "radar");
 
-  useEffect(() => {
-    if (open && radarAssets.length > 0 && !selectedRadarId) {
-      setSelectedRadarId(radarAssets[0]!.id);
-    }
-  }, [open, radarAssets.length, selectedRadarId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!open) setSelectedRadarId("");
-  }, [open]);
-
-  const selectedRadar = radarAssets.find((r) => r.id === selectedRadarId);
+  const effectiveSelectedRadarId = open
+    ? (selectedRadarId || radarAssets[0]?.id || "")
+    : "";
+  const selectedRadar = radarAssets.find((r) => r.id === effectiveSelectedRadarId);
   const assetProps = selectedRadar?.properties as Record<string, unknown> | null | undefined;
-  const overrides = displayOverrides[selectedRadarId];
+  const overrides = displayOverrides[effectiveSelectedRadarId];
 
   const get = <K extends keyof RadarProps>(key: K) =>
     getRadarProp(assetProps, overrides, key);
 
   const update = (patch: Partial<Record<keyof RadarProps, unknown>>) => {
-    if (!selectedRadarId) return;
-    setDisplayOverride(selectedRadarId, patch as Record<string, unknown>);
+    if (!effectiveSelectedRadarId) return;
+    setDisplayOverride(effectiveSelectedRadarId, patch as Record<string, unknown>);
   };
 
   const handleReset = () => {
-    if (!selectedRadarId) return;
-    clearDisplayOverride(selectedRadarId);
+    if (!effectiveSelectedRadarId) return;
+    clearDisplayOverride(effectiveSelectedRadarId);
   };
 
   const footer = (
