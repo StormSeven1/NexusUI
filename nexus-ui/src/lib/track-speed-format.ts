@@ -3,7 +3,7 @@ export function formatTrackSpeed(speed: unknown, digits = 1): string {
   if (typeof speed !== "number" || !Number.isFinite(speed)) {
     return "—";
   }
-  return `${speed.toFixed(digits)} m/s`;
+  return `${speed.toFixed(digits)}m/s`;
 }
 
 /** 航迹速度数值（m/s），非法则 undefined */

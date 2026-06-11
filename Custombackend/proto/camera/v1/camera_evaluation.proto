@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package camera.eval.v1;
+
+message GetSharpnessRequest {
+  string camera_entity_id = 1;
+  bool return_components = 2;
+}
+
+message GetSharpnessResponse {
+  double combined_score = 1;
+  double edge_component = 2;
+  double texture_component = 3;
+  int64 timestamp_unix_ms = 4;
+  string error_message = 5;
+}
+
+message SubscribeSharpnessRequest {
+  string camera_entity_id = 1;
+  uint32 interval_ms = 2;
+}
+
+message SharpnessSample {
+  double combined_score = 1;
+  int64 timestamp_unix_ms = 2;
+}
+
+message TriggerVisibilityCheckRequest {
+  string camera_entity_id = 1;
+  string task_id = 2;
+  uint32 timeout_ms = 3;
+}
+
+message TriggerVisibilityCheckResponse {
+  string task_id = 1;
+  bool accepted = 2;
+  string error_message = 3;
+}
+
+message GetVisibilityRequest {
+  string camera_entity_id = 1;
+}
+
+message GetVisibilityResponse {
+  double visibility = 1;
+  int64 updated_at_unix_ms = 2;
+  string last_task_id = 3;
+  string error_message = 4;
+}
+
+message VisibilityTaskEvent {
+  string task_id = 1;
+  string state = 2;
+  double visibility = 3;
+  string message = 4;
+}
+
+message TrueNorthPointingSample {
+  string range_band = 1;
+  int64 track_id = 2;
+  double p_at_track_start = 3;
+  double t_at_track_start = 4;
+  double p_when_centered = 5;
+  double t_when_centered = 6;
+  double delta_p = 7;
+  double delta_t = 8;
+  bool success = 9;
+  string fail_reason = 10;
+  int64 unique_id = 11;
+  double longitude = 12;
+  double latitude = 13;
+  double azimuth = 14;
+  double distance = 15;
+  double zoom_at_arrival = 16;
+  double zoom_at_center = 17;
+}
+
+message PointingAccuracyTarget {
+  int64 track_id = 1;
+  int64 unique_id = 2;
+  double longitude = 3;
+  double latitude = 4;
+  double azimuth = 5;
+  double distance = 6;
+  string range_band = 7;
+  int32 ship_type = 8;
+  int32 rect_type = 9;
+}
+
+message TriggerTrueNorthPointingEvalRequest {
+  string camera_entity_id = 1;
+  string task_id = 2;
+  PointingAccuracyTarget target = 3;
+  uint32 timeout_ms = 4;
+}
+
+message TriggerTrueNorthPointingEvalResponse {
+  string task_id = 1;
+  bool accepted = 2;
+  string error_message = 3;
+}
+
+message GetTrueNorthPointingResultRequest {
+  string camera_entity_id = 1;
+  string task_id = 2;
+  uint32 lookback_hours = 3;
+}
+
+message GetTrueNorthPointingResultResponse {
+  repeated TrueNorthPointingSample samples = 1;
+  double mean_delta_p = 2;
+  double mean_delta_t = 3;
+  bool all_bands_ok = 4;
+  int64 completed_at_unix_ms = 5;
+  string error_message = 6;
+}
+
+service CameraEvaluationService {
+  rpc GetSharpness(GetSharpnessRequest) returns (GetSharpnessResponse);
+  rpc SubscribeSharpness(SubscribeSharpnessRequest) returns (stream SharpnessSample);
+  rpc TriggerVisibilityCheck(TriggerVisibilityCheckRequest) returns (TriggerVisibilityCheckResponse);
+  rpc GetVisibility(GetVisibilityRequest) returns (GetVisibilityResponse);
+  rpc SubscribeVisibilityTask(TriggerVisibilityCheckRequest) returns (stream VisibilityTaskEvent);
+  rpc TriggerTrueNorthPointingEval(TriggerTrueNorthPointingEvalRequest) returns (TriggerTrueNorthPointingEvalResponse);
+  rpc GetTrueNorthPointingResult(GetTrueNorthPointingResultRequest) returns (GetTrueNorthPointingResultResponse);
+  rpc SubscribeTrueNorthPointingTask(TriggerTrueNorthPointingEvalRequest) returns (stream VisibilityTaskEvent);
+}

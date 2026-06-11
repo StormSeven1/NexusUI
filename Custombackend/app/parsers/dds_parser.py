@@ -642,16 +642,22 @@ def _parse_drone_status(dds_object) -> Optional[Dict]:
 
 
 def _parse_drone_task(dds_object) -> Optional[Dict]:
-    """解析无人机任务状态"""
+    """解析无人机任务状态（EntityRealTimeStatus.idl DroneTaskRealTimeStatus / 旧 DroneTask 模块）"""
     try:
         result = {
             'entityId': dds_object.entityId() if hasattr(dds_object, 'entityId') else None,
             'taskType': dds_object.taskType() if hasattr(dds_object, 'taskType') else None,
             'executionState': dds_object.executionState() if hasattr(dds_object, 'executionState') else None,
+            'executionTimeMs': dds_object.executionTimeMs() if hasattr(dds_object, 'executionTimeMs') else None,
             'online': dds_object.online() if hasattr(dds_object, 'online') else None,
+            'entityType': dds_object.entityType() if hasattr(dds_object, 'entityType') else None,
+            'deviceState': dds_object.deviceState() if hasattr(dds_object, 'deviceState') else None,
             'drone_state': dds_object.drone_state() if hasattr(dds_object, 'drone_state') else None,
+            'drone_task_action': dds_object.drone_task_action() if hasattr(dds_object, 'drone_task_action') else None,
+            'drone_task_targetID': dds_object.drone_task_targetID() if hasattr(dds_object, 'drone_task_targetID') else None,
+            # 旧 DroneTask 模块兼容
             'rev1': dds_object.rev1() if hasattr(dds_object, 'rev1') else None,
-            'rev2': dds_object.rev2() if hasattr(dds_object, 'rev2') else None,  # 存储uniqueID
+            'rev2': dds_object.rev2() if hasattr(dds_object, 'rev2') else None,
             'rev3': dds_object.rev3() if hasattr(dds_object, 'rev3') else None,
             'waypoints': [],
             'source': 'DDS',
@@ -681,21 +687,12 @@ def _parse_drone_task(dds_object) -> Optional[Dict]:
                         'speed': wp.speed() if hasattr(wp, 'speed') else None,
                     }
                     result['waypoints'].append(waypoint)
-        # result['waypoints']=[
-        #     { 'index': 0,
-        #                 'longitude': 122.089, 
-        #                 'latitude': 37.545,
-        #                 'height': 100,
-        #                 'speed': 10},
-        #                 { 'index': 1,
-        #                 'longitude': 122.189, 
-        #                 'latitude': 37.645,
-        #                 'height': 100,
-        #                 'speed': 10}]
-        # print("*"*50)
-        # print("解析无人机任务:",result)
-        # print("*"*50)
-        
+
+        # 旧 DroneTask：任务文案在 rev1；新 Entity IDL：drone_task_action
+        action = result.get('drone_task_action')
+        if (action is None or str(action).strip() == '') and result.get('rev1'):
+            result['drone_task_action'] = result['rev1']
+
         # 存储到文件（如果开关开启）
         if ENABLE_DRONE_DATA_STORAGE:
             try:

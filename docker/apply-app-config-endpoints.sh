@@ -25,16 +25,28 @@ if [[ ! -f "$BASE_CFG" ]]; then
   echo "错误: 缺少 $BASE_CFG" >&2
   exit 1
 fi
-if ! command -v jq >/dev/null 2>&1; then
-  echo "错误: 未找到 jq，请安装: apt install jq / yum install jq / brew install jq" >&2
+cp "$BASE_CFG" "$OUT_CFG"
+if command -v jq >/dev/null 2>&1; then
+  tmp="$(mktemp)"
+  jq --arg host "$HOST" --arg hp "$HTTP_PORT" --arg wp "$WS_PORT" '
+    .websocket.url = ("ws://" + $host + ":" + $wp + "/ws") |
+    .http.backendUrl = ("http://" + $host + ":" + $hp)
+  ' "$OUT_CFG" > "$tmp"
+  mv "$tmp" "$OUT_CFG" 2>/dev/null || { cat "$tmp" > "$OUT_CFG" && rm -f "$tmp"; }
+elif command -v python3 >/dev/null 2>&1; then
+  python3 - "$OUT_CFG" "$HOST" "$HTTP_PORT" "$WS_PORT" <<'PY'
+import json, sys
+path, host, hp, wp = sys.argv[1:5]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+data.setdefault("websocket", {})["url"] = f"ws://{host}:{wp}/ws"
+data.setdefault("http", {})["backendUrl"] = f"http://{host}:{hp}"
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+else
+  echo "错误: 未找到 jq 或 python3" >&2
   exit 1
 fi
-
-cp "$BASE_CFG" "$OUT_CFG"
-tmp="$(mktemp)"
-jq --arg host "$HOST" --arg hp "$HTTP_PORT" --arg wp "$WS_PORT" '
-  .websocket.url = ("ws://" + $host + ":" + $wp + "/ws") |
-  .http.backendUrl = ("http://" + $host + ":" + $hp)
-' "$OUT_CFG" > "$tmp"
-mv "$tmp" "$OUT_CFG"
 echo "== app-config 网络端点已写入 ${OUT_NAME}: ws://${HOST}:${WS_PORT}/ws , http://${HOST}:${HTTP_PORT} =="

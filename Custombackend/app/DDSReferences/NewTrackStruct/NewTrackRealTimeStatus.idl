@@ -817,7 +817,12 @@ enum AlarmCategory {
     TARGET_BEHAVIOR,  // 目标行为告警
     TARGET_ATTR,      // 目标属性告警
     DEVICE,           // 设备告警
-    CUSTOM1            // 自定义告警
+    EO_DETECTION,     // 光电探测/发现告警
+    RADAR_DETECTION,  // 雷达探测/发现告警
+    RF_DETECTION,     // 无线电侦收/电子侦察探测告警
+    BEARING_ONLY,     // 纯测向告警：只有方位，没有经纬度落点
+    BEARING_RANGE_ESTIMATE, // 测向估距告警：有方位和估计距离，但无精确落点
+    CUSTOM1           // 自定义告警
 };
 
 // 告警生命周期：对齐 AlarmEvent.AlarmStatus
@@ -843,6 +848,36 @@ struct AlarmAreaRef {
     string area_name;                     // 区域名称
 };
 
+// 告警空间表达方式：用于区分精确点位、纯测向、测向估距和区域类告警
+enum AlarmLocationType {
+    POINT,                  // 明确经纬度点位
+    BEARING_ONLY_LOCATION,  // 纯测向，只有方位
+    BEARING_RANGE_LOCATION, // 测向 + 估计距离
+    AREA_LOCATION,          // 区域/扇区表达
+    UNKNOWN_LOCATION        // 未知或未提供
+};
+
+// 告警空间信息：兼容纯测向、测向估距和传统点位告警
+struct AlarmSpatialInfo {
+    AlarmLocationType location_type;      // 空间表达类型
+    boolean has_point_position;           // 是否有明确点位
+    GeoPosition point_position;           // 明确点位；仅 POINT 或已解算出点位时填写
+    boolean has_reference_position;       // 是否有观测参考点
+    GeoPosition reference_position;       // 观测参考点/传感器位置，bearing 从该点出发
+    double bearing_deg;                   // 方位角；纯测向和测向估距时填写
+    double bearing_sigma_deg;             // 方位角标准差/误差
+    boolean has_range_estimate;           // 是否有估计距离
+    Measurement range_estimate_m;         // 估计距离
+    boolean has_range_min_m;              // 是否有距离下界
+    Measurement range_min_m;              // 距离下界
+    boolean has_range_max_m;              // 是否有距离上界
+    Measurement range_max_m;              // 距离上界
+    double sector_start_deg;              // 扇区起始方位；区域/扇区告警可用
+    double sector_end_deg;                // 扇区终止方位；区域/扇区告警可用
+    double spatial_confidence;            // 空间定位/空间表达置信度，0~1，无则填 0
+    EntityRef source_sensor;              // 产生该空间信息的观测设备/传感器
+};
+
 // 单条目标告警：挂载于 TargetObject.alarms，每条告警必须有唯一 alarm_id
 struct TargetAlarmItem {
     string alarm_id;                              // 告警唯一 ID（必填）
@@ -854,7 +889,8 @@ struct TargetAlarmItem {
     AlarmAreaRef area;                            // 关联区域
     long class_id;                                // 目标类型 ID（光电 classId，无则填 0）
     long behavior_id;                             // 行为 ID（无则填 0）
-    GeoPosition position;                         // 告警发生位置
+    GeoPosition position;                         // 告警发生位置；兼容旧版点位告警，纯测向类可不作为主表达
+    AlarmSpatialInfo spatial_info;                // 告警空间信息：支持纯测向、测向估距、点位和区域表达
     double raised_time;                           // 告警产生时间
     double updated_time;                          // 告警更新时间
     double resolved_time;                         // 解决时间（未解决填 0）

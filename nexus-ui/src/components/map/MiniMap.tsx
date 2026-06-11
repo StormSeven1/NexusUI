@@ -1,17 +1,33 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import { getMaplibreBaseMapOptions } from "@/lib/map-2d-basemap";
+import { useAppConfigStore } from "@/stores/app-config-store";
+import { bootstrapMapHomeSideEffects } from "@/lib/map-home-bootstrap";
+import type { AppConfigMapHome } from "@/lib/map-home-config";
 
 export function MiniMap() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const [mapHomeBoot, setMapHomeBoot] = useState<AppConfigMapHome | null | undefined>(undefined);
 
   useEffect(() => {
+    void useAppConfigStore
+      .getState()
+      .ensureLoaded()
+      .then((cfg) => {
+        bootstrapMapHomeSideEffects(cfg.mapHome);
+        setMapHomeBoot(cfg.mapHome);
+      })
+      .catch(() => setMapHomeBoot(null));
+  }, []);
+
+  useEffect(() => {
+    if (mapHomeBoot === undefined) return;
     if (!containerRef.current || mapRef.current) return;
 
-    const { style, transformStyle, ...mapOpts } = getMaplibreBaseMapOptions("mini");
+    const { style, transformStyle, ...mapOpts } = getMaplibreBaseMapOptions("mini", mapHomeBoot);
     const map = new maplibregl.Map({
       container: containerRef.current,
       ...mapOpts,
@@ -27,7 +43,7 @@ export function MiniMap() {
       map.remove();
       mapRef.current = null;
     };
-  }, []);
+  }, [mapHomeBoot]);
 
   return (
     <div className="absolute bottom-3 right-3 z-10 h-[88px] w-[120px] overflow-hidden rounded-md border border-white/[0.08] bg-nexus-bg-surface/80 shadow-lg backdrop-blur-sm">

@@ -45,6 +45,7 @@ import { pokeDroneLiveStream } from "@/lib/eo-video/pokeDroneLiveStream";
 import { postUavGimbalReset, uavMainPayloadIndexForDrone } from "@/lib/eo-video/postUavGimbalReset";
 import { resolveEoPipPlaybackUrl } from "@/lib/eo-video/resolveEoPipPlaybackUrl";
 import { useEoVideoDdsTaskLine } from "@/hooks/useEoVideoDdsTaskLine";
+import { useEoVideoSmartWindow } from "@/hooks/useEoVideoSmartWindow";
 import { blobToBase64DataOnly } from "@/lib/eo-video/blobToBase64";
 import { Button } from "@/components/ui/button";
 import { Home, Joystick, Loader2, Maximize2, Minimize2, PlaneTakeoff } from "lucide-react";
@@ -77,6 +78,7 @@ import { useEoFocusedUavAirportSnStore } from "@/stores/eo-focused-uav-airport-s
 import { useEoThirdPartyUdpDevStatusStore } from "@/stores/eo-third-party-udp-dev-status-store";
 import { isThirdPartyUdpStreamEntry } from "@/lib/eo-video/thirdPartyCamCtrlType";
 import { useEoVideoPanelFocusStore } from "@/stores/eo-video-panel-focus-store";
+import { useEoVideoSmartWindowStore } from "@/stores/eo-video-smart-window-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import { getDefaultEoCameraTaskBackendBaseUrl } from "@/lib/map-app-config";
 import { isEoVideoDebugUiEnabled } from "@/lib/eo-video/eoVideoDebugUi";
@@ -743,11 +745,11 @@ export function EoVideoPanel({
   );
   const ptzSupported = Boolean(detectionEntityId && /^camera_[0-9]{3}$/i.test(detectionEntityId));
 
-  /** 底部条右侧：相机 DDS（Camera WS 旁路）/ 无人机航线与状态 */
+  /** 底部条右侧：相机 DDS / 无人机 EntityRealTimeStatus 任务态 */
   const ddsBottomTaskLine = useEoVideoDdsTaskLine({
     variant: activeStream?.uav ? "uav" : "camera",
     cameraEntityId: cameraDdsEntityId,
-    droneSn: activeStream?.uav?.deviceSN ?? uavMqttProductIds?.device ?? null,
+    droneEntityId: activeStream?.uav?.entityId ?? null,
   });
 
   useEffect(() => {
@@ -1289,6 +1291,18 @@ export function EoVideoPanel({
   const onSelectStream = useCallback((id: string) => {
     setActiveStreamId(id);
   }, []);
+
+  const smartWindowEnabled = useEoVideoSmartWindowStore(
+    (s) => (dockPidNorm ? (s.enabledByPanelId[dockPidNorm] ?? false) : false),
+  );
+  useEoVideoSmartWindow({
+    panelId: dockPidNorm,
+    enabled: smartWindowEnabled,
+    cfg,
+    activeStreamId,
+    onSelectStream,
+    pageEntity: entity,
+  });
 
   const toggleExpand = useCallback(() => {
     if (onToggleExpand) {
@@ -1922,129 +1936,82 @@ export function EoVideoPanel({
       kind: "record",
       ext,
     });
+
+    const onSaveBlob = async (blob: Blob, suggested: string) => {
+      const extFromBlob = blob.type.includes("mp4") ? "mp4" : blob.type.includes("webm") ? "webm" : ext;
+      const base = suggested.replace(/\.(mp4|webm)$/i, "");
+      const finalName = `${base}.${extFromBlob}`;
+      let dir = captureDirHandleRecordRef.current;
+      if (!dir && isShowDirectoryPickerSupported()) {
+        try {
+          dir = await pickCaptureDirectoryHandle("record");
+          await saveCaptureDirHandle(dir, "record");
+          captureDirHandleRecordRef.current = dir;
+          setCaptureFolderLabel(dir.name);
+          appendClientLog(`${new Date().toLocaleTimeString()} 已绑定本机保存文件夹「${dir.name}」`);
+        } catch (e) {
+          if (!(e instanceof DOMException && e.name === "AbortError")) {
+            appendClientLog(`${new Date().toLocaleTimeString()} 选择文件夹失败：${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+      }
+      const targetDir = await resolvePerStreamCaptureDir(dir, activeStream?.label);
+      const mode = await saveCaptureBlob(blob, finalName, targetDir);
+      appendClientLog(
+        `${new Date().toLocaleTimeString()} ${
+          mode === "directory"
+            ? `录屏已写入本机文件夹：${activeStream?.label || "光电"}/${finalName}`
+            : `录屏已触发下载：${finalName}`
+        }`,
+      );
+      setSnapshotPreview((prev) => {
+        if (prev?.objectUrl) URL.revokeObjectURL(prev.objectUrl);
+        return {
+          kind: "record",
+          objectUrl: URL.createObjectURL(blob),
+          blob,
+          fileName: finalName,
+        };
+      });
+    };
+    const onError = (msg: string) => {
+      appendClientLog(`${new Date().toLocaleTimeString()} 录屏：${msg}`);
+      setIsRecording(false);
+      recorderCtlRef.current = null;
+    };
+    const onStarted = () => {
+      setIsRecording(true);
+      appendClientLog(
+        `${new Date().toLocaleTimeString()} 录屏开始 → 容器 ${ext.toUpperCase()}${ext === "webm" ? "（当前浏览器不支持 MP4 录制）" : ""}，将保存为 ${name}`,
+      );
+    };
+    const onStopped = () => {
+      setIsRecording(false);
+      recorderCtlRef.current = null;
+    };
+    const recordOpts = { fileName: name, mimeType, onSaveBlob, onError, onStarted, onStopped };
+
     if (isThirdPartyUdpStream) {
       const canvas = thirdPartyStackRef.current?.getRecordCanvas() ?? null;
       if (!canvas) return;
-      const ctl = createEoCanvasRecorder({
-        canvas,
-        fileName: name,
-        mimeType,
-        onSaveBlob: async (blob, suggested) => {
-          const extFromBlob = blob.type.includes("mp4") ? "mp4" : blob.type.includes("webm") ? "webm" : ext;
-          const base = suggested.replace(/\.(mp4|webm)$/i, "");
-          const finalName = `${base}.${extFromBlob}`;
-          let dir = captureDirHandleRecordRef.current;
-          if (!dir && isShowDirectoryPickerSupported()) {
-            try {
-              dir = await pickCaptureDirectoryHandle("record");
-              await saveCaptureDirHandle(dir, "record");
-              captureDirHandleRecordRef.current = dir;
-              setCaptureFolderLabel(dir.name);
-              appendClientLog(`${new Date().toLocaleTimeString()} 已绑定本机保存文件夹「${dir.name}」`);
-            } catch (e) {
-              if (!(e instanceof DOMException && e.name === "AbortError")) {
-                appendClientLog(`${new Date().toLocaleTimeString()} 选择文件夹失败：${e instanceof Error ? e.message : String(e)}`);
-              }
-            }
-          }
-          const targetDir = await resolvePerStreamCaptureDir(dir, activeStream?.label);
-          const mode = await saveCaptureBlob(blob, finalName, targetDir);
-          appendClientLog(
-            `${new Date().toLocaleTimeString()} ${
-              mode === "directory"
-                ? `录屏已写入本机文件夹：${activeStream?.label || "光电"}/${finalName}`
-                : `录屏已触发下载：${finalName}`
-            }`,
-          );
-          setSnapshotPreview((prev) => {
-            if (prev?.objectUrl) URL.revokeObjectURL(prev.objectUrl);
-            return {
-              kind: "record",
-              objectUrl: URL.createObjectURL(blob),
-              blob,
-              fileName: finalName,
-            };
-          });
-        },
-        onError: (msg) => {
-          appendClientLog(`${new Date().toLocaleTimeString()} 录屏：${msg}`);
-          setIsRecording(false);
-          recorderCtlRef.current = null;
-        },
-        onStarted: () => {
-          setIsRecording(true);
-          appendClientLog(
-            `${new Date().toLocaleTimeString()} 录屏开始 → 容器 ${ext.toUpperCase()}${ext === "webm" ? "（当前浏览器不支持 MP4 录制）" : ""}，将保存为 ${name}`,
-          );
-        },
-        onStopped: () => {
-          setIsRecording(false);
-          recorderCtlRef.current = null;
-        },
-      });
+      const ctl = createEoCanvasRecorder({ canvas, ...recordOpts });
       recorderCtlRef.current = ctl;
       ctl.start();
       return;
     }
+
+    const canvas = snapshotCanvasRef.current;
     const v = videoRef.current;
-    if (!v) return;
-    const ctl = createEoVideoRecorder({
-      video: v,
-      fileName: name,
-      mimeType,
-      onSaveBlob: async (blob, suggested) => {
-        const extFromBlob = blob.type.includes("mp4") ? "mp4" : blob.type.includes("webm") ? "webm" : ext;
-        const base = suggested.replace(/\.(mp4|webm)$/i, "");
-        const finalName = `${base}.${extFromBlob}`;
-        let dir = captureDirHandleRecordRef.current;
-        if (!dir && isShowDirectoryPickerSupported()) {
-          try {
-            dir = await pickCaptureDirectoryHandle("record");
-            await saveCaptureDirHandle(dir, "record");
-            captureDirHandleRecordRef.current = dir;
-            setCaptureFolderLabel(dir.name);
-            appendClientLog(`${new Date().toLocaleTimeString()} 已绑定本机保存文件夹「${dir.name}」`);
-          } catch (e) {
-            if (!(e instanceof DOMException && e.name === "AbortError")) {
-              appendClientLog(`${new Date().toLocaleTimeString()} 选择文件夹失败：${e instanceof Error ? e.message : String(e)}`);
-            }
-          }
-        }
-        const targetDir = await resolvePerStreamCaptureDir(dir, activeStream?.label);
-        const mode = await saveCaptureBlob(blob, finalName, targetDir);
-        appendClientLog(
-          `${new Date().toLocaleTimeString()} ${
-            mode === "directory"
-              ? `录屏已写入本机文件夹：${activeStream?.label || "光电"}/${finalName}`
-              : `录屏已触发下载：${finalName}`
-          }`,
-        );
-        setSnapshotPreview((prev) => {
-          if (prev?.objectUrl) URL.revokeObjectURL(prev.objectUrl);
-          return {
-            kind: "record",
-            objectUrl: URL.createObjectURL(blob),
-            blob,
-            fileName: finalName,
-          };
-        });
-      },
-      onError: (msg) => {
-        appendClientLog(`${new Date().toLocaleTimeString()} 录屏：${msg}`);
-        setIsRecording(false);
-        recorderCtlRef.current = null;
-      },
-      onStarted: () => {
-        setIsRecording(true);
-        appendClientLog(
-          `${new Date().toLocaleTimeString()} 录屏开始 → 容器 ${ext.toUpperCase()}${ext === "webm" ? "（当前浏览器不支持 MP4 录制）" : ""}，将保存为 ${name}`,
-        );
-      },
-      onStopped: () => {
-        setIsRecording(false);
-        recorderCtlRef.current = null;
-      },
-    });
+    const canvasOk = Boolean(canvas && canvas.width > 0 && canvas.height > 0);
+    const videoOk = Boolean(v && v.videoWidth > 0 && v.videoHeight > 0);
+    if (!canvasOk && !videoOk) {
+      appendClientLog(`${new Date().toLocaleTimeString()} 录屏：视频尚未就绪，无法开始录制`);
+      return;
+    }
+    const ctl =
+      canvasOk && canvas
+        ? createEoCanvasRecorder({ canvas, ...recordOpts })
+        : createEoVideoRecorder({ video: v!, ...recordOpts });
     recorderCtlRef.current = ctl;
     ctl.start();
   }, [activeStream?.label, appendClientLog, isThirdPartyUdpStream, resolvePerStreamCaptureDir]);

@@ -1,17 +1,18 @@
 "use client";
 
-import { useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   SYSTEM_EVAL_SECTION_TABS,
-  type SystemEvalSectionId,
 } from "@/components/panels/system-evaluation/types";
 import { TrackEvaluationTab } from "@/components/panels/system-evaluation/TrackEvaluationTab";
 import { SystemPerfEvalTab } from "@/components/panels/system-evaluation/SystemPerfEvalTab";
+import { CameraEvalTab } from "@/components/panels/system-evaluation/CameraEvalTab";
 import { EvalPlaceholderSection } from "@/components/panels/system-evaluation/EvalPlaceholderSection";
+import { useSystemEvaluationUiStore } from "@/stores/system-evaluation-ui-store";
 
 export function SystemEvaluationPanel() {
-  const [section, setSection] = useState<SystemEvalSectionId>("track");
+  const section = useSystemEvaluationUiStore((s) => s.section);
+  const setSection = useSystemEvaluationUiStore((s) => s.setSection);
 
   return (
     <div className="flex h-full flex-col">
@@ -19,12 +20,7 @@ export function SystemEvaluationPanel() {
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
           {section === "system" ? <SystemPerfEvalTab /> : null}
           {section === "track" ? <TrackEvaluationTab /> : null}
-          {section === "camera" ? (
-            <EvalPlaceholderSection
-              title="相机评估"
-              description="传入相机实体 ID，由后台完成拉流、取帧与指迹评估；接口见系统设计文档。"
-            />
-          ) : null}
+          {section === "camera" ? <CameraEvalTab /> : null}
           {section === "algorithm" ? (
             <EvalPlaceholderSection
               title="算法评估"

@@ -96,4 +96,8 @@ export interface EoDetectionBox {
   singleTrackOverlayTitle?: string | null;
   /** 与 DDS / 右下角一致的航迹号，用于在 GIS `track-store` 中反查 AZI/DIS/SPD/COG */
   ddsTrackId?: number;
+  /** 归一化坐标所依据的检测帧宽（像素）；WebCodecs 下与 presentation 尺寸可能不同 */
+  frameWidth?: number;
+  /** 归一化坐标所依据的检测帧高（像素） */
+  frameHeight?: number;
 }

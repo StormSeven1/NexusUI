@@ -13,50 +13,100 @@ const CODECS = [
   "avc1.42001f",
 ];
 
+const HW_MODES = ["prefer-hardware", "prefer-software"] as const;
+
+export type WebCodecsDecodePath = "pending" | "hardware" | "software" | "failed";
+
 export interface WebCodecsCanvasHandle {
   addEncodedFrame: (frame: EncodedFrameData) => void;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   webCodecsActive: boolean;
   videoWidth: number;
   videoHeight: number;
+  /** 解码器初始化结果：pending → hardware/software，或 failed */
+  decodePath: WebCodecsDecodePath;
+  /** 是否已成功绘制至少一帧到 Canvas */
+  hasRenderedFrame: boolean;
+}
+
+async function tryConfigureDecoder(
+  decoder: VideoDecoder,
+  codec: string,
+  hardwareAcceleration: VideoDecoderConfig["hardwareAcceleration"],
+): Promise<boolean> {
+  const config: VideoDecoderConfig = {
+    codec,
+    hardwareAcceleration,
+    optimizeForLatency: true,
+  };
+  if (VideoDecoder.isConfigSupported) {
+    const support = await VideoDecoder.isConfigSupported(config);
+    if (!support.supported) return false;
+  }
+  decoder.configure(config);
+  return true;
 }
 
 /**
  * WebCodecs + Canvas 视频解码渲染 hook。
- * 与 Vue videoPlayer.js 对齐：编码帧存入 frameBuffer（16帧），
- * 满时 shift 最老帧进 VideoDecoder.decode()，解码输出直接画 Canvas。
- * 检测框由 EoDetectionOverlay 统一绘制（支持点击/双击交互）。
+ * 初始化顺序：prefer-hardware → prefer-software；均失败时由上层回退 `<video>`。
  */
 export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const decoderRef = useRef<VideoDecoder | null>(null);
   const frameBufferRef = useRef<EncodedFrameData[]>([]);
   const firstKeyFrameRef = useRef(false);
+  const hasRenderedFrameRef = useRef(false);
   const [webCodecsActive, setWebCodecsActive] = useState(false);
   const [videoWidth, setVideoWidth] = useState(0);
   const [videoHeight, setVideoHeight] = useState(0);
+  const [decodePath, setDecodePath] = useState<WebCodecsDecodePath>("pending");
+  const [hasRenderedFrame, setHasRenderedFrame] = useState(false);
 
   const stableRefs = useRef({ canvasRef, setVideoWidth, setVideoHeight });
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.VideoDecoder || !window.EncodedVideoChunk) {
+      setDecodePath("failed");
       return;
     }
 
     let closed = false;
 
+    const markRendered = () => {
+      if (hasRenderedFrameRef.current) return;
+      hasRenderedFrameRef.current = true;
+      setHasRenderedFrame(true);
+    };
+
     const renderFrame = (videoFrame: VideoFrame) => {
-      if (closed) { try { videoFrame.close(); } catch { /* */ } return; }
+      if (closed) {
+        try {
+          videoFrame.close();
+        } catch {
+          /* */
+        }
+        return;
+      }
       const refs = stableRefs.current;
       try {
         const canvas = refs.canvasRef.current;
-        if (!canvas) { videoFrame.close(); return; }
+        if (!canvas) {
+          videoFrame.close();
+          return;
+        }
         const ctx = canvas.getContext("2d");
-        if (!ctx) { videoFrame.close(); return; }
+        if (!ctx) {
+          videoFrame.close();
+          return;
+        }
 
         const fw = videoFrame.displayWidth || videoFrame.codedWidth;
         const fh = videoFrame.displayHeight || videoFrame.codedHeight;
-        if (fw <= 0 || fh <= 0) { videoFrame.close(); return; }
+        if (fw <= 0 || fh <= 0) {
+          videoFrame.close();
+          return;
+        }
 
         if (canvas.width !== fw || canvas.height !== fh) {
           canvas.width = fw;
@@ -67,9 +117,14 @@ export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
 
         ctx.clearRect(0, 0, fw, fh);
         ctx.drawImage(videoFrame, 0, 0, fw, fh);
+        markRendered();
         videoFrame.close();
       } catch {
-        try { videoFrame.close(); } catch { /* */ }
+        try {
+          videoFrame.close();
+        } catch {
+          /* */
+        }
       }
     };
 
@@ -77,35 +132,41 @@ export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
       try {
         const decoder = new VideoDecoder({
           output: (frame) => renderFrame(frame),
-          error: (err) => { console.error("[WebCodecs] decode error:", err); },
+          error: (err) => {
+            console.error("[WebCodecs] decode error:", err);
+            if (!closed) {
+              setWebCodecsActive(false);
+              setDecodePath("failed");
+            }
+          },
         });
 
-        for (const codec of CODECS) {
-          try {
-            const config: VideoDecoderConfig = {
-              codec,
-              hardwareAcceleration: "prefer-hardware",
-              optimizeForLatency: true,
-            };
-            if (VideoDecoder.isConfigSupported) {
-              const support = await VideoDecoder.isConfigSupported(config);
-              if (!support.supported) continue;
+        for (const hw of HW_MODES) {
+          for (const codec of CODECS) {
+            try {
+              const ok = await tryConfigureDecoder(decoder, codec, hw);
+              if (!ok) continue;
+              if (!closed) {
+                decoderRef.current = decoder;
+                setWebCodecsActive(true);
+                setDecodePath(hw === "prefer-hardware" ? "hardware" : "software");
+                console.info(`[WebCodecs] decoder ready codec=${codec} acceleration=${hw}`);
+              } else {
+                decoder.close();
+              }
+              return;
+            } catch {
+              continue;
             }
-            decoder.configure(config);
-            if (!closed) {
-              decoderRef.current = decoder;
-              setWebCodecsActive(true);
-            } else {
-              decoder.close();
-            }
-            return;
-          } catch {
-            continue;
           }
         }
         decoder.close();
+        if (!closed) {
+          console.warn("[WebCodecs] no supported codec (hardware + software exhausted)");
+          setDecodePath("failed");
+        }
       } catch {
-        /* WebCodecs not available */
+        if (!closed) setDecodePath("failed");
       }
     })();
 
@@ -114,11 +175,18 @@ export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
       const d = decoderRef.current;
       decoderRef.current = null;
       if (d && d.state !== "closed") {
-        try { d.close(); } catch { /* */ }
+        try {
+          d.close();
+        } catch {
+          /* */
+        }
       }
       frameBufferRef.current = [];
       firstKeyFrameRef.current = false;
+      hasRenderedFrameRef.current = false;
       setWebCodecsActive(false);
+      setHasRenderedFrame(false);
+      setDecodePath("pending");
     };
   }, []);
 
@@ -153,5 +221,7 @@ export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
     webCodecsActive,
     videoWidth,
     videoHeight,
+    decodePath,
+    hasRenderedFrame,
   };
 }

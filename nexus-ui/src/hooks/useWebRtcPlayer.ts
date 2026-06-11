@@ -23,6 +23,18 @@ export interface UseWebRtcPlayerOptions {
   videoReceiverRef?: React.MutableRefObject<RTCRtpReceiver | null>;
   /** WebCodecs Canvas 模式：编码帧通过此回调传给 Canvas 解码渲染 */
   onEncodedFrame?: (frame: EncodedFrameData) => void;
+  /**
+   * 运行时强制 `<video>` 接流（WebCodecs 硬/软解均失败或无画面时由上层置 true 并 restart）。
+   * 仍保留 Insertable Streams → encodedSyncHub 供检测对齐。
+   */
+  forceVideoPassthrough?: boolean;
+  /**
+   * 若 >0，每 N ms 用 `getStats().framesDecoded` 检测停帧并自动 `restart`。
+   * 仅无人机等需对齐 C++ `uavReconnectTimer` 的场景传入（通常 6000）。
+   */
+  stallWatchIntervalMs?: number;
+  /** 停帧恢复前先调用（如 poke 推流）；随后自动 WebRTC restart */
+  onStallRecover?: () => void;
 }
 
 export interface UseWebRtcPlayerResult {
@@ -37,6 +49,24 @@ const SIGNALING_FETCH_TIMEOUT_MS = 5000;
 const ICE_RECONNECT_DELAYS_MS = [300, 350, 400, 500, 600, 800, 1000, 1200, 1500, 1800, 2200, 2600];
 const BLACK_FRAME_CHECK_MS = 450;
 const BLACK_FRAME_GIVEUP_MS = 2400;
+
+/** 对齐 C++ `PtzMainWidget::m_uavReconnectTimer`（6000ms） */
+export const WEBRTC_UAV_STALL_WATCH_INTERVAL_MS = 6000;
+const STALL_WATCH_GRACE_MS = 8000;
+const STALL_RECOVER_COOLDOWN_MS = 15000;
+
+async function readInboundVideoFramesDecoded(pc: RTCPeerConnection): Promise<number | null> {
+  const stats = await pc.getStats();
+  for (const report of stats.values()) {
+    if (report.type !== "inbound-rtp") continue;
+    const rtp = report as RTCInboundRtpStreamStats;
+    if (rtp.kind !== "video") continue;
+    if (typeof rtp.framesDecoded === "number" && Number.isFinite(rtp.framesDecoded)) {
+      return rtp.framesDecoded;
+    }
+  }
+  return null;
+}
 
 /**
  * ZLMediaKit 风格 WebRTC 播放：POST offer SDP（text/plain），响应 JSON { code, sdp }。
@@ -75,12 +105,22 @@ export function useWebRtcPlayer({
   encodedSyncHub,
   videoReceiverRef,
   onEncodedFrame,
+  forceVideoPassthrough = false,
+  stallWatchIntervalMs,
+  onStallRecover,
 }: UseWebRtcPlayerOptions): UseWebRtcPlayerResult {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const detachEncodedRef = useRef<(() => void) | null>(null);
   /** 浏览器定时器句柄（避免与 Node `Timeout` 类型合并冲突） */
   const iceRecoverTimerRef = useRef<number | null>(null);
   const blackFrameTimerRef = useRef<number | null>(null);
+  const stallWatchTimerRef = useRef<number | null>(null);
+  const prevFramesDecodedRef = useRef<number | null>(null);
+  const hadLiveFramesRef = useRef(false);
+  const stallWatchSinceRef = useRef(0);
+  const lastStallRecoverAtRef = useRef(0);
+  const onStallRecoverRef = useRef(onStallRecover);
+  onStallRecoverRef.current = onStallRecover;
   const iceFailCountRef = useRef(0);
   const [connectionState, setConnectionState] = useState<RTCPeerConnectionState | "idle">("idle");
   const [iceConnectionState, setIceConnectionState] = useState<RTCIceConnectionState | "idle">("idle");
@@ -97,6 +137,10 @@ export function useWebRtcPlayer({
     if (blackFrameTimerRef.current != null) {
       window.clearInterval(blackFrameTimerRef.current);
       blackFrameTimerRef.current = null;
+    }
+    if (stallWatchTimerRef.current != null) {
+      window.clearInterval(stallWatchTimerRef.current);
+      stallWatchTimerRef.current = null;
     }
     detachEncodedRef.current?.();
     detachEncodedRef.current = null;
@@ -192,13 +236,19 @@ export function useWebRtcPlayer({
           detachEncodedRef.current?.();
           detachEncodedRef.current = null;
           try {
-            detachEncodedRef.current = attachEncodedVideoFrameSync(ev.receiver, encodedSyncHub, onEncodedFrame);
+            detachEncodedRef.current = attachEncodedVideoFrameSync(
+              ev.receiver,
+              encodedSyncHub,
+              onEncodedFrame,
+              forceVideoPassthrough,
+            );
           } catch {
             detachEncodedRef.current = null;
           }
         }
       }
-      const cutVideoDecode = shouldCutEoVideoHardwarePassthrough(Boolean(onEncodedFrame));
+      const cutVideoDecode =
+        shouldCutEoVideoHardwarePassthrough(Boolean(onEncodedFrame)) && !forceVideoPassthrough;
       if (!cutVideoDecode) {
         const stream = ev.streams[0] ?? new MediaStream([ev.track]);
         video.srcObject = stream;
@@ -264,11 +314,25 @@ export function useWebRtcPlayer({
       setError(msg);
       cleanup();
     }
-  }, [cleanup, enabled, encodedSyncHub, iceServers, onEncodedFrame, peerConnectionRef, signalingUrl, videoReceiverRef, videoRef]);
+  }, [
+    cleanup,
+    enabled,
+    encodedSyncHub,
+    forceVideoPassthrough,
+    iceServers,
+    onEncodedFrame,
+    peerConnectionRef,
+    signalingUrl,
+    videoReceiverRef,
+    videoRef,
+  ]);
 
   const restart = useCallback(() => {
     void start();
   }, [start]);
+
+  const restartRef = useRef(restart);
+  restartRef.current = restart;
 
   const iceKey = JSON.stringify(iceServers);
 
@@ -281,7 +345,80 @@ export function useWebRtcPlayer({
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- videoRef 稳定；iceServers 用序列化键
-  }, [signalingUrl, enabled, iceKey, start, cleanup]);
+  }, [signalingUrl, enabled, iceKey, forceVideoPassthrough, start, cleanup]);
+
+  useEffect(() => {
+    const intervalMs = stallWatchIntervalMs ?? 0;
+    if (!enabled || intervalMs <= 0) return;
+
+    const resetStallWatchState = () => {
+      prevFramesDecodedRef.current = null;
+      hadLiveFramesRef.current = false;
+      stallWatchSinceRef.current = Date.now();
+    };
+
+    resetStallWatchState();
+
+    const checkStall = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+
+      const now = Date.now();
+      if (now - lastStallRecoverAtRef.current < STALL_RECOVER_COOLDOWN_MS) return;
+
+      const pc = pcRef.current;
+      const video = videoRef.current;
+      if (!pc) return;
+
+      const ice = pc.iceConnectionState;
+      if (ice !== "connected" && ice !== "completed") {
+        prevFramesDecodedRef.current = null;
+        return;
+      }
+      if (pc.connectionState !== "connected") return;
+
+      let framesDecoded: number | null;
+      try {
+        framesDecoded = await readInboundVideoFramesDecoded(pc);
+      } catch {
+        return;
+      }
+      if (framesDecoded == null) return;
+
+      const videoHasPicture = Boolean(video && video.videoWidth > 0 && video.videoHeight > 0);
+      const prev = prevFramesDecodedRef.current;
+
+      if (prev != null) {
+        const delta = framesDecoded - prev;
+        if (delta > 0) hadLiveFramesRef.current = true;
+
+        const gracePassed = now - stallWatchSinceRef.current >= STALL_WATCH_GRACE_MS;
+        if (gracePassed && hadLiveFramesRef.current && videoHasPicture && delta <= 0) {
+          lastStallRecoverAtRef.current = now;
+          resetStallWatchState();
+          try {
+            onStallRecoverRef.current?.();
+          } catch {
+            /* ignore */
+          }
+          restartRef.current();
+          return;
+        }
+      }
+
+      prevFramesDecodedRef.current = framesDecoded;
+    };
+
+    stallWatchTimerRef.current = window.setInterval(() => {
+      void checkStall();
+    }, intervalMs);
+
+    return () => {
+      if (stallWatchTimerRef.current != null) {
+        window.clearInterval(stallWatchTimerRef.current);
+        stallWatchTimerRef.current = null;
+      }
+    };
+  }, [enabled, stallWatchIntervalMs, signalingUrl, videoRef]);
 
   return { connectionState, iceConnectionState, error, restart };
 }

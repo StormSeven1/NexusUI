@@ -1,6 +1,6 @@
 import type maplibregl from "maplibre-gl";
 import type { FilterSpecification } from "maplibre-gl";
-import type { Track } from "@/lib/map-entity-model";
+import { trackMapDisplayId, type Track } from "@/lib/map-entity-model";
 import {
   getMarkerSymbolId,
   TRACK_SELECT_RING_ID,
@@ -14,8 +14,8 @@ import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackGreen } from "@/
 import { loadSvgImage } from "@/lib/map-image-loader";
 import { threatRankBadgeImageId } from "@/lib/map-icons";
 import { isTrackVirtualTroop } from "@/lib/track-reality-type";
-import { getTrackRenderingConfig, getTrackIdModeConfig } from "@/lib/map-app-config";
-import { getTrackDispositionForRendering, useTrackStore } from "@/stores/track-store";
+import { getTrackRenderingConfig } from "@/lib/map-app-config";
+import { getTrackDispositionForRendering, isTrackAlarmLinked, useTrackStore } from "@/stores/track-store";
 import { useVerifiedTrackStore } from "@/stores/verified-track-store";
 import {
   useTrackDisplayStore,
@@ -118,16 +118,100 @@ export function trackMapVertexEstimate(tracks: ReadonlyArray<Track>): number {
   }, 0);
 }
 
+/** 尾迹折线绘制计划：`maxViewportPoints` 超预算时按条分配，避免整批尾迹突然消失 */
+export type TrackTrailDrawPlan =
+  | { mode: "none" }
+  | { mode: "all" }
+  | { mode: "partial"; maxTrailPointsByTrackId: Map<string, number> };
+
+function trailDrawPlanCacheSig(plan: TrackTrailDrawPlan): string {
+  if (plan.mode === "all") return "all";
+  if (plan.mode === "none") return "none";
+  let h = plan.maxTrailPointsByTrackId.size;
+  for (const [id, n] of plan.maxTrailPointsByTrackId) {
+    h = (h ^ id.length ^ n) >>> 0;
+    for (let i = 0; i < Math.min(id.length, 12); i++) {
+      h ^= id.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+  }
+  return `p${h}`;
+}
+
 /**
- * 未超 `maxViewportPoints` 预算 → 画每条航迹的 `historyTrail` 折线。
- * 超预算 → **整批不画折线**（不渲染历史轨迹）；每条航迹**只画当前位置**一个 Point（符号/标牌），**不**单独画历史采样点（本模块也无历史点 Point 要素）。store 里 `historyTrail` 原样保留。
+ * 在 `maxViewportPoints` 预算内决定各航迹可绘制的尾迹点数。
+ * 告警关联航迹优先；仍不足时对单条尾迹做点数裁剪，而不是整批不画。
+ */
+export function computeTrackTrailDrawPlan(tracks: ReadonlyArray<Track>): TrackTrailDrawPlan {
+  const max = getTrackRenderingConfig().trackDisplay.maxViewportPoints;
+  if (!Number.isFinite(max)) return { mode: "all" };
+  if (max <= 0) return { mode: "none" };
+  if (trackMapVertexEstimate(tracks) <= max) return { mode: "all" };
+
+  const td = useTrackDisplayStore.getState();
+  let budget = max;
+  const caps = new Map<string, number>();
+
+  const candidates = tracks
+    .map((t) => {
+      const trailSec = trailLengthSecondsForTrack(t, td);
+      const tr = trimHistoryTrailForDisplay(t.historyTrail, trailSec);
+      const len = tr?.length ?? 0;
+      return { t, len, needed: len >= 1 ? 1 + len : 0 };
+    })
+    .filter((c) => c.needed > 0)
+    .sort((a, b) => {
+      const pa = isTrackAlarmLinked(a.t) ? 0 : 1;
+      const pb = isTrackAlarmLinked(b.t) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      return a.needed - b.needed;
+    });
+
+  for (const { t, len, needed } of candidates) {
+    if (budget >= needed) {
+      caps.set(t.id, len);
+      budget -= needed;
+    } else if (budget > 1) {
+      caps.set(t.id, budget - 1);
+      budget = 0;
+    }
+  }
+
+  return caps.size > 0 ? { mode: "partial", maxTrailPointsByTrackId: caps } : { mode: "none" };
+}
+
+function trailForDrawPlan(
+  plan: TrackTrailDrawPlan,
+  trackId: string,
+  trail: [number, number][] | undefined,
+): [number, number][] | undefined {
+  if (!trail?.length) return trail;
+  if (plan.mode === "none") return undefined;
+  if (plan.mode === "all") return trail;
+  const cap = plan.maxTrailPointsByTrackId.get(trackId);
+  if (cap == null) return undefined;
+  if (trail.length <= cap) return trail;
+  return trail.slice(-cap);
+}
+
+/** 单条航迹在地图上的尾迹折线点（已套用面板时长 + 全图顶点预算） */
+export function displayHistoryTrailForTrack(
+  plan: TrackTrailDrawPlan,
+  t: Track,
+): [number, number][] | undefined {
+  const td = useTrackDisplayStore.getState();
+  return trailForDrawPlan(
+    plan,
+    t.id,
+    trimHistoryTrailForDisplay(t.historyTrail, trailLengthSecondsForTrack(t, td)),
+  );
+}
+
+/**
+ * @deprecated 请用 {@link computeTrackTrailDrawPlan}；保留供 3D 等判断是否完全关闭尾迹层。
  */
 export function trackMapDrawHistoryTrails(tracks: ReadonlyArray<Track>): boolean {
-  const max = getTrackRenderingConfig().trackDisplay.maxViewportPoints;
-  if (!Number.isFinite(max)) return true;
-  /** ≤0：显式关闭历史折线（仅保留当前点符号）；无效数字则不作顶点限制 */
-  if (max <= 0) return false;
-  return trackMapVertexEstimate(tracks) <= max;
+  return computeTrackTrailDrawPlan(tracks).mode !== "none";
 }
 
 function trackPointFillAndStyle(t: Track, accent: AssetDispositionIconAccent | null | undefined) {
@@ -155,15 +239,19 @@ export function buildTrackLinesGeoJSON(
   trackList: Track[],
   accent?: AssetDispositionIconAccent | null,
 ): GeoJSON.FeatureCollection {
-  const drawTrails = trackMapDrawHistoryTrails(trackList);
+  const trailPlan = computeTrackTrailDrawPlan(trackList);
   const features: GeoJSON.Feature[] = [];
   const td = useTrackDisplayStore.getState();
 
   for (const t of trackList) {
     const { pointFill } = trackPointFillAndStyle(t, accent);
-    const trail = trimHistoryTrailForDisplay(t.historyTrail, trailLengthSecondsForTrack(t, td));
+    const trail = trailForDrawPlan(
+      trailPlan,
+      t.id,
+      trimHistoryTrailForDisplay(t.historyTrail, trailLengthSecondsForTrack(t, td)),
+    );
 
-    if (drawTrails && trail && trail.length >= 1) {
+    if (trail && trail.length >= 1) {
       const coords: [number, number][] = [
         ...trail.map(([lng, lat]) => [lng, lat] as [number, number]),
         [t.lng, t.lat],
@@ -229,9 +317,7 @@ export function buildTrackFusionPointsGeoJSON(
       isAirTrack: t.isAirTrack ?? false,
       targetType: t.targetType ?? null,
       name: t.name,
-      mapLabelText: getTrackIdModeConfig().distinguishSeaAir
-        ? (t.type === "air" ? t.showID : (t.trackId ?? t.showID))
-        : (t.trackId ?? t.showID),
+      mapLabelText: trackMapDisplayId(t),
       type: t.type,
       disposition: disp,
       speed: t.speed,
@@ -286,9 +372,7 @@ export function buildTrackRadarPointsGeoJSON(
       isAirTrack: t.isAirTrack ?? false,
       targetType: t.targetType ?? null,
       name: t.name,
-      mapLabelText: getTrackIdModeConfig().distinguishSeaAir
-        ? (t.type === "air" ? t.showID : (t.trackId ?? t.showID))
-        : (t.trackId ?? t.showID),
+      mapLabelText: trackMapDisplayId(t),
       type: t.type,
       disposition: disp,
       speed: t.speed,
@@ -778,7 +862,7 @@ export class TracksMaplibre {
     const trd = getTrackRenderingConfig().trackDisplay;
     const maxVp = trd.maxViewportPoints;
     const maxHist = trd.maxHistoryPointsPerTrack;
-    const drawTrails = trackMapDrawHistoryTrails(filtered) ? 1 : 0;
+    const drawTrails = trailDrawPlanCacheSig(computeTrackTrailDrawPlan(filtered));
     const tdRev = useTrackDisplayStore.getState().displayRevision;
     const affRev = useTrackStore.getState().mapManualAffiliationRev;
     const verRev = useVerifiedTrackStore.getState().mapVerifiedRev;

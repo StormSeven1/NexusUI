@@ -8,7 +8,12 @@ import {
 import { isEoVideoWebCodecsCanvasEnabled } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 import type { BufferedDetectionEntry } from "@/lib/eo-video/eoDetectionTypes";
 import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
-import { headersMatch, detectionRectsToEoBoxes } from "@/lib/eo-video/detectionSyncUtils";
+import {
+  eoDetectionBoxesEqual,
+  headersMatch,
+  detectionRectsToEoBoxes,
+  resolveDetectionFrameSize,
+} from "@/lib/eo-video/detectionSyncUtils";
 import { getEoDetectionWebSocketManager } from "@/lib/eo-video/eoDetectionWebSocket";
 import { ingestEntityDetectionPayload } from "@/lib/eo-video/entityDetectionIngest";
 import {
@@ -21,10 +26,46 @@ import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 
 const RENDER_MS = 40;
 const DETECTION_ENTRY_STALE_MS = 2000;
-/** 单目标框在画面变化时更敏感：超过该时长未更新就先清掉，避免“画面动了框还挂着” */
+/**
+ * 连续 sync 未命中则清框。约 40ms/tick，25≈1s；
+ * 对齐 Qt `m_nNoneSingleTagTick >= 5`（@50ms）但 Web 链路抖动更大，取 1s。
+ */
+const SINGLE_TRACK_SYNC_MISS_CLEAR_TICKS = 25;
+/** 非跟踪态 / 无 DDS 航迹时的单目标 WS 包有效年龄 */
 const SINGLE_TRACK_STALE_MS = 480;
+/** WS 显式空框后，该窗口内忽略 syncHeader 命中的旧有框包（告警清除） */
+const EXPLICIT_CLEAR_HONOR_MS = 400;
+/** 单目标 sync 仅扫描最近几帧 hub header，对齐 Qt 只用当前显示帧 index 匹配 */
+const SINGLE_HEADER_MATCH_LAG_FRAMES = [0, 1, 2, 3] as const;
+/** 多目标 sync 短暂失败沿用上一帧（对齐 base-vue maxFailures=20 / Qt m_nNoneTagTick=15） */
 const MAX_HEADER_MISS = 20;
 const DIAG_EMIT_INTERVAL_MS = 260;
+
+function isExplicitEmptyEntry(entry: BufferedDetectionEntry | null | undefined): boolean {
+  return entry != null && entry.videoRects.length === 0;
+}
+
+function latestBufferEntry(
+  arr: BufferedDetectionEntry[],
+  now: number,
+  maxAgeMs: number,
+): BufferedDetectionEntry | null {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const e = arr[i];
+    if (!e) continue;
+    if (now - e.receivedAt > maxAgeMs) break;
+    return e;
+  }
+  return null;
+}
+
+function isLayerExplicitlyCleared(
+  arr: BufferedDetectionEntry[],
+  now: number,
+  maxAgeMs = EXPLICIT_CLEAR_HONOR_MS,
+): boolean {
+  return isExplicitEmptyEntry(latestBufferEntry(arr, now, maxAgeMs));
+}
 
 function finiteFromDdsField(v: unknown): number | undefined {
   if (v === null || v === undefined || v === "") return undefined;
@@ -101,6 +142,7 @@ function hasAnyHeader(arr: BufferedDetectionEntry[], now: number): boolean {
 }
 
 const WS_LABEL = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"] as const;
+const EMPTY_DETECTION_BOXES: EoDetectionBox[] = [];
 
 export interface UseEoEntityDetectionOptions {
   entityId: string | undefined;
@@ -113,6 +155,9 @@ export interface UseEoEntityDetectionOptions {
   expandedMode?: boolean;
   /** 读 DDS `trackAlias` 的相机实体 id（与底部任务条 `cameraDdsEntityId` 一致；缺省用 detection entityId） */
   ddsCameraEntityId?: string;
+  /** WebCodecs Canvas 主画面 intrinsic（`<video>` 常为 0×0 时用于像素框归一化） */
+  presentationWidth?: number;
+  presentationHeight?: number;
 }
 
 export function useEoEntityDetection({
@@ -123,6 +168,8 @@ export function useEoEntityDetection({
   onDiagnostic,
   expandedMode = false,
   ddsCameraEntityId,
+  presentationWidth = 0,
+  presentationHeight = 0,
 }: UseEoEntityDetectionOptions): { boxes: EoDetectionBox[]; diag: string } {
   const [boxes, setBoxes] = useState<EoDetectionBox[]>([]);
   const [diag, setDiag] = useState("");
@@ -135,15 +182,6 @@ export function useEoEntityDetection({
   const lastJitterUpdateMsRef = useRef(0);
   const lastJitterTargetMsRef = useRef(-1);
 
-  const headerMissRef = useRef<{
-    boat: { last: BufferedDetectionEntry | null; fails: number };
-    plane: { last: BufferedDetectionEntry | null; fails: number };
-    single: { last: BufferedDetectionEntry | null; fails: number };
-  }>({
-    boat: { last: null, fails: 0 },
-    plane: { last: null, fails: 0 },
-    single: { last: null, fails: 0 },
-  });
   const headerEverMatchedRef = useRef(false);
 
   const syncDiagRef = useRef({ headerOk: 0, headerFail: 0, wallMs: 0, freshest: 0 });
@@ -159,8 +197,27 @@ export function useEoEntityDetection({
   const detectionDelaySamplesRef = useRef(0);
   const lastDiagEmitMsRef = useRef(0);
   const lastDiagLineRef = useRef("");
-  /** 单目标跟踪态：缺帧时沿用上一帧单目标框，避免闪出海/空多目标框 */
+  /** 对齐 Qt `m_lastSingleRect` + `m_nNoneSingleTagTick` */
   const lastSingleBoxesRef = useRef<EoDetectionBox[]>([]);
+  const singleNoneSyncTickRef = useRef(0);
+  /** 对齐 Qt `m_vLastRect` + `m_nNoneTagTick`（多目标） */
+  const lastMultiBoxesRef = useRef<EoDetectionBox[]>([]);
+  const multiNoneSyncTickRef = useRef(0);
+  const lastBoxesRef = useRef<EoDetectionBox[]>([]);
+
+  const onDiagnosticRef = useRef(onDiagnostic);
+  const expandedModeRef = useRef(expandedMode);
+  const ddsLookupIdRef = useRef("");
+  const ddsTrackIdForUiRef = useRef<number | null>(null);
+  const ddsAliasStrRef = useRef("");
+  const singleTrackOverlayTitleRef = useRef<string | null>(null);
+  const encodedSyncHubRef = useRef(encodedSyncHub);
+
+  const presentationSizeRef = useRef({ w: 0, h: 0 });
+  presentationSizeRef.current = {
+    w: presentationWidth > 0 ? presentationWidth : 0,
+    h: presentationHeight > 0 ? presentationHeight : 0,
+  };
 
   const id = entityId?.trim() ? canonicalEntityId(entityId.trim()) : "";
 
@@ -176,17 +233,20 @@ export function useEoEntityDetection({
   const ddsAliasStrMemo = heldDdsTrackUi.trackAlias;
   const singleTrackOverlayTitle = heldDdsTrackUi.overlayTitle;
 
+  onDiagnosticRef.current = onDiagnostic;
+  expandedModeRef.current = expandedMode;
+  ddsLookupIdRef.current = ddsLookupId;
+  ddsTrackIdForUiRef.current = ddsTrackIdForUi;
+  ddsAliasStrRef.current = ddsAliasStrMemo;
+  singleTrackOverlayTitleRef.current = singleTrackOverlayTitle;
+  encodedSyncHubRef.current = encodedSyncHub;
+
   useEffect(() => {
     boatBuf.current = [];
     planeBuf.current = [];
     singleBuf.current = [];
     captureToDisplayOffsetMsRef.current = 0;
     hasCaptureTsRef.current = false;
-    headerMissRef.current = {
-      boat: { last: null, fails: 0 },
-      plane: { last: null, fails: 0 },
-      single: { last: null, fails: 0 },
-    };
     headerEverMatchedRef.current = false;
     syncDiagRef.current = { headerOk: 0, headerFail: 0, wallMs: 0, freshest: 0 };
     headerDiagRef.current = "";
@@ -194,6 +254,10 @@ export function useEoEntityDetection({
     lastDiagEmitMsRef.current = 0;
     lastDiagLineRef.current = "";
     lastSingleBoxesRef.current = [];
+    singleNoneSyncTickRef.current = 0;
+    lastMultiBoxesRef.current = [];
+    multiNoneSyncTickRef.current = 0;
+    lastBoxesRef.current = [];
     setBoxes([]);
     setDiag("");
   }, [id]);
@@ -202,7 +266,24 @@ export function useEoEntityDetection({
     if (!enabled || !id) return;
     const mgr = getEoDetectionWebSocketManager();
     return mgr.subscribe(id, (data) => {
-      ingestEntityDetectionPayload(data, boatBuf.current, planeBuf.current, singleBuf.current);
+      const cleared = ingestEntityDetectionPayload(
+        data,
+        boatBuf.current,
+        planeBuf.current,
+        singleBuf.current,
+      );
+      if (cleared.clearedSingle) {
+        lastSingleBoxesRef.current = [];
+        singleNoneSyncTickRef.current = SINGLE_TRACK_SYNC_MISS_CLEAR_TICKS;
+      }
+      if (cleared.clearedBoat || cleared.clearedPlane) {
+        lastMultiBoxesRef.current = lastMultiBoxesRef.current.filter((b) => {
+          if (cleared.clearedBoat && b.id.startsWith("boat-")) return false;
+          if (cleared.clearedPlane && b.id.startsWith("plane-")) return false;
+          return true;
+        });
+        multiNoneSyncTickRef.current = MAX_HEADER_MISS;
+      }
     });
   }, [enabled, id]);
 
@@ -220,6 +301,12 @@ export function useEoEntityDetection({
       if (tickingRef.current) return;
       tickingRef.current = true;
       const video = videoRef.current;
+      const ddsTrackIdForUi = ddsTrackIdForUiRef.current;
+      const ddsLookupId = ddsLookupIdRef.current;
+      const ddsAliasStrMemo = ddsAliasStrRef.current;
+      const singleTrackOverlayTitle = singleTrackOverlayTitleRef.current;
+      const expandedMode = expandedModeRef.current;
+      const encodedSyncHub = encodedSyncHubRef.current;
       const mgr = getEoDetectionWebSocketManager();
       const rs = mgr.getWsReadyState();
       const wsName = rs >= 0 && rs < 4 ? WS_LABEL[rs] : "?";
@@ -231,9 +318,28 @@ export function useEoEntityDetection({
         const next: EoDetectionBox[] = [];
         const now = Date.now();
         const singleTrackMode = ddsTrackIdForUi != null;
-        if (!singleTrackMode) {
+        const singleExplicitlyCleared = isLayerExplicitlyCleared(singleBuf.current, now);
+        const boatExplicitlyCleared = isLayerExplicitlyCleared(boatBuf.current, now);
+        const planeExplicitlyCleared = isLayerExplicitlyCleared(planeBuf.current, now);
+
+        if (singleExplicitlyCleared) {
           lastSingleBoxesRef.current = [];
+          singleNoneSyncTickRef.current = SINGLE_TRACK_SYNC_MISS_CLEAR_TICKS;
+        } else if (!singleTrackMode) {
+          lastSingleBoxesRef.current = [];
+          singleNoneSyncTickRef.current = 0;
         }
+
+        if (boatExplicitlyCleared || planeExplicitlyCleared) {
+          lastMultiBoxesRef.current = lastMultiBoxesRef.current.filter((b) => {
+            if (boatExplicitlyCleared && b.id.startsWith("boat-")) return false;
+            if (planeExplicitlyCleared && b.id.startsWith("plane-")) return false;
+            return true;
+          });
+          multiNoneSyncTickRef.current = MAX_HEADER_MISS;
+        }
+
+        /** 跟踪态（含 DDS 3s 滞回）：单目标包与上一帧框均可保留至 3s，避免 sync 抖动误清 */
         const singleEntryMaxAgeMs = singleTrackMode
           ? EO_CAMERA_DDS_EXECUTING_HOLD_MS
           : SINGLE_TRACK_STALE_MS;
@@ -245,9 +351,22 @@ export function useEoEntityDetection({
           color: "friendly" | "hostile" | "accent",
         ): EoDetectionBox[] => {
           if (!entry?.videoRects?.length) return [];
-          const vw = entry.videoWidth || video?.videoWidth || 0;
-          const vh = entry.videoHeight || video?.videoHeight || 0;
-          return detectionRectsToEoBoxes(entry.videoRects, vw, vh, idPrefix, label, color);
+          const pres = presentationSizeRef.current;
+          const presentationW = pres.w > 0 ? pres.w : 0;
+          const presentationH = pres.h > 0 ? pres.h : 0;
+          const { w: vw, h: vh } = resolveDetectionFrameSize(entry.videoRects, {
+            entryW: entry.videoWidth,
+            entryH: entry.videoHeight,
+            presentationW,
+            presentationH,
+            videoW: video?.videoWidth ?? 0,
+            videoH: video?.videoHeight ?? 0,
+          });
+          return detectionRectsToEoBoxes(entry.videoRects, vw, vh, idPrefix, label, color).map((b) => ({
+            ...b,
+            frameWidth: vw,
+            frameHeight: vh,
+          }));
         };
 
         const buildBoxes = (
@@ -261,9 +380,16 @@ export function useEoEntityDetection({
           const ddSpeed = finiteFromDdsField(ddsRow?.speed);
           const ddDist = finiteFromDdsField(ddsRow?.distance);
 
-          const pickedSingle = picker(singleBuf.current);
+          let pickedSingle = picker(singleBuf.current);
+          if (
+            singleExplicitlyCleared &&
+            pickedSingle &&
+            !isExplicitEmptyEntry(pickedSingle)
+          ) {
+            pickedSingle = null;
+          }
           let singleEntry: BufferedDetectionEntry | null = null;
-          if (pickedSingle) {
+          if (pickedSingle && !isExplicitEmptyEntry(pickedSingle)) {
             const age = now - pickedSingle.receivedAt;
             if (age <= singleEntryMaxAgeMs) {
               singleEntry = pickedSingle;
@@ -345,19 +471,25 @@ export function useEoEntityDetection({
               next.push(...lastSingleBoxesRef.current);
             }
           } else {
-            next.push(...boxesFromEntry(picker(boatBuf.current), "boat", "海", "friendly"));
-            next.push(...boxesFromEntry(picker(planeBuf.current), "plane", "空", "hostile"));
+            const pickLayer = (
+              arr: BufferedDetectionEntry[],
+              prefix: "boat" | "plane",
+              cleared: boolean,
+            ): BufferedDetectionEntry | null => {
+              const picked = picker(arr);
+              if (cleared && picked && !isExplicitEmptyEntry(picked)) return null;
+              if (picked && isExplicitEmptyEntry(picked)) return null;
+              return picked;
+            };
+            if (!boatExplicitlyCleared) {
+              next.push(...boxesFromEntry(pickLayer(boatBuf.current, "boat", boatExplicitlyCleared), "boat", "海", "friendly"));
+            }
+            if (!planeExplicitlyCleared) {
+              next.push(...boxesFromEntry(pickLayer(planeBuf.current, "plane", planeExplicitlyCleared), "plane", "空", "hostile"));
+            }
           }
         };
 
-        /**
-         * 策略优先级：
-         * 1. syncHeader 匹配（hub 多滞后帧扫描 + WS 与 hub 32B 前缀兼容）
-         * 2. 编码帧环 wallMs 时间对齐（hub 有数据但 header 仍对不上时）
-         * 3. 取最新包（都不可用时）
-         */
-
-        // —— 策略 1：syncHeader 匹配（多滞后帧：仅 snapshotForPresentation(6) 常与当前显示帧/检测包错位）
         const bufHasHeader =
           hasAnyHeader(boatBuf.current, now) ||
           hasAnyHeader(planeBuf.current, now) ||
@@ -369,9 +501,12 @@ export function useEoEntityDetection({
           null;
 
         let headerMatchedThisTick = false;
+        let singleHeaderMatchedThisTick = false;
 
         if (encodedSyncHub && bufHasHeader && (headerEverMatchedRef.current || syncDiagRef.current.headerFail < 60)) {
-          const HEADER_MATCH_LAG_FRAMES = [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15] as const;
+          const HEADER_MATCH_LAG_FRAMES = singleTrackMode
+            ? SINGLE_HEADER_MATCH_LAG_FRAMES
+            : ([0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15] as const);
           for (const lag of HEADER_MATCH_LAG_FRAMES) {
             const snap = encodedSyncHub.snapshotForPresentation(lag);
             if (!snap?.syncHeader) continue;
@@ -381,11 +516,17 @@ export function useEoEntityDetection({
             const testHit = singleTrackMode
               ? tryMatch(singleBuf.current)
               : tryMatch(boatBuf.current) ?? tryMatch(planeBuf.current) ?? tryMatch(singleBuf.current);
-            if (testHit) {
+            if (
+              testHit &&
+              (!singleTrackMode || !isExplicitEmptyEntry(testHit))
+            ) {
               headerMatchedThisTick = true;
+              if (singleTrackMode) singleHeaderMatchedThisTick = true;
               headerEverMatchedRef.current = true;
               syncMode = singleTrackMode ? "header-single" : "header";
               syncDiagRef.current.headerOk++;
+              if (singleTrackMode) singleNoneSyncTickRef.current = 0;
+              if (!singleTrackMode) multiNoneSyncTickRef.current = 0;
               buildBoxes(tryMatch);
               break;
             }
@@ -394,18 +535,17 @@ export function useEoEntityDetection({
           if (!headerMatchedThisTick) {
             syncDiagRef.current.headerFail++;
             if (!headerDiagRef.current) {
-              const hex = (u: Uint8Array) => Array.from(u.slice(0, 8)).map(b => b.toString(16).padStart(2, "0")).join("");
+              const hex = (u: Uint8Array) => Array.from(u.slice(0, 8)).map((b) => b.toString(16).padStart(2, "0")).join("");
               const snapDiag = encodedSyncHub.snapshotForPresentation(0) ?? encodedSyncHub.snapshotForPresentation(6);
               const currentSyncHeader = snapDiag?.syncHeader ?? null;
               const hubHex = currentSyncHeader ? `hub(${currentSyncHeader.length})=${hex(currentSyncHeader)}` : "hub=∅";
               const allBufs = [...boatBuf.current, ...planeBuf.current, ...singleBuf.current];
-              const wsEntry = allBufs.find(e => e.header);
+              const wsEntry = allBufs.find((e) => e.header);
               const wsHex = wsEntry?.header ? `ws(${wsEntry.header.length})=${hex(wsEntry.header)}` : "ws=null";
 
-              // 暴力交叉匹配诊断：hub 环中任意帧 vs WS 缓冲中任意条
               let crossHit = 0;
               const allHubHeaders = encodedSyncHub.getAllSyncHeaders();
-              const wsHeaders = allBufs.filter(e => e.header).map(e => e.header!);
+              const wsHeaders = allBufs.filter((e) => e.header).map((e) => e.header!);
               for (const hh of allHubHeaders) {
                 for (const wh of wsHeaders) {
                   if (headersMatch(hh, wh)) {
@@ -421,12 +561,49 @@ export function useEoEntityDetection({
           }
         }
 
-        // —— 策略 2：编码帧环 wallMs + 检测延迟补偿
-        if (!headerMatchedThisTick && hubSnapForWallMs) {
+        /**
+         * 单目标跟踪：优先 syncHeader；未对齐时先用 3s 内 WS 包 / 上一帧框兜底，
+         * 连续多 tick 仍无有效单目标且 sync 持续失败才清框（相机运动场景）。
+         */
+        if (singleTrackMode && !singleHeaderMatchedThisTick && !singleExplicitlyCleared) {
+          if (next.length === 0) {
+            buildBoxes((arr) => {
+              const fresh = pickFreshest(arr, now);
+              if (!fresh || isExplicitEmptyEntry(fresh)) return null;
+              const age = now - fresh.receivedAt;
+              return age <= EO_CAMERA_DDS_EXECUTING_HOLD_MS ? fresh : null;
+            });
+            if (next.length > 0) {
+              singleNoneSyncTickRef.current = 0;
+              syncMode = "single-fresh-fallback";
+            }
+          }
+
+          if (next.length === 0 && lastSingleBoxesRef.current.length > 0) {
+            next.push(...lastSingleBoxesRef.current);
+            syncMode = "single-last-hold";
+          }
+
+          if (next.length === 0) {
+            const canSyncSingle =
+              Boolean(encodedSyncHub) && hasAnyHeader(singleBuf.current, now);
+            if (canSyncSingle) {
+              singleNoneSyncTickRef.current++;
+              if (singleNoneSyncTickRef.current >= SINGLE_TRACK_SYNC_MISS_CLEAR_TICKS) {
+                singleNoneSyncTickRef.current = 0;
+                lastSingleBoxesRef.current = [];
+                syncMode = "single-miss-clear";
+              } else {
+                syncMode = `single-miss-wait(${singleNoneSyncTickRef.current})`;
+              }
+            }
+          } else {
+            singleNoneSyncTickRef.current = 0;
+          }
+        } else if (!singleTrackMode && !headerMatchedThisTick && hubSnapForWallMs) {
           syncMode = "wallMs";
           syncDiagRef.current.wallMs++;
 
-          // 估算检测延迟 D：最新检测包 receivedAt - 编码帧环最新帧 wallMs
           const latestHub = encodedSyncHub?.latestWallMs() ?? null;
           if (latestHub) {
             const allBufs = [...boatBuf.current, ...planeBuf.current, ...singleBuf.current];
@@ -457,17 +634,39 @@ export function useEoEntityDetection({
             if (byRtp) frameWallMs = byRtp.wallMs;
           }
 
-          // 核心：当前显示帧 wallMs + D ≈ 对应检测包的 receivedAt
           const targetReceivedAt = frameWallMs + detectionDelayMsRef.current;
           buildBoxes((arr) => pickByReceivedAt(arr, now, targetReceivedAt));
         }
 
-        // —— 策略 3：取最新包
-        if (next.length === 0 && !headerMatchedThisTick) {
+        if (!singleTrackMode && next.length === 0 && !headerMatchedThisTick) {
           if (syncMode === "none") syncMode = "freshest";
           else syncMode += "→fresh";
           syncDiagRef.current.freshest++;
           buildBoxes((arr) => pickFreshest(arr, now));
+        }
+
+        if (!singleTrackMode) {
+          if (next.length > 0) {
+            lastMultiBoxesRef.current = next;
+            multiNoneSyncTickRef.current = 0;
+          } else if (
+            !boatExplicitlyCleared &&
+            !planeExplicitlyCleared &&
+            lastMultiBoxesRef.current.length > 0
+          ) {
+            const canSyncMulti =
+              Boolean(encodedSyncHub) && bufHasHeader;
+            if (canSyncMulti) {
+              multiNoneSyncTickRef.current++;
+              if (multiNoneSyncTickRef.current < MAX_HEADER_MISS) {
+                next.push(...lastMultiBoxesRef.current);
+                syncMode = `multi-last-hold(${multiNoneSyncTickRef.current})`;
+              } else {
+                lastMultiBoxesRef.current = [];
+                syncMode = "multi-miss-clear";
+              }
+            }
+          }
         }
 
         out = next;
@@ -488,11 +687,14 @@ export function useEoEntityDetection({
         if (changed && nowEmit - lastDiagEmitMsRef.current >= DIAG_EMIT_INTERVAL_MS) {
           setDiag(line);
           const hover = [line, wsDbg.rawForTitle].filter(Boolean).join("\n\n");
-          onDiagnostic?.(line, hover || undefined);
+          onDiagnosticRef.current?.(line, hover || undefined);
           lastDiagLineRef.current = line;
           lastDiagEmitMsRef.current = nowEmit;
         }
-        setBoxes(out);
+        if (!eoDetectionBoxesEqual(out, lastBoxesRef.current)) {
+          lastBoxesRef.current = out;
+          setBoxes(out);
+        }
         tickingRef.current = false;
       }
     };
@@ -515,8 +717,6 @@ export function useEoEntityDetection({
         const sample = wallClockMs - newest.captureTs;
         if (Number.isFinite(sample) && sample > 0 && sample < 8000) {
           captureToDisplayOffsetMsRef.current = captureToDisplayOffsetMsRef.current * 0.7 + sample * 0.3;
-
-          /* 试验：禁用 jitterBufferTarget 动态调整，减少播放链路干预。 */
         }
       }
 
@@ -528,7 +728,7 @@ export function useEoEntityDetection({
 
     const useVideoFrameClock =
       !shouldCutEoVideoHardwarePassthrough(
-        isEoVideoWebCodecsCanvasEnabled() && Boolean(encodedSyncHub),
+        isEoVideoWebCodecsCanvasEnabled() && Boolean(encodedSyncHubRef.current),
       ) &&
       video &&
       typeof video.requestVideoFrameCallback === "function";
@@ -546,11 +746,10 @@ export function useEoEntityDetection({
         video.cancelVideoFrameCallback(frameCbId);
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- encodedSyncHub 稳定引用，不影响逻辑
-  }, [enabled, id, onDiagnostic, videoRef, expandedMode, singleTrackOverlayTitle, ddsTrackIdForUi, ddsAliasStrMemo, ddsLookupId]);
+  }, [enabled, id, videoRef]);
 
   return {
-    boxes: enabled && id ? boxes : [],
+    boxes: enabled && id ? boxes : EMPTY_DETECTION_BOXES,
     diag: enabled && id ? diag : "",
   };
 }

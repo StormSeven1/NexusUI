@@ -42,6 +42,7 @@ const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
   "fuse_sea",
   "fuse_air",
   "bird_radar",
+  "fanwu_car_radar",
   "radar_wharf",
   "radar_jingzi",
   "ais_track",
@@ -88,11 +89,11 @@ function surfaceKindFromDdsOrTrackLayerKey(rec: Record<string, unknown>): Track[
   if (typeof ddsRaw === "string") {
     const rid = ddsRaw.trim().toLowerCase();
     const lk = TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[rid];
-    if (lk === "fuse_air" || lk === "bird_radar" || lk === "uav_pose_track") return "air";
+    if (lk === "fuse_air" || lk === "bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track") return "air";
     if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi") return "sea";
   }
   const tlk = readTrackLayerKey(rec);
-  if (tlk === "fuse_air" || tlk === "bird_radar" || tlk === "uav_pose_track") return "air";
+  if (tlk === "fuse_air" || tlk === "bird_radar" || tlk === "fanwu_car_radar" || tlk === "uav_pose_track") return "air";
   if (tlk === "fuse_sea" || tlk === "radar_wharf" || tlk === "radar_jingzi") return "sea";
   return undefined;
 }
@@ -266,7 +267,12 @@ function readDisposition(rec: Record<string, unknown>): ForceDisposition {
  * 数据传递：后端报文 uniqueID → 此函数 → Track.showID → 全局缓存 key
  */
 function resolveUniqueID(rec: Record<string, unknown>): string {
-  const u = rec.uniqueID ?? rec.uniqueId ?? rec.unique_id;
+  const u =
+    rec.uniqueID ??
+    rec.uniqueId ??
+    rec.unique_id ??
+    rec.target_id ??
+    rec.targetId;
   if (u != null && String(u).trim() !== "") return String(u).trim();
   return "";
 }
@@ -279,7 +285,7 @@ function resolveUniqueID(rec: Record<string, unknown>): string {
  * 关键变量说明：
  *   - uniqueID: 后端唯一标识（报文 uniqueID），作为 showID 的来源
  *   - showID: 渲染缓存主键（= uniqueID），全局唯一
- *   - trackIdStr: 业务 trackId，用于告警匹配和处置方案关联
+ *   - trackIdStr: 业务 track_id（external_target_id），无人机任务等；告警/相机用 uniqueID(target_id)
  *   - kind: 航迹类型（air/sea/underwater），影响图标旋转和 ID 截断
  *   - course: 原始航向角度
  *   - heading: 图标渲染航向（对空=course+offset）

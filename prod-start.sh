@@ -115,7 +115,9 @@ docker run -d \
   -e "BACKEND_ONLY=${BACKEND_ONLY:-0}" \
   -e "NEXUS_DOCKER_NO_KILL=${NEXUS_DOCKER_NO_KILL:-0}" \
   -e "NEXUS_UI_CLEAN_NEXT=${DO_REBUILD}" \
+  -e "NEXUS_UI_SKIP_BUILD=${NEXUS_UI_SKIP_BUILD:-$(( DO_REBUILD == 0 ? 1 : 0 ))}" \
   -e "NEXUS_PY_UPGRADE=${DO_REBUILD}" \
+  -e "NEXUS_PY_SKIP_INSTALL=${NEXUS_PY_SKIP_INSTALL:-$(( DO_REBUILD == 0 ? 1 : 0 ))}" \
   -e "NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}" \
   -e "NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}" \
   -e "NEXT_PUBLIC_APP_CONFIG_URL=/app-config.prod.json" \
@@ -139,7 +141,7 @@ echo "已启动生产容器: $NAME"
 echo "  前端:     http://127.0.0.1:${FP}/"
 echo "  后端 API: http://127.0.0.1:${BP}/api  WebSocket: ws://127.0.0.1:${BP}/ws"
 echo ""
-echo "说明: 容器内会执行 npm run build（若尚无可用 .next）与 next start，并拉起 Custombackend。"
+echo "说明: 容器内默认跳过 pip / 跳过 npm run build（已有 .next）；改代码或 NEXT_PUBLIC_* 后用 --rebuild。"
 echo "      浏览器读 public/app-config.prod.json（与开发 app-config.dev.json 互不覆盖）。"
 echo "      若路由/API 异常，请确认本机构建时 BACKEND_URL 与上述一致，必要时先 ./prod-build.sh 再重启。"
 echo "查看日志: docker logs -f ${NAME}"

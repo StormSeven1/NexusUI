@@ -206,6 +206,11 @@ function pushBuffer(arr: BufferedDetectionEntry[], entry: BufferedDetectionEntry
   if (arr.length > ENTITY_DETECTION_BUFFER_CAP) arr.shift();
 }
 
+/** 过滤 w/h≤0 的无效框；后端清除时可能发 [0,0,0,0] 而非空数组 */
+function filterPositiveSizeRects(rects: number[][]): number[][] {
+  return rects.filter((r) => r.length >= 4 && Number(r[2]) > 0 && Number(r[3]) > 0);
+}
+
 function toFiniteNumber(v: unknown): number | undefined {
   if (v === null || v === undefined || v === "") return undefined;
   const n = Number(v);
@@ -327,16 +332,17 @@ export function ingestEntityDetectionPayload(
   }
   if (data.singleRect) {
     const rects = extractVideoRectsFromLayer(data.singleRect);
-    if (!_rectIdDiagDone && rects && rects.length > 0) {
+    const validRects = rects !== null ? filterPositiveSizeRects(rects) : null;
+    if (!_rectIdDiagDone && validRects && validRects.length > 0) {
       _rectIdDiagDone = true;
-      const sampleRows = rects.slice(0, 3).map((r) => ({
+      const sampleRows = validRects.slice(0, 3).map((r) => ({
         rowLen: r.length,
         xywh: r.slice(0, 4),
         fifth: r.length >= 5 ? r[4] : null,
       }));
       console.log("[eo-detect] rect id diag:", {
         layer: "singleRect",
-        rows: rects.length,
+        rows: validRects.length,
         sampleRows,
         rawVideoRectType: Array.isArray(data.singleRect.videoRect) ? "array" : typeof data.singleRect.videoRect,
         rawFirstObj:
@@ -347,23 +353,23 @@ export function ingestEntityDetectionPayload(
             : null,
       });
     }
-    if (rects !== null) {
-      if (rects.length === 0) {
+    if (validRects !== null) {
+      if (validRects.length === 0) {
         singleBuf.length = 0;
         cleared.clearedSingle = true;
+      } else {
+        pushBuffer(singleBuf, {
+          header: parseDetectionHeader(data.singleRect.header),
+          videoRects: validRects,
+          videoWidth: vw,
+          videoHeight: vh,
+          frameId: toFiniteNumber(data.singleRect.frameId) ?? topFrameId,
+          captureTs: toFiniteNumber(data.singleRect.captureTs) ?? topCaptureTs,
+          encodeTs: toFiniteNumber(data.singleRect.encodeTs) ?? topEncodeTs,
+          receivedAt: Date.now(),
+          singleDisplayMeta: parseSingleRectDisplayMetaFromPayload(data.singleRect, data),
+        });
       }
-      pushBuffer(singleBuf, {
-        header: parseDetectionHeader(data.singleRect.header),
-        videoRects: rects,
-        videoWidth: vw,
-        videoHeight: vh,
-        frameId: toFiniteNumber(data.singleRect.frameId) ?? topFrameId,
-        captureTs: toFiniteNumber(data.singleRect.captureTs) ?? topCaptureTs,
-        encodeTs: toFiniteNumber(data.singleRect.encodeTs) ?? topEncodeTs,
-        receivedAt: Date.now(),
-        singleDisplayMeta:
-          rects.length > 0 ? parseSingleRectDisplayMetaFromPayload(data.singleRect, data) : undefined,
-      });
     }
   }
   return cleared;

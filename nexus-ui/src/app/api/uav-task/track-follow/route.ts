@@ -26,7 +26,7 @@ function tsFlightsubtask(): string {
 
 /**
  * WatchSys `PtzMainWidget::SendUavFlightTask`：`rectID`/`rectType`≤0 且 `radarid` 非 7/8 时
- * `type.casia.tasks.v1.MultiDroneTracking`（`trackID_List`、`transition_distance` 200 等）。
+ * `type.casia.tasks.v1.MultiDroneTracking`（`trackID_List` 为业务 track_id / external_target_id）。
  */
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;

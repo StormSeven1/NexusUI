@@ -1,35 +1,60 @@
 import type { Track } from "@/lib/map-entity-model";
 import type { ImportantTrackTargetCollection } from "@/lib/camera-management-client";
 
-/** 相机元任务 `targetcollection.trackID`：约定为航迹 `uniqueID` 对应的整型（与 Qt `alarmTrackID` / 后端一致） */
-export function numericTrackIdForCameraTask(track: Track): number {
-  const s = String(track.trackId ?? "").trim();
+function parsePositiveIntId(raw: string): number {
+  const s = raw.trim();
   if (!s) return 0;
-  const n = Number(s);
-  if (Number.isFinite(n)) return Math.trunc(n);
-  const digits = s.replace(/\D/g, "");
-  if (digits) {
+  if (!/^\d+$/.test(s)) {
+    const digits = s.replace(/\D/g, "");
+    if (!digits) return 0;
     const n2 = parseInt(digits, 10);
-    if (Number.isFinite(n2)) return n2;
+    return Number.isFinite(n2) ? n2 : 0;
   }
-  return 0;
+  const n = Number(s);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
+/** 从航迹解析新 DDS `target_id`（前端 `uniqueID` / `showID`）；告警、相机 POS、重点关注采集 */
+export function numericTargetIdForCameraTask(track: Pick<Track, "uniqueID" | "showID">): number {
+  const s = String(track.uniqueID ?? "").trim() || String(track.showID ?? "").trim();
+  return parsePositiveIntId(s);
+}
+
+/**
+ * 无人机跟踪任务 `MultiDroneTracking.trackID_List` 用业务 track_id（`external_target_id` → 前端 `trackId`）。
+ * 与告警/相机用的全局 `target_id`（`uniqueID`）分离。
+ */
+export function numericTrackIdForDroneTask(track: Pick<Track, "trackId" | "uniqueID" | "showID">): number {
+  const s =
+    String(track.trackId ?? "").trim() ||
+    String(track.uniqueID ?? "").trim() ||
+    String(track.showID ?? "").trim();
+  return parsePositiveIntId(s);
+}
+
+/** @deprecated 请用 `numericTargetIdForCameraTask`；保留别名避免遗漏引用 */
+export function numericTrackIdForCameraTask(track: Track): number {
+  return numericTargetIdForCameraTask(track);
 }
 
 /** 与 Qt 远程 `CAMERA_IMPORTANT_TRACK` / 地图双击航迹一致的重点关注采集体 */
 export function buildImportantTrackTargetFromTrack(track: Track): ImportantTrackTargetCollection {
   const isSea = track.type === "sea" || track.type === "underwater";
+  const lat = Number.isFinite(track.lat) ? track.lat : 0;
+  const lng = Number.isFinite(track.lng) ? track.lng : 0;
+  const targetId = numericTargetIdForCameraTask(track);
   return {
-    latitude: 0,
-    longitude: 0,
+    latitude: lat,
+    longitude: lng,
     type: isSea ? 0 : 1,
-    trackID: numericTrackIdForCameraTask(track),
+    target_id: targetId,
     shipType: isSea ? 3 : 0,
   };
 }
 
 /** 第三方 UDP `0x3004` POS：`ThirdPartyCamPosTask`，来自当前航迹（态势双击下发） */
 export type ThirdPartyPosFieldsFromTrack = {
-  /** 与报文 `uniqueID` / 库表 `unique_id` 对齐 */
+  /** 与报文 `uniqueID` / 库表 `unique_id` / 新 DDS `target_id` 对齐 */
   targetId: number;
   targetLon: number;
   targetLat: number;
@@ -42,11 +67,8 @@ export type ThirdPartyPosFieldsFromTrack = {
 export function parseTrackUniqueIdForThirdPartyPos(
   track: Pick<Track, "uniqueID" | "showID">,
 ): number | null {
-  const s = String(track.uniqueID ?? "").trim() || String(track.showID ?? "").trim();
-  if (!/^\d+$/.test(s)) return null;
-  const n = Number(s);
-  if (!Number.isFinite(n)) return null;
-  return Math.trunc(n);
+  const n = numericTargetIdForCameraTask(track);
+  return n > 0 ? n : null;
 }
 
 /**

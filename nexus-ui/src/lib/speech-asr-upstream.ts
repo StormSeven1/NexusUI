@@ -1,31 +1,17 @@
-/**
- * 与 Qt `HttpManage::PostSendData()`（LLMMode==2）对齐：
- * `ALI_AUDIO_TRANS_FMT` → `POST http://{AliAudioTransIP}/asr`（无端口时用 80）
- * multipart 字段 `file`；响应 JSON `{ "res": "识别文字" }`。
- */
-export function speechAsrUpstreamUrl(): string {
-  const full = process.env.NEXUS_SPEECH_ASR_URL?.trim();
-  if (full) return full.replace(/\/$/, "");
+import {
+  speechAsrMode1UpstreamUrl,
+  speechAsrMode2UpstreamUrl,
+  speechAsrUpstreamUrl,
+  speechMode,
+} from "@/lib/speech-config";
 
-  const host =
-    process.env.NEXUS_SPEECH_ASR_HOST?.trim() ||
-    process.env.NEXUS_ALI_AUDIO_TRANS_HOST?.trim() ||
-    process.env.NEXUS_TASK_SERVER_HOST?.trim() ||
-    "192.168.18.141";
-  const portRaw =
-    process.env.NEXUS_SPEECH_ASR_PORT?.trim() ||
-    process.env.NEXUS_ALI_AUDIO_TRANS_PORT?.trim() ||
-    "";
-  const path = process.env.NEXUS_SPEECH_ASR_PATH?.trim() || "/asr";
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const port = portRaw && portRaw !== "80" ? portRaw : "";
-  return port
-    ? `http://${host}:${port}${normalizedPath}`
-    : `http://${host}${normalizedPath}`;
-}
+export { speechAsrUpstreamUrl, speechMode };
 
-/** 解析上游返回：LLMMode==2 的 `{ res }`、Whisper 的 `{ text }` 或纯文本 */
-export function parseSpeechAsrResponse(raw: string): { text?: string; error?: string } {
+const UPSTREAM_MS = 300000;
+const HEALTH_PROBE_MS = 5000;
+
+/** 解析 Mode 1 上游返回：LLMMode==2 的 `{ res }`、Whisper 的 `{ text }` 或纯文本 */
+export function parseSpeechAsrMode1Response(raw: string): { text?: string; error?: string } {
   const trimmed = raw.trim();
   if (!trimmed) return { error: "语音识别返回空内容" };
 
@@ -54,21 +40,150 @@ export function parseSpeechAsrResponse(raw: string): { text?: string; error?: st
   return { text: trimmed };
 }
 
-const HEALTH_PROBE_MS = 5000;
+/** 解析 Mode 2 chat/completions 返回 */
+export function parseSpeechAsrMode2Response(raw: string): { text?: string; error?: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { error: "语音识别返回空内容" };
+
+  try {
+    const j = JSON.parse(trimmed) as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+      error?: unknown;
+      message?: unknown;
+    };
+    const err =
+      (typeof j.error === "string" ? j.error.trim() : "") ||
+      (typeof j.message === "string" ? j.message.trim() : "");
+    if (err) return { error: err };
+
+    const content = j.choices?.[0]?.message?.content;
+    if (typeof content === "string" && content.trim()) {
+      return { text: content.trim() };
+    }
+    return { error: "语音识别返回无 choices[0].message.content" };
+  } catch {
+    return parseSpeechAsrMode1Response(raw);
+  }
+}
+
+export function parseSpeechAsrResponse(raw: string): { text?: string; error?: string } {
+  return speechMode() === 2 ? parseSpeechAsrMode2Response(raw) : parseSpeechAsrMode1Response(raw);
+}
+
+function audioMimeForDataUrl(mimeType: string, fileName: string): string {
+  const mt = mimeType.trim().toLowerCase();
+  if (mt) return mt;
+  if (fileName.endsWith(".wav")) return "audio/wav";
+  if (fileName.endsWith(".webm")) return "audio/webm";
+  if (fileName.endsWith(".mp3") || fileName.endsWith(".mpeg")) return "audio/mpeg";
+  return "audio/webm";
+}
+
+/** Mode 1：multipart file → `/asr` */
+async function transcribeMode1(
+  file: Blob,
+  fileName: string,
+  mimeType: string,
+  timeoutMs: number,
+): Promise<{ text?: string; error?: string }> {
+  const out = new FormData();
+  const nodeFile = new File([await file.arrayBuffer()], fileName, {
+    type: mimeType || file.type || "audio/webm",
+  });
+  out.append("file", nodeFile);
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error("upstream timeout")), timeoutMs);
+  try {
+    const upstream = await fetch(speechAsrMode1UpstreamUrl(), {
+      method: "POST",
+      body: out,
+      signal: ac.signal,
+      cache: "no-store",
+    });
+    const raw = await upstream.text().catch(() => "");
+    if (!upstream.ok) {
+      return { error: raw.slice(0, 2000) || `语音识别上游错误 HTTP ${upstream.status}` };
+    }
+    return parseSpeechAsrMode1Response(raw);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { error: msg.includes("timeout") || msg.includes("aborted") ? "语音识别服务超时" : msg };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Mode 2：audio Data URL → `/v1/chat/completions` */
+async function transcribeMode2(
+  file: Blob,
+  fileName: string,
+  mimeType: string,
+  timeoutMs: number,
+): Promise<{ text?: string; error?: string }> {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const mime = audioMimeForDataUrl(mimeType || file.type, fileName);
+  const dataUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error("upstream timeout")), timeoutMs);
+  try {
+    const upstream = await fetch(speechAsrMode2UpstreamUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "audio_url", audio_url: { url: dataUrl } }],
+          },
+        ],
+      }),
+      signal: ac.signal,
+      cache: "no-store",
+    });
+    const raw = await upstream.text().catch(() => "");
+    if (!upstream.ok) {
+      return { error: raw.slice(0, 2000) || `语音识别上游错误 HTTP ${upstream.status}` };
+    }
+    return parseSpeechAsrMode2Response(raw);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { error: msg.includes("timeout") || msg.includes("aborted") ? "语音识别服务超时" : msg };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 统一 ASR 入口（按 NEXUS_SPEECH_MODE 切换） */
+export async function transcribeSpeechUpstream(
+  file: Blob,
+  opts?: { fileName?: string; mimeType?: string; timeoutMs?: number },
+): Promise<{ text?: string; error?: string }> {
+  const fileName = opts?.fileName?.trim() || "audio.webm";
+  const mimeType = opts?.mimeType?.trim() || file.type || "audio/webm";
+  const timeoutMs = opts?.timeoutMs ?? UPSTREAM_MS;
+  return speechMode() === 2
+    ? transcribeMode2(file, fileName, mimeType, timeoutMs)
+    : transcribeMode1(file, fileName, mimeType, timeoutMs);
+}
 
 /**
  * 探测 ASR 上游是否就绪。
- * POST 无 file 时若返回 400/422/405 等，说明路由存在；404/超时视为不可用。
+ * Mode 1：POST 无 file 时若返回 400/422/405 等，说明路由存在。
+ * Mode 2：POST 空 JSON 时同理。
  */
 export async function probeSpeechAsrUpstream(
   timeoutMs = HEALTH_PROBE_MS,
 ): Promise<{ ok: boolean; status?: number; detail?: string }> {
-  const url = speechAsrUpstreamUrl();
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(new Error("timeout")), timeoutMs);
   try {
+    const url = speechAsrUpstreamUrl();
     const res = await fetch(url, {
       method: "POST",
+      headers: speechMode() === 2 ? { "Content-Type": "application/json" } : undefined,
+      body: speechMode() === 2 ? JSON.stringify({ messages: [] }) : undefined,
       signal: ac.signal,
       cache: "no-store",
     });

@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
+import { isDbAreaDrawable } from "@/lib/db-area-panel-helpers";
 
 const DB_AREA_VISIBILITY_STORAGE_KEY = "nexus-ui-db-area-visibility-v1";
 
@@ -19,6 +20,8 @@ interface DbAreaState {
   setGroupAllAreasVisible: (groupId: number, visible: boolean) => void;
   /** 若组内全非显，则等效于关组；若至少一个开则保持各子项 */
   toggleGroupAllAreasVisible: (groupId: number) => void;
+  /** 全部可绘区域设为同一显隐 */
+  setAllDrawableAreasVisible: (visible: boolean) => void;
 }
 
 function pruneVisibility(
@@ -81,6 +84,16 @@ export const useDbAreaStore = create<DbAreaState>()(
         );
         get().setGroupAllAreasVisible(groupId, !allOn);
       },
+
+      setAllDrawableAreasVisible: (visible) =>
+        set((s) => {
+          const next = { ...s.areaVisibility };
+          for (const r of s.rows) {
+            if (!isDbAreaDrawable(r)) continue;
+            next[dbAreaVisibilityKey(r.group_id, r.area_id)] = visible;
+          }
+          return { areaVisibility: next };
+        }),
     }),
     {
       name: DB_AREA_VISIBILITY_STORAGE_KEY,

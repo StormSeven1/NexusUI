@@ -3,7 +3,13 @@ import type { NextConfig } from "next";
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8001";
 
 const nextConfig: NextConfig = {
+  /** pg/minio 含 Node 原生可选依赖，禁止打进 RSC 包 */
+  serverExternalPackages: ["pg", "minio"],
   turbopack: {},
+  /** 采集上传 /api/eo-capture/collect-upload 等 multipart 可能较大（截图 PNG、录屏） */
+  experimental: {
+    proxyClientMaxBodySize: "100mb",
+  },
   /** 局域网 IP 访问 dev（HMR / webpack-hmr）时需放行，否则跨域被拦 */
   allowedDevOrigins: ["192.168.18.141"],
   async rewrites() {

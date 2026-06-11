@@ -67,6 +67,24 @@ async function byUniqueId(uniqueId: bigint | number, cameraIndex: number): Promi
   }
 }
 
+/** 仅按 unique_id 取最近一条（相机 file_name 规则不一致时兜底） */
+async function byUniqueIdLatest(uniqueId: number): Promise<MinioMetadataRow | null> {
+  const p = getPool();
+  if (!p) return null;
+  const client = await p.connect();
+  try {
+    const sql = `
+      SELECT minio_bucket, minio_object_key, download_url
+      FROM minio_multi_metadata
+      WHERE "unique_id" = $1
+      ORDER BY uploaded_at DESC
+      LIMIT 1`;
+    return await queryOne(client, sql, [uniqueId]);
+  } finally {
+    client.release();
+  }
+}
+
 async function byTrackId(trackId: number, cameraIndex: number): Promise<MinioMetadataRow | null> {
   const p = getPool();
   if (!p) return null;
@@ -99,8 +117,11 @@ export async function resolveScreenshotMetadataFromDb(options: {
 
   const cam = options.cameraIndex;
   if (options.uniqueId != null && Number.isFinite(Number(options.uniqueId))) {
-    const row = await byUniqueId(Number(options.uniqueId), cam);
+    const uid = Number(options.uniqueId);
+    const row = await byUniqueId(uid, cam);
     if (row) return row;
+    const latest = await byUniqueIdLatest(uid);
+    if (latest) return latest;
   }
   if (options.trackId != null && Number.isFinite(options.trackId)) {
     return byTrackId(options.trackId, cam);

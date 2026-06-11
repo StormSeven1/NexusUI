@@ -8,18 +8,21 @@ import { useTrackStore } from "@/stores/track-store";
 const NM_PER_METRE = 1 / 1852;
 
 /**
- * 按 `track-store` 与告警相同的 ID 规则，用 HTTP 下发的 `trackID` 在内存航迹中查找。
- * - distinguishSeaAir：对空用 `trackId`，对海用 `uniqueID`
- * - 否则用业务 `trackId`
+ * 用 HTTP 下发的 `target_id`（或 legacy `trackID`）在内存航迹中查找。
+ * 新 DDS：`target_id` 与 `uniqueID` / `showID` 对齐，优先按此匹配。
  */
 export function findTrackForTaskStatusVerify(
-  trackID: number | undefined | null,
+  targetOrTrackId: number | undefined | null,
   tracks: readonly Track[],
 ): Track | undefined {
-  if (trackID == null || !Number.isFinite(Number(trackID))) return undefined;
-  const tid = String(trackID);
-  const distinguish = getTrackIdModeConfig().distinguishSeaAir;
+  if (targetOrTrackId == null || !Number.isFinite(Number(targetOrTrackId))) return undefined;
+  const tid = String(targetOrTrackId);
 
+  for (const t of tracks) {
+    if (t.uniqueID === tid || t.showID === tid) return t;
+  }
+
+  const distinguish = getTrackIdModeConfig().distinguishSeaAir;
   for (const t of tracks) {
     if (distinguish) {
       const isAir = t.isAirTrack === true;
@@ -30,7 +33,6 @@ export function findTrackForTaskStatusVerify(
     }
   }
   for (const t of tracks) {
-    if (t.uniqueID === tid || t.showID === tid) return t;
     if (t.trackId === tid) return t;
   }
   return undefined;
@@ -59,8 +61,9 @@ function pickShipArchiveFromAlerts(trackID: number | undefined | null, alerts: r
 export function enrichTaskStatusPayloadForVerifyUi(base: TaskStatusChatPayload): TaskStatusChatPayload {
   const tracks = useTrackStore.getState().tracks;
   const alerts = useAlertStore.getState().alerts;
-  const track = findTrackForTaskStatusVerify(base.trackID, tracks);
-  const fromAlert = pickShipArchiveFromAlerts(base.trackID, alerts);
+  const lookupId = base.verifyTargetId ?? base.uniqueId ?? base.trackID;
+  const track = findTrackForTaskStatusVerify(lookupId, tracks);
+  const fromAlert = pickShipArchiveFromAlerts(lookupId, alerts);
 
   const out: TaskStatusChatPayload = { ...base };
 

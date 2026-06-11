@@ -12,6 +12,7 @@ import {
   isElectroOpticalDockPanel,
   useEoVideoPanelFocusStore,
 } from "@/stores/eo-video-panel-focus-store";
+import { EoVideoSmartWindowToggle } from "@/components/eo-video/EoVideoSmartWindowToggle";
 
 /** 右侧竖条：上目标档案、下系统评估 + 智能助手 + 知识库查询（与 `rightPartitions` 顺序一致） */
 const RIGHT_TOOLS = [
@@ -186,18 +187,21 @@ export function RightSidebar() {
                       </span>
                     </div>
                     {panelId ? (
-                      <button
-                        type="button"
-                        className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-nexus-accent hover:bg-nexus-bg-elevated"
-                        title="弹出为独立窗口"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePanelClick(panelId);
-                        }}
-                        aria-label="弹出为独立窗口"
-                      >
-                        <ExternalLink size={14} />
-                      </button>
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <EoVideoSmartWindowToggle panelId={panelId} />
+                        <button
+                          type="button"
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-nexus-accent hover:bg-nexus-bg-elevated"
+                          title="弹出为独立窗口"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePanelClick(panelId);
+                          }}
+                          aria-label="弹出为独立窗口"
+                        >
+                          <ExternalLink size={14} />
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 ) : showDockHeader && panelId ? (

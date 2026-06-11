@@ -21357,6 +21357,11 @@ enum class AlarmCategory : int32_t
     TARGET_BEHAVIOR,
     TARGET_ATTR,
     DEVICE,
+    EO_DETECTION,
+    RADAR_DETECTION,
+    RF_DETECTION,
+    BEARING_ONLY,
+    BEARING_RANGE_ESTIMATE,
     CUSTOM1
 };
 /*!
@@ -21563,6 +21568,793 @@ private:
 
 };
 /*!
+ * @brief This class represents the enumeration AlarmLocationType defined by the user in the IDL file.
+ * @ingroup NewTrackRealTimeStatus
+ */
+enum class AlarmLocationType : int32_t
+{
+    POINT,
+    BEARING_ONLY_LOCATION,
+    BEARING_RANGE_LOCATION,
+    AREA_LOCATION,
+    UNKNOWN_LOCATION
+};
+/*!
+ * @brief This class represents the structure AlarmSpatialInfo defined by the user in the IDL file.
+ * @ingroup NewTrackRealTimeStatus
+ */
+class AlarmSpatialInfo
+{
+public:
+
+    /*!
+     * @brief Default constructor.
+     */
+    eProsima_user_DllExport AlarmSpatialInfo()
+    {
+    }
+
+    /*!
+     * @brief Default destructor.
+     */
+    eProsima_user_DllExport ~AlarmSpatialInfo()
+    {
+    }
+
+    /*!
+     * @brief Copy constructor.
+     * @param x Reference to the object AlarmSpatialInfo that will be copied.
+     */
+    eProsima_user_DllExport AlarmSpatialInfo(
+            const AlarmSpatialInfo& x)
+    {
+                    m_location_type = x.m_location_type;
+
+                    m_has_point_position = x.m_has_point_position;
+
+                    m_point_position = x.m_point_position;
+
+                    m_has_reference_position = x.m_has_reference_position;
+
+                    m_reference_position = x.m_reference_position;
+
+                    m_bearing_deg = x.m_bearing_deg;
+
+                    m_bearing_sigma_deg = x.m_bearing_sigma_deg;
+
+                    m_has_range_estimate = x.m_has_range_estimate;
+
+                    m_range_estimate_m = x.m_range_estimate_m;
+
+                    m_has_range_min_m = x.m_has_range_min_m;
+
+                    m_range_min_m = x.m_range_min_m;
+
+                    m_has_range_max_m = x.m_has_range_max_m;
+
+                    m_range_max_m = x.m_range_max_m;
+
+                    m_sector_start_deg = x.m_sector_start_deg;
+
+                    m_sector_end_deg = x.m_sector_end_deg;
+
+                    m_spatial_confidence = x.m_spatial_confidence;
+
+                    m_source_sensor = x.m_source_sensor;
+
+    }
+
+    /*!
+     * @brief Move constructor.
+     * @param x Reference to the object AlarmSpatialInfo that will be copied.
+     */
+    eProsima_user_DllExport AlarmSpatialInfo(
+            AlarmSpatialInfo&& x) noexcept
+    {
+        m_location_type = x.m_location_type;
+        m_has_point_position = x.m_has_point_position;
+        m_point_position = std::move(x.m_point_position);
+        m_has_reference_position = x.m_has_reference_position;
+        m_reference_position = std::move(x.m_reference_position);
+        m_bearing_deg = x.m_bearing_deg;
+        m_bearing_sigma_deg = x.m_bearing_sigma_deg;
+        m_has_range_estimate = x.m_has_range_estimate;
+        m_range_estimate_m = std::move(x.m_range_estimate_m);
+        m_has_range_min_m = x.m_has_range_min_m;
+        m_range_min_m = std::move(x.m_range_min_m);
+        m_has_range_max_m = x.m_has_range_max_m;
+        m_range_max_m = std::move(x.m_range_max_m);
+        m_sector_start_deg = x.m_sector_start_deg;
+        m_sector_end_deg = x.m_sector_end_deg;
+        m_spatial_confidence = x.m_spatial_confidence;
+        m_source_sensor = std::move(x.m_source_sensor);
+    }
+
+    /*!
+     * @brief Copy assignment.
+     * @param x Reference to the object AlarmSpatialInfo that will be copied.
+     */
+    eProsima_user_DllExport AlarmSpatialInfo& operator =(
+            const AlarmSpatialInfo& x)
+    {
+
+                    m_location_type = x.m_location_type;
+
+                    m_has_point_position = x.m_has_point_position;
+
+                    m_point_position = x.m_point_position;
+
+                    m_has_reference_position = x.m_has_reference_position;
+
+                    m_reference_position = x.m_reference_position;
+
+                    m_bearing_deg = x.m_bearing_deg;
+
+                    m_bearing_sigma_deg = x.m_bearing_sigma_deg;
+
+                    m_has_range_estimate = x.m_has_range_estimate;
+
+                    m_range_estimate_m = x.m_range_estimate_m;
+
+                    m_has_range_min_m = x.m_has_range_min_m;
+
+                    m_range_min_m = x.m_range_min_m;
+
+                    m_has_range_max_m = x.m_has_range_max_m;
+
+                    m_range_max_m = x.m_range_max_m;
+
+                    m_sector_start_deg = x.m_sector_start_deg;
+
+                    m_sector_end_deg = x.m_sector_end_deg;
+
+                    m_spatial_confidence = x.m_spatial_confidence;
+
+                    m_source_sensor = x.m_source_sensor;
+
+        return *this;
+    }
+
+    /*!
+     * @brief Move assignment.
+     * @param x Reference to the object AlarmSpatialInfo that will be copied.
+     */
+    eProsima_user_DllExport AlarmSpatialInfo& operator =(
+            AlarmSpatialInfo&& x) noexcept
+    {
+
+        m_location_type = x.m_location_type;
+        m_has_point_position = x.m_has_point_position;
+        m_point_position = std::move(x.m_point_position);
+        m_has_reference_position = x.m_has_reference_position;
+        m_reference_position = std::move(x.m_reference_position);
+        m_bearing_deg = x.m_bearing_deg;
+        m_bearing_sigma_deg = x.m_bearing_sigma_deg;
+        m_has_range_estimate = x.m_has_range_estimate;
+        m_range_estimate_m = std::move(x.m_range_estimate_m);
+        m_has_range_min_m = x.m_has_range_min_m;
+        m_range_min_m = std::move(x.m_range_min_m);
+        m_has_range_max_m = x.m_has_range_max_m;
+        m_range_max_m = std::move(x.m_range_max_m);
+        m_sector_start_deg = x.m_sector_start_deg;
+        m_sector_end_deg = x.m_sector_end_deg;
+        m_spatial_confidence = x.m_spatial_confidence;
+        m_source_sensor = std::move(x.m_source_sensor);
+        return *this;
+    }
+
+    /*!
+     * @brief Comparison operator.
+     * @param x AlarmSpatialInfo object to compare.
+     */
+    eProsima_user_DllExport bool operator ==(
+            const AlarmSpatialInfo& x) const
+    {
+        return (m_location_type == x.m_location_type &&
+           m_has_point_position == x.m_has_point_position &&
+           m_point_position == x.m_point_position &&
+           m_has_reference_position == x.m_has_reference_position &&
+           m_reference_position == x.m_reference_position &&
+           m_bearing_deg == x.m_bearing_deg &&
+           m_bearing_sigma_deg == x.m_bearing_sigma_deg &&
+           m_has_range_estimate == x.m_has_range_estimate &&
+           m_range_estimate_m == x.m_range_estimate_m &&
+           m_has_range_min_m == x.m_has_range_min_m &&
+           m_range_min_m == x.m_range_min_m &&
+           m_has_range_max_m == x.m_has_range_max_m &&
+           m_range_max_m == x.m_range_max_m &&
+           m_sector_start_deg == x.m_sector_start_deg &&
+           m_sector_end_deg == x.m_sector_end_deg &&
+           m_spatial_confidence == x.m_spatial_confidence &&
+           m_source_sensor == x.m_source_sensor);
+    }
+
+    /*!
+     * @brief Comparison operator.
+     * @param x AlarmSpatialInfo object to compare.
+     */
+    eProsima_user_DllExport bool operator !=(
+            const AlarmSpatialInfo& x) const
+    {
+        return !(*this == x);
+    }
+
+    /*!
+     * @brief This function sets a value in member location_type
+     * @param _location_type New value for member location_type
+     */
+    eProsima_user_DllExport void location_type(
+            AlarmLocationType _location_type)
+    {
+        m_location_type = _location_type;
+    }
+
+    /*!
+     * @brief This function returns the value of member location_type
+     * @return Value of member location_type
+     */
+    eProsima_user_DllExport AlarmLocationType location_type() const
+    {
+        return m_location_type;
+    }
+
+    /*!
+     * @brief This function returns a reference to member location_type
+     * @return Reference to member location_type
+     */
+    eProsima_user_DllExport AlarmLocationType& location_type()
+    {
+        return m_location_type;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member has_point_position
+     * @param _has_point_position New value for member has_point_position
+     */
+    eProsima_user_DllExport void has_point_position(
+            bool _has_point_position)
+    {
+        m_has_point_position = _has_point_position;
+    }
+
+    /*!
+     * @brief This function returns the value of member has_point_position
+     * @return Value of member has_point_position
+     */
+    eProsima_user_DllExport bool has_point_position() const
+    {
+        return m_has_point_position;
+    }
+
+    /*!
+     * @brief This function returns a reference to member has_point_position
+     * @return Reference to member has_point_position
+     */
+    eProsima_user_DllExport bool& has_point_position()
+    {
+        return m_has_point_position;
+    }
+
+
+    /*!
+     * @brief This function copies the value in member point_position
+     * @param _point_position New value to be copied in member point_position
+     */
+    eProsima_user_DllExport void point_position(
+            const GeoPosition& _point_position)
+    {
+        m_point_position = _point_position;
+    }
+
+    /*!
+     * @brief This function moves the value in member point_position
+     * @param _point_position New value to be moved in member point_position
+     */
+    eProsima_user_DllExport void point_position(
+            GeoPosition&& _point_position)
+    {
+        m_point_position = std::move(_point_position);
+    }
+
+    /*!
+     * @brief This function returns a constant reference to member point_position
+     * @return Constant reference to member point_position
+     */
+    eProsima_user_DllExport const GeoPosition& point_position() const
+    {
+        return m_point_position;
+    }
+
+    /*!
+     * @brief This function returns a reference to member point_position
+     * @return Reference to member point_position
+     */
+    eProsima_user_DllExport GeoPosition& point_position()
+    {
+        return m_point_position;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member has_reference_position
+     * @param _has_reference_position New value for member has_reference_position
+     */
+    eProsima_user_DllExport void has_reference_position(
+            bool _has_reference_position)
+    {
+        m_has_reference_position = _has_reference_position;
+    }
+
+    /*!
+     * @brief This function returns the value of member has_reference_position
+     * @return Value of member has_reference_position
+     */
+    eProsima_user_DllExport bool has_reference_position() const
+    {
+        return m_has_reference_position;
+    }
+
+    /*!
+     * @brief This function returns a reference to member has_reference_position
+     * @return Reference to member has_reference_position
+     */
+    eProsima_user_DllExport bool& has_reference_position()
+    {
+        return m_has_reference_position;
+    }
+
+
+    /*!
+     * @brief This function copies the value in member reference_position
+     * @param _reference_position New value to be copied in member reference_position
+     */
+    eProsima_user_DllExport void reference_position(
+            const GeoPosition& _reference_position)
+    {
+        m_reference_position = _reference_position;
+    }
+
+    /*!
+     * @brief This function moves the value in member reference_position
+     * @param _reference_position New value to be moved in member reference_position
+     */
+    eProsima_user_DllExport void reference_position(
+            GeoPosition&& _reference_position)
+    {
+        m_reference_position = std::move(_reference_position);
+    }
+
+    /*!
+     * @brief This function returns a constant reference to member reference_position
+     * @return Constant reference to member reference_position
+     */
+    eProsima_user_DllExport const GeoPosition& reference_position() const
+    {
+        return m_reference_position;
+    }
+
+    /*!
+     * @brief This function returns a reference to member reference_position
+     * @return Reference to member reference_position
+     */
+    eProsima_user_DllExport GeoPosition& reference_position()
+    {
+        return m_reference_position;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member bearing_deg
+     * @param _bearing_deg New value for member bearing_deg
+     */
+    eProsima_user_DllExport void bearing_deg(
+            double _bearing_deg)
+    {
+        m_bearing_deg = _bearing_deg;
+    }
+
+    /*!
+     * @brief This function returns the value of member bearing_deg
+     * @return Value of member bearing_deg
+     */
+    eProsima_user_DllExport double bearing_deg() const
+    {
+        return m_bearing_deg;
+    }
+
+    /*!
+     * @brief This function returns a reference to member bearing_deg
+     * @return Reference to member bearing_deg
+     */
+    eProsima_user_DllExport double& bearing_deg()
+    {
+        return m_bearing_deg;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member bearing_sigma_deg
+     * @param _bearing_sigma_deg New value for member bearing_sigma_deg
+     */
+    eProsima_user_DllExport void bearing_sigma_deg(
+            double _bearing_sigma_deg)
+    {
+        m_bearing_sigma_deg = _bearing_sigma_deg;
+    }
+
+    /*!
+     * @brief This function returns the value of member bearing_sigma_deg
+     * @return Value of member bearing_sigma_deg
+     */
+    eProsima_user_DllExport double bearing_sigma_deg() const
+    {
+        return m_bearing_sigma_deg;
+    }
+
+    /*!
+     * @brief This function returns a reference to member bearing_sigma_deg
+     * @return Reference to member bearing_sigma_deg
+     */
+    eProsima_user_DllExport double& bearing_sigma_deg()
+    {
+        return m_bearing_sigma_deg;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member has_range_estimate
+     * @param _has_range_estimate New value for member has_range_estimate
+     */
+    eProsima_user_DllExport void has_range_estimate(
+            bool _has_range_estimate)
+    {
+        m_has_range_estimate = _has_range_estimate;
+    }
+
+    /*!
+     * @brief This function returns the value of member has_range_estimate
+     * @return Value of member has_range_estimate
+     */
+    eProsima_user_DllExport bool has_range_estimate() const
+    {
+        return m_has_range_estimate;
+    }
+
+    /*!
+     * @brief This function returns a reference to member has_range_estimate
+     * @return Reference to member has_range_estimate
+     */
+    eProsima_user_DllExport bool& has_range_estimate()
+    {
+        return m_has_range_estimate;
+    }
+
+
+    /*!
+     * @brief This function copies the value in member range_estimate_m
+     * @param _range_estimate_m New value to be copied in member range_estimate_m
+     */
+    eProsima_user_DllExport void range_estimate_m(
+            const Measurement& _range_estimate_m)
+    {
+        m_range_estimate_m = _range_estimate_m;
+    }
+
+    /*!
+     * @brief This function moves the value in member range_estimate_m
+     * @param _range_estimate_m New value to be moved in member range_estimate_m
+     */
+    eProsima_user_DllExport void range_estimate_m(
+            Measurement&& _range_estimate_m)
+    {
+        m_range_estimate_m = std::move(_range_estimate_m);
+    }
+
+    /*!
+     * @brief This function returns a constant reference to member range_estimate_m
+     * @return Constant reference to member range_estimate_m
+     */
+    eProsima_user_DllExport const Measurement& range_estimate_m() const
+    {
+        return m_range_estimate_m;
+    }
+
+    /*!
+     * @brief This function returns a reference to member range_estimate_m
+     * @return Reference to member range_estimate_m
+     */
+    eProsima_user_DllExport Measurement& range_estimate_m()
+    {
+        return m_range_estimate_m;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member has_range_min_m
+     * @param _has_range_min_m New value for member has_range_min_m
+     */
+    eProsima_user_DllExport void has_range_min_m(
+            bool _has_range_min_m)
+    {
+        m_has_range_min_m = _has_range_min_m;
+    }
+
+    /*!
+     * @brief This function returns the value of member has_range_min_m
+     * @return Value of member has_range_min_m
+     */
+    eProsima_user_DllExport bool has_range_min_m() const
+    {
+        return m_has_range_min_m;
+    }
+
+    /*!
+     * @brief This function returns a reference to member has_range_min_m
+     * @return Reference to member has_range_min_m
+     */
+    eProsima_user_DllExport bool& has_range_min_m()
+    {
+        return m_has_range_min_m;
+    }
+
+
+    /*!
+     * @brief This function copies the value in member range_min_m
+     * @param _range_min_m New value to be copied in member range_min_m
+     */
+    eProsima_user_DllExport void range_min_m(
+            const Measurement& _range_min_m)
+    {
+        m_range_min_m = _range_min_m;
+    }
+
+    /*!
+     * @brief This function moves the value in member range_min_m
+     * @param _range_min_m New value to be moved in member range_min_m
+     */
+    eProsima_user_DllExport void range_min_m(
+            Measurement&& _range_min_m)
+    {
+        m_range_min_m = std::move(_range_min_m);
+    }
+
+    /*!
+     * @brief This function returns a constant reference to member range_min_m
+     * @return Constant reference to member range_min_m
+     */
+    eProsima_user_DllExport const Measurement& range_min_m() const
+    {
+        return m_range_min_m;
+    }
+
+    /*!
+     * @brief This function returns a reference to member range_min_m
+     * @return Reference to member range_min_m
+     */
+    eProsima_user_DllExport Measurement& range_min_m()
+    {
+        return m_range_min_m;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member has_range_max_m
+     * @param _has_range_max_m New value for member has_range_max_m
+     */
+    eProsima_user_DllExport void has_range_max_m(
+            bool _has_range_max_m)
+    {
+        m_has_range_max_m = _has_range_max_m;
+    }
+
+    /*!
+     * @brief This function returns the value of member has_range_max_m
+     * @return Value of member has_range_max_m
+     */
+    eProsima_user_DllExport bool has_range_max_m() const
+    {
+        return m_has_range_max_m;
+    }
+
+    /*!
+     * @brief This function returns a reference to member has_range_max_m
+     * @return Reference to member has_range_max_m
+     */
+    eProsima_user_DllExport bool& has_range_max_m()
+    {
+        return m_has_range_max_m;
+    }
+
+
+    /*!
+     * @brief This function copies the value in member range_max_m
+     * @param _range_max_m New value to be copied in member range_max_m
+     */
+    eProsima_user_DllExport void range_max_m(
+            const Measurement& _range_max_m)
+    {
+        m_range_max_m = _range_max_m;
+    }
+
+    /*!
+     * @brief This function moves the value in member range_max_m
+     * @param _range_max_m New value to be moved in member range_max_m
+     */
+    eProsima_user_DllExport void range_max_m(
+            Measurement&& _range_max_m)
+    {
+        m_range_max_m = std::move(_range_max_m);
+    }
+
+    /*!
+     * @brief This function returns a constant reference to member range_max_m
+     * @return Constant reference to member range_max_m
+     */
+    eProsima_user_DllExport const Measurement& range_max_m() const
+    {
+        return m_range_max_m;
+    }
+
+    /*!
+     * @brief This function returns a reference to member range_max_m
+     * @return Reference to member range_max_m
+     */
+    eProsima_user_DllExport Measurement& range_max_m()
+    {
+        return m_range_max_m;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member sector_start_deg
+     * @param _sector_start_deg New value for member sector_start_deg
+     */
+    eProsima_user_DllExport void sector_start_deg(
+            double _sector_start_deg)
+    {
+        m_sector_start_deg = _sector_start_deg;
+    }
+
+    /*!
+     * @brief This function returns the value of member sector_start_deg
+     * @return Value of member sector_start_deg
+     */
+    eProsima_user_DllExport double sector_start_deg() const
+    {
+        return m_sector_start_deg;
+    }
+
+    /*!
+     * @brief This function returns a reference to member sector_start_deg
+     * @return Reference to member sector_start_deg
+     */
+    eProsima_user_DllExport double& sector_start_deg()
+    {
+        return m_sector_start_deg;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member sector_end_deg
+     * @param _sector_end_deg New value for member sector_end_deg
+     */
+    eProsima_user_DllExport void sector_end_deg(
+            double _sector_end_deg)
+    {
+        m_sector_end_deg = _sector_end_deg;
+    }
+
+    /*!
+     * @brief This function returns the value of member sector_end_deg
+     * @return Value of member sector_end_deg
+     */
+    eProsima_user_DllExport double sector_end_deg() const
+    {
+        return m_sector_end_deg;
+    }
+
+    /*!
+     * @brief This function returns a reference to member sector_end_deg
+     * @return Reference to member sector_end_deg
+     */
+    eProsima_user_DllExport double& sector_end_deg()
+    {
+        return m_sector_end_deg;
+    }
+
+
+    /*!
+     * @brief This function sets a value in member spatial_confidence
+     * @param _spatial_confidence New value for member spatial_confidence
+     */
+    eProsima_user_DllExport void spatial_confidence(
+            double _spatial_confidence)
+    {
+        m_spatial_confidence = _spatial_confidence;
+    }
+
+    /*!
+     * @brief This function returns the value of member spatial_confidence
+     * @return Value of member spatial_confidence
+     */
+    eProsima_user_DllExport double spatial_confidence() const
+    {
+        return m_spatial_confidence;
+    }
+
+    /*!
+     * @brief This function returns a reference to member spatial_confidence
+     * @return Reference to member spatial_confidence
+     */
+    eProsima_user_DllExport double& spatial_confidence()
+    {
+        return m_spatial_confidence;
+    }
+
+
+    /*!
+     * @brief This function copies the value in member source_sensor
+     * @param _source_sensor New value to be copied in member source_sensor
+     */
+    eProsima_user_DllExport void source_sensor(
+            const EntityRef& _source_sensor)
+    {
+        m_source_sensor = _source_sensor;
+    }
+
+    /*!
+     * @brief This function moves the value in member source_sensor
+     * @param _source_sensor New value to be moved in member source_sensor
+     */
+    eProsima_user_DllExport void source_sensor(
+            EntityRef&& _source_sensor)
+    {
+        m_source_sensor = std::move(_source_sensor);
+    }
+
+    /*!
+     * @brief This function returns a constant reference to member source_sensor
+     * @return Constant reference to member source_sensor
+     */
+    eProsima_user_DllExport const EntityRef& source_sensor() const
+    {
+        return m_source_sensor;
+    }
+
+    /*!
+     * @brief This function returns a reference to member source_sensor
+     * @return Reference to member source_sensor
+     */
+    eProsima_user_DllExport EntityRef& source_sensor()
+    {
+        return m_source_sensor;
+    }
+
+
+
+private:
+
+    AlarmLocationType m_location_type{AlarmLocationType::POINT};
+    bool m_has_point_position{false};
+    GeoPosition m_point_position;
+    bool m_has_reference_position{false};
+    GeoPosition m_reference_position;
+    double m_bearing_deg{0.0};
+    double m_bearing_sigma_deg{0.0};
+    bool m_has_range_estimate{false};
+    Measurement m_range_estimate_m;
+    bool m_has_range_min_m{false};
+    Measurement m_range_min_m;
+    bool m_has_range_max_m{false};
+    Measurement m_range_max_m;
+    double m_sector_start_deg{0.0};
+    double m_sector_end_deg{0.0};
+    double m_spatial_confidence{0.0};
+    EntityRef m_source_sensor;
+
+};
+/*!
  * @brief This class represents the structure TargetAlarmItem defined by the user in the IDL file.
  * @ingroup NewTrackRealTimeStatus
  */
@@ -21611,6 +22403,8 @@ public:
 
                     m_position = x.m_position;
 
+                    m_spatial_info = x.m_spatial_info;
+
                     m_raised_time = x.m_raised_time;
 
                     m_updated_time = x.m_updated_time;
@@ -21646,6 +22440,7 @@ public:
         m_class_id = x.m_class_id;
         m_behavior_id = x.m_behavior_id;
         m_position = std::move(x.m_position);
+        m_spatial_info = std::move(x.m_spatial_info);
         m_raised_time = x.m_raised_time;
         m_updated_time = x.m_updated_time;
         m_resolved_time = x.m_resolved_time;
@@ -21684,6 +22479,8 @@ public:
 
                     m_position = x.m_position;
 
+                    m_spatial_info = x.m_spatial_info;
+
                     m_raised_time = x.m_raised_time;
 
                     m_updated_time = x.m_updated_time;
@@ -21721,6 +22518,7 @@ public:
         m_class_id = x.m_class_id;
         m_behavior_id = x.m_behavior_id;
         m_position = std::move(x.m_position);
+        m_spatial_info = std::move(x.m_spatial_info);
         m_raised_time = x.m_raised_time;
         m_updated_time = x.m_updated_time;
         m_resolved_time = x.m_resolved_time;
@@ -21749,6 +22547,7 @@ public:
            m_class_id == x.m_class_id &&
            m_behavior_id == x.m_behavior_id &&
            m_position == x.m_position &&
+           m_spatial_info == x.m_spatial_info &&
            m_raised_time == x.m_raised_time &&
            m_updated_time == x.m_updated_time &&
            m_resolved_time == x.m_resolved_time &&
@@ -22110,6 +22909,45 @@ public:
 
 
     /*!
+     * @brief This function copies the value in member spatial_info
+     * @param _spatial_info New value to be copied in member spatial_info
+     */
+    eProsima_user_DllExport void spatial_info(
+            const AlarmSpatialInfo& _spatial_info)
+    {
+        m_spatial_info = _spatial_info;
+    }
+
+    /*!
+     * @brief This function moves the value in member spatial_info
+     * @param _spatial_info New value to be moved in member spatial_info
+     */
+    eProsima_user_DllExport void spatial_info(
+            AlarmSpatialInfo&& _spatial_info)
+    {
+        m_spatial_info = std::move(_spatial_info);
+    }
+
+    /*!
+     * @brief This function returns a constant reference to member spatial_info
+     * @return Constant reference to member spatial_info
+     */
+    eProsima_user_DllExport const AlarmSpatialInfo& spatial_info() const
+    {
+        return m_spatial_info;
+    }
+
+    /*!
+     * @brief This function returns a reference to member spatial_info
+     * @return Reference to member spatial_info
+     */
+    eProsima_user_DllExport AlarmSpatialInfo& spatial_info()
+    {
+        return m_spatial_info;
+    }
+
+
+    /*!
      * @brief This function sets a value in member raised_time
      * @param _raised_time New value for member raised_time
      */
@@ -22394,6 +23232,7 @@ private:
     int32_t m_class_id{0};
     int32_t m_behavior_id{0};
     GeoPosition m_position;
+    AlarmSpatialInfo m_spatial_info;
     double m_raised_time{0.0};
     double m_updated_time{0.0};
     double m_resolved_time{0.0};

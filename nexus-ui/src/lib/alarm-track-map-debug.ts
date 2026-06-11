@@ -11,6 +11,7 @@
 
 import type { Track } from "@/lib/map-entity-model";
 import { fuseTypeFromTrack } from "@/lib/alarm-track-match";
+import { trackMapDisplayId } from "@/lib/map-entity-model";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 
@@ -68,11 +69,7 @@ declare global {
 }
 
 function mapLabelText(track: Track): string {
-  const mode = getTrackIdModeConfig();
-  if (mode.distinguishSeaAir) {
-    return track.type === "air" ? track.showID : (track.trackId ?? track.showID);
-  }
-  return track.trackId ?? track.showID;
+  return trackMapDisplayId(track);
 }
 
 function toDebugEntry(track: Track): AlarmTrackDebugEntry {

@@ -9,8 +9,34 @@ DDS接收器服务
 import os
 import sys
 import ctypes
-from typing import Optional, Callable, Dict
+from typing import Optional, Callable, Dict, Set
 from loguru import logger
+
+# 航迹类 structure_type：必须先于 Entity/相机 绑定启动，且 .so 才能 RTLD_GLOBAL
+_TRACK_STRUCTURE_TYPES: Set[str] = {
+    "new_track_struct",
+    "fusion_track",
+    "radar_track",
+    "ais_track",
+}
+# Entity/相机绑定禁止 RTLD_GLOBAL，否则会污染进程内 FastDDS 符号，导致航迹订阅 matched 失败
+_LOCAL_SO_BINDING_MODULES: Set[str] = {
+    "EntityRealTimeStatus",
+    "CameraRealTimeStatus",
+    "AlarmEvent",
+    "DroneTaskRealTimeStatus",
+    "DroneRealTimeStatus",
+}
+# 订阅匹配健康度（source_id -> 当前匹配的发布者数量）
+DDS_SUBSCRIPTION_MATCHED: Dict[str, int] = {}
+# domain 141 航迹：与 AlarmSys 一致，单 participant 多 reader
+_SHARED_DOMAIN141_PARTICIPANT = None
+_SHARED_DOMAIN141_SUBSCRIBER = None
+_DOMAIN141_XML_LOADED = False
+_DOMAIN141_REGISTERED_TYPES: Set[str] = set()
+_DOMAIN141_SHARED_PROFILE = "participant_newtrack_sub"
+_DOMAIN141_SHARED_XML = "newtrack_sub_recv.xml"
+_DOMAIN141_SHARED_XML_DIR = "./DDSReferences/NewTrackStruct/build"
 
 # 导入DDS相关模块
 try:
@@ -131,7 +157,44 @@ class DDSReceiverService:
             return ["libEntityRealTimeStatus.so", "_EntityRealTimeStatusWrapper.so"]
         if python_module_name == "CameraRealTimeStatus":
             return ["libCameraRealTimeStatus.so", "_CameraRealTimeStatusWrapper.so"]
+        if python_module_name == "NewTrackRealTimeStatus":
+            return [
+                "libNewTrackRealTimeStatus.so",
+                "_NewTrackRealTimeStatusWrapper.so",
+            ]
         return self._list_all_so_preload_order()
+
+    def _resolve_so_preload_mode(self, python_module_name: str) -> int:
+        """
+        航迹绑定可用 RTLD_GLOBAL；Entity/相机 必须 RTLD_LOCAL。
+        此前相机切 Entity 后全局预加载，多次导致同进程内航迹 DDS 订阅失效。
+        """
+        if python_module_name == "NewTrackRealTimeStatus":
+            return ctypes.RTLD_GLOBAL
+        if self.structure_type in _TRACK_STRUCTURE_TYPES:
+            return ctypes.RTLD_GLOBAL
+        if python_module_name in _LOCAL_SO_BINDING_MODULES:
+            return ctypes.RTLD_LOCAL
+        if self.structure_type in ("Camera", "high_freq", "drone_task", "drone_status", "dock_status", "alarm_data"):
+            return ctypes.RTLD_LOCAL
+        return ctypes.RTLD_LOCAL
+
+    def _should_prepend_ld_library_path(self, python_module_name: str) -> bool:
+        """仅航迹/NewTrack 调整 LD_LIBRARY_PATH，避免 Entity 路径覆盖航迹 .so 解析。"""
+        return (
+            python_module_name == "NewTrackRealTimeStatus"
+            or self.structure_type in _TRACK_STRUCTURE_TYPES
+        )
+
+    @staticmethod
+    def _prepend_ld_library_path(*paths: str) -> None:
+        """将目录 prepend 到 LD_LIBRARY_PATH，便于加载 SWIG 绑定依赖的 libfastdds.so.3.2 等。"""
+        existing = os.environ.get("LD_LIBRARY_PATH", "")
+        parts = [p for p in paths if p and os.path.isdir(p)]
+        if not parts:
+            return
+        merged = parts + ([existing] if existing else [])
+        os.environ["LD_LIBRARY_PATH"] = ":".join(merged)
 
     def _load_dds_module(self):
         """根据dds_module_path动态加载DDS模块"""
@@ -185,16 +248,22 @@ class DDSReceiverService:
                     f"回退模块 {module_name!r}，建议配置 dds_module_name"
                 )
 
-        # 预加载 .so：Camera 目录同时含新旧两套绑定，全量 RTLD_GLOBAL 会符号冲突 → 匹配发布者但收不到样本
+        if self._should_prepend_ld_library_path(module_name):
+            # 仅加入 SWIG 绑定目录；勿 prepend build/ 内 libfastdds 3.2，避免与 Python 绑定(3.1)混用
+            self._prepend_ld_library_path(os.path.abspath(self.dds_module_path))
+
+        # 预加载 .so：Entity/相机 必须 RTLD_LOCAL，否则会污染全局符号导致航迹收不到
         so_preload = self._resolve_dds_so_preload_list(module_name)
+        preload_mode = self._resolve_so_preload_mode(module_name)
         for so_filename in so_preload:
             so_file = os.path.join(self.dds_module_path, so_filename)
             if not os.path.isfile(so_file):
                 logger.debug(f"⚠️ 跳过不存在的共享库: {so_file}")
                 continue
             try:
-                ctypes.CDLL(so_file, mode=ctypes.RTLD_GLOBAL)
-                logger.info(f"✅ 预加载共享库: {so_file}")
+                ctypes.CDLL(so_file, mode=preload_mode)
+                mode_label = "GLOBAL" if preload_mode == ctypes.RTLD_GLOBAL else "LOCAL"
+                logger.info(f"✅ 预加载共享库({mode_label}): {so_file}")
             except Exception as e:
                 logger.debug(f"⚠️ 预加载共享库失败 [{so_filename}]: {e}")
 
@@ -271,23 +340,84 @@ class DDSReceiverService:
             logger.error(f"❌ 生成XML配置失败: {e}")
             raise
     
+    def _uses_shared_domain141_participant(self) -> bool:
+        return self.domain_id == 141 and self.structure_type in _TRACK_STRUCTURE_TYPES
+
+    def _resolve_domain141_shared_xml(self) -> tuple[str, str]:
+        candidates = [
+            os.path.join(os.path.abspath(self.dds_module_path), _DOMAIN141_SHARED_XML),
+            os.path.join(os.path.abspath(_DOMAIN141_SHARED_XML_DIR), _DOMAIN141_SHARED_XML),
+        ]
+        for xml_path in candidates:
+            if os.path.isfile(xml_path):
+                return xml_path, _DOMAIN141_SHARED_PROFILE
+        if self.xml_config_path and os.path.isfile(self.xml_config_path):
+            return self.xml_config_path, self.profile_name
+        raise FileNotFoundError(
+            f"domain 141 航迹共享 participant 需要 {_DOMAIN141_SHARED_XML}，"
+            f"已检查: {candidates}"
+        )
+
+    def _get_shared_domain141_participant(self):
+        """对齐 AlarmSys：domain 141 上所有航迹共用一个 participant。"""
+        global _SHARED_DOMAIN141_PARTICIPANT, _DOMAIN141_XML_LOADED
+        if _SHARED_DOMAIN141_PARTICIPANT is not None:
+            return _SHARED_DOMAIN141_PARTICIPANT
+
+        factory = fastdds.DomainParticipantFactory.get_instance()
+        xml_path, profile = self._resolve_domain141_shared_xml()
+        if not _DOMAIN141_XML_LOADED:
+            factory.load_XML_profiles_file(xml_path)
+            _DOMAIN141_XML_LOADED = True
+        participant = factory.create_participant_with_profile(141, profile)
+        if participant is None:
+            raise RuntimeError("共享 domain 141 航迹 participant 创建失败")
+        _SHARED_DOMAIN141_PARTICIPANT = participant
+        logger.info(
+            "✅ 创建共享航迹 participant domain=141 profile={} xml={}",
+            profile,
+            xml_path,
+        )
+        return participant
+
+    def _get_shared_domain141_subscriber(self):
+        global _SHARED_DOMAIN141_SUBSCRIBER
+        if _SHARED_DOMAIN141_SUBSCRIBER is not None:
+            return _SHARED_DOMAIN141_SUBSCRIBER
+        subscriber_qos = fastdds.SubscriberQos()
+        self.participant.get_default_subscriber_qos(subscriber_qos)
+        _SHARED_DOMAIN141_SUBSCRIBER = self.participant.create_subscriber(subscriber_qos)
+        return _SHARED_DOMAIN141_SUBSCRIBER
+
+    def _apply_track_reader_qos(self, reader_qos) -> None:
+        """
+        对齐 AlarmSys NewTrackStructSubscriberApp：航迹发布端为 RELIABLE + TRANSIENT_LOCAL。
+        订阅端若用默认 BEST_EFFORT/VOLATILE 将无法 matched（与 FastDDS 版本无关）。
+        """
+        if self.structure_type not in _TRACK_STRUCTURE_TYPES:
+            return
+        reader_qos.reliability().kind = fastdds.RELIABLE_RELIABILITY_QOS
+        reader_qos.durability().kind = fastdds.TRANSIENT_LOCAL_DURABILITY_QOS
+        reader_qos.history().kind = fastdds.KEEP_ALL_HISTORY_QOS
+
     def _init_dds(self):
         """初始化DDS组件"""
         try:
-            # 创建DomainParticipant
+            self._owns_participant = True
             factory = fastdds.DomainParticipantFactory.get_instance()
             participant_qos = fastdds.DomainParticipantQos()
             factory.get_default_participant_qos(participant_qos)
-            
-            if self.use_default_xml:
-                # 默认XML模式：直接用domain_id和默认QoS创建participant
+
+            if self._uses_shared_domain141_participant():
+                self.participant = self._get_shared_domain141_participant()
+                self._owns_participant = False
+            elif self.use_default_xml:
                 logger.info(f"📋 使用默认XML创建DDS参与者: domain_id={self.domain_id}")
                 self.participant = factory.create_participant(
                     self.domain_id,
                     participant_qos
                 )
             else:
-                # 自定义XML模式：加载XML配置文件，用profile创建participant
                 factory.load_XML_profiles_file(self.xml_config_path)
                 self.participant = factory.create_participant_with_profile(
                     self.domain_id,
@@ -300,27 +430,42 @@ class DDSReceiverService:
             # 动态注册数据类型
             pubsub_type_class = getattr(self.dds_module, self.pubsub_type_class_name)
             topic_data_type = pubsub_type_class()
-            topic_data_type.set_name(self.type_name)
+            if self.type_name:
+                topic_data_type.set_name(self.type_name)
+            registered_type_name = (
+                self.type_name if self.type_name else topic_data_type.get_name()
+            )
             type_support = fastdds.TypeSupport(topic_data_type)
-            
-            try:
-                self.participant.register_type(type_support)
-            except Exception:
-                pass  # 类型已注册，忽略错误
+
+            global _DOMAIN141_REGISTERED_TYPES
+            if self._uses_shared_domain141_participant():
+                if registered_type_name not in _DOMAIN141_REGISTERED_TYPES:
+                    try:
+                        self.participant.register_type(type_support)
+                    except Exception:
+                        pass
+                    _DOMAIN141_REGISTERED_TYPES.add(registered_type_name)
+            else:
+                try:
+                    self.participant.register_type(type_support)
+                except Exception:
+                    pass  # 类型已注册，忽略错误
             
             # 创建Topic
             topic_qos = fastdds.TopicQos()
             self.participant.get_default_topic_qos(topic_qos)
             topic = self.participant.create_topic(
                 self.topic_name,
-                topic_data_type.get_name(),
+                registered_type_name,
                 topic_qos
             )
             
-            # 创建Subscriber
-            subscriber_qos = fastdds.SubscriberQos()
-            self.participant.get_default_subscriber_qos(subscriber_qos)
-            self.subscriber = self.participant.create_subscriber(subscriber_qos)
+            if self._uses_shared_domain141_participant():
+                self.subscriber = self._get_shared_domain141_subscriber()
+            else:
+                subscriber_qos = fastdds.SubscriberQos()
+                self.participant.get_default_subscriber_qos(subscriber_qos)
+                self.subscriber = self.participant.create_subscriber(subscriber_qos)
             
             # 创建Listener
             self.listener = DDSReaderListener(
@@ -328,12 +473,18 @@ class DDSReceiverService:
                 structure_type=self.structure_type,
                 data_class_name=self.data_class_name,
                 dds_module=self.dds_module,
-                name=self.name
+                name=self.name,
+                source_id=self.source_id,
             )
             
             # 创建DataReader
             reader_qos = fastdds.DataReaderQos()
             self.subscriber.get_default_datareader_qos(reader_qos)
+            self._apply_track_reader_qos(reader_qos)
+            if self.structure_type == 'new_track_struct':
+                tc = reader_qos.type_consistency()
+                tc.m_kind = fastdds.ALLOW_TYPE_COERCION
+                tc.m_force_type_validation = False
             self.reader = self.subscriber.create_datareader(
                 topic,
                 reader_qos,
@@ -349,7 +500,7 @@ class DDSReceiverService:
     def delete(self):
         """清理DDS资源"""
         try:
-            if self.participant:
+            if self.participant and getattr(self, "_owns_participant", True):
                 factory = fastdds.DomainParticipantFactory.get_instance()
                 self.participant.delete_contained_entities()
                 factory.delete_participant(self.participant)
@@ -372,7 +523,8 @@ class DDSReaderListener(fastdds.DataReaderListener if DDS_AVAILABLE else object)
         structure_type: str = 'fusion_track',
         data_class_name: str = 'TrackDataClass',
         dds_module = None,
-        name:str = 'UnKnowen'
+        name: str = 'UnKnowen',
+        source_id: str = '',
     ):
         """
         初始化监听器
@@ -391,6 +543,7 @@ class DDSReaderListener(fastdds.DataReaderListener if DDS_AVAILABLE else object)
         self.data_class_name = data_class_name
         self.dds_module = dds_module
         self.name = name
+        self.source_id = source_id or name
     
     def on_subscription_matched(self, datareader, info):
         """订阅匹配回调"""
@@ -398,10 +551,15 @@ class DDSReaderListener(fastdds.DataReaderListener if DDS_AVAILABLE else object)
             return
         
         if 0 < info.current_count_change:
+            DDS_SUBSCRIPTION_MATCHED[self.source_id] = info.current_count
             logger.info(f"✅ DDS订阅者匹配发布者: {info.last_publication_handle}")
             logger.info(f"📊 当前匹配的发布者数量: {info.current_count}")
-            logger.info(f"🔍 Listener已注册，等待数据... (structure_type={self.structure_type})")
+            logger.info(
+                f"🔍 Listener已注册，等待数据... "
+                f"(source_id={self.source_id}, structure_type={self.structure_type})"
+            )
         else:
+            DDS_SUBSCRIPTION_MATCHED[self.source_id] = max(0, info.current_count)
             logger.info(f"🔌 DDS订阅者断开发布者: {info.last_publication_handle}")
             logger.info(f"📊 当前匹配的发布者数量: {info.current_count}")
             self.num = 0

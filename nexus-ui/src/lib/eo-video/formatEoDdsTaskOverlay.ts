@@ -95,6 +95,13 @@ export function formatEoDdsCameraLine(row: EoCameraDdsStatusRow | undefined): st
   if (taskType === "type.casia.tasks.v1.TargetCollectionIMChildTask") {
     return active && tid != null ? `正在跟踪${tid}号目标` : "空闲中";
   }
+  if (taskType === "type.casia.tasks.v1.CameraPointingAccuracyChild") {
+    return active
+      ? tid != null
+        ? `指向准确度评估中（${tid}号目标）`
+        : "指向准确度评估中"
+      : "空闲中";
+  }
   if (taskType === "type.casia.tasks.v1.TargetStrikeChildTask") {
     return active && tid != null ? `激光打击${tid}号目标` : "空闲中";
   }
@@ -108,7 +115,13 @@ export function formatEoDdsCameraLine(row: EoCameraDdsStatusRow | undefined): st
   return "空闲中";
 }
 
-/** 右下角一行：无人机侧「视频/航线」相关 DDS 字段（flightPath / status） */
+/** 右下角一行：无人机 EntityRealTimeStatus `drone_task_action` */
+export function formatEoDdsDroneTaskLine(row: { droneTaskAction?: unknown } | undefined): string {
+  const action = String(row?.droneTaskAction ?? "").trim();
+  return action || "空闲中";
+}
+
+/** @deprecated 无人机右下角已改读 EntityRealTimeStatus `drone_task_action` */
 export function formatEoDdsDroneVideoLine(t: DroneTelemetry | undefined): string {
   if (!t) return "空闲中";
   const fp = t.flightPath;

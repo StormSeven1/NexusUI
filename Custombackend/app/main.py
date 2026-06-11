@@ -42,11 +42,13 @@ _RECEIVER_STATS_LOG_INTERVAL_SEC = int(os.environ.get("RECEIVER_STATS_LOG_INTERV
 
 
 async def _receiver_stats_log_loop():
-    """定时输出 receiver_manager.get_stats()"""
+    """定时输出 receiver_manager.get_stats() 与航迹 DDS 健康度"""
     while True:
         try:
             stats = receiver_manager.get_stats()
             cam = stats.get("dds_camera_status")
+            fuse_bird = stats.get("dds_forward_fuse_bird_radar_track")
+            fuse_sea = stats.get("dds_forward_fuse_track")
             if cam:
                 logger.info(
                     "[receiver_stats] dds_camera_status received={} parsed={} failed={}",
@@ -54,9 +56,21 @@ async def _receiver_stats_log_loop():
                     cam.get("parsed", 0),
                     cam.get("failed", 0),
                 )
-            elif _RECEIVER_STATS_LOG_INTERVAL_SEC > 0:
+            if fuse_bird or fuse_sea:
                 logger.info(
-                    "[receiver_stats] 尚无 dds_camera_status | 当前计数键: {}",
+                    "[receiver_stats] 航迹 dds_forward_fuse_bird_radar_track received={} | dds_forward_fuse_track received={}",
+                    (fuse_bird or {}).get("received", 0),
+                    (fuse_sea or {}).get("received", 0),
+                )
+            health = receiver_manager.get_dds_track_health()
+            if not health.get("any_matched") and not health.get("any_received"):
+                logger.warning(
+                    "[receiver_stats] 航迹 DDS 尚无 matched/样本 | subscription_matched={}",
+                    health.get("subscription_matched"),
+                )
+            elif _RECEIVER_STATS_LOG_INTERVAL_SEC > 0 and not cam and not fuse_bird and not fuse_sea:
+                logger.info(
+                    "[receiver_stats] 当前计数键: {}",
                     sorted(stats.keys()),
                 )
         except asyncio.CancelledError:
@@ -65,10 +79,38 @@ async def _receiver_stats_log_loop():
             logger.warning("[receiver_stats] 读取统计失败: {}", e)
         await asyncio.sleep(max(5, _RECEIVER_STATS_LOG_INTERVAL_SEC))
 
+
+async def _dds_track_startup_health_check():
+    """启动后延迟自检：航迹 DDS 未 matched 时明确告警（与相机/target_id 改动解耦）。"""
+    await asyncio.sleep(20)
+    health = receiver_manager.get_dds_track_health()
+    if health.get("any_received"):
+        logger.info(
+            "[dds_track_health] 航迹 DDS 正常，已收到样本: {}",
+            {k: v for k, v in health.get("received", {}).items() if v > 0},
+        )
+        return
+    if health.get("any_matched"):
+        logger.warning(
+            "[dds_track_health] 航迹 DDS 已 matched 但尚无样本，subscription_matched={}",
+            health.get("subscription_matched"),
+        )
+        return
+    logger.error(
+        "[dds_track_health] 航迹 DDS 异常：启动 20s 后仍无 matched/样本。"
+        " 航迹已在独立子进程（mode={}），与相机/target_id 解耦。"
+        " 发布端正常时请：1) docker restart casia-fastdds-discovery 后重启 xk_docker；"
+        "2) curl /api/status 看 dds_track_health.worker_alive。"
+        " subscription_matched={}",
+        health.get("mode"),
+        health.get("subscription_matched"),
+    )
+
 # MCP服务独立运行，不需要导入
 
 # 接收器 stats 后台任务（lifespan 内 cancel）
 _receiver_stats_task: Optional[asyncio.Task] = None
+_dds_track_bridge_task: Optional[asyncio.Task] = None
 _work_mode_repeat_task: Optional[asyncio.Task] = None
 
 
@@ -199,6 +241,11 @@ async def lifespan(app: FastAPI):
         )
     elif _dds_py_ok and dds_started:
         logger.info("DDS 接收器已成功启动 {} 路（航迹可走 DDS → WebSocket）", dds_started)
+        asyncio.create_task(_dds_track_startup_health_check())
+        from receivers.network.dds_track_bridge import get_track_bridge, track_bridge_poll_loop
+        global _dds_track_bridge_task
+        if get_track_bridge().is_running:
+            _dds_track_bridge_task = asyncio.create_task(track_bridge_poll_loop(get_track_bridge()))
     
     # 启动HTTP轮询器
     logger.info("正在启动HTTP轮询器...")
@@ -224,6 +271,15 @@ async def lifespan(app: FastAPI):
     
     # 关闭服务
     logger.info("正在关闭服务...")
+
+    if _dds_track_bridge_task is not None:
+        _dds_track_bridge_task.cancel()
+        try:
+            await _dds_track_bridge_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            _dds_track_bridge_task = None
 
     if _receiver_stats_task is not None:
         _receiver_stats_task.cancel()

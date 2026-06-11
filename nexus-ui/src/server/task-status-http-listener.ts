@@ -1,6 +1,5 @@
 import http from "http";
 import type { IncomingHttpHeaders } from "http";
-import { processTaskStatusIngest } from "@/lib/task-status-ingest-handler";
 import { getTaskStatusBridge } from "@/lib/task-status-bridge";
 import type { TaskStatusChatPayload } from "@/lib/task-status-types";
 
@@ -410,6 +409,7 @@ export function startTaskStatusHttpListener(): void {
       fields: previewVerifyFields(parsed),
     });
 
+    const { processTaskStatusIngest } = await import("@/lib/task-status-ingest-handler");
     const result = await processTaskStatusIngest(alarmId, parsed);
     if (!result.ok) {
       const msg =

@@ -19,6 +19,7 @@ interface OptoDeviceLayerState {
   setDeviceIconVisible: (assetId: string, visible: boolean) => void;
   toggleDeviceFov: (assetId: string) => void;
   toggleDeviceIcon: (assetId: string) => void;
+  setDeviceAllVisible: (assetId: string, visible: boolean) => void;
 }
 
 export const useOptoDeviceLayerStore = create<OptoDeviceLayerState>()(
@@ -56,6 +57,14 @@ export const useOptoDeviceLayerStore = create<OptoDeviceLayerState>()(
         const { deviceVisibility } = get();
         get().setDeviceIconVisible(assetId, !isOptoDeviceIconVisible(assetId, deviceVisibility));
       },
+
+      setDeviceAllVisible: (assetId, visible) =>
+        set((s) => ({
+          deviceVisibility: {
+            ...s.deviceVisibility,
+            [assetId]: { fov: visible, icon: visible },
+          },
+        })),
     }),
     {
       name: OPTO_DEVICE_LAYER_STORAGE_KEY,

@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
+from system_eval_json_util import json_safe_value
+
 _PROTO_ROOT = Path(__file__).resolve().parent.parent / "proto"
 _GEN_ROOT = Path(__file__).resolve().parent / "system_eval_gen"
 _GENERATED = False
@@ -53,39 +55,42 @@ def fetch_system_response_time_stats(
     """
     调用 GetSystemResponseTimeStats，返回 JSON 友好结构。
     """
-    import grpc
-    from google.protobuf.json_format import MessageToDict
-
-    _ensure_generated()
-    gen_path = str(_GEN_ROOT)
-    if gen_path not in sys.path:
-        sys.path.insert(0, gen_path)
-
-    from perf.v1 import performance_evaluation_pb2 as perf_pb2
-    from perf.v1 import performance_evaluation_pb2_grpc as perf_grpc
-
-    channel = grpc.insecure_channel(target)
     try:
-        stub = perf_grpc.PerformanceEvaluationServiceStub(channel)
-        req = perf_pb2.GetSystemResponseTimeStatsRequest(limit=max(1, min(int(limit), 100)))
-        resp = stub.GetSystemResponseTimeStats(req, timeout=timeout_sec)
-        data = MessageToDict(resp, preserving_proto_field_name=True)
-        stats = data.get("stats") or {}
-        err = (data.get("error_message") or "").strip()
-        return {
-            "ok": not err,
-            "stats": stats,
-            "error_message": err or None,
-            "grpc_target": target,
-        }
-    except grpc.RpcError as e:
-        logger.warning("system-eval gRPC 失败: {} {}", target, e)
-        return {
-            "ok": False,
-            "stats": None,
-            "error_message": f"gRPC 错误: {e.code().name} {e.details()}",
-            "grpc_target": target,
-        }
+        import grpc
+        from google.protobuf.json_format import MessageToDict
+
+        _ensure_generated()
+        gen_path = str(_GEN_ROOT)
+        if gen_path not in sys.path:
+            sys.path.insert(0, gen_path)
+
+        from perf.v1 import performance_evaluation_pb2 as perf_pb2
+        from perf.v1 import performance_evaluation_pb2_grpc as perf_grpc
+
+        channel = grpc.insecure_channel(target)
+        try:
+            stub = perf_grpc.PerformanceEvaluationServiceStub(channel)
+            req = perf_pb2.GetSystemResponseTimeStatsRequest(limit=max(1, min(int(limit), 100)))
+            resp = stub.GetSystemResponseTimeStats(req, timeout=timeout_sec)
+            data = json_safe_value(MessageToDict(resp, preserving_proto_field_name=True))
+            stats = data.get("stats") or {}
+            err = (data.get("error_message") or "").strip()
+            return {
+                "ok": not err,
+                "stats": stats,
+                "error_message": err or None,
+                "grpc_target": target,
+            }
+        except grpc.RpcError as e:
+            logger.warning("system-eval gRPC 失败: {} {}", target, e)
+            return {
+                "ok": False,
+                "stats": None,
+                "error_message": f"gRPC 错误: {e.code().name} {e.details()}",
+                "grpc_target": target,
+            }
+        finally:
+            channel.close()
     except Exception as e:
         logger.exception("system-eval gRPC 异常")
         return {
@@ -94,5 +99,3 @@ def fetch_system_response_time_stats(
             "error_message": str(e),
             "grpc_target": target,
         }
-    finally:
-        channel.close()

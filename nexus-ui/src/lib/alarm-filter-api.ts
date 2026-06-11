@@ -8,18 +8,13 @@ export type AlarmFilterFuseType = 0 | 1;
 
 const FILTER_SPEC_TYPE = "type.casia.tasks.v1.filterTargetOrForce";
 
-/** 将业务 track_id 解析为告警服务要求的正整数 id（非 uniqueID/showID） */
-export function parseBusinessTrackIdForAlarmFilter(trackId: string): number | null {
+/** 解析 NewTrack target_id（支持大整数，字符串原样传递） */
+export function parseTargetIdForAlarmFilter(trackId: string): string | null {
   const s = String(trackId).trim();
   if (!s) return null;
-  const direct = Number(s);
-  if (Number.isFinite(direct) && direct > 0 && Number.isInteger(direct)) {
-    return direct;
-  }
+  if (/^\d+$/.test(s)) return s;
   const digits = s.replace(/\D/g, "");
-  if (!digits) return null;
-  const n = parseInt(digits, 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  return digits || null;
 }
 
 export function fuseTypeFromTrackKind(isAirTrack: boolean): AlarmFilterFuseType {
@@ -33,15 +28,16 @@ export type AlarmFilterPostResult = {
 
 /**
  * 删除/过滤指定航迹告警：POST JSON 体对齐 AlarmSys `AlarmHttpServer`。
+ * specification.id 为 NewTrack DDS target_id。
  */
 export async function sendAlarmTrackFilterRequest(
   trackId: string,
   fuseType: AlarmFilterFuseType,
   options?: { taskId?: string },
 ): Promise<AlarmFilterPostResult> {
-  const id = parseBusinessTrackIdForAlarmFilter(trackId);
+  const id = parseTargetIdForAlarmFilter(trackId);
   if (id == null) {
-    return { ok: false, message: "无法解析业务 track_id" };
+    return { ok: false, message: "无法解析 target_id" };
   }
 
   const taskId =

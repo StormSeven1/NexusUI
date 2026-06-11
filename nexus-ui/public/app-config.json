@@ -30,6 +30,13 @@
     "trackIdMode": {
       "distinguishSeaAir": "告警匹配模式。false = 18.141 模式（统一用 trackId 匹配）；true = 28.9 模式（对海用 uniqueID，对空用 trackId）。默认 false。"
     },
+    "mapHome": {
+      "_说明": "地图 Home 点（唯一配置入口）：2D/3D 初始视角、小地图中心、资产列表 HOME、态势距离环中心均由此同步。`center` 为 [经度, 纬度]；`distanceRings` 可选（环数/间距/颜色等）。",
+      "center": "[经度, 纬度] 数组",
+      "zoom2d": "二维 MapLibre 初始 zoom",
+      "zoom3d": "三维 Cesium 初始 zoom（可与 zoom2d 相同）",
+      "distanceRings": "可选：{ ringCount, spacingNm, ringColor, ringOpacity, labelOpacity }"
+    },
     "radar": {
       "_类型": "对象，与 `cameras` / `laserWeapons` 同形：`visibility` 为各雷达站默认；`devices` 为雷达站数组。支持根级 **`radar: [ ... ]`** 纯数组（无全局 `visibility` 时仍可加载）。",
       "visibility": {
@@ -794,6 +801,11 @@
   },
   "trackIdMode": {
     "distinguishSeaAir": false
+  },
+  "mapHome": {
+    "center": [122.089, 37.545],
+    "zoom2d": 14,
+    "zoom3d": 14
   },
   "softwareCompositionLinks": [
     {

@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * 图层面板：读 app-store，驱动 MapLibre。
- * 树形显隐行与 `TrackListPanel` 航迹类型、`PanelVisibilityTree` 统一缩进与样式。
+ * 图层面板：地图（含矢量子层）、目标图层、实体图层、区域图层。
+ * 树形显隐行与 `PanelVisibilityTree` 统一缩进与样式。
  */
 
 import {
@@ -11,7 +11,27 @@ import {
   LYR_DRONES,
   LYR_OPTO_FOV,
   LYR_RADAR_COVERAGE,
+  LYR_TRACKS,
+  TRACK_LAYER_KEYS_ORDERED,
 } from "@/lib/map-entity-model";
+import {
+  countVisibleTargetLayerLeaves,
+  TRACK_SUBTYPE_LABELS,
+} from "@/lib/track-layer-visibility";
+import {
+  collectTargetLayerLeafFlags,
+  fuseAirSubtypeVisibility,
+  targetLayerMasterVisibility,
+  trackSubtypeVisibilityState,
+} from "@/lib/layer-panel-target-visibility";
+import {
+  aggregatePanelVisibility,
+  parentToggleTurnOn,
+  syncEntityLayerMasterFromDeviceLeaves,
+  syncMasterOffWhenAllLeavesOff,
+  visibilityFromBoolean,
+} from "@/lib/panel-tree-visibility";
+import { useTrackDisplayStore } from "@/stores/track-display-store";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import {
   countVisibleOptoDeviceLeaves,
@@ -20,6 +40,7 @@ import {
 } from "@/lib/opto-device-layer-visibility";
 import {
   countVisibleDroneDeviceLeaves,
+  isDroneDeviceAirportVisible,
   isDroneDevicePositionVisible,
   isDroneDeviceRouteVisible,
 } from "@/lib/drone-device-layer-visibility";
@@ -47,49 +68,62 @@ import {
   PanelTreeBranchRow,
   PanelTreeGroup,
   PanelTreeToggleRow,
+  panelTreePaddingLeft,
 } from "@/components/panels/PanelVisibilityTree";
 import {
   ChevronDown,
   ChevronRight,
   Map as MapIcon,
   Database,
-  Layers as LayersIcon,
   FolderTree,
+  Target,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 export function LayerPanel() {
   const assets = useAssetStore((s) => s.assets);
   const layerVisibility = useAppStore((s) => s.layerVisibility);
   const toggleLayerVisibility = useAppStore((s) => s.toggleLayerVisibility);
+  const setLayerVisibility = useAppStore((s) => s.setLayerVisibility);
 
   const basemapStyleName = useAppStore((s) => s.basemapStyleName);
   const basemapVectorLayers = useAppStore((s) => s.basemapVectorLayers);
   const basemapGroupVisible = useAppStore((s) => s.basemapGroupVisible);
   const basemapVectorVisibility = useAppStore((s) => s.basemapVectorVisibility);
-  const toggleBasemapGroupVisible = useAppStore((s) => s.toggleBasemapGroupVisible);
+  const basemapRasterLayers = useAppStore((s) => s.basemapRasterLayers);
+  const basemapRasterVisibility = useAppStore((s) => s.basemapRasterVisibility);
+  const setBasemapGroupVisible = useAppStore((s) => s.setBasemapGroupVisible);
+  const setBasemapVectorLayersVisible = useAppStore((s) => s.setBasemapVectorLayersVisible);
   const toggleBasemapVectorLayer = useAppStore((s) => s.toggleBasemapVectorLayer);
+  const toggleBasemapRasterLayer = useAppStore((s) => s.toggleBasemapRasterLayer);
 
   const dataPanelRows = useMemo(() => buildDataLayerPanelRows(assets), [assets]);
 
   const dbAreaRows = useDbAreaStore((s) => s.rows);
   const dbAreaVisibility = useDbAreaStore((s) => s.areaVisibility);
-  const toggleGroupAllAreasVisible = useDbAreaStore((s) => s.toggleGroupAllAreasVisible);
+  const setGroupAllAreasVisible = useDbAreaStore((s) => s.setGroupAllAreasVisible);
+  const setAllDrawableAreasVisible = useDbAreaStore((s) => s.setAllDrawableAreasVisible);
   const setAreaVisible = useDbAreaStore((s) => s.setAreaVisible);
 
   const optoDeviceVisibility = useOptoDeviceLayerStore((s) => s.deviceVisibility);
   const toggleOptoDeviceFov = useOptoDeviceLayerStore((s) => s.toggleDeviceFov);
   const toggleOptoDeviceIcon = useOptoDeviceLayerStore((s) => s.toggleDeviceIcon);
+  const setOptoDeviceAllVisible = useOptoDeviceLayerStore((s) => s.setDeviceAllVisible);
   const droneDeviceVisibility = useDroneDeviceLayerStore((s) => s.deviceVisibility);
   const toggleDroneDevicePosition = useDroneDeviceLayerStore((s) => s.toggleDevicePosition);
   const toggleDroneDeviceRoute = useDroneDeviceLayerStore((s) => s.toggleDeviceRoute);
+  const toggleDroneDeviceAirport = useDroneDeviceLayerStore((s) => s.toggleDeviceAirport);
+  const setDroneDeviceAllVisible = useDroneDeviceLayerStore((s) => s.setDeviceAllVisible);
   const syncDroneDeviceSns = useDroneDeviceLayerStore((s) => s.syncDroneSns);
   const radarDeviceVisibility = useRadarDeviceLayerStore((s) => s.deviceVisibility);
   const toggleRadarDeviceCoverage = useRadarDeviceLayerStore((s) => s.toggleDeviceCoverage);
   const toggleRadarDeviceIcon = useRadarDeviceLayerStore((s) => s.toggleDeviceIcon);
+  const setRadarDeviceAllVisible = useRadarDeviceLayerStore((s) => s.setDeviceAllVisible);
   const syncRadarDeviceIds = useRadarDeviceLayerStore((s) => s.syncRadarIds);
   const cameraMenuRows = useMapGisCameraMenuStore((s) => s.rows);
   const cameraMenuLoading = useMapGisCameraMenuStore((s) => s.loading);
+  const cameraMenuLoaded = useMapGisCameraMenuStore((s) => s.loaded);
   const ensureCameraMenuRows = useMapGisCameraMenuStore((s) => s.ensureLoaded);
 
   const hasOptoLayerRow = useMemo(
@@ -122,9 +156,20 @@ export function LayerPanel() {
   const assetDroneSig = useMemo(() => mapGisDroneSyncSignature(assets), [assets]);
 
   const dronePanelDevices = useMemo(
-    () => collectMapGisDroneRowsSync().map((r) => ({ id: r.sn, label: r.label })),
+    () => collectMapGisDroneRowsSync(),
     [droneStoreDrones, droneToAirport, droneRelationships, assetDroneSig],
   );
+
+  const airportNameById = useMemo(() => {
+    const m = new globalThis.Map<string, string>();
+    for (const a of assets) {
+      if (a.asset_type !== "airport") continue;
+      const id = String(a.id ?? "").trim();
+      if (!id) continue;
+      m.set(id, (a.name || "").trim() || id);
+    }
+    return m;
+  }, [assets]);
 
   const optoCameraDevices = useMemo(
     () => cameraMenuRows.map((r) => ({ id: r.entityId, label: r.label })),
@@ -151,9 +196,20 @@ export function LayerPanel() {
     [basemapVectorLayers],
   );
 
+  const trackSubtypeVisible = useTrackDisplayStore((s) => s.trackSubtypeVisible);
+  const airFusionSubtypeVisible = useTrackDisplayStore((s) => s.airFusionSubtypeVisible);
+  const toggleTrackSubtype = useTrackDisplayStore((s) => s.toggleTrackSubtype);
+  const toggleAirFusionSubtype = useTrackDisplayStore((s) => s.toggleAirFusionSubtype);
+  const setAllTrackSubtypesVisible = useTrackDisplayStore((s) => s.setAllTrackSubtypesVisible);
+  const setTrackSubtypeVisible = useTrackDisplayStore((s) => s.setTrackSubtypeVisible);
+  const setAirFusionSubtypesVisible = useTrackDisplayStore((s) => s.setAirFusionSubtypesVisible);
+
   const [openBasemap, setOpenBasemap] = useState(false);
-  const [openDataLayers, setOpenDataLayers] = useState(false);
-  const [openVectorSection, setOpenVectorSection] = useState(false);
+  const [openBasemapStyle, setOpenBasemapStyle] = useState(true);
+  const [openTargetSection, setOpenTargetSection] = useState(false);
+  const [openTargetTree, setOpenTargetTree] = useState(true);
+  const [openTargetSubtype, setOpenTargetSubtype] = useState<Record<string, boolean>>({});
+  const [openEntityLayers, setOpenEntityLayers] = useState(false);
   const [openVectorGroup, setOpenVectorGroup] = useState<Record<string, boolean>>({});
   const [openDbAreaSection, setOpenDbAreaSection] = useState(false);
   const [openDbAreaTree, setOpenDbAreaTree] = useState(true);
@@ -165,9 +221,11 @@ export function LayerPanel() {
   const [openRadarTree, setOpenRadarTree] = useState(true);
   const [openRadarDevice, setOpenRadarDevice] = useState<Record<string, boolean>>({});
 
+  const tracksMasterOn = layerVisibility[LYR_TRACKS] !== false;
   const optoMasterOn = layerVisibility[LYR_OPTO_FOV] !== false;
   const droneMasterOn = layerVisibility[LYR_DRONES] !== false;
   const radarMasterOn = layerVisibility[LYR_RADAR_COVERAGE] !== false;
+  const dbAreaMasterOn = layerVisibility[LYR_DB_AREAS] !== false;
 
   useEffect(() => {
     if (!hasOptoLayerRow) return;
@@ -176,13 +234,114 @@ export function LayerPanel() {
 
   useEffect(() => {
     if (!hasDroneLayerRow) return;
-    syncDroneDeviceSns(dronePanelDevices.map((d) => d.id));
+    syncDroneDeviceSns(dronePanelDevices.map((d) => d.sn));
   }, [hasDroneLayerRow, dronePanelDevices, syncDroneDeviceSns]);
 
   useEffect(() => {
     if (!hasRadarLayerRow) return;
     syncRadarDeviceIds(radarPanelDevices.map((d) => d.id));
   }, [hasRadarLayerRow, radarPanelDevices, syncRadarDeviceIds]);
+
+  /** 子项全关时同步关闭母节点；不因子项缺省 true 自动打开母开关（刷新后保留用户记忆） */
+  useEffect(() => {
+    if (basemapVectorLayers.length === 0) return;
+    const anyVector = basemapVectorLayers.some((l) => basemapVectorVisibility[l.id] !== false);
+    syncMasterOffWhenAllLeavesOff(basemapGroupVisible, anyVector, setBasemapGroupVisible);
+  }, [basemapVectorLayers, basemapVectorVisibility, basemapGroupVisible, setBasemapGroupVisible]);
+
+  useEffect(() => {
+    const flags = collectTargetLayerLeafFlags(true, trackSubtypeVisible, airFusionSubtypeVisible);
+    const anyOn = flags.some(Boolean);
+    syncMasterOffWhenAllLeavesOff(tracksMasterOn, anyOn, (on) => setLayerVisibility(LYR_TRACKS, on));
+  }, [
+    trackSubtypeVisible,
+    airFusionSubtypeVisible,
+    tracksMasterOn,
+    setLayerVisibility,
+  ]);
+
+  useEffect(() => {
+    if (!hasRadarLayerRow) return;
+    syncEntityLayerMasterFromDeviceLeaves(
+      radarPanelDevices.length > 0,
+      radarMasterOn,
+      radarPanelDevices.map((d) => d.id),
+      radarDeviceVisibility,
+      (id) =>
+        isRadarDeviceCoverageVisible(id, radarDeviceVisibility) ||
+        isRadarDeviceIconVisible(id, radarDeviceVisibility),
+      (on) => setLayerVisibility(LYR_RADAR_COVERAGE, on),
+    );
+  }, [
+    hasRadarLayerRow,
+    radarPanelDevices,
+    radarDeviceVisibility,
+    radarMasterOn,
+    setLayerVisibility,
+  ]);
+
+  useEffect(() => {
+    if (!hasDroneLayerRow) return;
+    syncEntityLayerMasterFromDeviceLeaves(
+      dronePanelDevices.length > 0,
+      droneMasterOn,
+      dronePanelDevices.map((d) => d.sn),
+      droneDeviceVisibility,
+      (sn) => {
+        const dev = dronePanelDevices.find((d) => d.sn === sn);
+        if (!dev) return false;
+        return (
+          isDroneDevicePositionVisible(sn, droneDeviceVisibility) ||
+          isDroneDeviceRouteVisible(sn, droneDeviceVisibility) ||
+          (dev.airportSN.trim() !== "" && isDroneDeviceAirportVisible(sn, droneDeviceVisibility))
+        );
+      },
+      (on) => setLayerVisibility(LYR_DRONES, on),
+    );
+  }, [
+    hasDroneLayerRow,
+    dronePanelDevices,
+    droneDeviceVisibility,
+    droneMasterOn,
+    setLayerVisibility,
+  ]);
+
+  useEffect(() => {
+    if (!hasOptoLayerRow) return;
+    syncEntityLayerMasterFromDeviceLeaves(
+      cameraMenuLoaded,
+      optoMasterOn,
+      optoCameraDevices.map((d) => d.id),
+      optoDeviceVisibility,
+      (id) =>
+        isOptoDeviceFovVisible(id, optoDeviceVisibility) ||
+        isOptoDeviceIconVisible(id, optoDeviceVisibility),
+      (on) => setLayerVisibility(LYR_OPTO_FOV, on),
+    );
+  }, [
+    hasOptoLayerRow,
+    cameraMenuLoaded,
+    optoCameraDevices,
+    optoDeviceVisibility,
+    optoMasterOn,
+    setLayerVisibility,
+  ]);
+
+  useEffect(() => {
+    const drawable = dbAreaRows.filter(isDbAreaDrawable);
+    if (drawable.length === 0) return;
+    const anyOn = drawable.some(
+      (r) => dbAreaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] !== false,
+    );
+    syncMasterOffWhenAllLeavesOff(dbAreaMasterOn, anyOn, (on) => setLayerVisibility(LYR_DB_AREAS, on));
+    if (!dbAreaMasterOn && anyOn) {
+      const anyExplicit = drawable.some((r) => {
+        const key = dbAreaVisibilityKey(r.group_id, r.area_id);
+        return key in dbAreaVisibility;
+      });
+      if (anyExplicit) setLayerVisibility(LYR_DB_AREAS, true);
+    }
+  }, [dbAreaRows, dbAreaVisibility, dbAreaMasterOn, setLayerVisibility]);
 
   const toggleVectorGroup = useCallback((gk: string) => {
     setOpenVectorGroup((prev) => ({ ...prev, [gk]: !prev[gk] }));
@@ -191,8 +350,6 @@ export function LayerPanel() {
   const toggleDbGroupOpen = useCallback((gid: number) => {
     setOpenDbGroup((prev) => ({ ...prev, [gid]: !prev[gid] }));
   }, []);
-
-  const dbAreaMasterOn = layerVisibility[LYR_DB_AREAS] !== false;
 
   const dbAreaGroups = useMemo(() => {
     const m = new globalThis.Map<number, typeof dbAreaRows>();
@@ -205,14 +362,165 @@ export function LayerPanel() {
     return [...m.entries()].sort((a, b) => a[0] - b[0]);
   }, [dbAreaRows]);
 
-  const groupAllOn = useCallback(
+  const groupAreaVisibility = useCallback(
     (groupId: number) => {
       const list = dbAreaRows.filter((r) => r.group_id === groupId && isDbAreaDrawable(r));
-      if (list.length === 0) return true;
-      return list.every((r) => dbAreaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] !== false);
+      if (list.length === 0) return "all" as const;
+      const flags = list.map(
+        (r) => dbAreaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] !== false,
+      );
+      return aggregatePanelVisibility(flags);
     },
     [dbAreaRows, dbAreaVisibility],
   );
+
+  const dbAreaMasterVisibility = useMemo(() => {
+    const flags = dbAreaRows
+      .filter(isDbAreaDrawable)
+      .map((r) => dbAreaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] !== false);
+    return aggregatePanelVisibility(flags);
+  }, [dbAreaRows, dbAreaVisibility]);
+
+  const basemapLocalVisibility = useMemo(() => {
+    const vectorFlags = basemapVectorLayers.map(
+      (l) => basemapVectorVisibility[l.id] !== false,
+    );
+    return aggregatePanelVisibility(
+      basemapVectorLayers.length === 0 ? [basemapGroupVisible] : [basemapGroupVisible, ...vectorFlags],
+    );
+  }, [basemapGroupVisible, basemapVectorLayers, basemapVectorVisibility]);
+
+  const targetMasterVisibility = useMemo(
+    () => targetLayerMasterVisibility(tracksMasterOn, trackSubtypeVisible, airFusionSubtypeVisible),
+    [tracksMasterOn, trackSubtypeVisible, airFusionSubtypeVisible],
+  );
+
+  const toggleBasemapLocalVisibility = useCallback(() => {
+    const turnOn = parentToggleTurnOn(basemapLocalVisibility);
+    setBasemapGroupVisible(turnOn);
+    setBasemapVectorLayersVisible(turnOn);
+  }, [basemapLocalVisibility, setBasemapGroupVisible, setBasemapVectorLayersVisible]);
+
+  const vectorGroupVisibility = useCallback(
+    (gk: string) => {
+      const items = vectorByGroup.get(gk) ?? [];
+      if (items.length === 0) return "all" as const;
+      const flags = items.map((l) => basemapVectorVisibility[l.id] !== false);
+      return aggregatePanelVisibility(flags);
+    },
+    [vectorByGroup, basemapVectorVisibility],
+  );
+
+  const toggleVectorGroupVisibility = useCallback(
+    (gk: string) => {
+      const items = vectorByGroup.get(gk) ?? [];
+      const state = vectorGroupVisibility(gk);
+      const turnOn = parentToggleTurnOn(state);
+      setBasemapVectorLayersVisible(
+        turnOn,
+        items.map((l) => l.id),
+      );
+      if (turnOn) setBasemapGroupVisible(true);
+    },
+    [vectorByGroup, vectorGroupVisibility, setBasemapVectorLayersVisible, setBasemapGroupVisible],
+  );
+
+  const toggleTargetMasterVisibility = useCallback(() => {
+    const turnOn = parentToggleTurnOn(targetMasterVisibility);
+    setLayerVisibility(LYR_TRACKS, turnOn);
+    setAllTrackSubtypesVisible(turnOn);
+  }, [targetMasterVisibility, setLayerVisibility, setAllTrackSubtypesVisible]);
+
+  const radarLayerVisibility = useMemo(() => {
+    const flags: boolean[] = [];
+    for (const dev of radarPanelDevices) {
+      flags.push(isRadarDeviceCoverageVisible(dev.id, radarDeviceVisibility));
+      flags.push(isRadarDeviceIconVisible(dev.id, radarDeviceVisibility));
+    }
+    return aggregatePanelVisibility(flags.length > 0 ? flags : [true]);
+  }, [radarPanelDevices, radarDeviceVisibility]);
+
+  const droneLayerVisibility = useMemo(() => {
+    const flags: boolean[] = [];
+    for (const dev of dronePanelDevices) {
+      flags.push(isDroneDevicePositionVisible(dev.sn, droneDeviceVisibility));
+      flags.push(isDroneDeviceRouteVisible(dev.sn, droneDeviceVisibility));
+      if (dev.airportSN.trim()) {
+        flags.push(isDroneDeviceAirportVisible(dev.sn, droneDeviceVisibility));
+      }
+    }
+    return aggregatePanelVisibility(flags.length > 0 ? flags : [true]);
+  }, [dronePanelDevices, droneDeviceVisibility]);
+
+  const optoLayerVisibility = useMemo(() => {
+    const flags: boolean[] = [];
+    for (const dev of optoCameraDevices) {
+      flags.push(isOptoDeviceFovVisible(dev.id, optoDeviceVisibility));
+      flags.push(isOptoDeviceIconVisible(dev.id, optoDeviceVisibility));
+    }
+    return aggregatePanelVisibility(flags.length > 0 ? flags : [true]);
+  }, [optoCameraDevices, optoDeviceVisibility]);
+
+  const toggleEntityLayerVisibility = useCallback(
+    (layerId: string, state: ReturnType<typeof aggregatePanelVisibility>) => {
+      const turnOn = parentToggleTurnOn(state);
+      setLayerVisibility(layerId, turnOn);
+      if (layerId === LYR_RADAR_COVERAGE) {
+        for (const dev of radarPanelDevices) setRadarDeviceAllVisible(dev.id, turnOn);
+      } else if (layerId === LYR_DRONES) {
+        for (const dev of dronePanelDevices) setDroneDeviceAllVisible(dev.sn, turnOn);
+      } else if (layerId === LYR_OPTO_FOV) {
+        for (const dev of optoCameraDevices) setOptoDeviceAllVisible(dev.id, turnOn);
+      }
+    },
+    [
+      setLayerVisibility,
+      radarPanelDevices,
+      setRadarDeviceAllVisible,
+      dronePanelDevices,
+      setDroneDeviceAllVisible,
+      optoCameraDevices,
+      setOptoDeviceAllVisible,
+    ],
+  );
+
+  const radarDeviceVisibilityState = useCallback(
+    (devId: string) =>
+      aggregatePanelVisibility([
+        isRadarDeviceCoverageVisible(devId, radarDeviceVisibility),
+        isRadarDeviceIconVisible(devId, radarDeviceVisibility),
+      ]),
+    [radarDeviceVisibility],
+  );
+
+  const droneDeviceVisibilityState = useCallback(
+    (dev: (typeof dronePanelDevices)[number]) => {
+      const flags = [
+        isDroneDevicePositionVisible(dev.sn, droneDeviceVisibility),
+        isDroneDeviceRouteVisible(dev.sn, droneDeviceVisibility),
+      ];
+      if (dev.airportSN.trim()) {
+        flags.push(isDroneDeviceAirportVisible(dev.sn, droneDeviceVisibility));
+      }
+      return aggregatePanelVisibility(flags);
+    },
+    [droneDeviceVisibility],
+  );
+
+  const optoDeviceVisibilityState = useCallback(
+    (devId: string) =>
+      aggregatePanelVisibility([
+        isOptoDeviceFovVisible(devId, optoDeviceVisibility),
+        isOptoDeviceIconVisible(devId, optoDeviceVisibility),
+      ]),
+    [optoDeviceVisibility],
+  );
+
+  const toggleDbAreaMasterVisibility = useCallback(() => {
+    const turnOn = parentToggleTurnOn(dbAreaMasterVisibility);
+    setLayerVisibility(LYR_DB_AREAS, turnOn);
+    setAllDrawableAreasVisible(turnOn);
+  }, [dbAreaMasterVisibility, setLayerVisibility, setAllDrawableAreasVisible]);
 
   const groupDisplayName = useCallback(
     (groupId: number) => {
@@ -229,6 +537,12 @@ export function LayerPanel() {
       n += 1;
       n += basemapVectorLayers.filter((l) => basemapVectorVisibility[l.id] !== false).length;
     }
+    n += basemapRasterLayers.filter((l) => basemapRasterVisibility[l.id] !== false).length;
+    n += countVisibleTargetLayerLeaves(
+      tracksMasterOn,
+      trackSubtypeVisible,
+      airFusionSubtypeVisible,
+    );
     n += countVisibleDbAreaLeaves(dbAreaRows, dbAreaVisibility, dbAreaMasterOn);
     n += countVisibleOptoDeviceLeaves(
       optoCameraDevices.map((c) => c.id),
@@ -236,7 +550,7 @@ export function LayerPanel() {
       optoMasterOn,
     );
     n += countVisibleDroneDeviceLeaves(
-      dronePanelDevices.map((d) => d.id),
+      dronePanelDevices,
       droneDeviceVisibility,
       droneMasterOn,
     );
@@ -251,6 +565,11 @@ export function LayerPanel() {
     basemapGroupVisible,
     basemapVectorLayers,
     basemapVectorVisibility,
+    basemapRasterLayers,
+    basemapRasterVisibility,
+    tracksMasterOn,
+    trackSubtypeVisible,
+    airFusionSubtypeVisible,
     dbAreaRows,
     dbAreaVisibility,
     dbAreaMasterOn,
@@ -299,17 +618,73 @@ export function LayerPanel() {
             openBasemap,
             () => setOpenBasemap((v) => !v),
             <MapIcon size={12} className="shrink-0 text-nexus-text-muted" />,
-            "底图",
+            "地图",
           )}
           {openBasemap ? (
             <div className="border-b border-nexus-border/50 px-2 pb-2">
               <PanelTreeGroup>
-                <PanelTreeToggleRow
+                {basemapRasterLayers.map((layer) => (
+                  <PanelTreeBranchRow
+                    key={layer.id}
+                    depth={0}
+                    open={false}
+                    onToggleOpen={() => {}}
+                    label={layer.name}
+                    visibility={visibilityFromBoolean(basemapRasterVisibility[layer.id] !== false)}
+                    onToggleVisible={() => toggleBasemapRasterLayer(layer.id)}
+                  />
+                ))}
+                <PanelTreeBranchRow
                   depth={0}
-                  visible={basemapGroupVisible}
-                  onToggle={toggleBasemapGroupVisible}
-                  label={basemapStyleName ?? "未命名"}
+                  open={openBasemapStyle}
+                  onToggleOpen={() => setOpenBasemapStyle((v) => !v)}
+                  label={basemapStyleName ?? "本地地图"}
+                  visibility={basemapLocalVisibility}
+                  onToggleVisible={toggleBasemapLocalVisibility}
                 />
+                {openBasemapStyle ? (
+                  basemapVectorLayers.length === 0 ? (
+                    <div
+                      className="border-b border-nexus-border/30 py-2 pr-2 text-[10px] leading-relaxed text-nexus-text-muted last:border-b-0"
+                      style={{ paddingLeft: panelTreePaddingLeft(1) }}
+                    >
+                      暂无矢量子层，请检查 public/map-styles/
+                    </div>
+                  ) : (
+                    groupKeys.map((gk) => {
+                      const items = vectorByGroup.get(gk) ?? [];
+                      if (items.length === 0) return null;
+                      const subOpen = openVectorGroup[gk] ?? false;
+                      return (
+                        <div key={gk}>
+                          <PanelTreeBranchRow
+                            depth={1}
+                            open={subOpen}
+                            onToggleOpen={() => toggleVectorGroup(gk)}
+                            label={VECTOR_LAYER_GROUP_LABELS[gk] ?? gk}
+                            visibility={vectorGroupVisibility(gk)}
+                            onToggleVisible={() => toggleVectorGroupVisibility(gk)}
+                            disabled={!basemapGroupVisible && basemapLocalVisibility === "none"}
+                          />
+                          {subOpen
+                            ? items.map((layer) => (
+                                <PanelTreeToggleRow
+                                  key={layer.id}
+                                  depth={2}
+                                  visibility={visibilityFromBoolean(
+                                    basemapVectorVisibility[layer.id] !== false,
+                                  )}
+                                  onToggle={() => toggleBasemapVectorLayer(layer.id)}
+                                  label={layer.label}
+                                  disabled={!basemapGroupVisible}
+                                />
+                              ))
+                            : null}
+                        </div>
+                      );
+                    })
+                  )
+                ) : null}
               </PanelTreeGroup>
             </div>
           ) : null}
@@ -317,12 +692,108 @@ export function LayerPanel() {
 
         <div>
           {sectionHeader(
-            openDataLayers,
-            () => setOpenDataLayers((v) => !v),
-            <Database size={12} className="shrink-0 text-nexus-text-muted" />,
-            "数据图层",
+            openTargetSection,
+            () => setOpenTargetSection((v) => !v),
+            <Target size={12} className="shrink-0 text-nexus-text-muted" />,
+            "目标图层",
           )}
-          {openDataLayers ? (
+          {openTargetSection ? (
+            <div className="border-b border-nexus-border/50 px-2 pb-2">
+              <PanelTreeGroup>
+                <PanelTreeBranchRow
+                  depth={0}
+                  open={openTargetTree}
+                  onToggleOpen={() => setOpenTargetTree((v) => !v)}
+                  label="全部目标"
+                  visibility={targetMasterVisibility}
+                  onToggleVisible={toggleTargetMasterVisibility}
+                />
+                {openTargetTree
+                  ? TRACK_LAYER_KEYS_ORDERED.map((key) => {
+                      const on = trackSubtypeVisible[key] !== false;
+                      const showAirChildren = key === "fuse_air";
+                      const subtypeDisabled = !tracksMasterOn;
+                      if (showAirChildren) {
+                        const subOpen = openTargetSubtype[key] ?? true;
+                        const fuseAirVis = fuseAirSubtypeVisibility(
+                          tracksMasterOn,
+                          trackSubtypeVisible,
+                          airFusionSubtypeVisible,
+                        );
+                        return (
+                          <div key={key}>
+                            <PanelTreeBranchRow
+                              depth={1}
+                              open={subOpen}
+                              onToggleOpen={() =>
+                                setOpenTargetSubtype((prev) => ({
+                                  ...prev,
+                                  [key]: !subOpen,
+                                }))
+                              }
+                              label={TRACK_SUBTYPE_LABELS[key]}
+                              visibility={fuseAirVis}
+                              onToggleVisible={() => {
+                                const turnOn = parentToggleTurnOn(fuseAirVis);
+                                setTrackSubtypeVisible(key, turnOn);
+                                setAirFusionSubtypesVisible(turnOn);
+                              }}
+                              disabled={subtypeDisabled}
+                            />
+                            {subOpen ? (
+                              <div className={cn((!on || subtypeDisabled) && "opacity-75")}>
+                                <PanelTreeToggleRow
+                                  depth={2}
+                                  visibility={visibilityFromBoolean(
+                                    airFusionSubtypeVisible.uav !== false,
+                                  )}
+                                  onToggle={() => toggleAirFusionSubtype("uav")}
+                                  label="无人机"
+                                  disabled={!on || subtypeDisabled}
+                                />
+                                <PanelTreeToggleRow
+                                  depth={2}
+                                  visibility={visibilityFromBoolean(
+                                    airFusionSubtypeVisible.bird !== false,
+                                  )}
+                                  onToggle={() => toggleAirFusionSubtype("bird")}
+                                  label="鸟"
+                                  disabled={!on || subtypeDisabled}
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      }
+                      return (
+                        <PanelTreeToggleRow
+                          key={key}
+                          depth={1}
+                          visibility={trackSubtypeVisibilityState(
+                            tracksMasterOn,
+                            key,
+                            trackSubtypeVisible,
+                          )}
+                          onToggle={() => toggleTrackSubtype(key)}
+                          label={TRACK_SUBTYPE_LABELS[key]}
+                          disabled={subtypeDisabled}
+                        />
+                      );
+                    })
+                  : null}
+              </PanelTreeGroup>
+            </div>
+          ) : null}
+        </div>
+
+        <div>
+          {sectionHeader(
+            openEntityLayers,
+            () => setOpenEntityLayers((v) => !v),
+            <Database size={12} className="shrink-0 text-nexus-text-muted" />,
+            "实体图层",
+          )}
+          {openEntityLayers ? (
             <div className="border-b border-nexus-border/50 px-2 pb-2">
               <PanelTreeGroup>
                 {layersData.map((layer) => {
@@ -334,10 +805,12 @@ export function LayerPanel() {
                           open={openRadarTree}
                           onToggleOpen={() => setOpenRadarTree((v) => !v)}
                           label={layer.name}
-                          visible={layer.visible}
-                          onToggleVisible={() => toggleLayerVisibility(layer.id)}
+                          visibility={radarLayerVisibility}
+                          onToggleVisible={() =>
+                            toggleEntityLayerVisibility(layer.id, radarLayerVisibility)
+                          }
                         />
-                        {openRadarTree && layer.visible ? (
+                        {openRadarTree ? (
                           radarPanelDevices.length === 0 ? (
                             <div
                               className="border-b border-nexus-border/30 py-2 pr-2 text-[10px] leading-relaxed text-nexus-text-muted last:border-b-0"
@@ -360,23 +833,29 @@ export function LayerPanel() {
                                       }))
                                     }
                                     label={dev.label}
-                                    disabled={!radarMasterOn}
+                                    visibility={radarDeviceVisibilityState(dev.id)}
+                                    onToggleVisible={() => {
+                                      const st = radarDeviceVisibilityState(dev.id);
+                                      setRadarDeviceAllVisible(dev.id, parentToggleTurnOn(st));
+                                    }}
                                   />
                                   {dOpen ? (
                                     <>
                                       <PanelTreeToggleRow
                                         depth={2}
-                                        visible={isRadarDeviceCoverageVisible(dev.id, radarDeviceVisibility)}
+                                        visibility={visibilityFromBoolean(
+                                          isRadarDeviceCoverageVisible(dev.id, radarDeviceVisibility),
+                                        )}
                                         onToggle={() => toggleRadarDeviceCoverage(dev.id)}
                                         label="距离环"
-                                        disabled={!radarMasterOn}
                                       />
                                       <PanelTreeToggleRow
                                         depth={2}
-                                        visible={isRadarDeviceIconVisible(dev.id, radarDeviceVisibility)}
+                                        visibility={visibilityFromBoolean(
+                                          isRadarDeviceIconVisible(dev.id, radarDeviceVisibility),
+                                        )}
                                         onToggle={() => toggleRadarDeviceIcon(dev.id)}
                                         label="GIS 图标"
-                                        disabled={!radarMasterOn}
                                       />
                                     </>
                                   ) : null}
@@ -396,10 +875,12 @@ export function LayerPanel() {
                           open={openDroneTree}
                           onToggleOpen={() => setOpenDroneTree((v) => !v)}
                           label={layer.name}
-                          visible={layer.visible}
-                          onToggleVisible={() => toggleLayerVisibility(layer.id)}
+                          visibility={droneLayerVisibility}
+                          onToggleVisible={() =>
+                            toggleEntityLayerVisibility(layer.id, droneLayerVisibility)
+                          }
                         />
-                        {openDroneTree && layer.visible ? (
+                        {openDroneTree ? (
                           dronePanelDevices.length === 0 ? (
                             <div
                               className="border-b border-nexus-border/30 py-2 pr-2 text-[10px] leading-relaxed text-nexus-text-muted last:border-b-0"
@@ -409,37 +890,57 @@ export function LayerPanel() {
                             </div>
                           ) : (
                             dronePanelDevices.map((dev) => {
-                              const dOpen = openDroneDevice[dev.id] ?? false;
+                              const dOpen = openDroneDevice[dev.sn] ?? false;
+                              const airportSn = dev.airportSN.trim();
+                              const airportLabel = airportSn
+                                ? airportNameById.get(airportSn) ?? airportSn
+                                : "";
                               return (
-                                <div key={dev.id}>
+                                <div key={dev.sn}>
                                   <PanelTreeBranchRow
                                     depth={1}
                                     open={dOpen}
                                     onToggleOpen={() =>
                                       setOpenDroneDevice((prev) => ({
                                         ...prev,
-                                        [dev.id]: !prev[dev.id],
+                                        [dev.sn]: !prev[dev.sn],
                                       }))
                                     }
                                     label={dev.label}
-                                    disabled={!droneMasterOn}
+                                    visibility={droneDeviceVisibilityState(dev)}
+                                    onToggleVisible={() => {
+                                      const st = droneDeviceVisibilityState(dev);
+                                      setDroneDeviceAllVisible(dev.sn, parentToggleTurnOn(st));
+                                    }}
                                   />
                                   {dOpen ? (
                                     <>
                                       <PanelTreeToggleRow
                                         depth={2}
-                                        visible={isDroneDevicePositionVisible(dev.id, droneDeviceVisibility)}
-                                        onToggle={() => toggleDroneDevicePosition(dev.id)}
+                                        visibility={visibilityFromBoolean(
+                                          isDroneDevicePositionVisible(dev.sn, droneDeviceVisibility),
+                                        )}
+                                        onToggle={() => toggleDroneDevicePosition(dev.sn)}
                                         label="自报位"
-                                        disabled={!droneMasterOn}
                                       />
                                       <PanelTreeToggleRow
                                         depth={2}
-                                        visible={isDroneDeviceRouteVisible(dev.id, droneDeviceVisibility)}
-                                        onToggle={() => toggleDroneDeviceRoute(dev.id)}
+                                        visibility={visibilityFromBoolean(
+                                          isDroneDeviceRouteVisible(dev.sn, droneDeviceVisibility),
+                                        )}
+                                        onToggle={() => toggleDroneDeviceRoute(dev.sn)}
                                         label="航线"
-                                        disabled={!droneMasterOn}
                                       />
+                                      {airportSn ? (
+                                        <PanelTreeToggleRow
+                                          depth={2}
+                                          visibility={visibilityFromBoolean(
+                                            isDroneDeviceAirportVisible(dev.sn, droneDeviceVisibility),
+                                          )}
+                                          onToggle={() => toggleDroneDeviceAirport(dev.sn)}
+                                          label={`机场 · ${airportLabel}`}
+                                        />
+                                      ) : null}
                                     </>
                                   ) : null}
                                 </div>
@@ -455,7 +956,7 @@ export function LayerPanel() {
                       <PanelTreeToggleRow
                         key={layer.id}
                         depth={0}
-                        visible={layer.visible}
+                        visibility={visibilityFromBoolean(layer.visible)}
                         onToggle={() => toggleLayerVisibility(layer.id)}
                         label={layer.name}
                       />
@@ -471,10 +972,12 @@ export function LayerPanel() {
                         open={openOptoTree}
                         onToggleOpen={() => setOpenOptoTree((v) => !v)}
                         label={layer.name}
-                        visible={layer.visible}
-                        onToggleVisible={() => toggleLayerVisibility(layer.id)}
+                        visibility={optoLayerVisibility}
+                        onToggleVisible={() =>
+                          toggleEntityLayerVisibility(layer.id, optoLayerVisibility)
+                        }
                       />
-                      {openOptoTree && layer.visible ? (
+                      {openOptoTree ? (
                         cameraMenuLoading && optoCameraDevices.length === 0 ? (
                           <div
                             className="border-b border-nexus-border/30 py-2 pr-2 text-[10px] text-nexus-text-muted last:border-b-0"
@@ -504,23 +1007,29 @@ export function LayerPanel() {
                                     }))
                                   }
                                   label={dev.label}
-                                  disabled={!optoMasterOn}
+                                  visibility={optoDeviceVisibilityState(dev.id)}
+                                  onToggleVisible={() => {
+                                    const st = optoDeviceVisibilityState(dev.id);
+                                    setOptoDeviceAllVisible(dev.id, parentToggleTurnOn(st));
+                                  }}
                                 />
                                 {dOpen ? (
                                   <>
                                     <PanelTreeToggleRow
                                       depth={2}
-                                      visible={isOptoDeviceFovVisible(dev.id, optoDeviceVisibility)}
+                                      visibility={visibilityFromBoolean(
+                                        isOptoDeviceFovVisible(dev.id, optoDeviceVisibility),
+                                      )}
                                       onToggle={() => toggleOptoDeviceFov(dev.id)}
                                       label="视场"
-                                      disabled={!optoMasterOn}
                                     />
                                     <PanelTreeToggleRow
                                       depth={2}
-                                      visible={isOptoDeviceIconVisible(dev.id, optoDeviceVisibility)}
+                                      visibility={visibilityFromBoolean(
+                                        isOptoDeviceIconVisible(dev.id, optoDeviceVisibility),
+                                      )}
                                       onToggle={() => toggleOptoDeviceIcon(dev.id)}
                                       label="GIS 图标"
-                                      disabled={!optoMasterOn}
                                     />
                                   </>
                                 ) : null}
@@ -533,57 +1042,6 @@ export function LayerPanel() {
                   );
                 })}
               </PanelTreeGroup>
-            </div>
-          ) : null}
-        </div>
-
-        <div>
-          {sectionHeader(
-            openVectorSection,
-            () => setOpenVectorSection((v) => !v),
-            <LayersIcon size={12} className="shrink-0 text-nexus-text-muted" />,
-            "矢量图层",
-          )}
-          {openVectorSection ? (
-            <div className="border-b border-nexus-border/50 px-2 pb-2">
-              {basemapVectorLayers.length === 0 ? (
-                <div className="px-2 py-3 text-[10px] leading-relaxed text-nexus-text-muted">
-                  暂无矢量图层，请检查 public/map-styles/
-                </div>
-              ) : (
-                <PanelTreeGroup>
-                  {groupKeys.map((gk) => {
-                    const items = vectorByGroup.get(gk) ?? [];
-                    if (items.length === 0) return null;
-                    const subOpen = openVectorGroup[gk] ?? false;
-                    return (
-                      <div key={gk}>
-                        <PanelTreeBranchRow
-                          depth={0}
-                          open={subOpen}
-                          onToggleOpen={() => toggleVectorGroup(gk)}
-                          label={VECTOR_LAYER_GROUP_LABELS[gk] ?? gk}
-                          disabled={!basemapGroupVisible}
-                        />
-                        {subOpen
-                          ? items.map((layer) => (
-                              <PanelTreeToggleRow
-                                key={layer.id}
-                                depth={1}
-                                visible={
-                                  basemapGroupVisible && basemapVectorVisibility[layer.id] !== false
-                                }
-                                onToggle={() => toggleBasemapVectorLayer(layer.id)}
-                                label={layer.label}
-                                disabled={!basemapGroupVisible}
-                              />
-                            ))
-                          : null}
-                      </div>
-                    );
-                  })}
-                </PanelTreeGroup>
-              )}
             </div>
           ) : null}
         </div>
@@ -603,13 +1061,13 @@ export function LayerPanel() {
                   open={openDbAreaTree}
                   onToggleOpen={() => setOpenDbAreaTree((v) => !v)}
                   label="全部区域"
-                  visible={dbAreaMasterOn}
-                  onToggleVisible={() => toggleLayerVisibility(LYR_DB_AREAS)}
+                  visibility={dbAreaMasterVisibility}
+                  onToggleVisible={toggleDbAreaMasterVisibility}
                 />
-                {openDbAreaTree && dbAreaMasterOn
+                {openDbAreaTree
                   ? dbAreaGroups.map(([groupId, list]) => {
                       const gOpen = openDbGroup[groupId] ?? false;
-                      const gOn = groupAllOn(groupId);
+                      const gVis = groupAreaVisibility(groupId);
                       return (
                         <div key={groupId}>
                           <PanelTreeBranchRow
@@ -617,8 +1075,10 @@ export function LayerPanel() {
                             open={gOpen}
                             onToggleOpen={() => toggleDbGroupOpen(groupId)}
                             label={groupDisplayName(groupId)}
-                            visible={gOn}
-                            onToggleVisible={() => toggleGroupAllAreasVisible(groupId)}
+                            visibility={gVis}
+                            onToggleVisible={() =>
+                              setGroupAllAreasVisible(groupId, parentToggleTurnOn(gVis))
+                            }
                           />
                           {gOpen
                             ? list.map((r) => {
@@ -631,7 +1091,7 @@ export function LayerPanel() {
                                   <PanelTreeToggleRow
                                     key={key}
                                     depth={2}
-                                    visible={v}
+                                    visibility={visibilityFromBoolean(v)}
                                     onToggle={() => setAreaVisible(r.group_id, r.area_id, !v)}
                                     label={label}
                                   />

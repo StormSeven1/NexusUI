@@ -150,8 +150,15 @@ export function resolveShowIdFromAlarm(
   const tid = trimId(alert.trackId);
   if (!tid) return null;
 
+  if (getRenderCache().has(tid) || shadowTracks.has(tid)) return tid;
+  for (const t of getRenderCache().values()) {
+    if (trimId(t.uniqueID) === tid || trimId(t.showID) === tid) return t.showID;
+  }
+  for (const t of shadowTracks.values()) {
+    if (trimId(t.uniqueID) === tid || trimId(t.showID) === tid) return t.showID;
+  }
+
   if (getTrackIdModeConfig().distinguishSeaAir) {
-    if (getRenderCache().has(tid) || shadowTracks.has(tid)) return tid;
     for (const t of getRenderCache().values()) {
       if (t.trackId === tid) return t.showID;
     }

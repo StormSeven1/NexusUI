@@ -142,6 +142,7 @@ import type { ZoneData } from "@/stores/zone-store";
 import { useZoneStore } from "@/stores/zone-store";
 import { useDroneStore } from "@/stores/drone-store";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
+import { useEoDroneDdsStatusStore } from "@/stores/eo-drone-dds-status-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import {
   mapEntitiesPayload,
@@ -1245,6 +1246,12 @@ function dispatchWsMessageSync(raw: string) {
           useDroneStore.getState().setDroneFlightPath(d);
           recordDroneFlightPathReceived(snFromDronePayload(d));
         }
+        break;
+      }
+      case "dronetaskstatus":
+      case "drone_task_status": {
+        const d = unwrapCameraWsMessagePayload(msg);
+        useEoDroneDdsStatusStore.getState().ingestDroneTaskPayload(d);
         break;
       }
       case "highfreq":

@@ -1,3 +1,15 @@
+/** 叠层 letterbox 用的 intrinsic：WebCodecs 呈现尺寸优先于 `<video>`（后者常为 0 或与 Canvas 不一致） */
+export function resolveEoVideoIntrinsicSize(
+  video: Pick<HTMLVideoElement, "videoWidth" | "videoHeight"> | null | undefined,
+  fallbackW = 0,
+  fallbackH = 0,
+): { w: number; h: number } {
+  if (fallbackW > 0 && fallbackH > 0) return { w: fallbackW, h: fallbackH };
+  const vw = video?.videoWidth ?? 0;
+  const vh = video?.videoHeight ?? 0;
+  return { w: vw, h: vh };
+}
+
 /**
  * 视频内容在容器内的像素矩形，根据 object-fit 模式计算。
  * - contain: 居中缩放，可能有黑边（letterbox）

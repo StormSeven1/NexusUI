@@ -8232,6 +8232,285 @@ void serialize_key(
 template<>
 eProsima_user_DllExport size_t calculate_serialized_size(
         eprosima::fastcdr::CdrSizeCalculator& calculator,
+        const TargetFull::AlarmSpatialInfo& data,
+        size_t& current_alignment)
+{
+    using namespace TargetFull;
+
+    static_cast<void>(data);
+
+    eprosima::fastcdr::EncodingAlgorithmFlag previous_encoding = calculator.get_encoding();
+    size_t calculated_size {calculator.begin_calculate_type_serialized_size(
+                                eprosima::fastcdr::CdrVersion::XCDRv2 == calculator.get_cdr_version() ?
+                                eprosima::fastcdr::EncodingAlgorithmFlag::DELIMIT_CDR2 :
+                                eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR,
+                                current_alignment)};
+
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(0),
+                data.location_type(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(1),
+                data.has_point_position(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(2),
+                data.point_position(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(3),
+                data.has_reference_position(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(4),
+                data.reference_position(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(5),
+                data.bearing_deg(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(6),
+                data.bearing_sigma_deg(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(7),
+                data.has_range_estimate(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(8),
+                data.range_estimate_m(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(9),
+                data.has_range_min_m(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(10),
+                data.range_min_m(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(11),
+                data.has_range_max_m(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(12),
+                data.range_max_m(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(13),
+                data.sector_start_deg(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
+                data.sector_end_deg(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
+                data.spatial_confidence(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
+                data.source_sensor(), current_alignment);
+
+
+    calculated_size += calculator.end_calculate_type_serialized_size(previous_encoding, current_alignment);
+
+    return calculated_size;
+}
+
+template<>
+eProsima_user_DllExport void serialize(
+        eprosima::fastcdr::Cdr& scdr,
+        const TargetFull::AlarmSpatialInfo& data)
+{
+    using namespace TargetFull;
+
+    eprosima::fastcdr::Cdr::state current_state(scdr);
+    scdr.begin_serialize_type(current_state,
+            eprosima::fastcdr::CdrVersion::XCDRv2 == scdr.get_cdr_version() ?
+            eprosima::fastcdr::EncodingAlgorithmFlag::DELIMIT_CDR2 :
+            eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR);
+
+    scdr
+        << eprosima::fastcdr::MemberId(0) << data.location_type()
+        << eprosima::fastcdr::MemberId(1) << data.has_point_position()
+        << eprosima::fastcdr::MemberId(2) << data.point_position()
+        << eprosima::fastcdr::MemberId(3) << data.has_reference_position()
+        << eprosima::fastcdr::MemberId(4) << data.reference_position()
+        << eprosima::fastcdr::MemberId(5) << data.bearing_deg()
+        << eprosima::fastcdr::MemberId(6) << data.bearing_sigma_deg()
+        << eprosima::fastcdr::MemberId(7) << data.has_range_estimate()
+        << eprosima::fastcdr::MemberId(8) << data.range_estimate_m()
+        << eprosima::fastcdr::MemberId(9) << data.has_range_min_m()
+        << eprosima::fastcdr::MemberId(10) << data.range_min_m()
+        << eprosima::fastcdr::MemberId(11) << data.has_range_max_m()
+        << eprosima::fastcdr::MemberId(12) << data.range_max_m()
+        << eprosima::fastcdr::MemberId(13) << data.sector_start_deg()
+        << eprosima::fastcdr::MemberId(14) << data.sector_end_deg()
+        << eprosima::fastcdr::MemberId(15) << data.spatial_confidence()
+        << eprosima::fastcdr::MemberId(16) << data.source_sensor()
+;
+    scdr.end_serialize_type(current_state);
+}
+
+template<>
+eProsima_user_DllExport void deserialize(
+        eprosima::fastcdr::Cdr& cdr,
+        TargetFull::AlarmSpatialInfo& data)
+{
+    using namespace TargetFull;
+
+    cdr.deserialize_type(eprosima::fastcdr::CdrVersion::XCDRv2 == cdr.get_cdr_version() ?
+            eprosima::fastcdr::EncodingAlgorithmFlag::DELIMIT_CDR2 :
+            eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR,
+            [&data](eprosima::fastcdr::Cdr& dcdr, const eprosima::fastcdr::MemberId& mid) -> bool
+            {
+                bool ret_value = true;
+                switch (mid.id)
+                {
+                                        case 0:
+                                                dcdr >> data.location_type();
+                                            break;
+
+                                        case 1:
+                                                dcdr >> data.has_point_position();
+                                            break;
+
+                                        case 2:
+                                                dcdr >> data.point_position();
+                                            break;
+
+                                        case 3:
+                                                dcdr >> data.has_reference_position();
+                                            break;
+
+                                        case 4:
+                                                dcdr >> data.reference_position();
+                                            break;
+
+                                        case 5:
+                                                dcdr >> data.bearing_deg();
+                                            break;
+
+                                        case 6:
+                                                dcdr >> data.bearing_sigma_deg();
+                                            break;
+
+                                        case 7:
+                                                dcdr >> data.has_range_estimate();
+                                            break;
+
+                                        case 8:
+                                                dcdr >> data.range_estimate_m();
+                                            break;
+
+                                        case 9:
+                                                dcdr >> data.has_range_min_m();
+                                            break;
+
+                                        case 10:
+                                                dcdr >> data.range_min_m();
+                                            break;
+
+                                        case 11:
+                                                dcdr >> data.has_range_max_m();
+                                            break;
+
+                                        case 12:
+                                                dcdr >> data.range_max_m();
+                                            break;
+
+                                        case 13:
+                                                dcdr >> data.sector_start_deg();
+                                            break;
+
+                                        case 14:
+                                                dcdr >> data.sector_end_deg();
+                                            break;
+
+                                        case 15:
+                                                dcdr >> data.spatial_confidence();
+                                            break;
+
+                                        case 16:
+                                                dcdr >> data.source_sensor();
+                                            break;
+
+                    default:
+                        ret_value = false;
+                        break;
+                }
+                return ret_value;
+            });
+}
+
+void serialize_key(
+        eprosima::fastcdr::Cdr& scdr,
+        const TargetFull::AlarmSpatialInfo& data)
+{
+    using namespace TargetFull;
+            extern void serialize_key(
+                    Cdr& scdr,
+                    const TargetFull::GeoPosition& data);
+
+
+            extern void serialize_key(
+                    Cdr& scdr,
+                    const TargetFull::GeoPosition& data);
+
+
+
+
+            extern void serialize_key(
+                    Cdr& scdr,
+                    const TargetFull::Measurement& data);
+
+
+            extern void serialize_key(
+                    Cdr& scdr,
+                    const TargetFull::Measurement& data);
+
+
+            extern void serialize_key(
+                    Cdr& scdr,
+                    const TargetFull::Measurement& data);
+
+
+
+
+            extern void serialize_key(
+                    Cdr& scdr,
+                    const TargetFull::EntityRef& data);
+
+
+    static_cast<void>(scdr);
+    static_cast<void>(data);
+                        scdr << data.location_type();
+
+                        scdr << data.has_point_position();
+
+                        serialize_key(scdr, data.point_position());
+
+                        scdr << data.has_reference_position();
+
+                        serialize_key(scdr, data.reference_position());
+
+                        scdr << data.bearing_deg();
+
+                        scdr << data.bearing_sigma_deg();
+
+                        scdr << data.has_range_estimate();
+
+                        serialize_key(scdr, data.range_estimate_m());
+
+                        scdr << data.has_range_min_m();
+
+                        serialize_key(scdr, data.range_min_m());
+
+                        scdr << data.has_range_max_m();
+
+                        serialize_key(scdr, data.range_max_m());
+
+                        scdr << data.sector_start_deg();
+
+                        scdr << data.sector_end_deg();
+
+                        scdr << data.spatial_confidence();
+
+                        serialize_key(scdr, data.source_sensor());
+
+}
+
+
+template<>
+eProsima_user_DllExport size_t calculate_serialized_size(
+        eprosima::fastcdr::CdrSizeCalculator& calculator,
         const TargetFull::TargetAlarmItem& data,
         size_t& current_alignment)
 {
@@ -8278,27 +8557,30 @@ eProsima_user_DllExport size_t calculate_serialized_size(
                 data.position(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(10),
-                data.raised_time(), current_alignment);
+                data.spatial_info(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(11),
-                data.updated_time(), current_alignment);
+                data.raised_time(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(12),
-                data.resolved_time(), current_alignment);
+                data.updated_time(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(13),
-                data.resolved_by(), current_alignment);
+                data.resolved_time(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(14),
-                data.resolution_details(), current_alignment);
+                data.resolved_by(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(15),
-                data.rule_ids(), current_alignment);
+                data.resolution_details(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(16),
-                data.has_detection_box(), current_alignment);
+                data.rule_ids(), current_alignment);
 
         calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(17),
+                data.has_detection_box(), current_alignment);
+
+        calculated_size += calculator.calculate_member_serialized_size(eprosima::fastcdr::MemberId(18),
                 data.detection_box(), current_alignment);
 
 
@@ -8331,14 +8613,15 @@ eProsima_user_DllExport void serialize(
         << eprosima::fastcdr::MemberId(7) << data.class_id()
         << eprosima::fastcdr::MemberId(8) << data.behavior_id()
         << eprosima::fastcdr::MemberId(9) << data.position()
-        << eprosima::fastcdr::MemberId(10) << data.raised_time()
-        << eprosima::fastcdr::MemberId(11) << data.updated_time()
-        << eprosima::fastcdr::MemberId(12) << data.resolved_time()
-        << eprosima::fastcdr::MemberId(13) << data.resolved_by()
-        << eprosima::fastcdr::MemberId(14) << data.resolution_details()
-        << eprosima::fastcdr::MemberId(15) << data.rule_ids()
-        << eprosima::fastcdr::MemberId(16) << data.has_detection_box()
-        << eprosima::fastcdr::MemberId(17) << data.detection_box()
+        << eprosima::fastcdr::MemberId(10) << data.spatial_info()
+        << eprosima::fastcdr::MemberId(11) << data.raised_time()
+        << eprosima::fastcdr::MemberId(12) << data.updated_time()
+        << eprosima::fastcdr::MemberId(13) << data.resolved_time()
+        << eprosima::fastcdr::MemberId(14) << data.resolved_by()
+        << eprosima::fastcdr::MemberId(15) << data.resolution_details()
+        << eprosima::fastcdr::MemberId(16) << data.rule_ids()
+        << eprosima::fastcdr::MemberId(17) << data.has_detection_box()
+        << eprosima::fastcdr::MemberId(18) << data.detection_box()
 ;
     scdr.end_serialize_type(current_state);
 }
@@ -8399,34 +8682,38 @@ eProsima_user_DllExport void deserialize(
                                             break;
 
                                         case 10:
-                                                dcdr >> data.raised_time();
+                                                dcdr >> data.spatial_info();
                                             break;
 
                                         case 11:
-                                                dcdr >> data.updated_time();
+                                                dcdr >> data.raised_time();
                                             break;
 
                                         case 12:
-                                                dcdr >> data.resolved_time();
+                                                dcdr >> data.updated_time();
                                             break;
 
                                         case 13:
-                                                dcdr >> data.resolved_by();
+                                                dcdr >> data.resolved_time();
                                             break;
 
                                         case 14:
-                                                dcdr >> data.resolution_details();
+                                                dcdr >> data.resolved_by();
                                             break;
 
                                         case 15:
-                                                dcdr >> data.rule_ids();
+                                                dcdr >> data.resolution_details();
                                             break;
 
                                         case 16:
-                                                dcdr >> data.has_detection_box();
+                                                dcdr >> data.rule_ids();
                                             break;
 
                                         case 17:
+                                                dcdr >> data.has_detection_box();
+                                            break;
+
+                                        case 18:
                                                 dcdr >> data.detection_box();
                                             break;
 
@@ -8452,6 +8739,10 @@ void serialize_key(
             extern void serialize_key(
                     Cdr& scdr,
                     const TargetFull::GeoPosition& data);
+
+            extern void serialize_key(
+                    Cdr& scdr,
+                    const TargetFull::AlarmSpatialInfo& data);
 
 
 
@@ -8486,6 +8777,8 @@ void serialize_key(
                         scdr << data.behavior_id();
 
                         serialize_key(scdr, data.position());
+
+                        serialize_key(scdr, data.spatial_info());
 
                         scdr << data.raised_time();
 

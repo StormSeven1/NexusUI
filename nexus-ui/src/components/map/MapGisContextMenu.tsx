@@ -12,7 +12,10 @@ import {
   buildLookAtChildTaskBody,
 } from "@/lib/camera-management-client";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
-import { buildImportantTrackTargetFromTrack, numericTrackIdForCameraTask } from "@/lib/map-gis-camera-task";
+import {
+  buildImportantTrackTargetFromTrack,
+  numericTrackIdForDroneTask,
+} from "@/lib/map-gis-camera-task";
 import { uavFlightTaskTargetSourceId } from "@/lib/map-gis-uav-track-task";
 import { fetchMapGisEoMenuContext, type MapGisEoMenuContext } from "@/lib/map-gis-eo-menu-context";
 import {
@@ -93,9 +96,13 @@ async function uavTrackFollowOnTrack(track: Track, airportSN: string) {
     console.warn("[map-gis-menu] track-follow: airportSN 为空");
     return false;
   }
-  const tid = numericTrackIdForCameraTask(track);
+  const tid = numericTrackIdForDroneTask(track);
   if (tid === 0) {
-    console.warn("[map-gis-menu] track-follow: trackId 解析为 0", { showID: track.showID, trackId: track.trackId });
+    console.warn("[map-gis-menu] track-follow: 业务 track_id 解析为 0", {
+      showID: track.showID,
+      uniqueID: track.uniqueID,
+      trackId: track.trackId,
+    });
     return false;
   }
   const r = await postUavTrackFollowTask({
@@ -393,9 +400,9 @@ export function MapGisContextMenu({
             onClick={() => {
               const disp = droneMenuLabel(d);
               if (trackForFollow) {
-                const tid = numericTrackIdForCameraTask(trackForFollow);
+                const tid = numericTrackIdForDroneTask(trackForFollow);
                 if (tid === 0) {
-                  toast.error("当前航迹无有效 trackId，无法下发无人机跟踪");
+                  toast.error("当前航迹无有效业务 track_id，无法下发无人机跟踪");
                   onClose();
                   return;
                 }
@@ -531,9 +538,9 @@ export function MapGisContextMenu({
           type="button"
           className={itemCls}
           onClick={() => {
-            const tid = numericTrackIdForCameraTask(track);
+            const tid = numericTrackIdForDroneTask(track);
             if (tid === 0) {
-              toast.error("当前航迹无有效 trackId，无法下发无人机跟踪");
+              toast.error("当前航迹无有效业务 track_id，无法下发无人机跟踪");
               onClose();
               return;
             }

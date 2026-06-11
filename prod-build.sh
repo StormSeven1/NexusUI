@@ -48,7 +48,9 @@ UI="$ROOT/nexus-ui"
 echo "== NexusUI prod-build =="
 echo "仓库: $ROOT"
 echo "构建时 BACKEND_URL=${BU} （Next rewrites /api/backend → 该地址）"
-echo "构建时 NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}"
+# 与 prod-start-nginx 联用时默认 true；纯 HTTP prod-start 可 export false
+_WS_TUNNEL="${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-true}"
+echo "构建时 NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${_WS_TUNNEL}"
 echo "构建时 NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}"
 echo "构建时 NEXT_PUBLIC_APP_CONFIG_URL=${NEXT_PUBLIC_APP_CONFIG_URL:-/app-config.prod.json}"
 
@@ -71,7 +73,7 @@ if [[ "$USE_DOCKER" -eq 1 ]]; then
   docker run --rm \
     -e "BACKEND_URL=${BU}" \
     -e "NEXT_PUBLIC_APP_CONFIG_URL=${NEXT_PUBLIC_APP_CONFIG_URL}" \
-    -e "NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}" \
+    -e "NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${_WS_TUNNEL}" \
     -e "NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}" \
     -v "${ROOT}:/workspace" \
     -w /workspace/nexus-ui \
@@ -86,7 +88,7 @@ else
   cd "$UI"
   npm install
   NEXT_PUBLIC_APP_CONFIG_URL="${NEXT_PUBLIC_APP_CONFIG_URL}" \
-    NEXT_PUBLIC_WS_USE_NGINX_TUNNEL="${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}" \
+    NEXT_PUBLIC_WS_USE_NGINX_TUNNEL="${_WS_TUNNEL}" \
     NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT="${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-}" \
     BACKEND_URL="$BU" npm run build
 fi

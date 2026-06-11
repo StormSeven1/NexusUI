@@ -16949,8 +16949,58 @@ void register_AlarmCategory_type_identifier(
             TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmCategory, literal_DEVICE);
         }
         {
+            EnumeratedLiteralFlag flags_EO_DETECTION = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_EO_DETECTION = TypeObjectUtils::build_common_enumerated_literal(4, flags_EO_DETECTION);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_EO_DETECTION;
+            ann_custom_AlarmCategory.reset();
+            MemberName name_EO_DETECTION = "EO_DETECTION";
+            CompleteMemberDetail detail_EO_DETECTION = TypeObjectUtils::build_complete_member_detail(name_EO_DETECTION, member_ann_builtin_EO_DETECTION, ann_custom_AlarmCategory);
+            CompleteEnumeratedLiteral literal_EO_DETECTION = TypeObjectUtils::build_complete_enumerated_literal(common_EO_DETECTION, detail_EO_DETECTION);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmCategory, literal_EO_DETECTION);
+        }
+        {
+            EnumeratedLiteralFlag flags_RADAR_DETECTION = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_RADAR_DETECTION = TypeObjectUtils::build_common_enumerated_literal(5, flags_RADAR_DETECTION);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_RADAR_DETECTION;
+            ann_custom_AlarmCategory.reset();
+            MemberName name_RADAR_DETECTION = "RADAR_DETECTION";
+            CompleteMemberDetail detail_RADAR_DETECTION = TypeObjectUtils::build_complete_member_detail(name_RADAR_DETECTION, member_ann_builtin_RADAR_DETECTION, ann_custom_AlarmCategory);
+            CompleteEnumeratedLiteral literal_RADAR_DETECTION = TypeObjectUtils::build_complete_enumerated_literal(common_RADAR_DETECTION, detail_RADAR_DETECTION);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmCategory, literal_RADAR_DETECTION);
+        }
+        {
+            EnumeratedLiteralFlag flags_RF_DETECTION = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_RF_DETECTION = TypeObjectUtils::build_common_enumerated_literal(6, flags_RF_DETECTION);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_RF_DETECTION;
+            ann_custom_AlarmCategory.reset();
+            MemberName name_RF_DETECTION = "RF_DETECTION";
+            CompleteMemberDetail detail_RF_DETECTION = TypeObjectUtils::build_complete_member_detail(name_RF_DETECTION, member_ann_builtin_RF_DETECTION, ann_custom_AlarmCategory);
+            CompleteEnumeratedLiteral literal_RF_DETECTION = TypeObjectUtils::build_complete_enumerated_literal(common_RF_DETECTION, detail_RF_DETECTION);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmCategory, literal_RF_DETECTION);
+        }
+        {
+            EnumeratedLiteralFlag flags_BEARING_ONLY = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_BEARING_ONLY = TypeObjectUtils::build_common_enumerated_literal(7, flags_BEARING_ONLY);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_BEARING_ONLY;
+            ann_custom_AlarmCategory.reset();
+            MemberName name_BEARING_ONLY = "BEARING_ONLY";
+            CompleteMemberDetail detail_BEARING_ONLY = TypeObjectUtils::build_complete_member_detail(name_BEARING_ONLY, member_ann_builtin_BEARING_ONLY, ann_custom_AlarmCategory);
+            CompleteEnumeratedLiteral literal_BEARING_ONLY = TypeObjectUtils::build_complete_enumerated_literal(common_BEARING_ONLY, detail_BEARING_ONLY);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmCategory, literal_BEARING_ONLY);
+        }
+        {
+            EnumeratedLiteralFlag flags_BEARING_RANGE_ESTIMATE = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_BEARING_RANGE_ESTIMATE = TypeObjectUtils::build_common_enumerated_literal(8, flags_BEARING_RANGE_ESTIMATE);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_BEARING_RANGE_ESTIMATE;
+            ann_custom_AlarmCategory.reset();
+            MemberName name_BEARING_RANGE_ESTIMATE = "BEARING_RANGE_ESTIMATE";
+            CompleteMemberDetail detail_BEARING_RANGE_ESTIMATE = TypeObjectUtils::build_complete_member_detail(name_BEARING_RANGE_ESTIMATE, member_ann_builtin_BEARING_RANGE_ESTIMATE, ann_custom_AlarmCategory);
+            CompleteEnumeratedLiteral literal_BEARING_RANGE_ESTIMATE = TypeObjectUtils::build_complete_enumerated_literal(common_BEARING_RANGE_ESTIMATE, detail_BEARING_RANGE_ESTIMATE);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmCategory, literal_BEARING_RANGE_ESTIMATE);
+        }
+        {
             EnumeratedLiteralFlag flags_CUSTOM1 = TypeObjectUtils::build_enumerated_literal_flag(false);
-            CommonEnumeratedLiteral common_CUSTOM1 = TypeObjectUtils::build_common_enumerated_literal(4, flags_CUSTOM1);
+            CommonEnumeratedLiteral common_CUSTOM1 = TypeObjectUtils::build_common_enumerated_literal(9, flags_CUSTOM1);
             eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_CUSTOM1;
             ann_custom_AlarmCategory.reset();
             MemberName name_CUSTOM1 = "CUSTOM1";
@@ -17213,6 +17263,608 @@ void register_AlarmAreaRef_type_identifier(
         {
             EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
                     "TargetFull::AlarmAreaRef already registered in TypeObjectRegistry for a different type.");
+        }
+    }
+}
+void register_AlarmLocationType_type_identifier(
+        TypeIdentifierPair& type_ids_AlarmLocationType)
+{
+    ReturnCode_t return_code_AlarmLocationType {eprosima::fastdds::dds::RETCODE_OK};
+    return_code_AlarmLocationType =
+        eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+        "TargetFull::AlarmLocationType", type_ids_AlarmLocationType);
+    if (eprosima::fastdds::dds::RETCODE_OK != return_code_AlarmLocationType)
+    {
+        EnumTypeFlag enum_flags_AlarmLocationType = 0;
+        BitBound bit_bound_AlarmLocationType = 32;
+        CommonEnumeratedHeader common_AlarmLocationType = TypeObjectUtils::build_common_enumerated_header(bit_bound_AlarmLocationType);
+        QualifiedTypeName type_name_AlarmLocationType = "TargetFull::AlarmLocationType";
+        eprosima::fastcdr::optional<AppliedBuiltinTypeAnnotations> type_ann_builtin_AlarmLocationType;
+        eprosima::fastcdr::optional<AppliedAnnotationSeq> ann_custom_AlarmLocationType;
+        CompleteTypeDetail detail_AlarmLocationType = TypeObjectUtils::build_complete_type_detail(type_ann_builtin_AlarmLocationType, ann_custom_AlarmLocationType, type_name_AlarmLocationType.to_string());
+        CompleteEnumeratedHeader header_AlarmLocationType = TypeObjectUtils::build_complete_enumerated_header(common_AlarmLocationType, detail_AlarmLocationType);
+        CompleteEnumeratedLiteralSeq literal_seq_AlarmLocationType;
+        {
+            EnumeratedLiteralFlag flags_POINT = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_POINT = TypeObjectUtils::build_common_enumerated_literal(0, flags_POINT);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_POINT;
+            ann_custom_AlarmLocationType.reset();
+            MemberName name_POINT = "POINT";
+            CompleteMemberDetail detail_POINT = TypeObjectUtils::build_complete_member_detail(name_POINT, member_ann_builtin_POINT, ann_custom_AlarmLocationType);
+            CompleteEnumeratedLiteral literal_POINT = TypeObjectUtils::build_complete_enumerated_literal(common_POINT, detail_POINT);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmLocationType, literal_POINT);
+        }
+        {
+            EnumeratedLiteralFlag flags_BEARING_ONLY_LOCATION = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_BEARING_ONLY_LOCATION = TypeObjectUtils::build_common_enumerated_literal(1, flags_BEARING_ONLY_LOCATION);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_BEARING_ONLY_LOCATION;
+            ann_custom_AlarmLocationType.reset();
+            MemberName name_BEARING_ONLY_LOCATION = "BEARING_ONLY_LOCATION";
+            CompleteMemberDetail detail_BEARING_ONLY_LOCATION = TypeObjectUtils::build_complete_member_detail(name_BEARING_ONLY_LOCATION, member_ann_builtin_BEARING_ONLY_LOCATION, ann_custom_AlarmLocationType);
+            CompleteEnumeratedLiteral literal_BEARING_ONLY_LOCATION = TypeObjectUtils::build_complete_enumerated_literal(common_BEARING_ONLY_LOCATION, detail_BEARING_ONLY_LOCATION);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmLocationType, literal_BEARING_ONLY_LOCATION);
+        }
+        {
+            EnumeratedLiteralFlag flags_BEARING_RANGE_LOCATION = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_BEARING_RANGE_LOCATION = TypeObjectUtils::build_common_enumerated_literal(2, flags_BEARING_RANGE_LOCATION);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_BEARING_RANGE_LOCATION;
+            ann_custom_AlarmLocationType.reset();
+            MemberName name_BEARING_RANGE_LOCATION = "BEARING_RANGE_LOCATION";
+            CompleteMemberDetail detail_BEARING_RANGE_LOCATION = TypeObjectUtils::build_complete_member_detail(name_BEARING_RANGE_LOCATION, member_ann_builtin_BEARING_RANGE_LOCATION, ann_custom_AlarmLocationType);
+            CompleteEnumeratedLiteral literal_BEARING_RANGE_LOCATION = TypeObjectUtils::build_complete_enumerated_literal(common_BEARING_RANGE_LOCATION, detail_BEARING_RANGE_LOCATION);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmLocationType, literal_BEARING_RANGE_LOCATION);
+        }
+        {
+            EnumeratedLiteralFlag flags_AREA_LOCATION = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_AREA_LOCATION = TypeObjectUtils::build_common_enumerated_literal(3, flags_AREA_LOCATION);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_AREA_LOCATION;
+            ann_custom_AlarmLocationType.reset();
+            MemberName name_AREA_LOCATION = "AREA_LOCATION";
+            CompleteMemberDetail detail_AREA_LOCATION = TypeObjectUtils::build_complete_member_detail(name_AREA_LOCATION, member_ann_builtin_AREA_LOCATION, ann_custom_AlarmLocationType);
+            CompleteEnumeratedLiteral literal_AREA_LOCATION = TypeObjectUtils::build_complete_enumerated_literal(common_AREA_LOCATION, detail_AREA_LOCATION);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmLocationType, literal_AREA_LOCATION);
+        }
+        {
+            EnumeratedLiteralFlag flags_UNKNOWN_LOCATION = TypeObjectUtils::build_enumerated_literal_flag(false);
+            CommonEnumeratedLiteral common_UNKNOWN_LOCATION = TypeObjectUtils::build_common_enumerated_literal(4, flags_UNKNOWN_LOCATION);
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_UNKNOWN_LOCATION;
+            ann_custom_AlarmLocationType.reset();
+            MemberName name_UNKNOWN_LOCATION = "UNKNOWN_LOCATION";
+            CompleteMemberDetail detail_UNKNOWN_LOCATION = TypeObjectUtils::build_complete_member_detail(name_UNKNOWN_LOCATION, member_ann_builtin_UNKNOWN_LOCATION, ann_custom_AlarmLocationType);
+            CompleteEnumeratedLiteral literal_UNKNOWN_LOCATION = TypeObjectUtils::build_complete_enumerated_literal(common_UNKNOWN_LOCATION, detail_UNKNOWN_LOCATION);
+            TypeObjectUtils::add_complete_enumerated_literal(literal_seq_AlarmLocationType, literal_UNKNOWN_LOCATION);
+        }
+        CompleteEnumeratedType enumerated_type_AlarmLocationType = TypeObjectUtils::build_complete_enumerated_type(enum_flags_AlarmLocationType, header_AlarmLocationType,
+                literal_seq_AlarmLocationType);
+        if (eprosima::fastdds::dds::RETCODE_BAD_PARAMETER ==
+                TypeObjectUtils::build_and_register_enumerated_type_object(enumerated_type_AlarmLocationType, type_name_AlarmLocationType.to_string(), type_ids_AlarmLocationType))
+        {
+            EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                "TargetFull::AlarmLocationType already registered in TypeObjectRegistry for a different type.");
+        }
+    }
+}// TypeIdentifier is returned by reference: dependent structures/unions are registered in this same method
+void register_AlarmSpatialInfo_type_identifier(
+        TypeIdentifierPair& type_ids_AlarmSpatialInfo)
+{
+
+    ReturnCode_t return_code_AlarmSpatialInfo {eprosima::fastdds::dds::RETCODE_OK};
+    return_code_AlarmSpatialInfo =
+        eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+        "TargetFull::AlarmSpatialInfo", type_ids_AlarmSpatialInfo);
+    if (eprosima::fastdds::dds::RETCODE_OK != return_code_AlarmSpatialInfo)
+    {
+        StructTypeFlag struct_flags_AlarmSpatialInfo = TypeObjectUtils::build_struct_type_flag(eprosima::fastdds::dds::xtypes::ExtensibilityKind::APPENDABLE,
+                false, false);
+        QualifiedTypeName type_name_AlarmSpatialInfo = "TargetFull::AlarmSpatialInfo";
+        eprosima::fastcdr::optional<AppliedBuiltinTypeAnnotations> type_ann_builtin_AlarmSpatialInfo;
+        eprosima::fastcdr::optional<AppliedAnnotationSeq> ann_custom_AlarmSpatialInfo;
+        CompleteTypeDetail detail_AlarmSpatialInfo = TypeObjectUtils::build_complete_type_detail(type_ann_builtin_AlarmSpatialInfo, ann_custom_AlarmSpatialInfo, type_name_AlarmSpatialInfo.to_string());
+        CompleteStructHeader header_AlarmSpatialInfo;
+        header_AlarmSpatialInfo = TypeObjectUtils::build_complete_struct_header(TypeIdentifier(), detail_AlarmSpatialInfo);
+        CompleteStructMemberSeq member_seq_AlarmSpatialInfo;
+        {
+            TypeIdentifierPair type_ids_location_type;
+            ReturnCode_t return_code_location_type {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_location_type =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "TargetFull::AlarmLocationType", type_ids_location_type);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_location_type)
+            {
+                TargetFull::register_AlarmLocationType_type_identifier(type_ids_location_type);
+            }
+            StructMemberFlag member_flags_location_type = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_location_type = 0x00000000;
+            bool common_location_type_ec {false};
+            CommonStructMember common_location_type {TypeObjectUtils::build_common_struct_member(member_id_location_type, member_flags_location_type, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_location_type, common_location_type_ec))};
+            if (!common_location_type_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure location_type member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_location_type = "location_type";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_location_type;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_location_type = TypeObjectUtils::build_complete_member_detail(name_location_type, member_ann_builtin_location_type, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_location_type = TypeObjectUtils::build_complete_struct_member(common_location_type, detail_location_type);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_location_type);
+        }
+        {
+            TypeIdentifierPair type_ids_has_point_position;
+            ReturnCode_t return_code_has_point_position {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_has_point_position =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_bool", type_ids_has_point_position);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_has_point_position)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "has_point_position Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_has_point_position = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_has_point_position = 0x00000001;
+            bool common_has_point_position_ec {false};
+            CommonStructMember common_has_point_position {TypeObjectUtils::build_common_struct_member(member_id_has_point_position, member_flags_has_point_position, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_has_point_position, common_has_point_position_ec))};
+            if (!common_has_point_position_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure has_point_position member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_has_point_position = "has_point_position";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_has_point_position;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_has_point_position = TypeObjectUtils::build_complete_member_detail(name_has_point_position, member_ann_builtin_has_point_position, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_has_point_position = TypeObjectUtils::build_complete_struct_member(common_has_point_position, detail_has_point_position);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_has_point_position);
+        }
+        {
+            TypeIdentifierPair type_ids_point_position;
+            ReturnCode_t return_code_point_position {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_point_position =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "TargetFull::GeoPosition", type_ids_point_position);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_point_position)
+            {
+                TargetFull::register_GeoPosition_type_identifier(type_ids_point_position);
+            }
+            StructMemberFlag member_flags_point_position = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_point_position = 0x00000002;
+            bool common_point_position_ec {false};
+            CommonStructMember common_point_position {TypeObjectUtils::build_common_struct_member(member_id_point_position, member_flags_point_position, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_point_position, common_point_position_ec))};
+            if (!common_point_position_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure point_position member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_point_position = "point_position";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_point_position;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_point_position = TypeObjectUtils::build_complete_member_detail(name_point_position, member_ann_builtin_point_position, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_point_position = TypeObjectUtils::build_complete_struct_member(common_point_position, detail_point_position);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_point_position);
+        }
+        {
+            TypeIdentifierPair type_ids_has_reference_position;
+            ReturnCode_t return_code_has_reference_position {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_has_reference_position =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_bool", type_ids_has_reference_position);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_has_reference_position)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "has_reference_position Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_has_reference_position = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_has_reference_position = 0x00000003;
+            bool common_has_reference_position_ec {false};
+            CommonStructMember common_has_reference_position {TypeObjectUtils::build_common_struct_member(member_id_has_reference_position, member_flags_has_reference_position, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_has_reference_position, common_has_reference_position_ec))};
+            if (!common_has_reference_position_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure has_reference_position member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_has_reference_position = "has_reference_position";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_has_reference_position;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_has_reference_position = TypeObjectUtils::build_complete_member_detail(name_has_reference_position, member_ann_builtin_has_reference_position, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_has_reference_position = TypeObjectUtils::build_complete_struct_member(common_has_reference_position, detail_has_reference_position);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_has_reference_position);
+        }
+        {
+            TypeIdentifierPair type_ids_reference_position;
+            ReturnCode_t return_code_reference_position {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_reference_position =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "TargetFull::GeoPosition", type_ids_reference_position);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_reference_position)
+            {
+                TargetFull::register_GeoPosition_type_identifier(type_ids_reference_position);
+            }
+            StructMemberFlag member_flags_reference_position = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_reference_position = 0x00000004;
+            bool common_reference_position_ec {false};
+            CommonStructMember common_reference_position {TypeObjectUtils::build_common_struct_member(member_id_reference_position, member_flags_reference_position, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_reference_position, common_reference_position_ec))};
+            if (!common_reference_position_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure reference_position member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_reference_position = "reference_position";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_reference_position;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_reference_position = TypeObjectUtils::build_complete_member_detail(name_reference_position, member_ann_builtin_reference_position, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_reference_position = TypeObjectUtils::build_complete_struct_member(common_reference_position, detail_reference_position);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_reference_position);
+        }
+        {
+            TypeIdentifierPair type_ids_bearing_deg;
+            ReturnCode_t return_code_bearing_deg {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_bearing_deg =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_double", type_ids_bearing_deg);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_bearing_deg)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "bearing_deg Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_bearing_deg = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_bearing_deg = 0x00000005;
+            bool common_bearing_deg_ec {false};
+            CommonStructMember common_bearing_deg {TypeObjectUtils::build_common_struct_member(member_id_bearing_deg, member_flags_bearing_deg, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_bearing_deg, common_bearing_deg_ec))};
+            if (!common_bearing_deg_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure bearing_deg member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_bearing_deg = "bearing_deg";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_bearing_deg;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_bearing_deg = TypeObjectUtils::build_complete_member_detail(name_bearing_deg, member_ann_builtin_bearing_deg, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_bearing_deg = TypeObjectUtils::build_complete_struct_member(common_bearing_deg, detail_bearing_deg);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_bearing_deg);
+        }
+        {
+            TypeIdentifierPair type_ids_bearing_sigma_deg;
+            ReturnCode_t return_code_bearing_sigma_deg {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_bearing_sigma_deg =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_double", type_ids_bearing_sigma_deg);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_bearing_sigma_deg)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "bearing_sigma_deg Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_bearing_sigma_deg = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_bearing_sigma_deg = 0x00000006;
+            bool common_bearing_sigma_deg_ec {false};
+            CommonStructMember common_bearing_sigma_deg {TypeObjectUtils::build_common_struct_member(member_id_bearing_sigma_deg, member_flags_bearing_sigma_deg, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_bearing_sigma_deg, common_bearing_sigma_deg_ec))};
+            if (!common_bearing_sigma_deg_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure bearing_sigma_deg member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_bearing_sigma_deg = "bearing_sigma_deg";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_bearing_sigma_deg;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_bearing_sigma_deg = TypeObjectUtils::build_complete_member_detail(name_bearing_sigma_deg, member_ann_builtin_bearing_sigma_deg, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_bearing_sigma_deg = TypeObjectUtils::build_complete_struct_member(common_bearing_sigma_deg, detail_bearing_sigma_deg);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_bearing_sigma_deg);
+        }
+        {
+            TypeIdentifierPair type_ids_has_range_estimate;
+            ReturnCode_t return_code_has_range_estimate {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_has_range_estimate =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_bool", type_ids_has_range_estimate);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_has_range_estimate)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "has_range_estimate Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_has_range_estimate = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_has_range_estimate = 0x00000007;
+            bool common_has_range_estimate_ec {false};
+            CommonStructMember common_has_range_estimate {TypeObjectUtils::build_common_struct_member(member_id_has_range_estimate, member_flags_has_range_estimate, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_has_range_estimate, common_has_range_estimate_ec))};
+            if (!common_has_range_estimate_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure has_range_estimate member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_has_range_estimate = "has_range_estimate";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_has_range_estimate;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_has_range_estimate = TypeObjectUtils::build_complete_member_detail(name_has_range_estimate, member_ann_builtin_has_range_estimate, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_has_range_estimate = TypeObjectUtils::build_complete_struct_member(common_has_range_estimate, detail_has_range_estimate);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_has_range_estimate);
+        }
+        {
+            TypeIdentifierPair type_ids_range_estimate_m;
+            ReturnCode_t return_code_range_estimate_m {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_range_estimate_m =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "TargetFull::Measurement", type_ids_range_estimate_m);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_range_estimate_m)
+            {
+                TargetFull::register_Measurement_type_identifier(type_ids_range_estimate_m);
+            }
+            StructMemberFlag member_flags_range_estimate_m = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_range_estimate_m = 0x00000008;
+            bool common_range_estimate_m_ec {false};
+            CommonStructMember common_range_estimate_m {TypeObjectUtils::build_common_struct_member(member_id_range_estimate_m, member_flags_range_estimate_m, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_range_estimate_m, common_range_estimate_m_ec))};
+            if (!common_range_estimate_m_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure range_estimate_m member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_range_estimate_m = "range_estimate_m";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_range_estimate_m;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_range_estimate_m = TypeObjectUtils::build_complete_member_detail(name_range_estimate_m, member_ann_builtin_range_estimate_m, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_range_estimate_m = TypeObjectUtils::build_complete_struct_member(common_range_estimate_m, detail_range_estimate_m);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_range_estimate_m);
+        }
+        {
+            TypeIdentifierPair type_ids_has_range_min_m;
+            ReturnCode_t return_code_has_range_min_m {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_has_range_min_m =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_bool", type_ids_has_range_min_m);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_has_range_min_m)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "has_range_min_m Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_has_range_min_m = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_has_range_min_m = 0x00000009;
+            bool common_has_range_min_m_ec {false};
+            CommonStructMember common_has_range_min_m {TypeObjectUtils::build_common_struct_member(member_id_has_range_min_m, member_flags_has_range_min_m, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_has_range_min_m, common_has_range_min_m_ec))};
+            if (!common_has_range_min_m_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure has_range_min_m member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_has_range_min_m = "has_range_min_m";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_has_range_min_m;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_has_range_min_m = TypeObjectUtils::build_complete_member_detail(name_has_range_min_m, member_ann_builtin_has_range_min_m, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_has_range_min_m = TypeObjectUtils::build_complete_struct_member(common_has_range_min_m, detail_has_range_min_m);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_has_range_min_m);
+        }
+        {
+            TypeIdentifierPair type_ids_range_min_m;
+            ReturnCode_t return_code_range_min_m {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_range_min_m =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "TargetFull::Measurement", type_ids_range_min_m);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_range_min_m)
+            {
+                TargetFull::register_Measurement_type_identifier(type_ids_range_min_m);
+            }
+            StructMemberFlag member_flags_range_min_m = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_range_min_m = 0x0000000a;
+            bool common_range_min_m_ec {false};
+            CommonStructMember common_range_min_m {TypeObjectUtils::build_common_struct_member(member_id_range_min_m, member_flags_range_min_m, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_range_min_m, common_range_min_m_ec))};
+            if (!common_range_min_m_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure range_min_m member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_range_min_m = "range_min_m";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_range_min_m;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_range_min_m = TypeObjectUtils::build_complete_member_detail(name_range_min_m, member_ann_builtin_range_min_m, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_range_min_m = TypeObjectUtils::build_complete_struct_member(common_range_min_m, detail_range_min_m);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_range_min_m);
+        }
+        {
+            TypeIdentifierPair type_ids_has_range_max_m;
+            ReturnCode_t return_code_has_range_max_m {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_has_range_max_m =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_bool", type_ids_has_range_max_m);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_has_range_max_m)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "has_range_max_m Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_has_range_max_m = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_has_range_max_m = 0x0000000b;
+            bool common_has_range_max_m_ec {false};
+            CommonStructMember common_has_range_max_m {TypeObjectUtils::build_common_struct_member(member_id_has_range_max_m, member_flags_has_range_max_m, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_has_range_max_m, common_has_range_max_m_ec))};
+            if (!common_has_range_max_m_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure has_range_max_m member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_has_range_max_m = "has_range_max_m";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_has_range_max_m;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_has_range_max_m = TypeObjectUtils::build_complete_member_detail(name_has_range_max_m, member_ann_builtin_has_range_max_m, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_has_range_max_m = TypeObjectUtils::build_complete_struct_member(common_has_range_max_m, detail_has_range_max_m);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_has_range_max_m);
+        }
+        {
+            TypeIdentifierPair type_ids_range_max_m;
+            ReturnCode_t return_code_range_max_m {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_range_max_m =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "TargetFull::Measurement", type_ids_range_max_m);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_range_max_m)
+            {
+                TargetFull::register_Measurement_type_identifier(type_ids_range_max_m);
+            }
+            StructMemberFlag member_flags_range_max_m = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_range_max_m = 0x0000000c;
+            bool common_range_max_m_ec {false};
+            CommonStructMember common_range_max_m {TypeObjectUtils::build_common_struct_member(member_id_range_max_m, member_flags_range_max_m, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_range_max_m, common_range_max_m_ec))};
+            if (!common_range_max_m_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure range_max_m member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_range_max_m = "range_max_m";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_range_max_m;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_range_max_m = TypeObjectUtils::build_complete_member_detail(name_range_max_m, member_ann_builtin_range_max_m, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_range_max_m = TypeObjectUtils::build_complete_struct_member(common_range_max_m, detail_range_max_m);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_range_max_m);
+        }
+        {
+            TypeIdentifierPair type_ids_sector_start_deg;
+            ReturnCode_t return_code_sector_start_deg {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_sector_start_deg =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_double", type_ids_sector_start_deg);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_sector_start_deg)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "sector_start_deg Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_sector_start_deg = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_sector_start_deg = 0x0000000d;
+            bool common_sector_start_deg_ec {false};
+            CommonStructMember common_sector_start_deg {TypeObjectUtils::build_common_struct_member(member_id_sector_start_deg, member_flags_sector_start_deg, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_sector_start_deg, common_sector_start_deg_ec))};
+            if (!common_sector_start_deg_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure sector_start_deg member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_sector_start_deg = "sector_start_deg";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_sector_start_deg;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_sector_start_deg = TypeObjectUtils::build_complete_member_detail(name_sector_start_deg, member_ann_builtin_sector_start_deg, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_sector_start_deg = TypeObjectUtils::build_complete_struct_member(common_sector_start_deg, detail_sector_start_deg);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_sector_start_deg);
+        }
+        {
+            TypeIdentifierPair type_ids_sector_end_deg;
+            ReturnCode_t return_code_sector_end_deg {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_sector_end_deg =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_double", type_ids_sector_end_deg);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_sector_end_deg)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "sector_end_deg Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_sector_end_deg = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_sector_end_deg = 0x0000000e;
+            bool common_sector_end_deg_ec {false};
+            CommonStructMember common_sector_end_deg {TypeObjectUtils::build_common_struct_member(member_id_sector_end_deg, member_flags_sector_end_deg, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_sector_end_deg, common_sector_end_deg_ec))};
+            if (!common_sector_end_deg_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure sector_end_deg member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_sector_end_deg = "sector_end_deg";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_sector_end_deg;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_sector_end_deg = TypeObjectUtils::build_complete_member_detail(name_sector_end_deg, member_ann_builtin_sector_end_deg, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_sector_end_deg = TypeObjectUtils::build_complete_struct_member(common_sector_end_deg, detail_sector_end_deg);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_sector_end_deg);
+        }
+        {
+            TypeIdentifierPair type_ids_spatial_confidence;
+            ReturnCode_t return_code_spatial_confidence {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_spatial_confidence =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "_double", type_ids_spatial_confidence);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_spatial_confidence)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                        "spatial_confidence Structure member TypeIdentifier unknown to TypeObjectRegistry.");
+                return;
+            }
+            StructMemberFlag member_flags_spatial_confidence = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_spatial_confidence = 0x0000000f;
+            bool common_spatial_confidence_ec {false};
+            CommonStructMember common_spatial_confidence {TypeObjectUtils::build_common_struct_member(member_id_spatial_confidence, member_flags_spatial_confidence, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_spatial_confidence, common_spatial_confidence_ec))};
+            if (!common_spatial_confidence_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure spatial_confidence member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_spatial_confidence = "spatial_confidence";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_spatial_confidence;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_spatial_confidence = TypeObjectUtils::build_complete_member_detail(name_spatial_confidence, member_ann_builtin_spatial_confidence, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_spatial_confidence = TypeObjectUtils::build_complete_struct_member(common_spatial_confidence, detail_spatial_confidence);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_spatial_confidence);
+        }
+        {
+            TypeIdentifierPair type_ids_source_sensor;
+            ReturnCode_t return_code_source_sensor {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_source_sensor =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "TargetFull::EntityRef", type_ids_source_sensor);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_source_sensor)
+            {
+                TargetFull::register_EntityRef_type_identifier(type_ids_source_sensor);
+            }
+            StructMemberFlag member_flags_source_sensor = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_source_sensor = 0x00000010;
+            bool common_source_sensor_ec {false};
+            CommonStructMember common_source_sensor {TypeObjectUtils::build_common_struct_member(member_id_source_sensor, member_flags_source_sensor, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_source_sensor, common_source_sensor_ec))};
+            if (!common_source_sensor_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure source_sensor member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_source_sensor = "source_sensor";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_source_sensor;
+            ann_custom_AlarmSpatialInfo.reset();
+            CompleteMemberDetail detail_source_sensor = TypeObjectUtils::build_complete_member_detail(name_source_sensor, member_ann_builtin_source_sensor, ann_custom_AlarmSpatialInfo);
+            CompleteStructMember member_source_sensor = TypeObjectUtils::build_complete_struct_member(common_source_sensor, detail_source_sensor);
+            TypeObjectUtils::add_complete_struct_member(member_seq_AlarmSpatialInfo, member_source_sensor);
+        }
+        CompleteStructType struct_type_AlarmSpatialInfo = TypeObjectUtils::build_complete_struct_type(struct_flags_AlarmSpatialInfo, header_AlarmSpatialInfo, member_seq_AlarmSpatialInfo);
+        if (eprosima::fastdds::dds::RETCODE_BAD_PARAMETER ==
+                TypeObjectUtils::build_and_register_struct_type_object(struct_type_AlarmSpatialInfo, type_name_AlarmSpatialInfo.to_string(), type_ids_AlarmSpatialInfo))
+        {
+            EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION,
+                    "TargetFull::AlarmSpatialInfo already registered in TypeObjectRegistry for a different type.");
         }
     }
 }
@@ -17573,6 +18225,34 @@ void register_TargetAlarmItem_type_identifier(
             TypeObjectUtils::add_complete_struct_member(member_seq_TargetAlarmItem, member_position);
         }
         {
+            TypeIdentifierPair type_ids_spatial_info;
+            ReturnCode_t return_code_spatial_info {eprosima::fastdds::dds::RETCODE_OK};
+            return_code_spatial_info =
+                eprosima::fastdds::dds::DomainParticipantFactory::get_instance()->type_object_registry().get_type_identifiers(
+                "TargetFull::AlarmSpatialInfo", type_ids_spatial_info);
+
+            if (eprosima::fastdds::dds::RETCODE_OK != return_code_spatial_info)
+            {
+                TargetFull::register_AlarmSpatialInfo_type_identifier(type_ids_spatial_info);
+            }
+            StructMemberFlag member_flags_spatial_info = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
+                    false, false, false, false);
+            MemberId member_id_spatial_info = 0x0000000a;
+            bool common_spatial_info_ec {false};
+            CommonStructMember common_spatial_info {TypeObjectUtils::build_common_struct_member(member_id_spatial_info, member_flags_spatial_info, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_spatial_info, common_spatial_info_ec))};
+            if (!common_spatial_info_ec)
+            {
+                EPROSIMA_LOG_ERROR(XTYPES_TYPE_REPRESENTATION, "Structure spatial_info member TypeIdentifier inconsistent.");
+                return;
+            }
+            MemberName name_spatial_info = "spatial_info";
+            eprosima::fastcdr::optional<AppliedBuiltinMemberAnnotations> member_ann_builtin_spatial_info;
+            ann_custom_TargetAlarmItem.reset();
+            CompleteMemberDetail detail_spatial_info = TypeObjectUtils::build_complete_member_detail(name_spatial_info, member_ann_builtin_spatial_info, ann_custom_TargetAlarmItem);
+            CompleteStructMember member_spatial_info = TypeObjectUtils::build_complete_struct_member(common_spatial_info, detail_spatial_info);
+            TypeObjectUtils::add_complete_struct_member(member_seq_TargetAlarmItem, member_spatial_info);
+        }
+        {
             TypeIdentifierPair type_ids_raised_time;
             ReturnCode_t return_code_raised_time {eprosima::fastdds::dds::RETCODE_OK};
             return_code_raised_time =
@@ -17587,7 +18267,7 @@ void register_TargetAlarmItem_type_identifier(
             }
             StructMemberFlag member_flags_raised_time = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_raised_time = 0x0000000a;
+            MemberId member_id_raised_time = 0x0000000b;
             bool common_raised_time_ec {false};
             CommonStructMember common_raised_time {TypeObjectUtils::build_common_struct_member(member_id_raised_time, member_flags_raised_time, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_raised_time, common_raised_time_ec))};
             if (!common_raised_time_ec)
@@ -17617,7 +18297,7 @@ void register_TargetAlarmItem_type_identifier(
             }
             StructMemberFlag member_flags_updated_time = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_updated_time = 0x0000000b;
+            MemberId member_id_updated_time = 0x0000000c;
             bool common_updated_time_ec {false};
             CommonStructMember common_updated_time {TypeObjectUtils::build_common_struct_member(member_id_updated_time, member_flags_updated_time, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_updated_time, common_updated_time_ec))};
             if (!common_updated_time_ec)
@@ -17647,7 +18327,7 @@ void register_TargetAlarmItem_type_identifier(
             }
             StructMemberFlag member_flags_resolved_time = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_resolved_time = 0x0000000c;
+            MemberId member_id_resolved_time = 0x0000000d;
             bool common_resolved_time_ec {false};
             CommonStructMember common_resolved_time {TypeObjectUtils::build_common_struct_member(member_id_resolved_time, member_flags_resolved_time, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_resolved_time, common_resolved_time_ec))};
             if (!common_resolved_time_ec)
@@ -17685,7 +18365,7 @@ void register_TargetAlarmItem_type_identifier(
             }
             StructMemberFlag member_flags_resolved_by = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_resolved_by = 0x0000000d;
+            MemberId member_id_resolved_by = 0x0000000e;
             bool common_resolved_by_ec {false};
             CommonStructMember common_resolved_by {TypeObjectUtils::build_common_struct_member(member_id_resolved_by, member_flags_resolved_by, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_resolved_by, common_resolved_by_ec))};
             if (!common_resolved_by_ec)
@@ -17723,7 +18403,7 @@ void register_TargetAlarmItem_type_identifier(
             }
             StructMemberFlag member_flags_resolution_details = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_resolution_details = 0x0000000e;
+            MemberId member_id_resolution_details = 0x0000000f;
             bool common_resolution_details_ec {false};
             CommonStructMember common_resolution_details {TypeObjectUtils::build_common_struct_member(member_id_resolution_details, member_flags_resolution_details, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_resolution_details, common_resolution_details_ec))};
             if (!common_resolution_details_ec)
@@ -17793,7 +18473,7 @@ void register_TargetAlarmItem_type_identifier(
             }
             StructMemberFlag member_flags_rule_ids = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_rule_ids = 0x0000000f;
+            MemberId member_id_rule_ids = 0x00000010;
             bool common_rule_ids_ec {false};
             CommonStructMember common_rule_ids {TypeObjectUtils::build_common_struct_member(member_id_rule_ids, member_flags_rule_ids, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_rule_ids, common_rule_ids_ec))};
             if (!common_rule_ids_ec)
@@ -17823,7 +18503,7 @@ void register_TargetAlarmItem_type_identifier(
             }
             StructMemberFlag member_flags_has_detection_box = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_has_detection_box = 0x00000010;
+            MemberId member_id_has_detection_box = 0x00000011;
             bool common_has_detection_box_ec {false};
             CommonStructMember common_has_detection_box {TypeObjectUtils::build_common_struct_member(member_id_has_detection_box, member_flags_has_detection_box, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_has_detection_box, common_has_detection_box_ec))};
             if (!common_has_detection_box_ec)
@@ -17851,7 +18531,7 @@ void register_TargetAlarmItem_type_identifier(
             }
             StructMemberFlag member_flags_detection_box = TypeObjectUtils::build_struct_member_flag(eprosima::fastdds::dds::xtypes::TryConstructFailAction::DISCARD,
                     false, false, false, false);
-            MemberId member_id_detection_box = 0x00000011;
+            MemberId member_id_detection_box = 0x00000012;
             bool common_detection_box_ec {false};
             CommonStructMember common_detection_box {TypeObjectUtils::build_common_struct_member(member_id_detection_box, member_flags_detection_box, TypeObjectUtils::retrieve_complete_type_identifier(type_ids_detection_box, common_detection_box_ec))};
             if (!common_detection_box_ec)

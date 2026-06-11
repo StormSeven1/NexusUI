@@ -28,6 +28,13 @@ import {
   countRadarDevicePanelUiRows,
   countVisibleRadarDeviceLeaves,
 } from "@/lib/radar-device-layer-visibility";
+import {
+  countTargetLayerPanelUiRows,
+  countVisibleTargetLayerLeaves,
+  type AirFusionSubtypeVisibility,
+  type TrackSubtypeVisibility,
+} from "@/lib/track-layer-visibility";
+import { useTrackDisplayStore } from "@/stores/track-display-store";
 import { useRadarDeviceLayerStore } from "@/stores/radar-device-layer-store";
 import { collectMapGisDroneRowsSync, mapGisDroneSyncSignature } from "@/lib/map-gis-drone-rows";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
@@ -41,7 +48,6 @@ import {
   Filter,
   Download,
   Share,
-  MoreVertical,
   Package,
   ClipboardList,
   Route,
@@ -57,8 +63,7 @@ type StatRow = { label: string; value: string; icon: LucideIcon; color: string }
 
 /**
  * 图层面板「已开启」项数量（与 `LayerPanel` 的 enabledCount 一致）：
- * 可见的数据图层 +（底图组开时）**底图总开关算 1 项** + 各已开矢量子层。
- * 与「加载图层」关系：全打开时 本值 === countLayerPanelLoaded（总开关 + 矢量子层行 + 数据行）。
+ * 地图（含矢量子层）+ 目标图层 + 实体图层 + 区域图层。
  */
 function countLayerPanelEnabled(
   assets: ReadonlyArray<{ asset_type: string }>,
@@ -67,11 +72,15 @@ function countLayerPanelEnabled(
   basemapGroupVisible: boolean,
   basemapVectorLayers: ReadonlyArray<{ id: string }>,
   basemapVectorVisibility: Record<string, boolean>,
+  basemapRasterLayers: ReadonlyArray<{ id: string }>,
+  basemapRasterVisibility: Record<string, boolean>,
+  trackSubtypeVisible: TrackSubtypeVisibility,
+  airFusionSubtypeVisible: AirFusionSubtypeVisibility,
   dbAreaRows: ReadonlyArray<AreaTableRow>,
   dbAreaVisibility: Readonly<Record<string, boolean>>,
   optoDeviceVisibility: Readonly<Record<string, { fov?: boolean; icon?: boolean }>>,
   droneDeviceVisibility: Readonly<Record<string, { position?: boolean; route?: boolean }>>,
-  dronePanelSns: ReadonlyArray<string>,
+  dronePanelRows: ReadonlyArray<{ sn: string; airportSN: string }>,
   radarDeviceVisibility: Readonly<Record<string, { coverage?: boolean; icon?: boolean }>>,
   radarPanelIds: ReadonlyArray<string>,
 ): number {
@@ -81,6 +90,12 @@ function countLayerPanelEnabled(
     n += 1;
     n += basemapVectorLayers.filter((l) => basemapVectorVisibility[l.id] !== false).length;
   }
+  n += basemapRasterLayers.filter((l) => basemapRasterVisibility[l.id] !== false).length;
+  n += countVisibleTargetLayerLeaves(
+    layerVisibility["lyr-tracks"] !== false,
+    trackSubtypeVisible,
+    airFusionSubtypeVisible,
+  );
   n += countVisibleDbAreaLeaves(dbAreaRows, dbAreaVisibility, layerVisibility[LYR_DB_AREAS] !== false);
   n += countVisibleOptoDeviceLeaves(
     cameraMenuIds,
@@ -88,7 +103,7 @@ function countLayerPanelEnabled(
     layerVisibility[LYR_OPTO_FOV] !== false,
   );
   n += countVisibleDroneDeviceLeaves(
-    dronePanelSns,
+    dronePanelRows,
     droneDeviceVisibility,
     layerVisibility[LYR_DRONES] !== false,
   );
@@ -100,13 +115,13 @@ function countLayerPanelEnabled(
   return n;
 }
 
-/** 图层面板可管理项总数：底图总开关 1 行 + 底图矢量子层 + 数据图层行（与左侧 `LayerPanel` 列表行数一致） */
+/** 图层面板可管理项总数（与左侧 `LayerPanel` 列表行数一致） */
 function countLayerPanelLoaded(
   assets: ReadonlyArray<{ asset_type: string }>,
   basemapVectorLayers: ReadonlyArray<{ id: string }>,
   dbAreaRows: ReadonlyArray<AreaTableRow>,
   cameraMenuIds: ReadonlyArray<string>,
-  dronePanelSns: ReadonlyArray<string>,
+  dronePanelRows: ReadonlyArray<{ sn: string; airportSN: string }>,
   radarPanelIds: ReadonlyArray<string>,
 ): number {
   const rows = buildDataLayerPanelRows(assets);
@@ -115,12 +130,21 @@ function countLayerPanelLoaded(
     ? countOptoDevicePanelUiRows(cameraMenuIds.length)
     : 0;
   const droneUi = rows.some((r) => r.id === LYR_DRONES)
-    ? countDroneDevicePanelUiRows(dronePanelSns.length)
+    ? countDroneDevicePanelUiRows(dronePanelRows)
     : 0;
   const radarUi = rows.some((r) => r.id === LYR_RADAR_COVERAGE)
     ? countRadarDevicePanelUiRows(radarPanelIds.length)
     : 0;
-  return 1 + basemapVectorLayers.length + rows.length + dbUi + optoUi + droneUi + radarUi;
+  return (
+    1 +
+    basemapVectorLayers.length +
+    countTargetLayerPanelUiRows() +
+    rows.length +
+    dbUi +
+    optoUi +
+    droneUi +
+    radarUi
+  );
 }
 
 // 工作区详情配置
@@ -134,11 +158,7 @@ const WORKSPACE_CONFIGS = {
       { label: "预警事件", value: "0", icon: BarChart3, color: "text-orange-400" },
       { label: "图层显示", value: "0", icon: Layers, color: "text-purple-400" },
     ] as StatRow[],
-    tools: [
-      { id: "filter", label: "筛选", icon: Filter },
-      { id: "export", label: "导出", icon: Download },
-      { id: "share", label: "共享", icon: Share },
-    ],
+    tools: [],
   },
   assets: {
     title: "资产工作区",
@@ -255,6 +275,8 @@ export function WorkspaceDetails() {
   const basemapGroupVisible = useAppStore((s) => s.basemapGroupVisible);
   const basemapVectorLayers = useAppStore((s) => s.basemapVectorLayers);
   const basemapVectorVisibility = useAppStore((s) => s.basemapVectorVisibility);
+  const basemapRasterLayers = useAppStore((s) => s.basemapRasterLayers);
+  const basemapRasterVisibility = useAppStore((s) => s.basemapRasterVisibility);
   const drawnAreas = useAppStore((s) => s.drawnAreas);
   const routeLines = useAppStore((s) => s.routeLines);
   const dbAreaRows = useDbAreaStore((s) => s.rows);
@@ -268,11 +290,13 @@ export function WorkspaceDetails() {
   const droneToAirport = useDroneStore((s) => s.droneToAirport);
   const droneRelationships = useDroneStore((s) => s.relationships);
   const assetDroneSig = useMemo(() => mapGisDroneSyncSignature(assets), [assets]);
-  const dronePanelSns = useMemo(
-    () => collectMapGisDroneRowsSync().map((r) => r.sn),
+  const dronePanelRows = useMemo(
+    () => collectMapGisDroneRowsSync(),
     [droneStoreDrones, droneToAirport, droneRelationships, assetDroneSig],
   );
   const radarDeviceVisibility = useRadarDeviceLayerStore((s) => s.deviceVisibility);
+  const trackSubtypeVisible = useTrackDisplayStore((s) => s.trackSubtypeVisible);
+  const airFusionSubtypeVisible = useTrackDisplayStore((s) => s.airFusionSubtypeVisible);
   const radarPanelIds = useMemo(
     () =>
       assets
@@ -298,11 +322,15 @@ export function WorkspaceDetails() {
       basemapGroupVisible,
       basemapVectorLayers,
       basemapVectorVisibility,
+      basemapRasterLayers,
+      basemapRasterVisibility,
+      trackSubtypeVisible,
+      airFusionSubtypeVisible,
       dbAreaRows,
       dbAreaVisibility,
       optoDeviceVisibility,
       droneDeviceVisibility,
-      dronePanelSns,
+      dronePanelRows,
       radarDeviceVisibility,
       radarPanelIds,
     );
@@ -320,12 +348,16 @@ export function WorkspaceDetails() {
     basemapGroupVisible,
     basemapVectorLayers,
     basemapVectorVisibility,
+    basemapRasterLayers,
+    basemapRasterVisibility,
+    trackSubtypeVisible,
+    airFusionSubtypeVisible,
     dbAreaRows,
     dbAreaVisibility,
     optoDeviceVisibility,
     droneDeviceVisibility,
     cameraMenuIds,
-    dronePanelSns,
+    dronePanelRows,
     radarDeviceVisibility,
     radarPanelIds,
   ]);
@@ -357,7 +389,7 @@ export function WorkspaceDetails() {
       basemapVectorLayers,
       dbAreaRows,
       cameraMenuIds,
-      dronePanelSns,
+      dronePanelRows,
       radarPanelIds,
     );
     const visible = countLayerPanelEnabled(
@@ -367,11 +399,15 @@ export function WorkspaceDetails() {
       basemapGroupVisible,
       basemapVectorLayers,
       basemapVectorVisibility,
+      basemapRasterLayers,
+      basemapRasterVisibility,
+      trackSubtypeVisible,
+      airFusionSubtypeVisible,
       dbAreaRows,
       dbAreaVisibility,
       optoDeviceVisibility,
       droneDeviceVisibility,
-      dronePanelSns,
+      dronePanelRows,
       radarDeviceVisibility,
       radarPanelIds,
     );
@@ -390,6 +426,10 @@ export function WorkspaceDetails() {
     layerVisibility,
     basemapGroupVisible,
     basemapVectorVisibility,
+    basemapRasterLayers,
+    basemapRasterVisibility,
+    trackSubtypeVisible,
+    airFusionSubtypeVisible,
     drawnAreas,
     routeLines,
     dbAreaRows,
@@ -397,7 +437,7 @@ export function WorkspaceDetails() {
     optoDeviceVisibility,
     droneDeviceVisibility,
     cameraMenuIds,
-    dronePanelSns,
+    dronePanelRows,
     radarDeviceVisibility,
     radarPanelIds,
   ]);
@@ -531,10 +571,6 @@ export function WorkspaceDetails() {
             {tool.label}
           </button>
         ))}
-        <button className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 transition-colors">
-          <MoreVertical size={12} />
-          更多
-        </button>
       </div>
 
       {/* 快捷工作流弹窗：任务→规划 点击时弹出 */}

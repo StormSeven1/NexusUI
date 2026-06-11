@@ -8,8 +8,8 @@
  *    此时业务层（航迹、限制区等）尚未 `addLayer`，故 `style.layers` 与 JSON 里一致。
  * 3. **写入状态**：`setBasemapVectorInfo` → `app-store` 保存 `basemapStyleName`、`basemapVectorLayers`、
  *    以及每项默认 `basemapVectorVisibility[id]=true`、`basemapGroupVisible=true`。
- * 4. **面板展示**：`LayerPanel` 用 `useAppStore` 读上述字段，渲染底图标题、总开关、按 `group` 分组的子开关。
- * 5. **真正显隐**：`Map2D` 里**一个** `useAppStore.subscribe`：签名（底图总开关 + 子层 id + 各层开关 + 数据图层开关）变化时，
+ * 4. **面板展示**：`LayerPanel`「地图」块渲染底图标题、总开关、按 `group` 分组的矢量子开关。
+ * 5. **真正显隐**：`Map2D` 里**一个** `useAppStore.subscribe`：签名（底图总开关 + 子层 id + 各实体/目标图层开关）变化时，
  *    调用 `applyLayerPanelVisibilityFromStore` 写 MapLibre 并 `redraw`（与 mousemove 等无关更新自动跳过）。
  *    底图子层公式：`可见 = basemapGroupVisible && basemapVectorVisibility[id] !== false`。
  *
@@ -18,7 +18,7 @@
  * - 从 `StyleSpecification` 读出根级 `name`（底图标题）。
  * - 为每个 `layer.id` 生成面板用 `label`、`group`（分组仅用于 UI，不改变 MapLibre 图层 id）。
  *
- * 数据图层（航迹等）的显隐在别处（`layerVisibility` + `LAYER_MAPPING`），**不在**本模块。
+ * 目标/实体图层的显隐在别处（`layerVisibility` + `LAYER_MAPPING`），**不在**本模块。
  */
 
 import type { LayerSpecification, StyleSpecification } from "maplibre-gl";

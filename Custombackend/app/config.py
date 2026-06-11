@@ -145,6 +145,7 @@ MQTT_RECEIVERS: List[Dict[str, Any]] = [
 # 必需参数：domain_id, topic_name, profile_name, discovery_server_ip, discovery_server_port,
 #          multicast_ip, multicast_port, dds_module_path, structure_type, 
 #          data_class_name, pubsub_type_class_name, type_name
+# 航迹 DDS 在独立子进程（dds_track_bridge），与 Entity/相机 彻底隔离；修改相机/target_id 勿动航迹项。
 DDS_RECEIVERS: List[Dict[str, Any]] = [
     {
         "id": "dds_alarm_event",
@@ -175,8 +176,8 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "discovery_server_port": 11611,
         "multicast_ip": "239.255.0.1",
         "multicast_port": 12359,
-        "dds_module_path": "./DDSReferences/Camera",
-        "subscriber_xml_file": "entity_subscriber.xml",
+        "dds_module_path": "./DDSReferences/Entity",
+        "subscriber_xml_file": "camera_status_subscriber.xml",
         "dds_python_module": "EntityRealTimeStatus",
         "structure_type": "Camera",
         "data_class_name": "CameraRealTimeStatus",
@@ -188,15 +189,16 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "id": "dds_camera_status_legacy",
         "name": "DDS相机实时状态(旧版扁平结构，Topic CameraRealTimeStatusTopic1)",
         "enabled": False,
-        "domain_id": 200,
+        "domain_id": 149,
         "topic_name": "CameraRealTimeStatusTopic1",
         "profile_name": "camera_status_subscriber",
         "discovery_server_ip": "192.168.18.141",
         "discovery_server_port": 11611,
         "multicast_ip": "239.255.0.1",
         "multicast_port": 12359,
+        # 旧版扁平 CameraRealTimeStatus（独立 IDL，仍在 Camera 目录）
         "dds_module_path": "./DDSReferences/Camera",
-        "subscriber_xml_file": "entity_subscriber.xml",
+        "subscriber_xml_file": "dds_subscriber_CameraRealTimeStatusTopic_149_camera_status_subscriber.xml",
         "structure_type": "Camera",
         "data_class_name": "CameraRealTimeStatus",
         "pubsub_type_class_name": "CameraRealTimeStatusPubSubType",
@@ -257,7 +259,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "dds_module_name": "NewTrackRealTimeStatus",
         "data_class_name": "TargetOutputSet",
         "pubsub_type_class_name": "TargetOutputSetPubSubType",
-        "type_name": "TargetMinimal::TargetOutputSet",
+        "type_name": "TargetFull::TargetOutputSet",
         "use_default_xml": False
     },
     {
@@ -276,7 +278,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "dds_module_name": "NewTrackRealTimeStatus",
         "data_class_name": "TargetOutputSet",
         "pubsub_type_class_name": "TargetOutputSetPubSubType",
-        "type_name": "TargetMinimal::TargetOutputSet",
+        "type_name": "TargetFull::TargetOutputSet",
         "use_default_xml": False
     },
     {
@@ -385,7 +387,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "dds_module_name": "NewTrackRealTimeStatus",
         "data_class_name": "TargetOutputSet",
         "pubsub_type_class_name": "TargetOutputSetPubSubType",
-        "type_name": "TargetMinimal::TargetOutputSet",
+        "type_name": "TargetFull::TargetOutputSet",
         "use_default_xml": False
     },
     {
@@ -404,7 +406,26 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "dds_module_name": "NewTrackRealTimeStatus",
         "data_class_name": "TargetOutputSet",
         "pubsub_type_class_name": "TargetOutputSetPubSubType",
-        "type_name": "TargetMinimal::TargetOutputSet",
+        "type_name": "TargetFull::TargetOutputSet",
+        "use_default_xml": False
+    },
+    {
+        "id": "dds_forward_fanwu_car_track",
+        "name": "反无车雷达航迹",
+        "enabled": True,
+        "domain_id": 141,
+        "topic_name": "TrackTopic_NewStruct_FanWuCarTrack",
+        "profile_name": "track_subscriber_newstruct_fanwu_car",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
+        "multicast_port": 12355,
+        "dds_module_path": "./DDSReferences/NewTrackStruct/build",
+        "structure_type": "new_track_struct",
+        "dds_module_name": "NewTrackRealTimeStatus",
+        "data_class_name": "TargetOutputSet",
+        "pubsub_type_class_name": "TargetOutputSetPubSubType",
+        "type_name": "TargetFull::TargetOutputSet",
         "use_default_xml": False
     },
     {
@@ -484,15 +505,18 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     {
         "id": "dds_drone_task",
         "name": "无人机任务状态",
-        "enabled": True,  # TODO: 需要配置profile_name后启用
+        "enabled": True,
         "domain_id": 115,
         "topic_name": "DroneTaskRealTimeStatusTopic",
-        "profile_name": "drone_task_subscriber",  # TODO: 配置实际的profile_name
+        "profile_name": "drone_task_subscriber",
         "discovery_server_ip": "192.168.18.141",
         "discovery_server_port": 11611,
         "multicast_ip": "239.255.0.1",
         "multicast_port": 12355,
+        # 现场发布端仍为旧 IDL：casia::device::status::dronetask::DroneTaskRealTimeStatus
+        # （Entity 新 type_name 订阅匹配不到，received=0）。任务文案在 rev1，解析器映射到 drone_task_action。
         "dds_module_path": "./DDSReferences/DroneTask",
+        "subscriber_xml_file": "dds_subscriber_DroneTaskRealTimeStatusTopic_115_drone_task_subscriber.xml",
         "structure_type": "drone_task",
         "data_class_name": "DroneTaskRealTimeStatus",
         "pubsub_type_class_name": "DroneTaskRealTimeStatusPubSubType",
@@ -501,20 +525,22 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     },
     {
         "id": "dds_high_freq",
-        "name": "高频位置数据",
-        "enabled": True,  # TODO: 需要配置profile_name后启用
-        "domain_id": 115,
+        "name": "高频位置数据(新版 Entity IDL，与现场发布端 domain 200 对齐)",
+        "enabled": True,
+        "domain_id": 200,
         "topic_name": "highFreqRealTimeStatusTopic",
-        "profile_name": "high_freq_subscriber",  # TODO: 配置实际的profile_name
+        "profile_name": "test_highfreq_client",
         "discovery_server_ip": "192.168.18.141",
         "discovery_server_port": 11611,
         "multicast_ip": "239.255.0.1",
         "multicast_port": 12355,
-        "dds_module_path": "./DDSReferences/highFreq",
+        "dds_module_path": "./DDSReferences/Entity",
+        "subscriber_xml_file": "highfreq_subscriber.xml",
+        "dds_python_module": "EntityRealTimeStatus",
         "structure_type": "high_freq",
         "data_class_name": "highFreqRealTimeStatus",
         "pubsub_type_class_name": "highFreqRealTimeStatusPubSubType",
-        "type_name": "casia::device::status::drcstatus::highFreqRealTimeStatus",
+        "type_name": "casia::device::status::DroneGeneralStatus::DroneStatus::highFreqRealTimeStatus",
         "use_default_xml": False
     }
 ]

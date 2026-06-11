@@ -9,7 +9,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Crosshair } from "lucide-react";
 import { TrackMarkerIcon } from "@/components/military/TrackMarkerIcon";
 import { cn } from "@/lib/utils";
-import type { Track } from "@/lib/map-entity-model";
+import { trackMapDisplayId, type Track } from "@/lib/map-entity-model";
+import { subscribeTaskStatusChat } from "@/lib/task-status-chat-feed-bus";
+import { pickTaskStatusImageUrl } from "@/lib/task-status-chat-format";
+import { resolveVerifyUniqueId } from "@/lib/verified-track-from-task-status";
 import { useTrackStore } from "@/stores/track-store";
 import { useTargetProfileStore } from "@/stores/target-profile-store";
 import { resolveTrackLayerKey, TRACK_SUBTYPE_LABELS } from "@/lib/track-layer-visibility";
@@ -36,7 +39,7 @@ function formatAlt(v: number | undefined): string {
 function displayTitle(t: Track): string {
   const alias = t.trackAlias?.trim();
   if (alias) return alias;
-  return t.trackId?.trim() ? t.trackId : t.showID;
+  return trackMapDisplayId(t);
 }
 
 function isDigitsUniqueId(s: string | undefined | null): boolean {
@@ -93,6 +96,21 @@ export function TargetProfilePanel() {
     if (!focusedShowId) return;
     const id = setInterval(() => setImagePollGen((n) => n + 1), PROFILE_POLL_MS);
     return () => clearInterval(id);
+  }, [focusedShowId]);
+
+  /** 查证 SSE 落库后立刻刷新相册，不必等 5s 轮询 */
+  useEffect(() => {
+    if (!focusedShowId) return;
+    return subscribeTaskStatusChat((payload) => {
+      if (!pickTaskStatusImageUrl(payload)) return;
+      const tracks = useTrackStore.getState().tracks;
+      const uid = resolveVerifyUniqueId(payload, tracks);
+      const focused = tracks.find((t) => t.showID === focusedShowId);
+      const focusedUid = focused?.uniqueID?.trim() || focusedShowId.trim();
+      if (uid && focusedUid && uid === focusedUid) {
+        setImagePollGen((n) => n + 1);
+      }
+    });
   }, [focusedShowId]);
 
   const [urls, setUrls] = useState<string[]>([]);

@@ -155,6 +155,7 @@ export function attachEncodedVideoFrameSync(
   receiver: RTCRtpReceiver,
   hub: EoEncodedSyncHub,
   onEncodedFrame?: (frame: EncodedFrameData) => void,
+  forceVideoPassthrough = false,
 ): () => void {
   const r = receiver as ReceiverWithStreams;
   if (typeof r.createEncodedStreams !== "function") {
@@ -175,7 +176,8 @@ export function attachEncodedVideoFrameSync(
     };
   }
 
-  const cutPassthrough = shouldCutEoVideoHardwarePassthrough(Boolean(onEncodedFrame));
+  const cutPassthrough =
+    shouldCutEoVideoHardwarePassthrough(Boolean(onEncodedFrame)) && !forceVideoPassthrough;
   const ac = new AbortController();
 
   if (cutPassthrough) {

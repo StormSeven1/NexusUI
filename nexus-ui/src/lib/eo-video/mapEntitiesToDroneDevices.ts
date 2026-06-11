@@ -4,11 +4,11 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** 8090 实体：仅保留 `indicators.simulated === false` 的条目（仿真/演练实体排除） */
+/** 8090 实体：排除明确标记为仿真的条目；缺省 indicators 或未设 simulated 视为实装设备 */
 export function entityIndicatorsSimulatedIsFalse(raw: Record<string, unknown>): boolean {
   const indicators = raw.indicators;
-  if (!isRecord(indicators)) return false;
-  return indicators.simulated === false;
+  if (!isRecord(indicators)) return true;
+  return indicators.simulated !== true;
 }
 
 function pickStr(r: Record<string, unknown>, keys: string[]): string {

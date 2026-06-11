@@ -15,9 +15,19 @@ import {
   buildVerifySessionKey,
   resolveVerifyEntityRef,
 } from "@/lib/task-status-verify-entity-ref";
+import { resolveVerifyTargetIdFromBody } from "@/lib/task-status-verify-target-id";
 
 function normalizeObjectKeySegments(k: string): string {
   return k.replace(/\/+/g, "/").replace(/^\//, "").replace(/\/$/, "");
+}
+
+/** 完整 MinIO 对象 key 应含文件名（如 screenshot_0_4_...jpg），纯目录前缀不能用于拉图 */
+function isCompleteMinioObjectKey(k: string): boolean {
+  const t = normalizeObjectKeySegments(k);
+  if (!t) return false;
+  if (/\.(jpe?g|png|webp|gif|bmp)$/i.test(t)) return true;
+  const last = t.split("/").filter(Boolean).pop() ?? "";
+  return /^screenshot_/i.test(last);
 }
 
 export type TaskStatusIngestResult =
@@ -94,8 +104,8 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
   const entityRef = resolveVerifyEntityRef(o, cameraIndexRaw);
   const { entityId, cameraIndex } = entityRef;
   const trackID = numField("trackID", "track_id", "trackId", "TrackID");
-  const verifyTargetId = numField("verifyTargetId", "verify_target_id", "targetId", "target_id");
-  const uniqueIdFromBody = numField("uniqueId", "unique_id", "uniqueID");
+  const verifyTargetId = resolveVerifyTargetIdFromBody(o);
+  const uniqueIdFromBody = verifyTargetId ?? numField("uniqueId", "unique_id", "uniqueID");
   const longitudeDeg = numField("longitudeDeg", "longitude_deg", "lon", "longitude");
   const latitudeDeg = numField("latitudeDeg", "latitude_deg", "lat", "latitude");
   const distanceNm = numField("distanceNm", "distance_nm", "distanceNauticalMiles");
@@ -136,9 +146,11 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
     return undefined;
   };
 
+  const targetId = verifyTargetId ?? uniqueIdFromBody ?? trackID;
+  const targetOk = targetId != null && Number.isFinite(targetId);
   const trackOk = trackID != null && Number.isFinite(trackID);
   const camOk = cameraIndex != null && Number.isFinite(cameraIndex);
-  const sessionKey = trackOk ? buildVerifySessionKey(trackID!, entityRef) : null;
+  const sessionKey = targetOk ? buildVerifySessionKey(targetId!, entityRef) : null;
 
   if (taskStatus === 4 && sessionKey) {
     resetVerifyObjectKeyAccumulatorForSession(sessionKey);
@@ -165,18 +177,29 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
     if (!mergedKeySuffix) mergedKeySuffix = undefined;
   }
 
-  let objectKeyForUrl = explicitKey ?? mergedKeySuffix;
+  let imageFileName: string | undefined;
+  if (typeof o.imageFileName === "string" && o.imageFileName.trim()) imageFileName = o.imageFileName.trim();
+  else if (typeof o.fileName === "string" && o.fileName.trim()) imageFileName = o.fileName.trim();
 
-  /** 与 Qt 一致：未带 bucket/key 时读 PostgreSQL `minio_multi_metadata`（需可解析的 cameraIndex） */
-  if (!downloadUrl && camOk) {
+  let objectKeyForUrl: string | undefined;
+  if (explicitKey && isCompleteMinioObjectKey(explicitKey)) {
+    objectKeyForUrl = explicitKey;
+  } else if (mergedKeySuffix && isCompleteMinioObjectKey(mergedKeySuffix)) {
+    objectKeyForUrl = mergedKeySuffix;
+  }
+
+  /** 与 Qt 一致：未带 bucket/key 时读 PostgreSQL `minio_multi_metadata`（需可解析的 cameraIndex）。
+   *  taskStatus=4 仅为「开始查证」，此时库中可能是历史截图，不应展示。 */
+  if (!downloadUrl && camOk && taskStatus >= 5) {
     const dbRow = await resolveScreenshotMetadataFromDb({
-      uniqueId: uniqueIdFromBody ?? undefined,
-      trackId: trackOk ? trackID : undefined,
+      uniqueId: targetOk ? targetId : uniqueIdFromBody ?? undefined,
+      trackId: !targetOk && trackOk ? trackID : undefined,
       cameraIndex: cameraIndex!,
     });
     if (dbRow) {
-      bucketForUrl = bucketForUrl ?? dbRow.minioBucket;
-      objectKeyForUrl = objectKeyForUrl ?? normalizeObjectKeySegments(dbRow.minioObjectKey);
+      bucketForUrl = dbRow.minioBucket || bucketForUrl;
+      const dbKey = normalizeObjectKeySegments(dbRow.minioObjectKey);
+      if (dbKey) objectKeyForUrl = dbKey;
       const du = dbRow.downloadUrl.trim();
       /** 库内常为 HTTP 直链：HTTPS 页面会混合内容拦截；若已配 MinIO 代理则优先走同源代理 */
       if (/^https:\/\//i.test(du)) {
@@ -188,12 +211,13 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
       } else if (du) {
         imageSource = "postgresMeta";
       }
+      const fn = dbRow.minioObjectKey.split("/").filter(Boolean).pop();
+      if (fn && !imageFileName) imageFileName = fn;
     }
   }
-  if (objectKeyForUrl && !/\.(jpe?g|png|webp|gif)$/i.test(objectKeyForUrl)) {
-    const ext = process.env.TASK_STATUS_VERIFY_IMAGE_DEFAULT_EXT?.trim() || ".jpg";
-    const e = ext.startsWith(".") ? ext : `.${ext}`;
-    objectKeyForUrl = `${objectKeyForUrl}${e}`;
+
+  if (objectKeyForUrl && !isCompleteMinioObjectKey(objectKeyForUrl)) {
+    objectKeyForUrl = undefined;
   }
 
   /** 优先同源代理：HTTPS 页面加载 HTTP MinIO 预签名会被浏览器拦截（混合内容） */
@@ -215,9 +239,6 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
     typeof o.imageMediaType === "string" && o.imageMediaType.startsWith("image/")
       ? o.imageMediaType
       : undefined;
-  let imageFileName: string | undefined;
-  if (typeof o.imageFileName === "string" && o.imageFileName.trim()) imageFileName = o.imageFileName.trim();
-  else if (typeof o.fileName === "string" && o.fileName.trim()) imageFileName = o.fileName.trim();
 
   const payload: TaskStatusRequestBody = {
     taskStatus,
@@ -230,8 +251,7 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
     downloadUrl,
     imageMediaType,
     imageFileName,
-    verifyTargetId:
-      verifyTargetId != null && Number.isFinite(verifyTargetId) ? verifyTargetId : undefined,
+    verifyTargetId: targetOk ? targetId : undefined,
     longitudeDeg: longitudeDeg != null && Number.isFinite(longitudeDeg) ? longitudeDeg : undefined,
     latitudeDeg: latitudeDeg != null && Number.isFinite(latitudeDeg) ? latitudeDeg : undefined,
     distanceNm: distanceNm != null && Number.isFinite(distanceNm) ? distanceNm : undefined,
@@ -258,11 +278,14 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
     entityId: entityId ?? null,
     cameraIndex: camOk ? cameraIndex : null,
     trackID: trackOk ? trackID : null,
+    targetId: targetOk ? targetId : null,
     uniqueId: uniqueIdFromBody ?? null,
     taskID: taskID ?? null,
     sessionKey,
     hasImage: Boolean(downloadUrl),
     imageSource: imageSource ?? (downloadUrl ? "resolved" : "none"),
+    objectKey: objectKeyForUrl ?? null,
+    downloadUrlPreview: downloadUrl ? downloadUrl.slice(0, 120) : null,
     descriptionLen: description.length,
     receivedAt,
   });

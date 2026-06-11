@@ -1,7 +1,6 @@
 /**
  * 地图航迹显隐：
- * - 图层侧边栏：`lyr-tracks` 总开关；
- * - 目标侧边栏：`trackSubtypeVisible`（track-display-store）按 DDS 来源分类。
+ * - 图层面板「目标图层」：`lyr-tracks` 总开关 + `trackSubtypeVisible` 按 DDS 来源分类。
  */
 
 import type { Track } from "@/lib/map-entity-model";
@@ -28,17 +27,19 @@ export const TRACK_LAYER_KEY_BY_DDS_SOURCE_ID: Record<string, TrackLayerKey> = {
   dds_forward_fuse_track: "fuse_sea",
   dds_forward_fuse_bird_radar_track: "fuse_air",
   dds_forward_bird_radar_track: "bird_radar",
+  dds_forward_fanwu_car_track: "fanwu_car_radar",
   dds_forward_radar_track1: "radar_wharf",
   dds_forward_radar_track2: "radar_jingzi",
   dds_forward_ais_track: "ais_track",
   dds_forward_uav_pose_track: "uav_pose_track",
 };
 
-/** 目标列表 / 航迹显示面板共用标签 */
+/** 目标图层 / 目标列表 / 航迹显示面板共用标签 */
 export const TRACK_SUBTYPE_LABELS: Record<TrackLayerKey, string> = {
   fuse_sea: "对海融合航迹",
   fuse_air: "对空融合航迹",
   bird_radar: "探鸟雷达航迹",
+  fanwu_car_radar: "反无车雷达航迹",
   radar_wharf: "远遥码头雷达航迹",
   radar_jingzi: "靖子头雷达航迹",
   ais_track: "AIS 航迹",
@@ -47,7 +48,7 @@ export const TRACK_SUBTYPE_LABELS: Record<TrackLayerKey, string> = {
 
 /** 雷达类 DDS 来源：地图上用圆点而非军标 */
 export function isRadarTrackLayerKey(k: TrackLayerKey): boolean {
-  return k === "bird_radar" || k === "radar_wharf" || k === "radar_jingzi";
+  return k === "bird_radar" || k === "fanwu_car_radar" || k === "radar_wharf" || k === "radar_jingzi";
 }
 
 /** 地图与目标列表上用圆点表示的航迹（雷达 + AIS + 自报位） */
@@ -73,6 +74,7 @@ function inferTrackLayerKeyFromText(track: LayerResolveInput): TrackLayerKey | u
   if (/\bdds_forward_fuse_bird_radar_track\b/.test(textBlob)) return "fuse_air";
   if (/\bdds_forward_fuse_track\b/.test(textBlob)) return "fuse_sea";
   if (/\bdds_forward_bird_radar_track\b/.test(textBlob)) return "bird_radar";
+  if (/\bdds_forward_fanwu_car_track\b/.test(textBlob)) return "fanwu_car_radar";
   if (/\bdds_forward_ais_track\b/.test(textBlob)) return "ais_track";
   if (/\bdds_forward_uav_pose_track\b/.test(textBlob)) return "uav_pose_track";
   return undefined;
@@ -152,4 +154,28 @@ export function filterTracksForMapRender(
     out.push(t);
   }
   return out;
+}
+
+/** 图层面板「目标图层」UI 行数：总开关 1 + 各 DDS 分类 + 对空融合下无人机/鸟 */
+export function countTargetLayerPanelUiRows(): number {
+  return 1 + TRACK_LAYER_KEYS_ORDERED.length + 2;
+}
+
+/** 与 `LayerPanel` enabledCount 一致：总开关开启时计 master + 各已开分类（含对空子项） */
+export function countVisibleTargetLayerLeaves(
+  masterOn: boolean,
+  subtypeVisible: TrackSubtypeVisibility,
+  airSubtypeVisible: AirFusionSubtypeVisibility,
+): number {
+  if (!masterOn) return 0;
+  let n = 1;
+  for (const k of TRACK_LAYER_KEYS_ORDERED) {
+    if (subtypeVisible[k] === false) continue;
+    n += 1;
+    if (k === "fuse_air") {
+      if (airSubtypeVisible.uav !== false) n += 1;
+      if (airSubtypeVisible.bird !== false) n += 1;
+    }
+  }
+  return n;
 }

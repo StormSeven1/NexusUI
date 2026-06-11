@@ -262,6 +262,102 @@ export function rectRowServerTrackId(rect: number[] | undefined): number | undef
   return Math.trunc(v);
 }
 
+/** 检测算法像素坐标系缺 WS 尺寸时的缺省（与 camServer / 8304 常见输出一致，非 WebCodecs 呈现尺寸） */
+const DEFAULT_DETECTION_FRAME_W = 1920;
+const DEFAULT_DETECTION_FRAME_H = 1080;
+
+/** WS 无 videoWidth/Height 时推断检测帧尺寸（不可用框外包络或 WebCodecs canvas 尺寸） */
+export function inferFrameSizeFromPixelRects(rects: number[][]): { w: number; h: number } | null {
+  let maxR = 0;
+  let maxB = 0;
+  for (const r of rects) {
+    if (!r || r.length < 4) continue;
+    const [x, y, w, h] = r.map((v) => Number(v));
+    if (![x, y, w, h].every(Number.isFinite)) continue;
+    if (Math.max(x, y, w, h) <= 1.001) continue;
+    maxR = Math.max(maxR, x + w);
+    maxB = Math.max(maxB, y + h);
+  }
+  if (maxR <= 1 || maxB <= 1) return null;
+  // 像素框在 1920×1080 系；用 max(x+w) 当整帧宽会把框归一化算偏（Qt 直接用解码宽，不走此路径）
+  if (maxR > 640 || maxB > 480) {
+    return { w: DEFAULT_DETECTION_FRAME_W, h: DEFAULT_DETECTION_FRAME_H };
+  }
+  return { w: Math.max(640, Math.ceil(maxR)), h: Math.max(480, Math.ceil(maxB)) };
+}
+
+/** 可信的 WS / 解码帧宽（排除 CheckFindRect 误写的 ~700 级「框外包络」尺寸） */
+function isPlausibleDetectionFrameSize(w: number, h: number): boolean {
+  return w >= 1280 && h >= 720;
+}
+
+export function resolveDetectionFrameSize(
+  rects: number[][],
+  sources: {
+    entryW?: number;
+    entryH?: number;
+    /** 当前屏幕呈现宽（WebCodecs Canvas / 可见 video），优先于隐藏 video 元数据 */
+    presentationW?: number;
+    presentationH?: number;
+    videoW?: number;
+    videoH?: number;
+  },
+): { w: number; h: number } {
+  const entryW = sources.entryW ?? 0;
+  const entryH = sources.entryH ?? 0;
+  if (isPlausibleDetectionFrameSize(entryW, entryH)) return { w: entryW, h: entryH };
+
+  const presW = sources.presentationW ?? 0;
+  const presH = sources.presentationH ?? 0;
+  if (isPlausibleDetectionFrameSize(presW, presH)) return { w: presW, h: presH };
+
+  const videoW = sources.videoW ?? 0;
+  const videoH = sources.videoH ?? 0;
+  if (isPlausibleDetectionFrameSize(videoW, videoH)) return { w: videoW, h: videoH };
+
+  const inferred = inferFrameSizeFromPixelRects(rects);
+  if (inferred) {
+    if (presW > 0 && presH > 0) return { w: presW, h: presH };
+    if (videoW > 0 && videoH > 0) return { w: videoW, h: videoH };
+    return inferred;
+  }
+
+  if (entryW > 0 && entryH > 0) return { w: entryW, h: entryH };
+  if (presW > 0 && presH > 0) return { w: presW, h: presH };
+  return { w: videoW, h: videoH };
+}
+
+/**
+ * 检测归一化坐标所依据的帧尺寸 ≠ 当前呈现尺寸时，映射到呈现空间 0–1（与 base-vue convertRectToDisplaySize 同源思路）。
+ */
+export function mapEoBoxToPresentationNorm(
+  box: EoDetectionBox,
+  presentationW: number,
+  presentationH: number,
+): { x: number; y: number; w: number; h: number } {
+  const fw = box.frameWidth ?? 0;
+  const fh = box.frameHeight ?? 0;
+  if (
+    fw > 0 &&
+    fh > 0 &&
+    presentationW > 0 &&
+    presentationH > 0 &&
+    (fw !== presentationW || fh !== presentationH)
+  ) {
+    const px = box.x * fw;
+    const py = box.y * fh;
+    const pw = box.w * fw;
+    const ph = box.h * fh;
+    return {
+      x: px / presentationW,
+      y: py / presentationH,
+      w: pw / presentationW,
+      h: ph / presentationH,
+    };
+  }
+  return { x: box.x, y: box.y, w: box.w, h: box.h };
+}
+
 /** 后端是否已给 0–1 相对视频分辨率的框（再除以 videoWidth 会画飞） */
 export function rectsLookNormalized(rects: number[][]): boolean {
   if (!rects.length) return false;
@@ -337,4 +433,47 @@ export function detectionRectsToEoBoxes(
   }
   if (!videoWidth || !videoHeight) return [];
   return pixelRectsToNormalizedBoxes(rects, videoWidth, videoHeight, idPrefix, label, colorToken);
+}
+
+/** 检测框列表浅比较：避免每帧新数组引用触发父级 setState 循环 */
+export function eoDetectionBoxesEqual(a: EoDetectionBox[], b: EoDetectionBox[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (
+      x.id !== y.id ||
+      x.trackId !== y.trackId ||
+      x.label !== y.label ||
+      x.x !== y.x ||
+      x.y !== y.y ||
+      x.w !== y.w ||
+      x.h !== y.h ||
+      x.score !== y.score ||
+      x.colorToken !== y.colorToken ||
+      x.variant !== y.variant ||
+      x.singleTagShort !== y.singleTagShort ||
+      x.singleTrackOverlayTitle !== y.singleTrackOverlayTitle ||
+      x.ddsTrackId !== y.ddsTrackId ||
+      x.frameWidth !== y.frameWidth ||
+      x.frameHeight !== y.frameHeight
+    ) {
+      return false;
+    }
+    const xd = x.singleTrackDetail;
+    const yd = y.singleTrackDetail;
+    if (xd !== yd) {
+      if (!xd || !yd) return false;
+      if (
+        xd.azimuthDeg !== yd.azimuthDeg ||
+        xd.distanceM !== yd.distanceM ||
+        xd.speedMps !== yd.speedMps ||
+        xd.courseDeg !== yd.courseDeg
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }

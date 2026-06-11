@@ -131,7 +131,16 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
         : isoNow();
 
   let trackId: string | undefined;
-  const trackRawTop = o.trackId ?? o.track_id ?? o.tid ?? o.trackID;
+  const trackRawTop =
+    o.targetId ??
+    o.target_id ??
+    o.uniqueID ??
+    o.uniqueId ??
+    o.unique_id ??
+    o.trackId ??
+    o.track_id ??
+    o.tid ??
+    o.trackID;
   if (typeof trackRawTop === "string" && trackRawTop.trim()) {
     trackId = trackRawTop.trim();
   } else if (typeof trackRawTop === "number" && Number.isFinite(trackRawTop) && trackRawTop > 0) {
@@ -141,7 +150,15 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
   const nestedTrack = o.track;
   if (!trackId && nestedTrack && typeof nestedTrack === "object" && !Array.isArray(nestedTrack)) {
     const tr = nestedTrack as Record<string, unknown>;
-    const tid = tr.trackId ?? tr.track_id ?? tr.id;
+    const tid =
+      tr.targetId ??
+      tr.target_id ??
+      tr.uniqueID ??
+      tr.uniqueId ??
+      tr.unique_id ??
+      tr.trackId ??
+      tr.track_id ??
+      tr.id;
     if (typeof tid === "string" && tid.trim()) trackId = tid.trim();
     else if (typeof tid === "number" && Number.isFinite(tid) && tid > 0) trackId = String(tid);
   }
@@ -259,12 +276,15 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     }
   }
 
-  const uniqueIDRaw = o.uniqueID ?? o.uniqueId ?? o.unique_id ?? o.showID;
+  const uniqueIDRaw = o.uniqueID ?? o.uniqueId ?? o.unique_id ?? o.targetId ?? o.target_id ?? o.showID;
   let uniqueID: string | undefined;
   if (typeof uniqueIDRaw === "string" && uniqueIDRaw.trim()) {
     uniqueID = uniqueIDRaw.trim();
   } else if (typeof uniqueIDRaw === "number" && Number.isFinite(uniqueIDRaw) && uniqueIDRaw > 0) {
     uniqueID = String(uniqueIDRaw);
+  }
+  if (!uniqueID && trackId) {
+    uniqueID = trackId;
   }
 
   const fuseTypeRaw = o.fuseType ?? o.fuse_type;

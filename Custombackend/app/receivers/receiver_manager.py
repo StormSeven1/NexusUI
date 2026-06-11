@@ -13,6 +13,11 @@ from receivers.network import (
     DDSReceiverService,
     DDS_AVAILABLE
 )
+from receivers.network.dds_receiver_service import (
+    DDS_SUBSCRIPTION_MATCHED,
+    _TRACK_STRUCTURE_TYPES,
+)
+from receivers.network.dds_track_bridge import get_track_bridge
 from parsers import TrackParser
 from parsers.entity_parser import parse_entity_status
 from websocket_manager import ws_manager
@@ -24,6 +29,7 @@ TRACK_LAYER_KEY_BY_RECEIVER = {
     "dds_forward_fuse_bird_radar_track": "fuse_air",
     "dds_forward_fuse_bird_radar_track_virtual": "fuse_air",
     "dds_forward_bird_radar_track": "bird_radar",
+    "dds_forward_fanwu_car_track": "fanwu_car_radar",
     "dds_forward_radar_track1": "radar_wharf",
     "dds_forward_radar_track2": "radar_jingzi",
     "dds_forward_ais_track": "ais_track",
@@ -65,7 +71,8 @@ class ReceiverManager:
         self.tcp_clients: Dict[str, TCPClient] = {}
         self.http_pollers: Dict[str, HTTPPoller] = {}
         self.mqtt_receivers: Dict[str, MQTTReceiver] = {}
-        self.dds_receivers: Dict[str, Any] = {}  # DDSReceiver实例
+        self.dds_receivers: Dict[str, Any] = {}  # DDSReceiver实例（非航迹；航迹在独立子进程）
+        self._dds_track_meta: Dict[str, Dict[str, str]] = {}  # 子进程航迹：receiver_id -> topic/name
         
         # 统计信息
         self._stats: Dict[str, Dict[str, int]] = {}
@@ -228,9 +235,13 @@ class ReceiverManager:
                         'data': parsed_data
                     })
                 elif data_type == 'drone_task':
-                    # 无人机任务状态数据（包含航线规划）
+                    # 无人机任务：航线仍走 DroneFlightPath；光电右下角任务态走 DroneTaskStatus
                     ws_manager.queue_message({
                         'type': 'DroneFlightPath',
+                        'data': parsed_data
+                    })
+                    ws_manager.queue_message({
+                        'type': 'DroneTaskStatus',
                         'data': parsed_data
                     })
                 elif data_type == 'high_freq':
@@ -362,6 +373,40 @@ class ReceiverManager:
             self.mqtt_receivers[receiver_id] = receiver
             receiver.start()
     
+    @staticmethod
+    def _dds_receiver_boot_order(config: Dict[str, Any]) -> tuple:
+        """
+        同进程多路 DDS 的启动顺序：航迹必须先于 Entity/相机。
+        否则 Entity RTLD_GLOBAL 预加载会污染符号，导致航迹订阅反复失效（与 target_id 等前端改动无关）。
+        """
+        structure_type = config.get("structure_type", "")
+        receiver_id = config.get("id", "")
+        if structure_type == "new_track_struct":
+            return (0, receiver_id)
+        if structure_type in _TRACK_STRUCTURE_TYPES:
+            return (1, receiver_id)
+        if structure_type in ("MultiCameraTrack", "SingleCameraTrack", "alarm_data"):
+            return (2, receiver_id)
+        if structure_type in ("Camera", "high_freq", "drone_task", "drone_status", "dock_status"):
+            return (3, receiver_id)
+        return (2, receiver_id)
+
+    @staticmethod
+    def _is_track_dds_config(config: Dict[str, Any]) -> bool:
+        return config.get("structure_type", "") in _TRACK_STRUCTURE_TYPES
+
+    def _on_track_worker_data(
+        self,
+        receiver_id: str,
+        topic_name: str,
+        source_name: str,
+        parsed_data: Dict[str, Any],
+    ) -> None:
+        """航迹子进程 Queue → 复用主进程 DDS 回调（WS 下发）。"""
+        if parsed_data and not parsed_data.get("source_name"):
+            parsed_data["source_name"] = source_name or self._dds_track_meta.get(receiver_id, {}).get("name", "DDS数据源")
+        self._create_dds_callback(receiver_id)(parsed_data)
+
     def start_dds_receivers(self, configs: List[Dict[str, Any]]):
         """启动DDS接收器（支持多个，支持动态配置）"""
         if not DDS_AVAILABLE or DDSReceiverService is None:
@@ -379,13 +424,40 @@ class ReceiverManager:
                 logger.error("当前被跳过的 DDS 源 id（需在修复环境后重启后端）: {}", ", ".join(enabled))
             return
         
-        for config in configs:
-            if not config.get('enabled', False):
-                continue
-            
+        enabled_configs = [c for c in configs if c.get("enabled", False) and c.get("id")]
+        track_configs = [c for c in enabled_configs if self._is_track_dds_config(c)]
+        other_configs = [c for c in enabled_configs if not self._is_track_dds_config(c)]
+
+        if track_configs:
+            for cfg in track_configs:
+                rid = cfg["id"]
+                self._dds_track_meta[rid] = {
+                    "topic_name": cfg.get("topic_name", ""),
+                    "name": cfg.get("name", ""),
+                }
+                # 占位：健康检查 / stats 能识别航迹 receiver_id
+                self.dds_receivers[rid] = type(
+                    "TrackSubprocessProxy",
+                    (),
+                    {
+                        "name": cfg.get("name", ""),
+                        "structure_type": cfg.get("structure_type", ""),
+                        "topic_name": cfg.get("topic_name", ""),
+                    },
+                )()
+            bridge = get_track_bridge()
+            bridge.start(track_configs, self._on_track_worker_data)
+
+        ordered_configs = sorted(other_configs, key=self._dds_receiver_boot_order)
+        if track_configs or ordered_configs:
+            logger.info(
+                "DDS 启动: 航迹子进程 {} 路 | 主进程 {}",
+                len(track_configs),
+                " → ".join(c["id"] for c in ordered_configs) if ordered_configs else "(无)",
+            )
+
+        for config in ordered_configs:
             receiver_id = config.get('id', '')
-            if not receiver_id:
-                continue
             
             try:
                 callback = self._create_dds_callback(receiver_id)
@@ -466,13 +538,22 @@ class ReceiverManager:
                 logger.error(f"停止MQTT接收器失败: {e}")
         self.mqtt_receivers.clear()
         
-        # 停止DDS接收器
-        for receiver_id, receiver in self.dds_receivers.items():
+        # 停止航迹 DDS 子进程
+        try:
+            get_track_bridge().stop()
+        except Exception as e:
+            logger.error(f"停止航迹 DDS 子进程失败: {e}")
+
+        # 停止主进程 DDS 接收器
+        for receiver_id, receiver in list(self.dds_receivers.items()):
+            if receiver_id in self._dds_track_meta:
+                continue
             try:
                 receiver.delete()
             except Exception as e:
                 logger.error(f"停止DDS接收器失败 [{receiver_id}]: {e}")
         self.dds_receivers.clear()
+        self._dds_track_meta.clear()
         
         logger.info("所有接收器已停止")
     
@@ -485,6 +566,30 @@ class ReceiverManager:
     def get_stats(self) -> Dict[str, Dict[str, int]]:
         """获取统计信息"""
         return dict(self._stats)
+
+    def get_dds_track_health(self) -> Dict[str, Any]:
+        """航迹 DDS 健康度：匹配数 + 已收样本（供启动自检与 /api/status 扩展）"""
+        bridge = get_track_bridge()
+        if bridge.is_running or bridge._track_receiver_ids:
+            bridge.drain_messages()
+            return bridge.get_health(self._stats)
+        track_ids = [
+            rid for rid, recv in self.dds_receivers.items()
+            if getattr(recv, "structure_type", "") in _TRACK_STRUCTURE_TYPES
+        ]
+        matched = {rid: DDS_SUBSCRIPTION_MATCHED.get(rid, 0) for rid in track_ids}
+        received = {
+            rid: self._stats.get(rid, {}).get("received", 0)
+            for rid in track_ids
+        }
+        return {
+            "mode": "inprocess",
+            "track_receiver_ids": track_ids,
+            "subscription_matched": matched,
+            "received": received,
+            "any_matched": any(v > 0 for v in matched.values()),
+            "any_received": any(v > 0 for v in received.values()),
+        }
 
 
 # 全局实例

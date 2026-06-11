@@ -1,6 +1,10 @@
 /**
  * 实体 REST 上游（camera / UAV 等设备），与 eo-webrtc-sources 中逻辑一致。
  * 服务端 BFF：`/api/entity-v1/*`、`/api/entity-playback/*` 转发到此 base。
+ *
+ * 与 POST `/api/v1/tasks` 同源：均走 `NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL`。
+ * - 18.141 本机：8088（camServer 默认 HTTP API 端口）
+ * - 28.9 现场：8089（deploy-28.9.sh 写入 .env.local）
  */
 
 export const DEFAULT_CAMERA_ENTITY_BASE = "http://192.168.18.141:8088";

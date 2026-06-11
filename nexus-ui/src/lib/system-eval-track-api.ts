@@ -58,7 +58,33 @@ export async function fetchTrackEvalQuality(
     cache: "no-store",
   });
 
-  const json = (await res.json()) as TrackEvalGrpcApiResponse & { error?: string; detail?: string };
+  const raw = await res.text();
+  let json: TrackEvalGrpcApiResponse & { error?: string; detail?: string; message?: string };
+  try {
+    json = JSON.parse(raw) as typeof json;
+  } catch {
+    const preview = raw.trim().slice(0, 200);
+    let hint: string;
+    if (preview.startsWith("<!")) {
+      hint =
+        "接口返回了 HTML 而非 JSON，请确认 Next.js 已配置 /api/system-eval/track/evaluate 代理且 Custombackend 已启动";
+    } else if (preview === "Internal Server Error") {
+      hint =
+        "后端 500：评估结果可能含无效浮点数（NaN），或 Custombackend 未部署最新 system-eval 路由；请重启 Custombackend 后重试";
+    } else if (preview.includes("Not Found") || preview.includes('"detail":"Not Found"')) {
+      hint =
+        "Custombackend 无 /api/system-eval/track/evaluate（404），请部署含 system_eval_routes 的版本并重启";
+    } else {
+      hint = `响应不是合法 JSON（HTTP ${res.status}）: ${preview}`;
+    }
+    return {
+      metrics: null,
+      status: "error",
+      error: hint,
+      trackPointCount: 0,
+      fetchedAt: new Date().toISOString(),
+    };
+  }
   const fetchedAt = json.timestamp ?? new Date().toISOString();
 
   if (!res.ok) {
@@ -84,9 +110,14 @@ export async function fetchTrackEvalQuality(
     };
   }
 
+  // proto3 JSON：status=0(OK) 时 MessageToDict 会省略该字段，不能当作失败
   const statusRaw = result.status;
   const status =
-    statusRaw === 0 || statusRaw === "OK"
+    statusRaw === undefined ||
+    statusRaw === null ||
+    statusRaw === 0 ||
+    statusRaw === "OK" ||
+    statusRaw === "EVALUATION_STATUS_OK"
       ? "OK"
       : typeof statusRaw === "string"
         ? statusRaw
@@ -95,11 +126,20 @@ export async function fetchTrackEvalQuality(
   const trackPointCount = Number(result.track_point_count ?? 0);
   const errMsg = (result.error_message as string | undefined)?.trim() || grpcErr || null;
 
-  if (status !== "OK" && status !== "0") {
+  const statusLabels: Record<string, string> = {
+    MISSING_AIS: "缺少 AIS 数据",
+    MISSING_SELF_REPORT: "缺少自报位数据",
+    MISSING_REFERENCE_DATA: "缺少参考数据",
+    INVALID_TIME_RANGE: "时间范围无效",
+    INTERNAL_ERROR: "服务端内部错误",
+  };
+
+  if (status !== "OK") {
+    const friendly = statusLabels[status] ?? (status && status !== "undefined" ? status : null);
     return {
       metrics: null,
       status,
-      error: errMsg || status,
+      error: errMsg || friendly || "航迹质量评估未完成",
       trackPointCount,
       fetchedAt,
     };

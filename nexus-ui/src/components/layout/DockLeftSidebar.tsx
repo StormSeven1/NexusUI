@@ -13,6 +13,7 @@ import {
   isElectroOpticalDockPanel,
   useEoVideoPanelFocusStore,
 } from "@/stores/eo-video-panel-focus-store";
+import { EoVideoSmartWindowToggle } from "@/components/eo-video/EoVideoSmartWindowToggle";
 
 /** Keep original 4 tools; EO appears only when docked back. */
 const LEFT_TOOLS = ["tracks", "assets", "layers", "alerts", "track-display"] as const satisfies readonly PanelId[];
@@ -294,18 +295,23 @@ export function DockLeftSidebar() {
                     </span>
                   </div>
                   {panelId ? (
-                    <button
-                      type="button"
-                      className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-nexus-accent hover:bg-nexus-bg-elevated"
-                      title="弹出为独立窗口"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handlePanelClick(panelId);
-                      }}
-                      aria-label="弹出为独立窗口"
-                    >
-                      <ExternalLink size={14} />
-                    </button>
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      {isElectroOpticalDockPanel(panelId) ? (
+                        <EoVideoSmartWindowToggle panelId={panelId} />
+                      ) : null}
+                      <button
+                        type="button"
+                        className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-nexus-accent hover:bg-nexus-bg-elevated"
+                        title="弹出为独立窗口"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePanelClick(panelId);
+                        }}
+                        aria-label="弹出为独立窗口"
+                      >
+                        <ExternalLink size={14} />
+                      </button>
+                    </div>
                   ) : null}
                 </div>
                 <div

@@ -132,12 +132,17 @@ function normalizeImportantTargetCollection(t: ImportantTrackTargetCollection): 
     t.alarmTime != null && String(t.alarmTime).length > 0 ? String(t.alarmTime) : formatAlarmTimeQtLike();
   const trackTime = Number.isFinite(t.trackTime) ? Number(t.trackTime) : 25;
   const action = Number.isFinite(t.action) ? Number(t.action) : 1;
+  const rawTargetId = t.target_id;
+  const targetId =
+    rawTargetId != null && Number.isFinite(rawTargetId) && rawTargetId > 0
+      ? Number(rawTargetId)
+      : 0;
   return {
     latitude: lat,
     longitude: lng,
     type: t.type,
     checkTime,
-    trackID: t.trackID,
+    target_id: targetId,
     alarmID,
     alarmTime,
     trackTime,
@@ -225,8 +230,8 @@ export type ImportantTrackTargetCollection = {
   /** 海面 0 / 对空 1（与 Qt 一致） */
   type: number;
   checkTime?: number;
-  /** 航迹 `uniqueID`（与 Qt `alarmTrackID` / 后端字段一致） */
-  trackID: number;
+  /** 新 DDS `target_id`（全局唯一目标 ID，与 Qt `m_nAlarmTrackID` 一致） */
+  target_id?: number;
   /** Qt `QString`，JSON 为字符串，常 `""` */
   alarmID?: string;
   /** Qt `yyyyMMdd_hhmmss_zzz` */

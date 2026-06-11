@@ -237,6 +237,7 @@ async def get_status():
         "dds_receivers": list(receiver_manager.dds_receivers.keys()),
         "http_pollers": len(receiver_manager.http_pollers),
         "stats": receiver_manager.get_stats(),
+        "dds_track_health": receiver_manager.get_dds_track_health(),
     }
     
     return JSONResponse(

@@ -189,6 +189,16 @@ function readHeading(d: Record<string, unknown>): number | null {
   return Number.isFinite(h) ? h : null;
 }
 
+function readAltitudeM(d: Record<string, unknown>): number | null {
+  const h = Number(d.height ?? d.altitude ?? d.alt ?? 0);
+  return Number.isFinite(h) && h > 0 ? h : null;
+}
+
+/** 是否曾收到过 drone_status（无低频时 high_freq 需单独判离场） */
+function hasDroneStatusChannel(drone: DroneTelemetry): boolean {
+  return drone.statusReceivedAt != null;
+}
+
 export function readVirtualTroop(d: Record<string, unknown>): boolean {
   return (
     d.virtual_troop === true ||
@@ -359,8 +369,10 @@ function buildRelationshipCachesFromAirportsRaw(airportsRaw: unknown[]): {
   };
 }
 
-/** 起飞阶段距机场阈值（米）：高频位置距机场 >50m 丢弃（与 V2 DroneRenderer 一致） */
+/** 起飞阶段距机场阈值（米）：高频位置距机场 >50m 时原逻辑丢弃（防跳点） */
 const TAKEOFF_DISTANCE_M = 50;
+/** 有 drone_status 时，距机场远的高频点需达到此高度（米）才视为已离场 */
+const TAKEOFF_MIN_ALTITUDE_M = 10;
 /** 起飞退出窗口：状态与高频均需在窗口内有过 50m 内有效点才退出起飞态 */
 const BOTH_DATA_RECENT_MS = 3000;
 /** 高频位置最大有效时间（ms）：超过此时间未更新则改用 status 位置（与 V2 一致） */
@@ -388,36 +400,65 @@ function getDockPositionForDrone(sn: string, state: DroneFleetState): { lng: num
   return null;
 }
 
-/** 起飞阶段：判断高频位置是否应丢弃（距机场 >50m） */
+/** 起飞阶段：判断高频位置是否应丢弃（距机场 >50m 且仍在地面/有低频通道时防跳点） */
 function shouldDiscardByTakeoff(
   sn: string,
   lng: number,
   lat: number,
   dataType: "high_freq" | "status",
   state: DroneFleetState,
+  payload?: Record<string, unknown>,
 ): boolean {
   const drone = state.drones[sn];
   if (!drone?.isTakingOff) return false;
+  if (dataType === "status") return false;
   const dock = getDockPositionForDrone(sn, state);
-  if (!dock) return true; /* 无机场坐标时丢弃高频，避免跳点 */
+  if (!dock) return false;
   const dist = haversineM(dock.lat, dock.lng, lat, lng);
   if (dist <= TAKEOFF_DISTANCE_M) return false;
-  if (dataType === "status") return false; /* 状态点不丢弃，用于判断已离场 */
+  /* 仅有 high_freq、从未收到 drone_status：距机场远即视为已离场，必须接受位置 */
+  if (!hasDroneStatusChannel(drone)) return false;
+  const alt = payload ? readAltitudeM(payload) : null;
+  if (alt != null && alt >= TAKEOFF_MIN_ALTITUDE_M) return false;
   return true;
 }
 
+interface TakeoffIncomingPos {
+  lat: number;
+  lng: number;
+  payload?: Record<string, unknown>;
+  source: "high_freq" | "status";
+}
+
 /** 更新起飞状态：判断是否应退出起飞态 */
-function updateTakeoffState(sn: string, currentTime: number, state: DroneFleetState): Partial<DroneTelemetry> {
+function updateTakeoffState(
+  sn: string,
+  currentTime: number,
+  state: DroneFleetState,
+  incoming?: TakeoffIncomingPos,
+): Partial<DroneTelemetry> {
   const drone = state.drones[sn];
   if (!drone || !drone.isTakingOff) return {};
+  const dock = getDockPositionForDrone(sn, state);
+
+  const departedByDistance = (lat: number, lng: number, source: "high_freq" | "status", payload?: Record<string, unknown>) => {
+    if (!dock) return true;
+    const dist = haversineM(dock.lat, dock.lng, lat, lng);
+    if (dist <= TAKEOFF_DISTANCE_M) return false;
+    if (source === "status") return true;
+    if (!hasDroneStatusChannel(drone)) return true;
+    const alt = payload ? readAltitudeM(payload) : null;
+    return alt != null && alt >= TAKEOFF_MIN_ALTITUDE_M;
+  };
+
+  if (incoming && departedByDistance(incoming.lat, incoming.lng, incoming.source, incoming.payload)) {
+    return { isTakingOff: false };
+  }
+
   /* 条件1：状态位置已超过 50m → 退出起飞 */
   const statusPos = drone.status ? readLatLng(drone.status) : null;
-  if (statusPos) {
-    const dock = getDockPositionForDrone(sn, state);
-    if (dock) {
-      const dist = haversineM(dock.lat, dock.lng, statusPos.lat, statusPos.lng);
-      if (dist > TAKEOFF_DISTANCE_M) return { isTakingOff: false };
-    }
+  if (statusPos && departedByDistance(statusPos.lat, statusPos.lng, "status")) {
+    return { isTakingOff: false };
   }
   /* 条件2：状态+高频均近期有过 50m 内有效点 */
   const statusOk = drone.lastStatusAcceptedAt != null && currentTime - drone.lastStatusAcceptedAt <= BOTH_DATA_RECENT_MS;
@@ -556,7 +597,7 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
     const ts = Date.now();
     /* 起飞阶段：状态点不丢弃，但记录是否被接受 */
     const posStatus = readLatLng(data);
-    const discardStatus = posStatus && shouldDiscardByTakeoff(sn, posStatus.lng, posStatus.lat, "status", s);
+    const discardStatus = posStatus && shouldDiscardByTakeoff(sn, posStatus.lng, posStatus.lat, "status", s, data);
     const statusAcceptedAt = posStatus && !discardStatus ? ts : s.drones[sn].lastStatusAcceptedAt;
     /* wasLanded → isTakingOff */
     const wasLanded = s.drones[sn].wasLanded;
@@ -582,7 +623,14 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
         if (next.lat != null && next.lng != null) {
           next = { ...next, historyTrail: appendHistoryTrail(prev, next.lat, next.lng) };
         }
-        const takeoffUpdate = updateTakeoffState(sn, ts, s);
+        const takeoffUpdate = updateTakeoffState(
+          sn,
+          ts,
+          s,
+          posStatus && !discardStatus
+            ? { lat: posStatus.lat, lng: posStatus.lng, payload: data, source: "status" }
+            : undefined,
+        );
         return { drones: { ...s.drones, [sn]: { ...next, ...takeoffUpdate } } };
       }
       /* 高频仍新鲜，保留高频位置，仅更新 heading 等 */
@@ -591,7 +639,14 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
       if (posStatus && !discardStatus) {
         next = { ...next, historyTrail: appendHistoryTrail(prev, posStatus.lat, posStatus.lng) };
       }
-      const takeoffUpdate = updateTakeoffState(sn, ts, s);
+      const takeoffUpdate = updateTakeoffState(
+        sn,
+        ts,
+        s,
+        posStatus && !discardStatus
+          ? { lat: posStatus.lat, lng: posStatus.lng, payload: data, source: "status" }
+          : undefined,
+      );
       return { drones: { ...s.drones, [sn]: { ...next, ...takeoffUpdate } } };
     });
   },
@@ -648,26 +703,28 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
     const ts = Date.now();
     /* 起飞阶段：高频位置距机场 >50m 丢弃 */
     const posHighFreq = readLatLng(data);
-    const discardHighFreq = posHighFreq && shouldDiscardByTakeoff(sn, posHighFreq.lng, posHighFreq.lat, "high_freq", s);
+    const discardHighFreq = posHighFreq && shouldDiscardByTakeoff(sn, posHighFreq.lng, posHighFreq.lat, "high_freq", s, data);
     const highFreqAcceptedAt = posHighFreq && !discardHighFreq ? ts : s.drones[sn].lastHighFreqAcceptedAt;
+    const incomingHighFreq: TakeoffIncomingPos | undefined = posHighFreq
+      ? { lat: posHighFreq.lat, lng: posHighFreq.lng, payload: data, source: "high_freq" }
+      : undefined;
     /* wasLanded → isTakingOff */
     const wasLanded = s.drones[sn].wasLanded;
     if (discardHighFreq) {
-      /* 仅更新 highFreq 原始数据和时间戳，不更新位置 */
+      const takeoffUpdate = updateTakeoffState(sn, ts, s, incomingHighFreq);
       set((s) => {
         const prev = s.drones[sn];
         if (!prev) return s;
-        const takeoffUpdate = updateTakeoffState(sn, ts, s);
         return {
           drones: {
             ...s.drones,
             [sn]: {
               ...prev,
-              ...takeoffUpdate,
               lastHighFreqAcceptedAt: highFreqAcceptedAt,
               wasLanded: false,
-              isTakingOff: wasLanded ? true : prev.isTakingOff,
               lastPacketAtMs: ts,
+              isTakingOff: wasLanded ? true : prev.isTakingOff,
+              ...takeoffUpdate,
             },
           },
         };
@@ -693,7 +750,7 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
       if (next.lat != null && next.lng != null) {
         next = { ...next, historyTrail: appendHistoryTrail(prev, next.lat, next.lng) };
       }
-      const takeoffUpdate = updateTakeoffState(sn, ts, s);
+      const takeoffUpdate = updateTakeoffState(sn, ts, s, incomingHighFreq);
       return { drones: { ...s.drones, [sn]: { ...next, ...takeoffUpdate } } };
     });
   },

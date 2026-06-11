@@ -13,10 +13,12 @@ export type UavTrackFollowResult = {
 
 /**
  * WatchSys `PtzMainWidget::SendUavFlightTask`（`rectID`/`rectType` 为 -1、`targetSourceId` 0/9）→ `MultiDroneTracking`。
+ * `trackId` 为业务 track_id（external_target_id），非 NewTrack 全局 target_id。
  */
 export async function postUavTrackFollowTask(args: {
   /** 机巢 / 机场 gateway SN（任务 JSON `specification.deviceSn`） */
   airportSN: string;
+  /** 业务 track_id（external_target_id）→ `trackID_List` */
   trackId: number;
   latitude: number;
   longitude: number;

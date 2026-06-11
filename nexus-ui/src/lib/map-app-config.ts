@@ -25,17 +25,27 @@ import {
   type PublicMapAssetType,
   type Track,
 } from "@/lib/map-entity-model";
+import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
 import { MAP_FRIENDLY_COLOR_PROP, MAP_LABEL_FONT_COLOR_PROP } from "@/lib/map-icons";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
 import {
+  defaultSeaOwnerEntityId,
+  defaultSkyOwnerEntityId,
+} from "@/lib/camera-management-client";
+import { setMapFovCameraAllowlist } from "@/lib/map-display-filters";
+import {
   buildHttpChatUrlsFromTaskManagementOrigin,
   DEFAULT_TASK_MANAGEMENT_ORIGIN,
   overlayHttpChatFromTaskManagementEnv,
 } from "@/lib/task-management-url";
-import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
+import {
+  applyMapHomeToRadarAssets,
+  parseMapHomeFromRoot,
+  type AppConfigMapHome,
+} from "@/lib/map-home-config";
 import {
   mapRadarPayload,
   type RadarMapGlobals,
@@ -1178,6 +1188,11 @@ export type CameraManagementConfig = {
   seaOwnerEntityId?: string;
   /** 对空任务默认 `owner.entityId` */
   skyOwnerEntityId?: string;
+  /**
+   * 地图光电视场 / 图层面板 PTZ 白名单（可选）。
+   * 缺省时用对海 + 对空槽位（`sea*` / `sky*`）；18.141 → 001+004，28.9 → 004+008。
+   */
+  mapFovCameraEntityIds?: string[];
   requestTimeoutMs: number;
 };
 
@@ -1215,6 +1230,11 @@ function parseCameraManagementConfig(root: Record<string, unknown>): CameraManag
     typeof cm.skyOwnerEntityId === "string" && cm.skyOwnerEntityId.trim()
       ? cm.skyOwnerEntityId.trim()
       : undefined;
+  const mapFovCameraEntityIds = Array.isArray(cm.mapFovCameraEntityIds)
+    ? cm.mapFovCameraEntityIds
+        .map((v) => (typeof v === "string" ? canonicalEntityId(v.trim()) : ""))
+        .filter(Boolean)
+    : undefined;
   const imTaskUserId =
     typeof cm.imTaskUserId === "string" && cm.imTaskUserId.trim()
       ? cm.imTaskUserId.trim()
@@ -1235,6 +1255,7 @@ function parseCameraManagementConfig(root: Record<string, unknown>): CameraManag
     skyCameraIndex,
     seaOwnerEntityId,
     skyOwnerEntityId,
+    mapFovCameraEntityIds: mapFovCameraEntityIds?.length ? mapFovCameraEntityIds : undefined,
     requestTimeoutMs,
   };
 }
@@ -1346,6 +1367,8 @@ export type ResolvedAppConfig = {
   chatDisposalPlanWsEnabled: boolean;
   /** 根键 `cameraManagement`：光电元任务 HTTP；无配置时为 null */
   cameraManagement: CameraManagementConfig | null;
+  /** 根键 `mapHome`：地图 Home 点（2D/3D 初始视角 + HOME 资产坐标） */
+  mapHome: AppConfigMapHome | null;
   /** @deprecated 双击航迹 POS 不再依赖此配置 */
   thirdPartyPosGuide: ThirdPartyPosGuideConfig;
   /**
@@ -1514,9 +1537,12 @@ export function mergeDynamicAndStaticAssets(configAssetBase: AssetData[], fromWs
     if (!w.id) continue;
     const prev = byId.get(w.id);
     if (prev) {
+      const isHomeAnchor = prev.id.trim().toLowerCase() === "home";
       byId.set(w.id, {
         ...prev,
         ...w,
+        lat: isHomeAnchor ? prev.lat : w.lat,
+        lng: isHomeAnchor ? prev.lng : w.lng,
         heading: mergeNullableNumericPreferLive(w.heading, prev.heading),
         fov_angle: mergeNullableNumericPreferLive(w.fov_angle, prev.fov_angle),
         range_km: mergeNullableNumericPreferLive(w.range_km, prev.range_km),
@@ -1642,8 +1668,21 @@ function parseIconSizeStops(root: Record<string, unknown>): [number, number][] |
   return stops.length >= 2 ? stops : null;
 }
 
+function applyMapFovCameraAllowlistFromCameraManagement(cm: CameraManagementConfig | null): void {
+  if (!cm) {
+    setMapFovCameraAllowlist(null);
+    return;
+  }
+  if (cm.mapFovCameraEntityIds?.length) {
+    setMapFovCameraAllowlist(cm.mapFovCameraEntityIds);
+    return;
+  }
+  setMapFovCameraAllowlist([defaultSeaOwnerEntityId(cm), defaultSkyOwnerEntityId(cm)]);
+}
+
 function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   const root = asRecord(json) ?? {};
+  const mapHome = parseMapHomeFromRoot(root);
   const camerasBundle = parseSectorBundle(root.cameras);
   const towerBundle = parseSectorBundle(root.tower);
   const airportsBundle = parseSectorBundle(root.airports);
@@ -1651,7 +1690,10 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   const tdoaBundle = parseSectorBundle(root.tdoa);
   const dronesBundle = parseSectorBundle(root.drones);
   const fromCameras = mapCamerasDevicesPayload(root.cameras);
-  const fromRadar = mapRadarPayload(root.radar, buildRadarMapGlobalsFromRoot(root));
+  const fromRadar = applyMapHomeToRadarAssets(
+    mapRadarPayload(root.radar, buildRadarMapGlobalsFromRoot(root)),
+    mapHome,
+  );
   const fromAirports = mapAirportsDevicesPayload(root.airports);
   const fromDrones = mapDronesDevicesPayload(root.drones);
   const configAssetBase = mergeConfigAssetBase(
@@ -1683,6 +1725,8 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
   /** 缺省 true：仅当配置显式写 `false` 时关闭助手侧处置方案 WS */
   const chatDisposalPlanWsEnabled = uiRoot?.chatDisposalPlanWsEnabled !== false;
   const softwareCompositionLinks = parseSoftwareCompositionLinks(root);
+  const cameraManagement = mergeCameraManagementWithEnv(parseCameraManagementConfig(root));
+  applyMapFovCameraAllowlistFromCameraManagement(cameraManagement);
   return {
     configAssetBase,
     cameras: camerasBundle,
@@ -1698,7 +1742,8 @@ function parseFullAppConfig(json: unknown): ResolvedAppConfig {
     tdoaActivationEnabled,
     gptInterfaceRightPanel,
     chatDisposalPlanWsEnabled,
-    cameraManagement: mergeCameraManagementWithEnv(parseCameraManagementConfig(root)),
+    cameraManagement,
+    mapHome,
     thirdPartyPosGuide: parseThirdPartyPosGuide(root),
     softwareCompositionLinks,
   };
@@ -2136,6 +2181,7 @@ export async function loadResolvedAppConfig(customUrl?: string): Promise<Resolve
     gptInterfaceRightPanel: false,
     chatDisposalPlanWsEnabled: true,
     cameraManagement: null,
+    mapHome: null,
     thirdPartyPosGuide: {},
     softwareCompositionLinks: [],
   };

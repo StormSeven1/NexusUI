@@ -5,20 +5,15 @@
  * 【数据流】WS(useUnifiedWsFeed) setTracks `useTrackStore(s => s.tracks)` 列表渲染 */
 
 import { useState, useMemo } from "react";
-import { Search, Star, Filter, ChevronDown, ChevronRight } from "lucide-react";
+import { Search, Star, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  PanelTreeGroup,
-  PanelTreeToggleRow,
-} from "@/components/panels/PanelVisibilityTree";
-import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore, getTrackDispositionForRendering, isTrackAlarmLinked } from "@/stores/track-store";
 import { getFusionTrackMarkerFill, resolveTrackPointFill, isAirTrackBirdGlyph } from "@/lib/map-icons";
 import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
-import { LYR_TRACKS, TRACK_LAYER_KEYS_ORDERED, type Track } from "@/lib/map-entity-model";
+import { LYR_TRACKS, trackMapDisplayId, type Track } from "@/lib/map-entity-model";
 import {
   useTrackDisplayStore,
   neutralFusionColorForTrack,
@@ -34,12 +29,6 @@ import {
   TRACK_SUBTYPE_LABELS,
 } from "@/lib/track-layer-visibility";
 
-/** 根据航迹 ID 模式返回列表显示的标识：18.141 显示 trackId，28.9 对空显示 showID，对海显示 trackId */
-function trackDisplayId(track: { showID: string; trackId?: string; type: string }): string {
-  const mode = getTrackIdModeConfig();
-  if (!mode.distinguishSeaAir) return track.trackId ?? track.showID;
-  return track.type === "air" ? track.showID : (track.trackId ?? track.showID);
-}
 
 /**
  * 航向格式化（保留 2 位小数）
@@ -117,7 +106,7 @@ function TrackListRow({
           )}
         </div>
         <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-nexus-text-muted">
-          <span>{trackDisplayId(track)}</span>
+          <span>{trackMapDisplayId(track)}</span>
           <span>·</span>
           <span>
             {track.lat.toFixed(2)}°N, {Math.abs(track.lng).toFixed(2)}°
@@ -140,12 +129,9 @@ export function TrackListPanel() {
   const tracksMasterOn = useAppStore((s) => s.layerVisibility[LYR_TRACKS] !== false);
   const trackSubtypeVisible = useTrackDisplayStore((s) => s.trackSubtypeVisible);
   const airFusionSubtypeVisible = useTrackDisplayStore((s) => s.airFusionSubtypeVisible);
-  const toggleTrackSubtype = useTrackDisplayStore((s) => s.toggleTrackSubtype);
-  const toggleAirFusionSubtype = useTrackDisplayStore((s) => s.toggleAirFusionSubtype);
   const liveTracks = useTrackStore((s) => s.tracks);
   const [search, setSearch] = useState("");
   const [filterStarred, setFilterStarred] = useState(false);
-  const [openSubtypeSection, setOpenSubtypeSection] = useState(true);
 
   const allTracks = useMemo(() => {
     if (!tracksMasterOn) return [];
@@ -200,62 +186,11 @@ export function TrackListPanel() {
           </div>
         </div>
 
-        <div>
-          <button
-            type="button"
-            onClick={() => setOpenSubtypeSection((v) => !v)}
-            className="flex w-full items-center gap-1.5 rounded-md border border-nexus-border/60 bg-nexus-bg-base/40 px-2 py-1.5 text-left hover:bg-nexus-bg-elevated/40"
-          >
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center text-nexus-text-muted">
-              {openSubtypeSection ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            </span>
-            <span className="text-[10px] font-semibold tracking-wide text-nexus-text-secondary">
-              航迹类型（地图显隐）
-            </span>
-          </button>
-          {openSubtypeSection ? (
-            <PanelTreeGroup className="mt-1.5">
-              {TRACK_LAYER_KEYS_ORDERED.map((key) => {
-                const on = trackSubtypeVisible[key] !== false;
-                const showAirChildren = key === "fuse_air";
-                return (
-                  <div key={key}>
-                    <PanelTreeToggleRow
-                      depth={0}
-                      visible={on}
-                      onToggle={() => toggleTrackSubtype(key)}
-                      label={TRACK_SUBTYPE_LABELS[key]}
-                      disabled={!tracksMasterOn}
-                    />
-                    {showAirChildren ? (
-                      <div className={cn(!on && "opacity-75")}>
-                        <PanelTreeToggleRow
-                          depth={1}
-                          visible={airFusionSubtypeVisible.uav !== false}
-                          onToggle={() => toggleAirFusionSubtype("uav")}
-                          label="无人机"
-                          disabled={!tracksMasterOn}
-                        />
-                        <PanelTreeToggleRow
-                          depth={1}
-                          visible={airFusionSubtypeVisible.bird !== false}
-                          onToggle={() => toggleAirFusionSubtype("bird")}
-                          label="鸟"
-                          disabled={!tracksMasterOn}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </PanelTreeGroup>
-          ) : null}
-          {!tracksMasterOn ? (
-            <p className="mt-1.5 text-[9px] leading-snug text-amber-500/90">
-              图层侧「目标」已关闭，地图不绘制航迹；列表亦为空。
-            </p>
-          ) : null}
-        </div>
+        {!tracksMasterOn ? (
+          <p className="text-[9px] leading-snug text-amber-500/90">
+            图层面板「目标图层」已关闭，地图不绘制航迹；列表亦为空。
+          </p>
+        ) : null}
 
         <div className="relative">
           <Search

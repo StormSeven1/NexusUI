@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useEoEntityDetection } from "@/hooks/useEoEntityDetection";
+import { eoDetectionBoxesEqual } from "@/lib/eo-video/detectionSyncUtils";
 import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
 import { EoDetectionOverlay } from "./EoDetectionOverlay";
@@ -30,6 +31,8 @@ export interface EoVideoDetectionLayerProps {
   expandedMode?: boolean;
   /** 与 DDS `trackAlias` 对应的相机 entityId（可与 detection entityId 不同） */
   ddsCameraEntityId?: string;
+  /** false：无人机等场景仅显示框，不拦截拖拽/瞄准 */
+  interactive?: boolean;
 }
 
 /**
@@ -53,6 +56,7 @@ export function EoVideoDetectionLayer({
   videoIntrinsicHeight,
   expandedMode = false,
   ddsCameraEntityId,
+  interactive = true,
 }: EoVideoDetectionLayerProps) {
   const { boxes } = useEoEntityDetection({
     entityId,
@@ -63,11 +67,19 @@ export function EoVideoDetectionLayer({
     onDiagnostic,
     expandedMode,
     ddsCameraEntityId,
+    presentationWidth: videoIntrinsicWidth,
+    presentationHeight: videoIntrinsicHeight,
   });
 
+  const onBoxesChangeRef = useRef(onBoxesChange);
+  onBoxesChangeRef.current = onBoxesChange;
+  const lastNotifiedBoxesRef = useRef(boxes);
+
   useEffect(() => {
-    onBoxesChange?.(boxes);
-  }, [boxes, onBoxesChange]);
+    if (eoDetectionBoxesEqual(lastNotifiedBoxesRef.current, boxes)) return;
+    lastNotifiedBoxesRef.current = boxes;
+    onBoxesChangeRef.current?.(boxes);
+  }, [boxes]);
 
   return (
     <EoDetectionOverlay
@@ -83,6 +95,7 @@ export function EoVideoDetectionLayer({
       videoObjectFit={videoObjectFit}
       videoIntrinsicWidth={videoIntrinsicWidth}
       videoIntrinsicHeight={videoIntrinsicHeight}
+      interactive={interactive}
     />
   );
 }

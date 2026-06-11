@@ -35,23 +35,56 @@ export const PERF_STAGE_LABELS: { key: keyof SystemResponseTimeStats; countKey: 
   { key: "avg_task_dispatch_to_wrjgl_recv_ms", countKey: "task_dispatch_to_wrjgl_recv_count", label: "下发任务 → 设备接收" },
 ];
 
+function formatPerfHttpError(
+  res: Response,
+  raw: string,
+  json: SystemPerfJson | null,
+): string {
+  if (json) {
+    const parts = [
+      json.message,
+      json.error,
+      json.detail,
+      json.backend ? `backend=${json.backend}` : null,
+    ].filter(Boolean);
+    if (parts.length > 0) return parts.join(" · ");
+  }
+  const preview = raw.trim().slice(0, 120);
+  if (preview.startsWith("<!")) {
+    return "接口返回了 HTML 而非 JSON，请确认 Next.js 已配置 /api/system-eval/perf 代理且 Custombackend 已启动";
+  }
+  if (preview === "Internal Server Error") {
+    return "后端 500：Custombackend 可能缺少 grpcio，或 system-evaluation-server 未启动；请重启 Custombackend 并确认 pip 依赖已安装";
+  }
+  return preview ? `HTTP ${res.status}: ${preview}` : `HTTP ${res.status}`;
+}
+
+type SystemPerfJson = SystemPerfApiResponse & { error?: string; detail?: string; backend?: string };
+
 export async function fetchSystemPerfStats(limit = 10): Promise<{
   stats: SystemResponseTimeStats | null;
   error: string | null;
   fetchedAt: string;
 }> {
   const res = await fetch(`/api/system-eval/perf?limit=${limit}`, { cache: "no-store" });
-  const json = (await res.json()) as SystemPerfApiResponse & { error?: string; detail?: string };
+  const raw = await res.text();
+  let json: SystemPerfJson | null = null;
+  try {
+    json = raw.trim() ? (JSON.parse(raw) as SystemPerfJson) : null;
+  } catch {
+    return {
+      stats: null,
+      error: formatPerfHttpError(res, raw, null),
+      fetchedAt: new Date().toISOString(),
+    };
+  }
 
-  if (!res.ok) {
-    const parts = [
-      json.message,
-      json.error,
-      json.detail,
-      (json as { backend?: string }).backend ? `backend=${(json as { backend?: string }).backend}` : null,
-    ].filter(Boolean);
-    const msg = parts.length > 0 ? parts.join(" · ") : `HTTP ${res.status}`;
-    return { stats: null, error: msg, fetchedAt: new Date().toISOString() };
+  if (!res.ok || !json) {
+    return {
+      stats: null,
+      error: formatPerfHttpError(res, raw, json),
+      fetchedAt: new Date().toISOString(),
+    };
   }
 
   const stats = json.data?.stats ?? null;

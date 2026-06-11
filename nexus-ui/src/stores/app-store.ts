@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { ALL_DATA_LAYER_IDS } from "@/lib/map-entity-model";
 import type { VectorLayerPanelItem } from "@/lib/map-2d-basemap-layer-panel";
+import type { RasterLayerPanelItem } from "@/lib/map-2d-raster-layers";
 
 /**
  * app-store — 全局 UI / 地图相关 Zustand 状态
@@ -144,6 +145,10 @@ interface AppState {
   basemapGroupVisible: boolean;
   /** 各底图矢量子图层显隐，键为 `basemapVectorLayers[].id` */
   basemapVectorVisibility: Record<string, boolean>;
+  /** 可选栅格 XYZ 底图（图层面板与矢量底图并列） */
+  basemapRasterLayers: RasterLayerPanelItem[];
+  /** 各栅格底图显隐，键为 `basemapRasterLayers[].id` */
+  basemapRasterVisibility: Record<string, boolean>;
 
   /** 智能体 / 助手消息列表（右侧等消费） */
   agentMessages: AgentMessage[];
@@ -186,12 +191,27 @@ interface AppState {
 
   /** 切换数据图层（`lyr-*`）显隐 */
   toggleLayerVisibility: (layerId: string) => void;
+  /** 设置数据图层显隐 */
+  setLayerVisibility: (layerId: string, visible: boolean) => void;
   /** Map2D load 后写入底图名称与矢量图层列表 */
   setBasemapVectorInfo: (payload: { name: string; layers: VectorLayerPanelItem[] }) => void;
   /** 切换底图矢量组总开关 */
   toggleBasemapGroupVisible: () => void;
+  /** 设置底图矢量组总开关 */
+  setBasemapGroupVisible: (visible: boolean) => void;
+  /** 批量设置底图矢量子图层显隐 */
+  setBasemapVectorLayersVisible: (visible: boolean, layerIds?: string[]) => void;
   /** 切换单条底图矢量子图层 */
   toggleBasemapVectorLayer: (layerId: string) => void;
+  /** Map2D load 后写入栅格底图列表与默认显隐 */
+  setBasemapRasterInfo: (payload: {
+    layers: RasterLayerPanelItem[];
+    defaultVisibility: Record<string, boolean>;
+  }) => void;
+  /** 切换单条栅格底图 */
+  toggleBasemapRasterLayer: (layerId: string) => void;
+  /** 设置单条栅格底图显隐 */
+  setBasemapRasterLayerVisible: (layerId: string, visible: boolean) => void;
 
   /** 追加一条智能体消息（自动生成 id、时间，最多保留 50 条） */
   addAgentMessage: (message: Omit<AgentMessage, "id" | "timestamp">) => void;
@@ -237,6 +257,8 @@ export const useAppStore = create<AppState>()(
   basemapVectorLayers: [],
   basemapGroupVisible: true,
   basemapVectorVisibility: {},
+  basemapRasterLayers: [],
+  basemapRasterVisibility: {},
 
   agentMessages: [],
   selectedAgentMessage: null,
@@ -276,6 +298,11 @@ export const useAppStore = create<AppState>()(
       layerVisibility: { ...s.layerVisibility, [layerId]: !s.layerVisibility[layerId] },
     })),
 
+  setLayerVisibility: (layerId, visible) =>
+    set((s) => ({
+      layerVisibility: { ...s.layerVisibility, [layerId]: visible },
+    })),
+
   setBasemapVectorInfo: ({ name, layers }) =>
     set((s) => {
       const prev = s.basemapVectorVisibility;
@@ -294,6 +321,16 @@ export const useAppStore = create<AppState>()(
   toggleBasemapGroupVisible: () =>
     set((s) => ({ basemapGroupVisible: !s.basemapGroupVisible })),
 
+  setBasemapGroupVisible: (visible) => set({ basemapGroupVisible: visible }),
+
+  setBasemapVectorLayersVisible: (visible, layerIds) =>
+    set((s) => {
+      const ids = layerIds ?? s.basemapVectorLayers.map((l) => l.id);
+      const next = { ...s.basemapVectorVisibility };
+      for (const id of ids) next[id] = visible;
+      return { basemapVectorVisibility: next };
+    }),
+
   toggleBasemapVectorLayer: (layerId) =>
     set((s) => {
       const cur = s.basemapVectorVisibility[layerId] !== false;
@@ -302,6 +339,32 @@ export const useAppStore = create<AppState>()(
         basemapVectorVisibility: { ...s.basemapVectorVisibility, [layerId]: next },
       };
     }),
+
+  setBasemapRasterInfo: ({ layers, defaultVisibility }) =>
+    set((s) => {
+      const prev = s.basemapRasterVisibility;
+      const nextVis: Record<string, boolean> = {};
+      for (const l of layers) {
+        nextVis[l.id] = prev[l.id] ?? defaultVisibility[l.id] ?? false;
+      }
+      return {
+        basemapRasterLayers: layers,
+        basemapRasterVisibility: nextVis,
+      };
+    }),
+
+  toggleBasemapRasterLayer: (layerId) =>
+    set((s) => {
+      const cur = s.basemapRasterVisibility[layerId] !== false;
+      return {
+        basemapRasterVisibility: { ...s.basemapRasterVisibility, [layerId]: !cur },
+      };
+    }),
+
+  setBasemapRasterLayerVisible: (layerId, visible) =>
+    set((s) => ({
+      basemapRasterVisibility: { ...s.basemapRasterVisibility, [layerId]: visible },
+    })),
 
   addAgentMessage: (message) =>
     set((s) => ({
@@ -342,10 +405,14 @@ export const useAppStore = create<AppState>()(
         layerVisibility: s.layerVisibility,
         basemapGroupVisible: s.basemapGroupVisible,
         basemapVectorVisibility: s.basemapVectorVisibility,
+        basemapRasterVisibility: s.basemapRasterVisibility,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<
-          Pick<AppState, "layerVisibility" | "basemapGroupVisible" | "basemapVectorVisibility">
+          Pick<
+            AppState,
+            "layerVisibility" | "basemapGroupVisible" | "basemapVectorVisibility" | "basemapRasterVisibility"
+          >
         >;
         return {
           ...current,
@@ -357,6 +424,10 @@ export const useAppStore = create<AppState>()(
           basemapVectorVisibility: {
             ...current.basemapVectorVisibility,
             ...(p.basemapVectorVisibility ?? {}),
+          },
+          basemapRasterVisibility: {
+            ...current.basemapRasterVisibility,
+            ...(p.basemapRasterVisibility ?? {}),
           },
         };
       },

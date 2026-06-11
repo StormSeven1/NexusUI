@@ -27,7 +27,7 @@ function defaultSecondsByLayer(defaultSec: number): Record<TrackLayerKey, number
 }
 
 function layerUsesAirDisplayDefaults(key: TrackLayerKey): boolean {
-  return key === "fuse_air" || key === "bird_radar" || key === "uav_pose_track";
+  return key === "fuse_air" || key === "bird_radar" || key === "fanwu_car_radar" || key === "uav_pose_track";
 }
 
 /** 尾迹长度（秒）换算为保留点数时，假定相邻采样间隔（秒）；仅前端展示裁剪，不改动 track-store */
@@ -60,6 +60,9 @@ export interface TrackDisplayState {
   setTrailLengthSecondsForLayer: (key: TrackLayerKey, s: number) => void;
   toggleTrackSubtype: (key: TrackLayerKey) => void;
   toggleAirFusionSubtype: (key: AirFusionSubtypeKey) => void;
+  setTrackSubtypeVisible: (key: TrackLayerKey, visible: boolean) => void;
+  setAirFusionSubtypesVisible: (visible: boolean) => void;
+  setAllTrackSubtypesVisible: (visible: boolean) => void;
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -168,6 +171,24 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
           },
           displayRevision: s.displayRevision + 1,
         })),
+      setTrackSubtypeVisible: (key, visible) =>
+        set((s) => ({
+          trackSubtypeVisible: { ...s.trackSubtypeVisible, [key]: visible },
+          displayRevision: s.displayRevision + 1,
+        })),
+      setAirFusionSubtypesVisible: (visible) =>
+        set((s) => ({
+          airFusionSubtypeVisible: { uav: visible, bird: visible },
+          displayRevision: s.displayRevision + 1,
+        })),
+      setAllTrackSubtypesVisible: (visible) =>
+        set((s) => ({
+          trackSubtypeVisible: Object.fromEntries(
+            TRACK_LAYER_KEYS_ORDERED.map((k) => [k, visible]),
+          ) as Record<TrackLayerKey, boolean>,
+          airFusionSubtypeVisible: { uav: visible, bird: visible },
+          displayRevision: s.displayRevision + 1,
+        })),
     }),
     {
       name: STORAGE_KEY,
@@ -251,7 +272,7 @@ export function neutralFusionColorForTrack(
 ): string {
   if (track.type === "underwater") return sea;
   const lk = resolveTrackLayerKey(track);
-  if (lk === "fuse_air" || lk === "bird_radar") return air;
+  if (lk === "fuse_air" || lk === "bird_radar" || lk === "fanwu_car_radar") return air;
   if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track") {
     return sea;
   }

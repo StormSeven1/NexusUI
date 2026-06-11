@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import { toast } from "sonner";
-import { Boxes, Camera, ClipboardCheck, Home, Video, ChevronDown, Zap, Activity } from "lucide-react";
+import { Camera, ClipboardCheck, Video } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
@@ -11,17 +10,12 @@ import {
   startDailyVerificationWorkflow,
   terminateDailyVerificationThreads,
 } from "@/lib/daily-verification-workflow";
-import { useUavQuickContextStore } from "@/stores/uav-quick-context-store";
-import { postUavControlAction } from "@/lib/eo-video/uavControlClient";
-import { getHttpChatConfig, type SoftwareCompositionLinkItem } from "@/lib/map-app-config";
-import { getAllFleetAirportSNs, primaryDroneSnForAirport } from "@/lib/uav-fleet-airports";
+import { getHttpChatConfig } from "@/lib/map-app-config";
 import {
   captureScreenOnceToPng,
   startTopNavScreenRecording,
   stopTopNavScreenRecording,
 } from "@/lib/top-nav-capture";
-import { SystemFunctionsMenu } from "@/components/eo-video/EoVideoTopLauncher";
-import { NetworkStatsDialog } from "@/components/layout/NetworkStatsDialog";
 
 function quickBtnClass(active?: boolean) {
   return cn(
@@ -41,71 +35,10 @@ export function TopNavQuickActions() {
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
   const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar);
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
-  const lastAirportSN = useUavQuickContextStore((s) => s.lastAirportSN);
-  const lastDeviceSN = useUavQuickContextStore((s) => s.lastDeviceSN);
 
-  const [links, setLinks] = useState<SoftwareCompositionLinkItem[]>([]);
-  const [softOpen, setSoftOpen] = useState(false);
-  const softBtnRef = useRef<HTMLButtonElement>(null);
-  const softMenuRef = useRef<HTMLUListElement>(null);
-  const [softAnchor, setSoftAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
-  const [returnBusy, setReturnBusy] = useState(false);
-  const [hotbackBusy, setHotbackBusy] = useState(false);
   const [screenRecording, setScreenRecording] = useState(false);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [dailyVerifyBusy, setDailyVerifyBusy] = useState(false);
-  const [networkStatsOpen, setNetworkStatsOpen] = useState(false);
-
-  useEffect(() => {
-    void useAppConfigStore
-      .getState()
-      .ensureLoaded()
-      .then((c) => setLinks(c.softwareCompositionLinks ?? []))
-      .catch(() => setLinks([]));
-  }, []);
-
-  const updateSoftAnchor = useCallback(() => {
-    const el = softBtnRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setSoftAnchor({
-      left: Math.max(8, r.right - 200),
-      top: r.bottom + 4,
-      width: Math.max(200, r.width),
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!softOpen) return;
-    updateSoftAnchor();
-    const onScroll = () => setSoftOpen(false);
-    const onResize = () => updateSoftAnchor();
-    window.addEventListener("scroll", onScroll, true);
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("resize", onResize);
-    };
-  }, [softOpen, updateSoftAnchor]);
-
-  useEffect(() => {
-    if (!softOpen) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (softBtnRef.current?.contains(t)) return;
-      if (softMenuRef.current?.contains(t)) return;
-      setSoftOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSoftOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [softOpen]);
 
   /** 与 Qt `sig_dailyHandleToggled` → `ThreatListTable::sendDailyHandleTask` / `stopDailyHandleTask`（工作流模式 1）一致 */
   const onToggleDailyVerification = async () => {
@@ -154,54 +87,6 @@ export function TopNavQuickActions() {
     }
   };
 
-  const onReturnAllDrones = async () => {
-    const airports = getAllFleetAirportSNs(lastAirportSN).sort();
-    setReturnBusy(true);
-    try {
-      for (const ap of airports) {
-        const device =
-          primaryDroneSnForAirport(ap) ??
-          (lastAirportSN?.trim() === ap ? lastDeviceSN?.trim() || undefined : undefined);
-        try {
-          await postUavControlAction({
-            action: "back",
-            airportSN: ap,
-            deviceSN: device,
-          });
-        } catch {
-          // 不提示失败
-        }
-      }
-      toast.success("一键返航成功");
-    } finally {
-      setReturnBusy(false);
-    }
-  };
-
-  const onHotbackAll = async () => {
-    const airports = getAllFleetAirportSNs(lastAirportSN).sort();
-    setHotbackBusy(true);
-    try {
-      for (const ap of airports) {
-        const device =
-          primaryDroneSnForAirport(ap) ??
-          (lastAirportSN?.trim() === ap ? lastDeviceSN?.trim() || undefined : undefined);
-        try {
-          await postUavControlAction({
-            action: "hotback",
-            airportSN: ap,
-            deviceSN: device,
-          });
-        } catch {
-          // 不提示失败
-        }
-      }
-      toast.success("一键热备成功");
-    } finally {
-      setHotbackBusy(false);
-    }
-  };
-
   const onScreenshot = async () => {
     if (!navigator.mediaDevices?.getDisplayMedia) {
       toast.error("截屏不可用", { description: "当前浏览器不支持屏幕共享 API" });
@@ -245,63 +130,8 @@ export function TopNavQuickActions() {
     }
   };
 
-  const openSoftwareLink = (url: string) => {
-    try {
-      window.open(url, "_blank", "noopener,noreferrer");
-    } catch {
-      toast.error("无法打开链接", { description: url });
-    }
-    setSoftOpen(false);
-  };
-
-  const softMenu =
-    softOpen &&
-    softAnchor &&
-    typeof document !== "undefined" &&
-    createPortal(
-      <ul
-        ref={softMenuRef}
-        role="menu"
-        className="fixed z-[600] max-h-[min(320px,70vh)] overflow-y-auto rounded-md border border-nexus-border bg-nexus-bg-elevated py-1 text-xs shadow-xl"
-        style={{
-          left: softAnchor.left,
-          top: softAnchor.top,
-          minWidth: softAnchor.width,
-        }}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {links.length === 0 ? (
-          <li className="px-3 py-2 text-nexus-text-muted">未配置外链（app-config.json → softwareCompositionLinks）</li>
-        ) : (
-          links.map((item) => (
-            <li key={`${item.label}-${item.url}`} role="none">
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10"
-                onClick={() => openSoftwareLink(item.url)}
-              >
-                {item.label}
-              </button>
-            </li>
-          ))
-        )}
-      </ul>,
-      document.body,
-    );
-
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <button
-        type="button"
-        className={quickBtnClass(networkStatsOpen)}
-        title="各数据源接收间隔（态势 WS、库表、光电检测、MQTT 等）"
-        onClick={() => setNetworkStatsOpen(true)}
-      >
-        <Activity size={13} />
-        <span className="hidden xl:inline">数据状态</span>
-      </button>
-
       <button
         type="button"
         className={quickBtnClass(dailyVerificationEnabled)}
@@ -312,52 +142,6 @@ export function TopNavQuickActions() {
         <ClipboardCheck size={13} />
         <span className="hidden xl:inline">{dailyVerifyBusy ? "查证…" : "日常查证"}</span>
       </button>
-
-      <button
-        type="button"
-        className={quickBtnClass(false)}
-        disabled={returnBusy}
-        title="对当前 WS 中全部机场依次下发返航（与 Qt uavctrlboard 单机场返航接口相同，逐台执行）"
-        onClick={() => void onReturnAllDrones()}
-      >
-        <Home size={13} />
-        <span className="hidden xl:inline">一键返航</span>
-      </button>
-
-      <button
-        type="button"
-        className={quickBtnClass(false)}
-        disabled={hotbackBusy}
-        title="对全部机场依次下发热备（debug_mode_open，与 Qt 热备按钮一致）"
-        onClick={() => void onHotbackAll()}
-      >
-        <Zap size={13} />
-        <span className="hidden xl:inline">一键热备</span>
-      </button>
-
-      <SystemFunctionsMenu />
-
-      <div className="relative flex items-center">
-        <button
-          ref={softBtnRef}
-          type="button"
-          className={quickBtnClass(softOpen)}
-          title="打开各管理子系统页面（URL 见 app-config.json）"
-          aria-expanded={softOpen}
-          onClick={() => {
-            if (softOpen) setSoftOpen(false);
-            else {
-              updateSoftAnchor();
-              setSoftOpen(true);
-            }
-          }}
-        >
-          <Boxes size={13} />
-          <span className="hidden xl:inline">软件组成</span>
-          <ChevronDown className={cn("h-3 w-3 shrink-0 opacity-70", softOpen && "rotate-180")} />
-        </button>
-        {softMenu}
-      </div>
 
       <button
         type="button"
@@ -379,8 +163,6 @@ export function TopNavQuickActions() {
         <Video size={13} />
         <span className="hidden xl:inline">{screenRecording ? "录屏中" : "录屏"}</span>
       </button>
-
-      <NetworkStatsDialog open={networkStatsOpen} onClose={() => setNetworkStatsOpen(false)} />
     </div>
   );
 }

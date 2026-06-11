@@ -21,6 +21,7 @@ BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 TRACK_WS_BACKEND_PORT="${TRACK_WS_BACKEND_PORT:-${BACKEND_PORT}}"
 MQTT_WS_BACKEND_PORT="${MQTT_WS_BACKEND_PORT:-8083}"
 EO_DETECTION_WS_BACKEND_PORT="${EO_DETECTION_WS_BACKEND_PORT:-2088}"
+TRACK_EVAL_WS_BACKEND_PORT="${TRACK_EVAL_WS_BACKEND_PORT:-12600}"
 APP_CONTAINER_NAME="${APP_CONTAINER_NAME:-xk_docker_prod}"
 NGINX_CONTAINER_NAME="${NGINX_CONTAINER_NAME:-xk_nginx_prod}"
 NGINX_IMAGE="${NGINX_IMAGE:-nginx:alpine}"
@@ -43,6 +44,26 @@ chmod +x "$ROOT/docker/apply-app-config-endpoints.sh" 2>/dev/null || true
 _cfg_host="${APP_CONFIG_LAN_HOST:-${_tunnel_ip}}"
 echo "== 写入 nexus-ui/public/app-config.prod.json（生产: API ${BACKEND_PORT} / 航迹 WS ${TRACK_WS_BACKEND_PORT} @ ${_cfg_host}）=="
 APP_CONFIG_OUT=app-config.prod.json "$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BACKEND_PORT" "$TRACK_WS_BACKEND_PORT"
+
+DO_SKIP_FRONTEND_BUILD=0
+PROD_START_ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --no-build) DO_SKIP_FRONTEND_BUILD=1 ;;
+    *) PROD_START_ARGS+=("$a") ;;
+  esac
+done
+
+if [[ "$DO_SKIP_FRONTEND_BUILD" -eq 0 ]]; then
+  echo "== 宿主机 prod-build（NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL}）=="
+  NEXT_PUBLIC_WS_USE_NGINX_TUNNEL="${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL}" \
+  NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT="${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT}" \
+  BACKEND_PORT="${BACKEND_PORT}" \
+  BACKEND_URL="${BACKEND_URL}" \
+  "$ROOT/prod-build.sh"
+else
+  echo "== 跳过宿主机 prod-build（--no-build）=="
+fi
 
 NGINX_DIR="$ROOT/docker/nginx"
 CERT_DIR="$NGINX_DIR/certs"
@@ -77,6 +98,7 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_session_timeout 10m;
     ssl_session_cache shared:SSL:10m;
+    client_max_body_size 100m;
 
     location /wss-track/ {
         proxy_pass http://${TRACK_WS_BACKEND_HOST}:${TRACK_WS_BACKEND_PORT}/;
@@ -108,6 +130,20 @@ server {
 
     location /wss-detection/ {
         proxy_pass http://127.0.0.1:${EO_DETECTION_WS_BACKEND_PORT}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_buffering off;
+    }
+
+    location /wss-track-eval/ {
+        proxy_pass http://127.0.0.1:${TRACK_EVAL_WS_BACKEND_PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -158,12 +194,34 @@ server {
 }
 EOF
 
+wait_tcp_port() {
+  local port="$1"
+  local label="$2"
+  local max_sec="${WAIT_UPSTREAM_SEC:-900}"
+  local deadline=$((SECONDS + max_sec))
+  echo "等待 ${label} 监听 127.0.0.1:${port}（最多 ${max_sec}s，含容器内 npm run build）..."
+  while (( SECONDS < deadline )); do
+    if ss -tln 2>/dev/null | grep -qE ":${port}( |$)"; then
+      echo "✅ ${label} 已就绪（:${port}）"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "错误: ${label} 未在 ${max_sec}s 内监听 :${port}。查看: docker logs -f ${APP_CONTAINER_NAME}" >&2
+  return 1
+}
+
 echo "启动应用容器（前端内部端口 ${INTERNAL_FRONTEND_PORT}，后端 ${BACKEND_PORT}）..."
+# 先停 Nginx，避免 build 期间旧反代仍对外 22401 但 upstream 已断开 → 502
+docker rm -f "$NGINX_CONTAINER_NAME" 2>/dev/null || true
 FRONTEND_PORT="${INTERNAL_FRONTEND_PORT}" \
 BACKEND_PORT="${BACKEND_PORT}" \
 BACKEND_URL="${BACKEND_URL}" \
 NEXUS_DOCKER_NAME="${APP_CONTAINER_NAME}" \
-"$ROOT/prod-start.sh"
+"$ROOT/prod-start.sh" "${PROD_START_ARGS[@]}"
+
+wait_tcp_port "${BACKEND_PORT}" "Custombackend"
+wait_tcp_port "${INTERNAL_FRONTEND_PORT}" "Next.js (next start)"
 
 echo "启动 Nginx HTTPS 容器（外部端口 ${PUBLIC_HTTPS_PORT}）..."
 # 对已挂载的单文件改动若用 sed -i「原地换 inode」，仅 nginx -s reload 仍看得到旧副本，须 rm 后重建本容器。

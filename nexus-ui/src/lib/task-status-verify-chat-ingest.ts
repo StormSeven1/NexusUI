@@ -13,6 +13,7 @@ import {
   type TaskVerifyJudgmentState,
 } from "@/lib/task-status-judgment-ui";
 import type { TaskStatusChatPayload } from "@/lib/task-status-types";
+import { resolveVerifyTargetIdFromPayload } from "@/lib/task-status-verify-target-id";
 import { useAssistantPanelSessionStore } from "@/stores/assistant-panel-session-store";
 
 /** 上游 JSON 偶发把 taskStatus/trackID 等打成字符串，与严格 `=== 4` 分支对齐 */
@@ -33,10 +34,13 @@ function normalizeTaskStatusPayload(raw: TaskStatusChatPayload): TaskStatusChatP
       ? Number(raw.cameraIndex)
       : undefined;
   const entityId = typeof raw.entityId === "string" ? raw.entityId.trim() : "";
+  const verifyTargetId = resolveVerifyTargetIdFromPayload(raw);
   return {
     ...raw,
     taskStatus: Number.isFinite(ts) ? ts : raw.taskStatus,
     trackID,
+    verifyTargetId,
+    uniqueId: verifyTargetId ?? raw.uniqueId,
     entityId: entityId || undefined,
     cameraIndex,
     alarmId: String(raw.alarmId ?? "").trim(),
@@ -86,10 +90,13 @@ export function clearTaskStatusVerifyChatSession(): void {
 export function ingestTaskStatusChatPayload(raw: TaskStatusChatPayload): void {
   try {
     const payload = normalizeTaskStatusPayload(raw);
-    const sessionKey = taskStatusVerifySessionKey(payload.trackID ?? undefined, {
-      entityId: payload.entityId,
-      cameraIndex: payload.cameraIndex,
-    });
+    const sessionKey = taskStatusVerifySessionKey(
+      payload.verifyTargetId ?? payload.uniqueId ?? payload.trackID ?? undefined,
+      {
+        entityId: payload.entityId,
+        cameraIndex: payload.cameraIndex,
+      },
+    );
     const patchMessages = useAssistantPanelSessionStore.getState().patchMessages;
     const ts = payload.taskStatus;
 

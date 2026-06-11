@@ -6,15 +6,41 @@ import { Map as MapIcon, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 // import { MiniMap } from "./MiniMap"; // 小地图暂隐藏，恢复时取消注释
 
-const Map2D = dynamic(() => import("./Map2D").then((m) => m.Map2D), {
-  ssr: false,
-  loading: () => <MapPlaceholder />,
-});
+/** dev 热更新 / 容器重启后浏览器可能仍引用旧 chunk，自动刷新一次 */
+function importWithChunkRetry<T>(loader: () => Promise<T>): Promise<T> {
+  return loader().catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    const name = err instanceof Error ? err.name : "";
+    const isChunk =
+      name === "ChunkLoadError" || /Failed to load chunk|Loading chunk .* failed/i.test(msg);
+    if (isChunk && typeof window !== "undefined") {
+      const key = "nexus-ui:chunk-reload";
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, "1");
+        window.location.reload();
+        return new Promise<T>(() => {});
+      }
+      sessionStorage.removeItem(key);
+    }
+    throw err;
+  });
+}
 
-const Map3D = dynamic(() => import("./Map3D").then((m) => m.Map3D), {
-  ssr: false,
-  loading: () => <MapPlaceholder />,
-});
+const Map2D = dynamic(
+  () => importWithChunkRetry(() => import("./Map2D").then((m) => m.Map2D)),
+  {
+    ssr: false,
+    loading: () => <MapPlaceholder />,
+  },
+);
+
+const Map3D = dynamic(
+  () => importWithChunkRetry(() => import("./Map3D").then((m) => m.Map3D)),
+  {
+    ssr: false,
+    loading: () => <MapPlaceholder />,
+  },
+);
 
 function MapPlaceholder() {
   return (

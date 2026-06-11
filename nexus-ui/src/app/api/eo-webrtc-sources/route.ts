@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { getCameraEntityBaseUrl } from "@/lib/entityUpstream";
 import { signalingUrlFromWebrtcUrl } from "@/lib/eo-video/buildSignalingUrl";
 
 interface ZOthersConfig {
@@ -11,8 +12,6 @@ interface EntityRow {
   aliases?: { name?: unknown };
   sensorParameters?: { url?: unknown };
 }
-
-const DEFAULT_ENTITY_BASE = "http://192.168.18.141:8088";
 
 function cameraIdByIndex(i: number): string {
   return `camera_${String(i).padStart(3, "0")}`;
@@ -53,11 +52,7 @@ export async function GET() {
     const text = await readFile(cfgPath, "utf-8");
     const raw = JSON.parse(text) as ZOthersConfig;
     const list = Array.isArray(raw.uavCameras) ? raw.uavCameras : [];
-    const entityBase = (
-      process.env.NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL ??
-      process.env.CAMERA_ENTITY_BASE_URL ??
-      DEFAULT_ENTITY_BASE
-    ).replace(/\/$/, "");
+    const entityBase = getCameraEntityBaseUrl();
     const entityRows = await Promise.all(list.map((_, i) => fetchEntityStream(entityBase, cameraIdByIndex(i))));
     const streams = list
       .map((item, i) => {

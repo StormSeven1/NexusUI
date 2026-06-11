@@ -1,11 +1,7 @@
 /**
  * 二维底图（仅此模块；Map2D / MiniMap 只 import `getMaplibreBaseMapOptions`）
  *
- * 不设任何代码内默认值：必须在 `nexus-ui/.env.local` 中显式配置（见 `.env.example`）：
- * - `NEXT_PUBLIC_MAP2D_STYLE_URL` — 主图样式 JSON（二维底图来源）
- * - `NEXT_PUBLIC_MAP2D_MINI_STYLE_URL` — 小地图样式 JSON（可与主图相同，如离线时两行都写 `/map-styles/offline-map.json`）
- * - `NEXT_PUBLIC_MAP2D_INITIAL_CENTER` — 初始中心 `经度,纬度`
- * - `NEXT_PUBLIC_MAP2D_INITIAL_ZOOM` — 初始缩放级别（数字）
+ * Home 点：优先 `app-config.json` → `mapHome`（见 `map-home-config.ts`）；未配时回退 `.env.local` 的 `NEXT_PUBLIC_MAP2D_INITIAL_*`。
  *
  * 在线示例值见 `.env.example`；离线：样式指 `public/map-styles/` 下 JSON，PMTiles 地址写在 JSON 的 `pmtiles://...` 里。
  */
@@ -13,6 +9,7 @@
 import maplibregl from "maplibre-gl";
 import type { SourceSpecification, TransformStyleFunction } from "maplibre-gl";
 import { Protocol } from "pmtiles";
+import { resolveMap2dHomeView, type AppConfigMapHome } from "@/lib/map-home-config";
 
 /**
  * Next.js 只会把「写死的」`process.env.NEXT_PUBLIC_*` 打进客户端包；
@@ -36,37 +33,6 @@ function requirePublicMapMiniStyleUrl(): string {
     );
   }
   return v;
-}
-
-function parseRequiredCenter(raw: string | undefined): [number, number] {
-  const s = raw?.trim();
-  if (!s) {
-    throw new Error(
-      "[map-basemap] 缺少 NEXT_PUBLIC_MAP2D_INITIAL_CENTER。请在 .env.local 中设为 经度,纬度，参见 .env.example。"
-    );
-  }
-  const parts = s.split(/[,\s]+/).map(Number);
-  if (parts.length < 2 || !parts.slice(0, 2).every((n) => Number.isFinite(n))) {
-    throw new Error(
-      `[map-basemap] NEXT_PUBLIC_MAP2D_INITIAL_CENTER 格式无效，应为 经度,纬度，当前: ${raw}`
-    );
-  }
-  return [parts[0]!, parts[1]!];
-}
-function parseRequiredZoom(raw: string | undefined): number {
-  const s = raw?.trim();
-  if (!s) {
-    throw new Error(
-      "[map-basemap] 缺少 NEXT_PUBLIC_MAP2D_INITIAL_ZOOM。请在 .env.local 中设为数字，参见 .env.example。"
-    );
-  }
-  const n = Number(s);
-  if (!Number.isFinite(n)) {
-    throw new Error(
-      `[map-basemap] NEXT_PUBLIC_MAP2D_INITIAL_ZOOM 格式无效，应为数字，当前: ${raw}`
-    );
-  }
-  return n;
 }
 
 /* ─── PMTiles 协议（style 里 pmtiles://...）─── */
@@ -139,7 +105,10 @@ export function getMaplibreTransformStyle(kind: "main" | "mini"): TransformStyle
 
 /* ─── 对外：创建 Map 时 spread（不含 style，需再 setStyle + transformStyle）─── */
 
-export function getMaplibreBaseMapOptions(kind: "main" | "mini"): {
+export function getMaplibreBaseMapOptions(
+  kind: "main" | "mini",
+  mapHome?: AppConfigMapHome | null,
+): {
   style: string;
   center: [number, number];
   zoom: number;
@@ -147,8 +116,7 @@ export function getMaplibreBaseMapOptions(kind: "main" | "mini"): {
 } {
   const mainStyle = requirePublicMapStyleUrl();
   const miniStyle = requirePublicMapMiniStyleUrl();
-  const center = parseRequiredCenter(process.env.NEXT_PUBLIC_MAP2D_INITIAL_CENTER);
-  const zoom = parseRequiredZoom(process.env.NEXT_PUBLIC_MAP2D_INITIAL_ZOOM);
+  const { center, zoom } = resolveMap2dHomeView(mapHome);
 
   ensurePmtilesProtocol();
   const style = kind === "mini" ? miniStyle : mainStyle;

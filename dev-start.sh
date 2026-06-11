@@ -5,22 +5,21 @@
 #   chmod +x dev-start.sh   # 首次
 #   ./dev-start.sh
 #   ./dev-start.sh --pull     # 启动前 git pull --ff-only（需 .git）
-#   ./dev-start.sh --rebuild  # 容器内删 nexus-ui/.next、npm install，后端 pip install --upgrade
+#   ./dev-start.sh --rebuild  # 删除整个 nexus-ui/.next 并刷新依赖（默认仅清 .next/dev，保留生产 server/）
 #
 # 环境变量（可选）:
 #   NEXUS_DOCKER_IMAGE   默认 xk_docker:latest（须能 import fastdds，航迹 DDS 才工作；否则会跳过全部 DDS）
 #   NEXUS_DOCKER_NAME    默认 xk_docker
 #   BACKEND_PORT         默认 27003
 #   FRONTEND_PORT        默认 22301（与 nexus-ui/.env.local 中 PORT 一致为宜）
-#   FRONTEND_HTTPS_SAN_IP  可选，写入 dev 证书 SAN；默认取 nexus-ui/next.config.ts allowedDevOrigins 首项
+#   FRONTEND_HTTPS_SAN_IP  可选，写入 dev 证书 SAN；默认 site-host.env → SITE_LAN_HOST
+#   APP_CONFIG_LAN_HOST  可选，覆盖 site-host.env 写入 app-config.dev.json 的主机
 #   BACKEND_URL          默认 http://127.0.0.1:${BACKEND_PORT}
 #   BACKEND_ONLY=1       仅起 Custombackend
 #   NEXUS_DOCKER_NO_KILL=1  不尝试 fuser 释放 FRONTEND_PORT
 #   NEXUS_PY_SKIP_INSTALL=1  跳过容器内 pip install（默认：非 --rebuild 时跳过，避免阻塞 uvicorn）
-#   NEXT_PUBLIC_WS_USE_NGINX_TUNNEL  默认 false（直连 app-config 的 ws，与同时跑的 prod HTTPS+Nginx 不冲突）。
-#                                   若 dev 页也必须走 :22401 隧道，可先 export NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=true 再执行本脚本。
-#   NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT  隧道为真时设为 <本机IP>:22401（与 prod-start-nginx 的 HTTPS 端口一致）
-#   APP_CONFIG_LAN_HOST  可选，写入 public/app-config.dev.json 的主机（默认 hostname -I 首地址）
+#   NEXT_PUBLIC_WS_USE_NGINX_TUNNEL  默认 false
+#   NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT  隧道为真时设为 <现场IP>:22401
 #   开发/生产并行：端点写入 app-config.dev.json，不覆盖 app-config.prod.json（见 prod-start-nginx.sh）
 
 set -euo pipefail
@@ -48,18 +47,41 @@ for a in "$@"; do
 done
 
 IMG="${NEXUS_DOCKER_IMAGE:-xk_docker:latest}"
-NAME="${NEXUS_DOCKER_NAME:-xk_docker}"
-BP="${BACKEND_PORT:-27003}"
-FP="${FRONTEND_PORT:-22301}"
-BU="${BACKEND_URL:-http://127.0.0.1:${BP}}"
 
-# 用 https://<局域网IP> 打开前端时，证书 SAN 须含该 IP。未设置则取 nexus-ui/next.config.ts 里 allowedDevOrigins 的首项。
-if [[ -z "${FRONTEND_HTTPS_SAN_IP:-}" ]] && [[ -f "$ROOT/nexus-ui/next.config.ts" ]]; then
-  FRONTEND_HTTPS_SAN_IP="$(sed -n 's/.*allowedDevOrigins:[[:space:]]*\["\([^"]*\)"\].*/\1/p' "$ROOT/nexus-ui/next.config.ts" | head -1)"
+# 现场 IP / 端口 / 容器名：site-host.env（18.141 与 28.9 各一套，可并行）
+# shellcheck source=docker/read-site-host.sh
+source "$ROOT/docker/read-site-host.sh"
+if [[ -f "$ROOT/site-host.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT/site-host.env"
+fi
+_site_host="${APP_CONFIG_LAN_HOST:-${SITE_LAN_HOST:-$(read_site_lan_host "$ROOT")}}"
+if [[ -z "${_site_host:-}" ]]; then
+  _site_host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+fi
+[[ -n "${_site_host:-}" ]] || _site_host="127.0.0.1"
+_access_host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[[ -n "${_access_host:-}" ]] || _access_host="127.0.0.1"
+NAME="${NEXUS_DOCKER_NAME:-xk_docker}"
+BP="${BACKEND_PORT:-${DEV_BACKEND_PORT:-27003}}"
+FP="${FRONTEND_PORT:-${DEV_FRONTEND_PORT:-22301}}"
+BU="${BACKEND_URL:-http://127.0.0.1:${BP}}"
+if [[ -z "${FRONTEND_HTTPS_SAN_IP:-}" ]]; then
+  if [[ "${_access_host}" != "${_site_host}" ]]; then
+    FRONTEND_HTTPS_SAN_IP="${_access_host},${_site_host}"
+  else
+    FRONTEND_HTTPS_SAN_IP="${_access_host}"
+  fi
 fi
 
 echo "== NexusUI dev-start =="
 echo "仓库: $ROOT"
+echo "现场 IP（site-host.env）: ${_site_host}"
+if [[ "${_access_host}" != "${_site_host}" ]]; then
+  echo "⚠️  本机 IP=${_access_host}，与 site-host.env 的 ${_site_host} 不一致。"
+  echo "    本脚本应在 ${_site_host} 机器上执行；在其它机器跑只会起本地 Docker，浏览器请用 https://${_access_host}:${FP}/"
+  echo "    要访问 https://${_site_host}:${FP}/ 请 SSH 到 ${_site_host} 再执行 dev-start.sh。"
+fi
 echo "镜像: $IMG | 容器名: $NAME | 后端端口: $BP | 前端端口: $FP"
 echo "NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-false}（Docker -e 注入，覆盖 .env.local，可与 prod-start-nginx 并行）"
 echo "NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT=${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-（未设置）}"
@@ -100,10 +122,40 @@ fi
 chmod +x "$START_SH" 2>/dev/null || true
 chmod +x "$ROOT/docker/apply-app-config-endpoints.sh" 2>/dev/null || true
 
-_cfg_host="${APP_CONFIG_LAN_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
-[[ -n "${_cfg_host:-}" ]] || _cfg_host="127.0.0.1"
+# app-config 主机：site-host.env 绑定的现场 IP
+_cfg_host="${_site_host}"
 echo "== 写入 nexus-ui/public/app-config.dev.json（开发: ${_cfg_host}:${BP}）=="
 APP_CONFIG_OUT=app-config.dev.json "$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BP"
+
+_next_dir="$ROOT/nexus-ui/.next"
+if [[ "$DO_REBUILD" -eq 1 && -d "$_next_dir" ]]; then
+  echo "== --rebuild：宿主机清理整个 nexus-ui/.next =="
+  if ! rm -rf "$_next_dir" 2>/dev/null; then
+    _next_bak="${_next_dir}.bak.$(date +%s)"
+    echo "⚠️  rm 失败，重命名为 $(basename "$_next_bak")（多为文件被占用）"
+    mv "$_next_dir" "$_next_bak" || {
+      echo "错误: 无法移动 $_next_dir。请先 docker rm -f ${NAME} 再执行: mv nexus-ui/.next nexus-ui/.next.old" >&2
+      exit 1
+    }
+    rm -rf "$_next_bak" 2>/dev/null &
+  fi
+elif [[ -f "$_next_dir/BUILD_ID" && -d "$_next_dir/server" ]]; then
+  if [[ -d "$_next_dir/dev" ]]; then
+    echo "== 宿主机清理 nexus-ui/.next/dev（保留生产构建，可与 prod 并行）=="
+    rm -rf "$_next_dir/dev" 2>/dev/null || true
+  fi
+elif [[ -d "$_next_dir" ]]; then
+  echo "== 宿主机清理 nexus-ui/.next（无完整生产构建）=="
+  if ! rm -rf "$_next_dir" 2>/dev/null; then
+    _next_bak="${_next_dir}.bak.$(date +%s)"
+    echo "⚠️  rm 失败，重命名为 $(basename "$_next_bak")（多为文件被占用）"
+    mv "$_next_dir" "$_next_bak" || {
+      echo "错误: 无法移动 $_next_dir。请先 docker rm -f ${NAME} 再执行: mv nexus-ui/.next nexus-ui/.next.old" >&2
+      exit 1
+    }
+    rm -rf "$_next_bak" 2>/dev/null &
+  fi
+fi
 
 echo "== 重建容器并挂载 /workspace =="
 docker rm -f "$NAME" 2>/dev/null || true
@@ -114,6 +166,7 @@ fi
 
 docker run -d \
   --name "$NAME" \
+  --user 0:0 \
   --network host \
   --cgroupns=host \
   -e DEV_MODE=1 \
@@ -149,7 +202,8 @@ fi
 
 echo ""
 echo "已启动容器: $NAME"
-echo "  前端:     https://127.0.0.1:${FP}  （自签证书；局域网用本机 IP:${FP}）"
+echo "  前端: https://${_site_host}:${FP}/  （自签证书，浏览器需「继续访问」）"
+echo "  前端 localhost: https://127.0.0.1:${FP}/"
 echo "  后端 API: http://127.0.0.1:${BP}/api  WebSocket: ws://127.0.0.1:${BP}/ws"
 echo ""
 echo "说明: 开发模式下每次启动会 npm install，并拉起 next dev（HTTPS）与 uvicorn（默认跳过 pip，--rebuild 时后台 pip）。"

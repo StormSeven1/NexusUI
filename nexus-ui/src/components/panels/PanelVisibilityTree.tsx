@@ -2,7 +2,14 @@
 
 import { ChevronDown, ChevronRight, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  isPanelTreeLit,
+  visibilityFromBoolean,
+  type PanelTreeVisibilityState,
+} from "@/lib/panel-tree-visibility";
 import type { ReactNode } from "react";
+
+export type { PanelTreeVisibilityState } from "@/lib/panel-tree-visibility";
 
 /** 各面板树形显隐行统一缩进：每加深一层增加 16px */
 export const PANEL_TREE_DEPTH_PX = 16;
@@ -26,24 +33,40 @@ export function PanelTreeGroup({ children, className }: { children: ReactNode; c
 }
 
 function PanelTreeEye({
-  visible,
+  state,
   size = 9,
 }: {
-  visible: boolean;
+  state: PanelTreeVisibilityState;
   size?: number;
 }) {
   return (
     <span
       className={cn(
         "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-        visible
-          ? "border-nexus-border-accent bg-nexus-accent-glow/15 text-nexus-text-primary"
-          : "border-nexus-border bg-nexus-bg-sidebar text-nexus-text-muted",
+        state === "all" && "border-nexus-border-accent bg-nexus-accent-glow/15 text-nexus-text-primary",
+        state === "partial" &&
+          "border border-dashed border-nexus-border-accent/55 bg-nexus-accent-glow/8 text-nexus-text-primary/65",
+        state === "none" && "border-nexus-border bg-nexus-bg-sidebar text-nexus-text-muted",
       )}
+      title={state === "partial" ? "部分显示" : state === "all" ? "全部显示" : "全部隐藏"}
     >
-      {visible ? <Eye size={size} /> : <EyeOff size={size} />}
+      {state === "partial" ? (
+        <Eye size={size} strokeWidth={1.75} className="opacity-60" />
+      ) : state === "all" ? (
+        <Eye size={size} />
+      ) : (
+        <EyeOff size={size} />
+      )}
     </span>
   );
+}
+
+function resolveVisibilityState(
+  visibility: PanelTreeVisibilityState | undefined,
+  visible: boolean | undefined,
+): PanelTreeVisibilityState {
+  if (visibility != null) return visibility;
+  return visibilityFromBoolean(visible !== false);
 }
 
 function PanelTreeChevron({ open }: { open: boolean }) {
@@ -54,41 +77,57 @@ function PanelTreeChevron({ open }: { open: boolean }) {
   );
 }
 
-/** 叶子：仅显隐开关（无展开） */
+/** 叶子：左侧预留与 `PanelTreeBranchRow` 同宽的三角列，保证与分支行对齐 */
 export function PanelTreeToggleRow({
   depth,
   visible,
+  visibility,
   onToggle,
   label,
   disabled,
 }: {
   depth: number;
-  visible: boolean;
+  /** @deprecated 请用 `visibility` */
+  visible?: boolean;
+  visibility?: PanelTreeVisibilityState;
   onToggle: () => void;
   label: string;
   disabled?: boolean;
 }) {
+  const state = resolveVisibilityState(visibility, visible);
+  const pad = panelTreePaddingLeft(depth);
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onToggle}
+    <div
       className={cn(
-        "flex w-full items-center gap-2 border-b border-nexus-border/30 py-1.5 pr-2 text-left last:border-b-0",
-        disabled ? "cursor-not-allowed opacity-45" : "hover:bg-nexus-bg-elevated/50",
+        "flex w-full items-stretch border-b border-nexus-border/30 last:border-b-0",
+        disabled && "opacity-45",
       )}
-      style={{ paddingLeft: panelTreePaddingLeft(depth) }}
     >
-      <PanelTreeEye visible={visible} />
       <span
+        className="h-8 w-8 shrink-0"
+        style={{ marginLeft: pad - 8 }}
+        aria-hidden
+      />
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onToggle}
         className={cn(
-          "min-w-0 flex-1 truncate text-[10px]",
-          visible && !disabled ? "text-nexus-text-primary" : "text-nexus-text-muted",
+          "flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-2 text-left",
+          disabled ? "cursor-not-allowed" : "hover:bg-nexus-bg-elevated/50",
         )}
       >
-        {label}
-      </span>
-    </button>
+        <PanelTreeEye state={state} />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-[10px]",
+            isPanelTreeLit(state) && !disabled ? "text-nexus-text-primary" : "text-nexus-text-muted",
+          )}
+        >
+          {label}
+        </span>
+      </button>
+    </div>
   );
 }
 
@@ -102,6 +141,7 @@ export function PanelTreeBranchRow({
   onToggleOpen,
   label,
   visible,
+  visibility,
   onToggleVisible,
   disabled,
   labelClassName,
@@ -110,11 +150,14 @@ export function PanelTreeBranchRow({
   open: boolean;
   onToggleOpen: () => void;
   label: string;
+  /** @deprecated 请用 `visibility` */
   visible?: boolean;
+  visibility?: PanelTreeVisibilityState;
   onToggleVisible?: () => void;
   disabled?: boolean;
   labelClassName?: string;
 }) {
+  const state = resolveVisibilityState(visibility, visible);
   const pad = panelTreePaddingLeft(depth);
   return (
     <div
@@ -146,11 +189,11 @@ export function PanelTreeBranchRow({
             disabled ? "cursor-not-allowed" : "hover:bg-nexus-bg-elevated/50",
           )}
         >
-          <PanelTreeEye visible={visible !== false} />
+          <PanelTreeEye state={state} />
           <span
             className={cn(
               "min-w-0 flex-1 truncate text-[10px]",
-              visible !== false && !disabled ? "text-nexus-text-primary" : "text-nexus-text-muted",
+              isPanelTreeLit(state) && !disabled ? "text-nexus-text-primary" : "text-nexus-text-muted",
               labelClassName,
             )}
           >

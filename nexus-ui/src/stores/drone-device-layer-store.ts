@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
+  isDroneDeviceAirportVisible,
   isDroneDevicePositionVisible,
   isDroneDeviceRouteVisible,
   pruneDroneDeviceVisibility,
@@ -17,8 +18,11 @@ interface DroneDeviceLayerState {
   syncDroneSns: (droneSns: string[]) => void;
   setDevicePositionVisible: (deviceSn: string, visible: boolean) => void;
   setDeviceRouteVisible: (deviceSn: string, visible: boolean) => void;
+  setDeviceAirportVisible: (deviceSn: string, visible: boolean) => void;
   toggleDevicePosition: (deviceSn: string) => void;
   toggleDeviceRoute: (deviceSn: string) => void;
+  toggleDeviceAirport: (deviceSn: string) => void;
+  setDeviceAllVisible: (deviceSn: string, visible: boolean) => void;
 }
 
 export const useDroneDeviceLayerStore = create<DroneDeviceLayerState>()(
@@ -56,6 +60,27 @@ export const useDroneDeviceLayerStore = create<DroneDeviceLayerState>()(
         const { deviceVisibility } = get();
         get().setDeviceRouteVisible(deviceSn, !isDroneDeviceRouteVisible(deviceSn, deviceVisibility));
       },
+
+      setDeviceAirportVisible: (deviceSn, visible) =>
+        set((s) => ({
+          deviceVisibility: {
+            ...s.deviceVisibility,
+            [deviceSn]: { ...s.deviceVisibility[deviceSn], airport: visible },
+          },
+        })),
+
+      toggleDeviceAirport: (deviceSn) => {
+        const { deviceVisibility } = get();
+        get().setDeviceAirportVisible(deviceSn, !isDroneDeviceAirportVisible(deviceSn, deviceVisibility));
+      },
+
+      setDeviceAllVisible: (deviceSn, visible) =>
+        set((s) => ({
+          deviceVisibility: {
+            ...s.deviceVisibility,
+            [deviceSn]: { position: visible, route: visible, airport: visible },
+          },
+        })),
     }),
     {
       name: DRONE_DEVICE_LAYER_STORAGE_KEY,

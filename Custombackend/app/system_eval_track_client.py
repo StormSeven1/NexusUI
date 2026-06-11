@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
+from system_eval_json_util import json_safe_value
+
 _PROTO_ROOT = Path(__file__).resolve().parent.parent / "proto"
 _GEN_ROOT = Path(__file__).resolve().parent / "system_eval_gen"
 _GENERATED = False
@@ -56,7 +58,14 @@ def _parse_local_time(s: str) -> datetime:
     try:
         dt = datetime.fromisoformat(s)
     except ValueError:
-        dt = datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S")
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+            try:
+                dt = datetime.strptime(s[:19], fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            raise ValueError(f"无法解析时间: {s!r}") from None
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
@@ -74,9 +83,18 @@ def evaluate_track_quality(
     polygon_points: Optional[List[Dict[str, float]]] = None,
     timeout_sec: float = 120.0,
 ) -> Dict[str, Any]:
-    import grpc
-    from google.protobuf import timestamp_pb2
-    from google.protobuf.json_format import MessageToDict
+    try:
+        import grpc
+        from google.protobuf import timestamp_pb2
+        from google.protobuf.json_format import MessageToDict
+    except Exception as e:
+        logger.exception("track-eval 依赖加载失败")
+        return {
+            "ok": False,
+            "result": None,
+            "error_message": str(e),
+            "grpc_target": target,
+        }
 
     _ensure_generated()
     gen_path = str(_GEN_ROOT)
@@ -126,6 +144,10 @@ def evaluate_track_quality(
         stub = track_grpc.TrackEvaluationServiceStub(channel)
         resp = stub.EvaluateTrackQuality(req, timeout=timeout_sec)
         data = MessageToDict(resp, preserving_proto_field_name=True)
+        # proto3 默认枚举 0 不会出现在 dict 里，显式补上便于前端判断
+        if "status" not in data:
+            data["status"] = int(resp.status)
+        data = json_safe_value(data)
         status = data.get("status", 0)
         err = (data.get("error_message") or "").strip()
         ok = status == 0 or status == "OK"

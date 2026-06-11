@@ -5,6 +5,7 @@ export type TrackLayerKey =
   | "fuse_sea"
   | "fuse_air"
   | "bird_radar"
+  | "fanwu_car_radar"
   | "radar_wharf"
   | "radar_jingzi"
   | "ais_track"
@@ -15,6 +16,7 @@ export const TRACK_LAYER_KEYS_ORDERED = [
   "fuse_sea",
   "fuse_air",
   "bird_radar",
+  "fanwu_car_radar",
   "radar_wharf",
   "radar_jingzi",
   "ais_track",
@@ -42,7 +44,7 @@ export interface Track {
   showID: string;
   /** 后端唯一标识（报文 uniqueID / uniqueId） */
   uniqueID: string;
-  /** 业务 trackId（告警匹配用；18.141 全部走此字段，28.9 仅对空走此字段） */
+  /** 业务 track_id（NewTrack external_target_id）；无人机跟踪等 legacy 系统使用，与 uniqueID(target_id) 分离 */
   trackId?: string;
   name: string;
   type: "air" | "underwater" | "sea";
@@ -100,6 +102,12 @@ export interface Track {
   verificationImage?: string;
   /** 航迹别名（报文 trackAlias / track_alias；有则优先作标题） */
   trackAlias?: string;
+}
+
+/** GIS 地图标牌 / 列表主显示 ID：NewTrack `target_id`（`uniqueID` / `showID`） */
+export function trackMapDisplayId(track: Pick<Track, "showID" | "uniqueID">): string {
+  const uid = track.uniqueID?.trim();
+  return uid || track.showID;
 }
 
 /** 与 `map-icons.PUBLIC_MAP_SVG_FILES` 键一致；含 WS 动态机场 / 无人机 */
@@ -193,7 +201,7 @@ export interface RestrictedZone {
   fillOpacity?: number;
 }
 
-/** 图层面板「数据图层」单行（航迹仅一项总开关，分类显隐在目标侧边栏） */
+/** 图层面板「实体图层」单行（航迹显隐在独立「目标图层」块） */
 export type DataLayerPanelRow = { id: string; name: string };
 
 export const LYR_TRACKS = "lyr-tracks";
@@ -215,7 +223,7 @@ export const LYR_DISTANCE_RINGS = "lyr-distance-rings";
 /** Map2D 量算/标绘图层分组 id（**不进** `layerVisibility` 初始键；显隐用 `applyLayerPanelVisibilityFromStore` 的 `?? true`） */
 export const LYR_MEASURE = "lyr-measure";
 
-/** `useAppStore.layerVisibility` 初始键（图层面板「数据图层」）；缺省在 Map2D 按 `?? true` */
+/** `useAppStore.layerVisibility` 初始键；`lyr-tracks` 在图层面板「目标图层」控制；缺省在 Map2D 按 `?? true` */
 export const ALL_DATA_LAYER_IDS = [
   LYR_TRACKS,
   LYR_DRONES,
@@ -231,7 +239,7 @@ export const ALL_DATA_LAYER_IDS = [
 ] as const;
 
 /**
- * 按当前资产列表生成**数据图层**面板行（航迹、按类型出现的专题、限制区）。
+ * 按当前资产列表生成**实体图层**面板行（装备专题、距离环等；不含航迹；机场挂在无人机子项）。
  * **光电**（camera）和**电侦**（tower）为不同类型，分别显示。
  */
 export function buildDataLayerPanelRows(assets: ReadonlyArray<{ asset_type: string }>): DataLayerPanelRow[] {
@@ -239,10 +247,7 @@ export function buildDataLayerPanelRows(assets: ReadonlyArray<{ asset_type: stri
   for (const a of assets) {
     types.add(normalizeAssetType(a.asset_type));
   }
-  const rows: DataLayerPanelRow[] = [
-    { id: LYR_TRACKS, name: "目标" },
-    { id: LYR_DRONES, name: "无人机" },
-  ];
+  const rows: DataLayerPanelRow[] = [{ id: LYR_DRONES, name: "无人机" }];
   if (types.has("radar")) rows.push({ id: LYR_RADAR_COVERAGE, name: "雷达装备" });
   if (types.has("camera")) {
     rows.push({ id: LYR_OPTO_FOV, name: "光电装备" });
@@ -250,13 +255,9 @@ export function buildDataLayerPanelRows(assets: ReadonlyArray<{ asset_type: stri
   if (types.has("tower")) {
     rows.push({ id: LYR_TOWER, name: "电侦装备" });
   }
-  if (types.has("airport")) {
-    rows.push({ id: LYR_AIRPORT, name: "无人机场" });
-  }
   if (types.has("laser")) rows.push({ id: LYR_LASER, name: "激光武器" });
   if (types.has("tdoa")) rows.push({ id: LYR_TDOA, name: "TDOA" });
-  rows.push({ id: LYR_ZONES, name: "限制区域" });
-  rows.push({ id: LYR_DISTANCE_RINGS, name: "态势" });
-  /** `LYR_DB_AREAS` 在 `LayerPanel` 独立「区域图层」分级块中控制，不进数据图层列表 */
+  rows.push({ id: LYR_DISTANCE_RINGS, name: "距离环" });
+  /** `LYR_DB_AREAS` 在 `LayerPanel` 独立「区域图层」分级块中控制，不进实体图层列表 */
   return rows;
 }

@@ -26,11 +26,9 @@ import { useTrackMarkerSymbolUrl } from "@/components/military/TrackMarkerIcon";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
 import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
-import { useAlertStore } from "@/stores/alert-store";
 import { useAssetStore } from "@/stores/asset-store";
 import {
   useTrackStore,
-  isTrackMatchedByAlarm,
   getTrackDispositionForRendering,
 } from "@/stores/track-store";
 import { formatTrackSpeed } from "@/lib/track-speed-format";
@@ -87,11 +85,11 @@ function SectionTitle({ children, accent }: { children: string; accent?: boolean
   );
 }
 
-function Row({ k, v }: { k: string; v: React.ReactNode }) {
+function Row({ k, v, nowrap }: { k: string; v: React.ReactNode; nowrap?: boolean }) {
   return (
-    <div className="grid grid-cols-[78px_1fr] gap-x-3 gap-y-1 text-[11px]">
+    <div className="grid grid-cols-[56px_1fr] gap-x-2 gap-y-1 text-[11px]">
       <div className="text-nexus-text-muted">{k}</div>
-      <div className="min-w-0 text-nexus-text-primary">{v}</div>
+      <div className={cn("min-w-0 text-nexus-text-primary", nowrap && "whitespace-nowrap")}>{v}</div>
     </div>
   );
 }
@@ -104,7 +102,6 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
   const asset = allAssets.find((a) => a.id === id);
   // console.log("[TargetPlacard] id=", id, "kind=", kind, "asset=", asset ? { id: asset.id, asset_type: asset.asset_type, name: asset.name } : null, "allAssetIds=", allAssets.map(a => `${a.id}(${a.asset_type})`));
-  const alerts = useAlertStore((s) => s.alerts);
   const [verifyLoading, setVerifyLoading] = useState(false);
 
   /* 目标丢失时自动关闭属性框 */
@@ -112,16 +109,6 @@ export function TargetPlacard(props: TargetPlacardProps) {
     if (kind === "track" && !track) onClose();
     if (kind === "asset" && !asset) onClose();
   }, [kind, track, asset, onClose]);
-
-  /** 构建告警 trackId 集合，复用 isTrackMatchedByAlarm 逻辑匹配 */
-  const relatedAlerts = useMemo(() => {
-    if (kind !== "track" || !track) return [];
-    const alarmTrackIds = useAlertStore.getState().alarmTrackIds;
-    const shadow = useTrackStore.getState().shadowTracks;
-    return alerts
-      .filter((a) => a.trackId && isTrackMatchedByAlarm(track, alarmTrackIds, shadow))
-      .slice(0, 5);
-  }, [alerts, track, kind]);
 
   /** 机场/无人机的 name 在入资产时已解析好，直接用 */
   const mapDisplayName = useMemo(() => {
@@ -281,10 +268,11 @@ export function TargetPlacard(props: TargetPlacardProps) {
           </div>
 
           <SectionTitle accent>运动</SectionTitle>
-          <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1.5">
-            <Row k="航速" v={track ? formatTrackSpeed(track.speed) : "-"} />
+          <div className="mt-1 flex flex-col gap-y-1.5">
+            <Row k="航速" nowrap v={track ? formatTrackSpeed(track.speed) : "-"} />
             <Row
               k="航向"
+              nowrap
               v={
                 track
                   ? (() => {
@@ -294,7 +282,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
                   : "-"
               }
             />
-            <Row k="高度" v={track?.altitude != null ? `${track.altitude.toFixed(1)}` : "-"} />
+            <Row k="高度" nowrap v={track?.altitude != null ? `${track.altitude.toFixed(1)} m` : "-"} />
           </div>
 
           <SectionTitle accent>查证</SectionTitle>
@@ -308,72 +296,6 @@ export function TargetPlacard(props: TargetPlacardProps) {
               {verifyLoading ? <Loader2 size={12} className="animate-spin" /> : null}
               查证目标
             </button>
-          </div>
-
-          <SectionTitle>关联告警</SectionTitle>
-          <div className="mt-1 space-y-1.5">
-            {relatedAlerts.length ? (
-              relatedAlerts.map((a) => {
-                const sevColor =
-                  a.severity === "critical"
-                    ? "text-red-400"
-                    : a.severity === "warning"
-                      ? "text-amber-400"
-                      : "text-zinc-400";
-                const sevLabel =
-                  a.severity === "critical"
-                    ? "严重"
-                    : a.severity === "warning"
-                      ? "警告"
-                      : "信息";
-                const sevBorder =
-                  a.severity === "critical"
-                    ? "border-l-2 border-l-red-500/60"
-                    : a.severity === "warning"
-                      ? "border-l-2 border-l-amber-500/60"
-                      : "border-l-2 border-l-zinc-500/40";
-                return (
-                  <div
-                    key={a.id}
-                    className={cn("rounded-lg border border-white/10 bg-white/5 px-2.5 py-2", sevBorder)}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("text-[10px] font-bold", sevColor)}>{sevLabel}</span>
-                        {a.alarmType && (
-                          <span className="rounded bg-white/5 px-1 text-[9px] text-nexus-text-muted">
-                            {a.alarmType === "threat" ? "威胁" : "告警"}
-                          </span>
-                        )}
-                        {a.alarmLevel != null && (
-                          <span className="text-[10px] text-nexus-text-muted">Lv.{a.alarmLevel}</span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-nexus-text-muted">{a.timestamp}</div>
-                    </div>
-                    {/* {a.title && (
-                      <div className="mt-1 text-[11px] font-medium text-nexus-text-primary">{a.title}</div>
-                    )} */}
-                    {/* <div className={cn("text-[11px] text-nexus-text-primary", a.title ? "mt-0.5" : "mt-1")}>
-                      {a.message}
-                    </div> */}
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-nexus-text-muted">
-                      {a.source && <span>来源：{a.source}</span>}
-                      {a.areaName && <span>区域：{a.areaName}</span>}
-                      {a.lat != null && a.lng != null && Number.isFinite(a.lat) && Number.isFinite(a.lng) && (
-                        <span>坐标：{a.lng.toFixed(4)}, {a.lat.toFixed(4)}</span>
-                      )}
-                      {a.type && <span>类型：{a.type}</span>}
-                    </div>
-                    {a.detail && (
-                      <div className="mt-1 text-[10px] leading-relaxed text-nexus-text-muted">{a.detail}</div>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <div className="text-[11px] text-nexus-text-muted">暂无关联告警</div>
-            )}
           </div>
         </>
       ) : (

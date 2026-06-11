@@ -6,7 +6,9 @@ import {
 } from "@/lib/entities-track-task-cache";
 import type { EoCameraRegistryRow } from "@/lib/eo-video/cameraRegistryTypes";
 import { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
+import { isStandardOptoCameraAllowedOnMap } from "@/lib/map-display-filters";
 import { fetchMapGisEoMenuContext, type MapGisEoMenuContext } from "@/lib/map-gis-eo-menu-context";
+import { loadResolvedAppConfig } from "@/lib/map-app-config";
 
 /** 与地图右键「选择光电…」子菜单同源的一行 */
 export type MapGisCameraMenuRow = {
@@ -42,6 +44,7 @@ export function buildMapGisCameraMenuRows(
   for (const r of ptzOwners) {
     const id = canonicalEntityId(String(r.entityId ?? "").trim());
     if (!id || seen.has(id)) continue;
+    if (!isStandardOptoCameraAllowedOnMap(id)) continue;
     seen.add(id);
     out.push({
       entityId: id,
@@ -66,6 +69,7 @@ export function buildMapGisCameraMenuRows(
 
 /** 预拉实体快照 + eo 注册表/第三方相机，返回右键同源菜单行 */
 export async function fetchMapGisCameraMenuRows(): Promise<MapGisCameraMenuRow[]> {
+  await loadResolvedAppConfig();
   await ensureEntitiesTrackTaskCache();
   const eoCtx = await fetchMapGisEoMenuContext();
   return buildMapGisCameraMenuRows(listTrackTaskOwnerRows(), eoCtx);

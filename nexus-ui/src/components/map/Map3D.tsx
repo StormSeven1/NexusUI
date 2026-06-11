@@ -11,19 +11,25 @@ import {
   useTrackDisplayStore,
   neutralFusionColorForTrack,
   uavPoseTrackDotColor,
-  trailLengthSecondsForTrack,
   vectorLengthSecondsForTrack,
 } from "@/stores/track-display-store";
-import { trimHistoryTrailForDisplay, velocityVectorEndLngLat } from "@/lib/track-display-trail";
+import { velocityVectorEndLngLat } from "@/lib/track-display-trail";
 import {
   LYR_DB_AREAS,
   LYR_DISTANCE_RINGS,
+  LYR_DRONES,
   LYR_OPTO_FOV,
   LYR_TRACKS,
   type Asset,
   type RestrictedZone,
+  trackMapDisplayId,
   type Track,
 } from "@/lib/map-entity-model";
+import {
+  filterAssetsByVisibleDroneAirports,
+  getVisibleDroneAirportIdsFromStores,
+} from "@/lib/drone-device-layer-visibility";
+import { useDroneDeviceLayerStore } from "@/stores/drone-device-layer-store";
 import { pickDistanceRingSettings } from "@/lib/distance-ring-settings";
 import { useDistanceRingStore } from "@/stores/distance-ring-store";
 import {
@@ -62,7 +68,10 @@ import {
   laserLabelStyleFromBundle,
 } from "@/lib/map-app-config";
 import type { AssetDispositionIconAccent } from "@/lib/map-icons";
-import { trackMapDrawHistoryTrails } from "@/components/map/modules/tracks-maplibre";
+import {
+  computeTrackTrailDrawPlan,
+  displayHistoryTrailForTrack,
+} from "@/components/map/modules/tracks-maplibre";
 import {
   filterTracksForMapRender,
   isDotTrackLayerKey,
@@ -84,7 +93,8 @@ import { resolveVerifiedTrackPointFill } from "@/lib/verified-track-color";
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { AlertTriangle } from "lucide-react";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
-import { createCesiumBaseImageryProvider, getMap3DInitialViewFromEnv } from "@/lib/map-3d-config";
+import { createCesiumBaseImageryProvider, getMap3DInitialView } from "@/lib/map-3d-config";
+import { bootstrapMapHomeSideEffects } from "@/lib/map-home-bootstrap";
 
 type CesiumModule = typeof import("cesium");
 type CesiumViewer = import("cesium").Viewer;
@@ -375,12 +385,17 @@ function applyNonRadarFovLayerVisibility(
   groups: { optoFov: CesiumEntity[]; airportFov: CesiumEntity[]; droneFov: CesiumEntity[] },
   layerOn: (k: string) => boolean,
 ) {
-  for (const ent of groups.optoFov) ent.show = layerOn("lyr-opto-fov");
-  for (const ent of groups.airportFov) ent.show = layerOn("lyr-airport");
-  for (const ent of groups.droneFov) ent.show = layerOn("lyr-drones");
+  const visibleAirports = getVisibleDroneAirportIdsFromStores();
+  const droneOn = layerOn(LYR_DRONES);
+  for (const ent of groups.optoFov) ent.show = layerOn(LYR_OPTO_FOV);
+  for (const ent of groups.airportFov) {
+    const aid = ent.properties?.assetId?.getValue() as string | undefined;
+    ent.show = droneOn && !!aid && visibleAirports.has(aid);
+  }
+  for (const ent of groups.droneFov) ent.show = droneOn;
 }
 
-/** 与 Map2D 一致：store 全量画航迹 billboard（最新位置）；折线仅在 `trackMapDrawHistoryTrails` 为真时画；超预算整批不画尾迹线，仅保留最新点实体（不删 store） */
+/** 与 Map2D 一致：store 全量画航迹 billboard（最新位置）；尾迹按 `maxViewportPoints` 预算分配（超预算时告警航迹优先，不整批消失） */
 async function syncCesiumTrackBillboards(
   viewer: CesiumViewer,
   Cesium: CesiumModule,
@@ -389,7 +404,7 @@ async function syncCesiumTrackBillboards(
   accent: AssetDispositionIconAccent,
 ) {
   const td = useTrackDisplayStore.getState();
-  const drawTrails = trackMapDrawHistoryTrails(allTracks);
+  const trailPlan = computeTrackTrailDrawPlan(allTracks);
   const visibleIds = new Set(allTracks.map((t) => t.id));
   const fullMap = new Map(allTracks.map((t) => [t.id, t]));
 
@@ -448,7 +463,7 @@ async function syncCesiumTrackBillboards(
     const wantDot = isDotTrackLayerKey(resolveTrackLayerKey(track));
     const opticallyVerified = shouldApplyVerifiedTrackGreen(track);
     const labelCommon = {
-      text: track.name,
+      text: trackMapDisplayId(track),
       font: '11px Roboto, "Noto Sans SC", sans-serif',
       fillColor: Cesium.Color.fromCssColorString(pickTrackPointCss(track, eff, friendlyFill)),
       outlineColor: Cesium.Color.fromCssColorString("#09090b"),
@@ -544,9 +559,9 @@ async function syncCesiumTrackBillboards(
 
   const alt = (z: number | undefined) => (Number.isFinite(z) ? (z as number) : 0);
 
-  if (drawTrails) {
+  if (trailPlan.mode !== "none") {
     for (const t of allTracks) {
-      const trail = trimHistoryTrailForDisplay(t.historyTrail, trailLengthSecondsForTrack(t, td));
+      const trail = displayHistoryTrailForTrack(trailPlan, t);
       if (!trail || trail.length < 1) continue;
       const ts2 = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
       const eff = getTrackDispositionForRendering(t);
@@ -641,6 +656,7 @@ export function Map3D() {
         if (destroyed || !containerRef.current) return;
 
         const appCfg = await useAppConfigStore.getState().ensureLoaded();
+        bootstrapMapHomeSideEffects(appCfg.mapHome);
         const droneLabelStyle = laserLabelStyleFromBundle(appCfg.drones);
         const assetIconAccent: AssetDispositionIconAccent = appCfg.assetDispositionIconAccent ?? {};
         await preloadPublicMapAssetFragments();
@@ -665,7 +681,7 @@ export function Map3D() {
         viewer.scene.globe.enableLighting = false;
         viewer.scene.highDynamicRange = false;
 
-        const { center, zoom } = getMap3DInitialViewFromEnv();
+        const { center, zoom } = getMap3DInitialView(appCfg.mapHome);
         viewer.camera.flyToBoundingSphere(
           new Cesium.BoundingSphere(Cesium.Cartesian3.fromDegrees(center[0], center[1], 0), 0),
           {
@@ -873,7 +889,10 @@ export function Map3D() {
           v,
           Cesium,
           groups,
-          adaptAssetsForMap(useAssetStore.getState().assets),
+          filterAssetsByVisibleDroneAirports(
+            adaptAssetsForMap(useAssetStore.getState().assets),
+            getVisibleDroneAirportIdsFromStores(),
+          ),
           optoPerDevice,
           optoPanelIds,
         );
@@ -898,8 +917,15 @@ export function Map3D() {
         applyNonRadarFovLayerVisibility(groups, layerOn);
         for (const ent of groups.zones) ent.show = layerOn("lyr-zones");
         for (const ent of groups.dbAreas) ent.show = layerOn("lyr-db-areas");
+        const visibleAirports = getVisibleDroneAirportIdsFromStores();
         for (const ent of groups.assets) {
           const at = ent.properties?.assetType?.getValue() as string | undefined;
+          const aid = ent.properties?.assetId?.getValue() as string | undefined;
+          if (at === "airport") {
+            ent.show =
+              layerOn(LYR_DRONES) && !!aid && visibleAirports.has(aid);
+            continue;
+          }
           const layerKey =
             at === "radar"
               ? "lyr-radar-coverage"
@@ -907,11 +933,9 @@ export function Map3D() {
                 ? "lyr-laser"
                 : at === "tdoa"
                   ? "lyr-tdoa"
-                  : at === "airport"
-                    ? "lyr-airport"
-                    : at === "drone"
-                      ? "lyr-drones"
-                      : "lyr-opto-fov";
+                  : at === "drone"
+                    ? LYR_DRONES
+                    : LYR_OPTO_FOV;
           ent.show = layerOn(layerKey);
         }
         applyCesiumOptoPerDeviceShow(groups, optoMasterOn, optoPerDevice, optoPanelIds);
@@ -1122,16 +1146,20 @@ export function Map3D() {
       for (const ent of g.tracks) ent.show = layerOn("lyr-tracks");
       for (const ent of g.trackTrails) ent.show = layerOn("lyr-tracks");
       for (const ent of g.radarCoverage) ent.show = layerOn("lyr-radar-coverage");
-      for (const ent of g.optoFov) ent.show = layerOn("lyr-opto-fov");
-      for (const ent of g.airportFov) ent.show = layerOn("lyr-airport");
-      for (const ent of g.droneFov) ent.show = layerOn("lyr-drones");
+      applyNonRadarFovLayerVisibility(g, layerOn);
       for (const ent of g.zones) ent.show = layerOn("lyr-zones");
       for (const ent of g.dbAreas) ent.show = layerOn("lyr-db-areas");
       const drVis = layerOn(LYR_DISTANCE_RINGS);
       for (const ent of distanceRingGroupsRef.current.rings) ent.show = drVis;
       for (const ent of distanceRingGroupsRef.current.labels) ent.show = drVis;
+      const visibleAirports = getVisibleDroneAirportIdsFromStores();
       for (const ent of g.assets) {
         const at = ent.properties?.assetType?.getValue() as string | undefined;
+        const aid = ent.properties?.assetId?.getValue() as string | undefined;
+        if (at === "airport") {
+          ent.show = layerOn(LYR_DRONES) && !!aid && visibleAirports.has(aid);
+          continue;
+        }
         const layerKey =
           at === "radar"
             ? "lyr-radar-coverage"
@@ -1139,11 +1167,9 @@ export function Map3D() {
               ? "lyr-laser"
               : at === "tdoa"
                 ? "lyr-tdoa"
-                : at === "airport"
-                  ? "lyr-airport"
-                  : at === "drone"
-                    ? "lyr-drones"
-                    : "lyr-opto-fov";
+                : at === "drone"
+                  ? LYR_DRONES
+                  : LYR_OPTO_FOV;
         ent.show = layerOn(layerKey);
       }
       applyCesiumOptoPerDeviceShow(
@@ -1169,7 +1195,10 @@ export function Map3D() {
         v,
         C,
         entityGroupsRef.current,
-        adaptAssetsForMap(useAssetStore.getState().assets),
+        filterAssetsByVisibleDroneAirports(
+          adaptAssetsForMap(useAssetStore.getState().assets),
+          getVisibleDroneAirportIdsFromStores(),
+        ),
         perDevice,
         panelIds,
       );
@@ -1186,6 +1215,50 @@ export function Map3D() {
       unsubVis();
       unsubCam();
       unsubMaster();
+    };
+  }, []);
+
+  /* 无人机子项（含各机机场）→ 机场扇区与机场 GIS 图标 */
+  useEffect(() => {
+    const flush = () => {
+      const v = viewerRef.current;
+      const C = cesiumRef.current;
+      if (!v || !C || v.isDestroyed()) return;
+      const g = entityGroupsRef.current;
+      const layerOn = (k: string) => useAppStore.getState().layerVisibility[k] !== false;
+      const perDevice = useOptoDeviceLayerStore.getState().deviceVisibility;
+      const panelIds = resolveOptoPanelCameraIds();
+      syncCesiumNonRadarCoverageFov(
+        v,
+        C,
+        g,
+        filterAssetsByVisibleDroneAirports(
+          adaptAssetsForMap(useAssetStore.getState().assets),
+          getVisibleDroneAirportIdsFromStores(),
+        ),
+        perDevice,
+        panelIds,
+      );
+      applyNonRadarFovLayerVisibility(g, layerOn);
+      const visibleAirports = getVisibleDroneAirportIdsFromStores();
+      for (const ent of g.assets) {
+        const at = ent.properties?.assetType?.getValue() as string | undefined;
+        if (at !== "airport") continue;
+        const aid = ent.properties?.assetId?.getValue() as string | undefined;
+        ent.show = layerOn(LYR_DRONES) && !!aid && visibleAirports.has(aid);
+      }
+    };
+    const unsubDroneVis = useDroneDeviceLayerStore.subscribe(flush);
+    const unsubDroneMaster = useAppStore.subscribe((s, p) => {
+      if ((s.layerVisibility[LYR_DRONES] ?? true) === (p.layerVisibility[LYR_DRONES] ?? true)) return;
+      flush();
+    });
+    const unsubAssets = useAssetStore.subscribe(flush);
+    flush();
+    return () => {
+      unsubDroneVis();
+      unsubDroneMaster();
+      unsubAssets();
     };
   }, []);
 

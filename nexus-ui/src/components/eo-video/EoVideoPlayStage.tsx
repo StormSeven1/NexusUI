@@ -42,6 +42,28 @@ function pickDetectionBoxClosestToVideoCenter(boxes: EoDetectionBox[]): EoDetect
   return best;
 }
 
+/** 双击落点附近的海/空多目标框（补全 hitTest 漏检，避免误取消） */
+function pickMultiTargetBoxNearPoint(
+  boxes: EoDetectionBox[],
+  normalizedX: number,
+  normalizedY: number,
+  maxNormDist = 0.08,
+): EoDetectionBox | null {
+  let best: EoDetectionBox | null = null;
+  let bestD = maxNormDist ** 2;
+  for (const b of boxes) {
+    if (b.variant === "singleTrack") continue;
+    const mx = b.x + b.w / 2;
+    const my = b.y + b.h / 2;
+    const d = (mx - normalizedX) ** 2 + (my - normalizedY) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
 /** 参见 `postUavCameraAim` / Qt `UavAimAt5` */
 export type UavCameraAimUiContext = {
   /** 与 uavtabboard 一致：机场 gateway SN */
@@ -153,6 +175,8 @@ export function EoVideoPlayStage({
   /** 与 Qt 一致：相机实体即可双击发任务；检测 WS 关闭时仍要有叠层接收双击 */
   const showTrackHitLayer = Boolean(trimmedEntityId && /^camera_[0-9]{3}$/i.test(trimmedEntityId));
   const canSendSingleTrack = /^camera_[0-9]{3}$/i.test(trimmedEntityId);
+  /** 视频与检测叠层统一 cover 铺满（叠层用 getVideoContentRect 对齐，避免黑边） */
+  const videoObjectFit: "contain" | "cover" = "cover";
   const encodedSyncHub = useMemo(() => createEoEncodedSyncHub(), []);
   const videoReceiverRef = useRef<RTCRtpReceiver | null>(null);
   const webCodecsPresentationRef = useRef<EoWebCodecsPresentation>({
@@ -176,6 +200,12 @@ export function EoVideoPlayStage({
       if (wcOk) {
         setOverlayIntrinsic((prev) =>
           prev.w === wc.width && prev.h === wc.height ? prev : { w: wc.width, h: wc.height },
+        );
+      } else if (videoOk && v) {
+        setOverlayIntrinsic((prev) =>
+          prev.w === v.videoWidth && prev.h === v.videoHeight
+            ? prev
+            : { w: v.videoWidth, h: v.videoHeight },
         );
       } else {
         setOverlayIntrinsic((prev) =>
@@ -635,18 +665,25 @@ export function EoVideoPlayStage({
         logClient("中止：非 camera_XXX 实体");
         return;
       }
-      const isSingleTracking = detectionBoxes.some((b) => b.variant === "singleTrack");
-      if (isSingleTracking) {
-        logClient("已在单目标跟踪：二次双击 -> 发送取消跟踪（trackAction=0，对齐 Qt / publishEntity）");
-        const cameraMetaTask = {
-          entityId: trimmedEntityId,
-          taskType: "SingleTrack",
-          trackAction: 0,
-          rectId: 0,
-          rectType: 0,
-          boundingBox: { x: 0, y: 0, width: 0, height: 0 },
-        };
-        logClient(`CameraMetaTask => ${JSON.stringify(cameraMetaTask)}`);
+      if (taskBusy) {
+        logClient("中止：上一跟踪任务仍在发送中");
+        return;
+      }
+
+      const inSingleTrackUi = detectionBoxes.some((b) => b.variant === "singleTrack");
+      const nearMulti = pickMultiTargetBoxNearPoint(
+        detectionBoxes,
+        payload.normalizedX,
+        payload.normalizedY,
+      );
+      const hitIsMultiTargetBox =
+        (payload.hitBox != null && payload.hitBox.variant !== "singleTrack") || nearMulti != null;
+      const shouldCancelSingleTrack = inSingleTrackUi && !hitIsMultiTargetBox;
+
+      if (shouldCancelSingleTrack) {
+        logClient(
+          `已在单目标跟踪：双击${payload.hitBox ? `框 ${payload.hitBox.id}` : "空白"} -> 发送取消跟踪（trackAction=0）`,
+        );
         setTaskBusy(true);
         setTaskHint("正在取消目标跟踪…");
         try {
@@ -660,7 +697,7 @@ export function EoVideoPlayStage({
             trackAction: 0,
           });
           setTaskHint("已发送取消跟踪任务");
-          logClient("HTTP 流程结束（取消跟踪，见下方请求/返回区）");
+          logClient("HTTP 流程结束（取消跟踪）");
         } catch (e) {
           setTaskHint(`取消失败：${e instanceof Error ? e.message : String(e)}`);
           logClient(`HTTP 失败（取消）：${e instanceof Error ? e.message : String(e)}`);
@@ -670,35 +707,42 @@ export function EoVideoPlayStage({
         return;
       }
 
-      const video = videoRef.current;
-      const wc = webCodecsPresentationRef.current;
-      const vw =
-        (video?.videoWidth ?? 0) > 0
-          ? video!.videoWidth
-          : wc.active && wc.width > 0
-            ? wc.width
-            : overlayIntrinsic.w ?? 0;
-      const vh =
-        (video?.videoHeight ?? 0) > 0
-          ? video!.videoHeight
-          : wc.active && wc.height > 0
-            ? wc.height
-            : overlayIntrinsic.h ?? 0;
-      if (vw <= 0 || vh <= 0) {
-        setTaskHint("视频分辨率未就绪，稍后重试");
-        logClient(`中止：画面未就绪 vw=${vw} vh=${vh}`);
-        return;
+      let hit = payload.hitBox ?? nearMulti;
+      if (!hit && selectedBoxId) {
+        hit = detectionBoxes.find((b) => b.id === selectedBoxId) ?? null;
       }
-
-      let hit = payload.hitBox;
       if (!hit) {
-        const near = pickDetectionBoxClosestToVideoCenter(detectionBoxes);
+        const near = pickDetectionBoxClosestToVideoCenter(
+          detectionBoxes.filter((b) => b.variant !== "singleTrack"),
+        );
         if (near) {
           hit = near;
           logClient(
             `空白双击：按 Qt CheckFindRect 取距画面中心最近的框 id=${near.id} centerNorm=(${(near.x + near.w / 2).toFixed(3)},${(near.y + near.h / 2).toFixed(3)})`,
           );
         }
+      }
+
+      const video = videoRef.current;
+      const wc = webCodecsPresentationRef.current;
+      const presentationVw =
+        (video?.videoWidth ?? 0) > 0
+          ? video!.videoWidth
+          : wc.active && wc.width > 0
+            ? wc.width
+            : overlayIntrinsic.w ?? 0;
+      const presentationVh =
+        (video?.videoHeight ?? 0) > 0
+          ? video!.videoHeight
+          : wc.active && wc.height > 0
+            ? wc.height
+            : overlayIntrinsic.h ?? 0;
+      const vw = (hit?.frameWidth ?? 0) > 0 ? hit!.frameWidth! : presentationVw;
+      const vh = (hit?.frameHeight ?? 0) > 0 ? hit!.frameHeight! : presentationVh;
+      if (vw <= 0 || vh <= 0) {
+        setTaskHint("视频分辨率未就绪，稍后重试");
+        logClient(`中止：画面未就绪 vw=${vw} vh=${vh} pres=${presentationVw}x${presentationVh}`);
+        return;
       }
 
       let x = 0;
@@ -709,6 +753,15 @@ export function EoVideoPlayStage({
       let rectType = 4;
 
       if (hit) {
+        if (
+          (hit.frameWidth ?? 0) > 0 &&
+          (presentationVw > 0 || presentationVh > 0) &&
+          (hit.frameWidth !== presentationVw || hit.frameHeight !== presentationVh)
+        ) {
+          logClient(
+            `检测帧 ${hit.frameWidth}x${hit.frameHeight} ≠ 呈现 ${presentationVw}x${presentationVh}，跟踪 bbox 用检测帧`,
+          );
+        }
         x = hit.x * vw;
         y = hit.y * vh;
         width = hit.w * vw;
@@ -764,7 +817,7 @@ export function EoVideoPlayStage({
         setTaskBusy(false);
       }
     },
-    [canSendSingleTrack, detectionBoxes, logClient, onSingleTrackTask, overlayIntrinsic.h, overlayIntrinsic.w, trimmedEntityId, videoRef],
+    [canSendSingleTrack, detectionBoxes, logClient, onSingleTrackTask, overlayIntrinsic.h, overlayIntrinsic.w, selectedBoxId, taskBusy, trimmedEntityId, videoRef],
   );
 
   useEffect(() => {
@@ -805,6 +858,7 @@ export function EoVideoPlayStage({
         videoReceiverRef={showDetection ? videoReceiverRef : undefined}
         streamLabel={streamLabel}
         webCodecsPresentationRef={webCodecsPresentationRef}
+        videoObjectFit={videoObjectFit}
       />
       {ptzDragArrow ? <EoPtzDragArrowOverlay box={ptzDragArrow} /> : null}
       {!onOverlayTaskLine && !onBottomCenterToast && taskHint ? (
@@ -830,11 +884,12 @@ export function EoVideoPlayStage({
           onDoubleClickPoint={handleDoubleClickPoint}
           onDiagnostic={onDetectionDiagnostic}
           onBoxesChange={onDetectionBoxesChange}
-          videoObjectFit="cover"
+          videoObjectFit={videoObjectFit}
           videoIntrinsicWidth={overlayIntrinsic.w}
           videoIntrinsicHeight={overlayIntrinsic.h}
           expandedMode={expandedMode}
           ddsCameraEntityId={ddsCameraEntityId}
+          interactive={canSendSingleTrack}
         />
       ) : showTrackHitLayer ? (
         <EoDetectionOverlay
@@ -847,9 +902,10 @@ export function EoVideoPlayStage({
           selectedBoxId={selectedBoxId}
           onSelectBox={onSelectBox}
           onDoubleClickPoint={handleDoubleClickPoint}
-          videoObjectFit="cover"
+          videoObjectFit={videoObjectFit}
           videoIntrinsicWidth={overlayIntrinsic.w}
           videoIntrinsicHeight={overlayIntrinsic.h}
+          interactive
         />
       ) : null}
       {taskBusy ? <div className="pointer-events-none absolute inset-0 z-20" /> : null}

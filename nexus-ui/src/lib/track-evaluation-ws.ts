@@ -5,6 +5,7 @@
  * 环境变量：NEXT_PUBLIC_TRACK_EVAL_WS_URL
  */
 
+import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
 import { recordTrackEvalReceived } from "@/stores/network-stats-store";
 
 export const DEFAULT_TRACK_EVAL_WS_URL = "ws://127.0.0.1:12600/ws/test-client";
@@ -118,7 +119,7 @@ export class TrackEvaluationWsClient {
     this.intentionalClose = false;
     this.callbacks.onState?.("connecting");
     try {
-      const ws = new WebSocket(this.url);
+      const ws = new WebSocket(rewriteWsUrlForHttpsPage(this.url));
       this.ws = ws;
       ws.onopen = () => {
         this.reconnectAttempts = 0;

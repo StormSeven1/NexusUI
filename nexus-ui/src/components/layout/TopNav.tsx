@@ -11,9 +11,9 @@ import {
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TopNavCategoryMenu } from "@/components/layout/TopNavCategoryMenu";
 import { TopNavQuickActions } from "@/components/layout/TopNavQuickActions";
 import { TopNavWeatherStrip } from "@/components/layout/TopNavWeatherStrip";
-import { DockLayoutMenu } from "@/components/layout/DockLayoutMenu";
 import { getHttpConfig } from "@/lib/map-app-config";
 
 const WORK_MODE_STORAGE_KEY = "nexus-system-work-mode";
@@ -455,11 +455,10 @@ export function TopNav() {
         </div>
       </div>
 
-      <div className="flex-1" aria-hidden />
+      <TopNavCategoryMenu />
 
       {/* 右侧功能区 */}
       <div className="flex h-full shrink-0 items-center justify-end gap-4 border-l border-nexus-border px-2 sm:px-3">
-        <DockLayoutMenu />
         <TopNavQuickActions />
         <div className="hidden h-4 w-px shrink-0 bg-nexus-border md:block" aria-hidden />
         <label className="flex min-w-0 items-center gap-2 text-[11px] whitespace-nowrap">

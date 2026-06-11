@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
 import { mergeSingleTrackTelemetry } from "@/lib/eo-video/mergeSingleTrackTelemetry";
-import { getVideoContentRect } from "@/lib/eo-video/videoContentRect";
+import { mapEoBoxToPresentationNorm } from "@/lib/eo-video/detectionSyncUtils";
+import { getVideoContentRect, resolveEoVideoIntrinsicSize } from "@/lib/eo-video/videoContentRect";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 import { useTrackStore } from "@/stores/track-store";
 import { cn } from "@/lib/utils";
@@ -35,11 +36,13 @@ export interface EoDetectionOverlayProps {
     hitBox: EoDetectionBox | null;
   }) => void;
   className?: string;
-  /** 与视频元素/Canvas 的 object-fit 一致，默认 cover */
+  /** 与视频元素/Canvas 的 object-fit 一致 */
   videoObjectFit?: "contain" | "cover";
   /** WebCodecs 模式下 video 元素可能无法提供 intrinsic size，用此 fallback */
   videoIntrinsicWidth?: number;
   videoIntrinsicHeight?: number;
+  /** false：仅绘制框，不拦截指针（无人机拖拽瞄准等） */
+  interactive?: boolean;
 }
 
 function clamp01(v: number): number {
@@ -254,6 +257,7 @@ export function EoDetectionOverlay({
   videoObjectFit = "cover",
   videoIntrinsicWidth = 0,
   videoIntrinsicHeight = 0,
+  interactive = true,
 }: EoDetectionOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -289,16 +293,16 @@ export function EoDetectionOverlay({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    const vw = video?.videoWidth || videoIntrinsicWidth;
-    const vh = video?.videoHeight || videoIntrinsicHeight;
+    const { w: vw, h: vh } = resolveEoVideoIntrinsicSize(video, videoIntrinsicWidth, videoIntrinsicHeight);
     const content = getVideoContentRect(w, h, vw, vh, videoObjectFit);
 
     for (const b of boxes) {
       const isSelected = b.id === selectedBoxId;
-      const x = content.x + b.x * content.w;
-      const y = content.y + b.y * content.h;
-      const bw = b.w * content.w;
-      const bh = b.h * content.h;
+      const norm = mapEoBoxToPresentationNorm(b, vw, vh);
+      const x = content.x + norm.x * content.w;
+      const y = content.y + norm.y * content.h;
+      const bw = norm.w * content.w;
+      const bh = norm.h * content.h;
 
       if (b.variant === "singleTrack") {
         const mergedDetail = mergeSingleTrackTelemetry(b, ddsRow, tracks);
@@ -379,23 +383,38 @@ export function EoDetectionOverlay({
       if (rect.width <= 0 || rect.height <= 0) return null;
       const px = clientX - rect.left;
       const py = clientY - rect.top;
-      const vw = video?.videoWidth || videoIntrinsicWidth;
-      const vh = video?.videoHeight || videoIntrinsicHeight;
+      const { w: vw, h: vh } = resolveEoVideoIntrinsicSize(video, videoIntrinsicWidth, videoIntrinsicHeight);
       const content = getVideoContentRect(rect.width, rect.height, vw, vh, videoObjectFit);
       /** 与 draw() 完全一致：在画布像素空间判命中，避免「归一化 + clamp」与视觉框错位 */
       const pad = 10;
       let hitBoxId: string | null = null;
       let hitBox: EoDetectionBox | null = null;
+      const tryHit = (b: EoDetectionBox) => {
+        const norm = mapEoBoxToPresentationNorm(b, vw, vh);
+        const bx = content.x + norm.x * content.w;
+        const by = content.y + norm.y * content.h;
+        const bw = norm.w * content.w;
+        const bh = norm.h * content.h;
+        return px >= bx - pad && px <= bx + bw + pad && py >= by - pad && py <= by + bh + pad;
+      };
+      /** 海/空多目标框优先于单目标角标，避免跟踪态下误点成取消 */
       for (let i = boxes.length - 1; i >= 0; i--) {
         const b = boxes[i]!;
-        const bx = content.x + b.x * content.w;
-        const by = content.y + b.y * content.h;
-        const bw = b.w * content.w;
-        const bh = b.h * content.h;
-        if (px >= bx - pad && px <= bx + bw + pad && py >= by - pad && py <= by + bh + pad) {
+        if (b.variant === "singleTrack") continue;
+        if (tryHit(b)) {
           hitBoxId = b.id;
           hitBox = b;
           break;
+        }
+      }
+      if (!hitBox) {
+        for (let i = boxes.length - 1; i >= 0; i--) {
+          const b = boxes[i]!;
+          if (tryHit(b)) {
+            hitBoxId = b.id;
+            hitBox = b;
+            break;
+          }
         }
       }
       const nx = content.w > 0 ? (px - content.x) / content.w : 0;
@@ -410,31 +429,39 @@ export function EoDetectionOverlay({
   return (
     <canvas
       ref={canvasRef}
-      className={cn("absolute inset-0 z-10", className)}
-      onClick={(e) => {
-        if (!onSelectBox) return;
-        const hit = resolveHit(e.clientX, e.clientY);
-        onSelectBox(hit?.hitBoxId ?? null);
-      }}
-      onDoubleClick={(e) => {
-        const hit = resolveHit(e.clientX, e.clientY);
-        if (!hit) return;
-        /** 双击第二次落点常偏出小框，仍应视为对「当前选中框」发任务 */
-        let out = hit;
-        if (!hit.hitBox && selectedBoxId) {
-          const b = boxes.find((x) => x.id === selectedBoxId) ?? null;
-          if (b) {
-            out = {
-              normalizedX: b.x + b.w / 2,
-              normalizedY: b.y + b.h / 2,
-              hitBoxId: selectedBoxId,
-              hitBox: b,
-            };
-          }
-        }
-        if (onSelectBox) onSelectBox(out.hitBoxId);
-        onDoubleClickPoint?.(out);
-      }}
+      className={cn("absolute inset-0 z-10", !interactive && "pointer-events-none", className)}
+      onClick={
+        interactive
+          ? (e) => {
+              if (!onSelectBox) return;
+              const hit = resolveHit(e.clientX, e.clientY);
+              onSelectBox(hit?.hitBoxId ?? null);
+            }
+          : undefined
+      }
+      onDoubleClick={
+        interactive
+          ? (e) => {
+              const hit = resolveHit(e.clientX, e.clientY);
+              if (!hit) return;
+              /** 双击第二次落点常偏出小框，仍应视为对「当前选中框」发任务 */
+              let out = hit;
+              if (!hit.hitBox && selectedBoxId) {
+                const b = boxes.find((x) => x.id === selectedBoxId) ?? null;
+                if (b) {
+                  out = {
+                    normalizedX: b.x + b.w / 2,
+                    normalizedY: b.y + b.h / 2,
+                    hitBoxId: selectedBoxId,
+                    hitBox: b,
+                  };
+                }
+              }
+              if (onSelectBox) onSelectBox(out.hitBoxId);
+              onDoubleClickPoint?.(out);
+            }
+          : undefined
+      }
       aria-hidden
     />
   );

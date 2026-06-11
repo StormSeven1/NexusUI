@@ -49,6 +49,7 @@ export const TRACK_EVAL_SENSOR_OPTIONS = [
   { id: 4, label: "自报位" },
   { id: 6, label: "对空融合航迹" },
   { id: 7, label: "KU雷达" },
+  { id: 203, label: "反无车雷达航迹" },
 ] as const;
 
 /** 默认勾选：对海融合、码头雷达、AIS、探鸟、自报位、对空融合 */
@@ -326,7 +327,7 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   endTime: defaultDatetimeLocal(0),
   sensorIdsForQuery: [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
   directDownload: false,
-  autoAnalysisEnabled: true,
+  autoAnalysisEnabled: false,
   realtimeTracking: false,
   queryStatus: { type: "", message: "", details: "" },
 
@@ -477,8 +478,8 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
               metricsComputing: false,
               queryStatus: {
                 type: "error",
-                message: error || status || "gRPC 评估失败",
-                details: "",
+                message: error?.trim() || "gRPC 评估失败",
+                details: status !== "OK" && status ? `状态: ${status}` : "",
               },
             });
             return;

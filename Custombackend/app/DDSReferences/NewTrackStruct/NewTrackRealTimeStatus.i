@@ -5828,6 +5828,219 @@ namespace swig {
     }
 }
 
+%traits_penumn(enum TargetFull::AlarmLocationType);
+////////////////////////////////////////////////////////
+// Binding for class TargetFull::AlarmSpatialInfo
+////////////////////////////////////////////////////////
+
+// Ignore overloaded methods that have no application on Python
+// Otherwise they will issue a warning
+%ignore TargetFull::AlarmSpatialInfo::AlarmSpatialInfo(TargetFull::AlarmSpatialInfo&&);
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Avoid a warning ignoring all but one
+%ignore TargetFull::AlarmSpatialInfo::location_type(TargetFull::AlarmLocationType&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::location_type();
+%rename("%s") TargetFull::AlarmSpatialInfo::location_type() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::has_point_position(bool&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::has_point_position();
+%rename("%s") TargetFull::AlarmSpatialInfo::has_point_position() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::point_position(TargetFull::GeoPosition&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::point_position();
+%rename("%s") TargetFull::AlarmSpatialInfo::point_position() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::has_reference_position(bool&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::has_reference_position();
+%rename("%s") TargetFull::AlarmSpatialInfo::has_reference_position() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::reference_position(TargetFull::GeoPosition&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::reference_position();
+%rename("%s") TargetFull::AlarmSpatialInfo::reference_position() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::bearing_deg(double&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::bearing_deg();
+%rename("%s") TargetFull::AlarmSpatialInfo::bearing_deg() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::bearing_sigma_deg(double&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::bearing_sigma_deg();
+%rename("%s") TargetFull::AlarmSpatialInfo::bearing_sigma_deg() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::has_range_estimate(bool&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::has_range_estimate();
+%rename("%s") TargetFull::AlarmSpatialInfo::has_range_estimate() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::range_estimate_m(TargetFull::Measurement&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::range_estimate_m();
+%rename("%s") TargetFull::AlarmSpatialInfo::range_estimate_m() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::has_range_min_m(bool&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::has_range_min_m();
+%rename("%s") TargetFull::AlarmSpatialInfo::has_range_min_m() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::range_min_m(TargetFull::Measurement&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::range_min_m();
+%rename("%s") TargetFull::AlarmSpatialInfo::range_min_m() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::has_range_max_m(bool&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::has_range_max_m();
+%rename("%s") TargetFull::AlarmSpatialInfo::has_range_max_m() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::range_max_m(TargetFull::Measurement&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::range_max_m();
+%rename("%s") TargetFull::AlarmSpatialInfo::range_max_m() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::sector_start_deg(double&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::sector_start_deg();
+%rename("%s") TargetFull::AlarmSpatialInfo::sector_start_deg() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::sector_end_deg(double&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::sector_end_deg();
+%rename("%s") TargetFull::AlarmSpatialInfo::sector_end_deg() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::spatial_confidence(double&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::spatial_confidence();
+%rename("%s") TargetFull::AlarmSpatialInfo::spatial_confidence() const;
+
+
+
+%ignore TargetFull::AlarmSpatialInfo::source_sensor(TargetFull::EntityRef&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::AlarmSpatialInfo::source_sensor();
+%rename("%s") TargetFull::AlarmSpatialInfo::source_sensor() const;
+
+
+
+%template(_AlarmSpatialInfoSeq) eprosima::fastdds::dds::LoanableTypedCollection<TargetFull::AlarmSpatialInfo, std::false_type>;
+%template(AlarmSpatialInfoSeq) eprosima::fastdds::dds::LoanableSequence<TargetFull::AlarmSpatialInfo, std::false_type>;
+%extend eprosima::fastdds::dds::LoanableSequence<TargetFull::AlarmSpatialInfo, std::false_type>
+{
+    size_t __len__() const
+    {
+        return self->length();
+    }
+
+    const TargetFull::AlarmSpatialInfo& __getitem__(size_t i) const
+    {
+        return (*self)[i];
+    }
+}
+
 ////////////////////////////////////////////////////////
 // Binding for class TargetFull::TargetAlarmItem
 ////////////////////////////////////////////////////////
@@ -5952,6 +6165,17 @@ namespace swig {
 // We ignore them to prevent this
 %ignore TargetFull::TargetAlarmItem::position();
 %rename("%s") TargetFull::TargetAlarmItem::position() const;
+
+
+
+%ignore TargetFull::TargetAlarmItem::spatial_info(TargetFull::AlarmSpatialInfo&&);
+
+
+// Overloaded getter methods shadow each other and are equivalent in python
+// Const accesors produced constant enums instead of arrays/dictionaries when used
+// We ignore them to prevent this
+%ignore TargetFull::TargetAlarmItem::spatial_info();
+%rename("%s") TargetFull::TargetAlarmItem::spatial_info() const;
 
 
 

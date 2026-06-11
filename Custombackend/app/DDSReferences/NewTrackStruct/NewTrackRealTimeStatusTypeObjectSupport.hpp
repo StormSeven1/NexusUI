@@ -962,6 +962,32 @@ eProsima_user_DllExport void register_AlarmAreaRef_type_identifier(
         eprosima::fastdds::dds::xtypes::TypeIdentifierPair& type_ids);
 
 /**
+ * @brief Register AlarmLocationType related TypeIdentifier.
+ *        Fully-descriptive TypeIdentifiers are directly registered.
+ *        Hash TypeIdentifiers require to fill the TypeObject information and hash it, consequently, the TypeObject is
+ *        indirectly registered as well.
+ *
+ * @param[out] TypeIdentifier of the registered type.
+ *             The returned TypeIdentifier corresponds to the complete TypeIdentifier in case of hashed TypeIdentifiers.
+ *             Invalid TypeIdentifier is returned in case of error.
+ */
+eProsima_user_DllExport void register_AlarmLocationType_type_identifier(
+        eprosima::fastdds::dds::xtypes::TypeIdentifierPair& type_ids);
+
+/**
+ * @brief Register AlarmSpatialInfo related TypeIdentifier.
+ *        Fully-descriptive TypeIdentifiers are directly registered.
+ *        Hash TypeIdentifiers require to fill the TypeObject information and hash it, consequently, the TypeObject is
+ *        indirectly registered as well.
+ *
+ * @param[out] TypeIdentifier of the registered type.
+ *             The returned TypeIdentifier corresponds to the complete TypeIdentifier in case of hashed TypeIdentifiers.
+ *             Invalid TypeIdentifier is returned in case of error.
+ */
+eProsima_user_DllExport void register_AlarmSpatialInfo_type_identifier(
+        eprosima::fastdds::dds::xtypes::TypeIdentifierPair& type_ids);
+
+/**
  * @brief Register TargetAlarmItem related TypeIdentifier.
  *        Fully-descriptive TypeIdentifiers are directly registered.
  *        Hash TypeIdentifiers require to fill the TypeObject information and hash it, consequently, the TypeObject is

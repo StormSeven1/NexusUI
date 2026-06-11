@@ -45,6 +45,16 @@ def _fusion_source_name_from_radar(sp, entity_id: str) -> Optional[str]:
     return None
 
 
+def _read_enum_int(getter, default: int = 0) -> int:
+    try:
+        raw = getter()
+        if hasattr(raw, 'value'):
+            return int(raw.value)
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 def _read_reality_type(obj) -> int:
     """
     IDL RealityType：0 未知(UNKNOWN_REALITY)，1 实兵(REAL)，2 虚兵(VIRTUAL)。
@@ -83,8 +93,13 @@ def _extract_fusion_sources(obj) -> List[Dict[str, Any]]:
 
 def target_object_to_track(obj) -> Dict[str, Any]:
     """单个 TargetObject → 前端航迹 dict；类型名仅由 trackType(classified_type) 决定。"""
-    track_type = int(obj.classified_type())
-    track_category_name = _TRACK_TYPE_TO_CATEGORY_NAME[track_type]
+    track_type = _read_enum_int(obj.classified_type)
+    track_category_name = _TRACK_TYPE_TO_CATEGORY_NAME.get(track_type, 'unknown')
+
+    target_id = str(obj.target_id()).strip()
+    ext_id = str(obj.external_target_id()).strip()
+    # trackId：业务 track_id（external_target_id），无人机管理软件等 legacy 系统使用
+    track_id_raw = ext_id if ext_id else target_id
 
     kin = obj.target_kinematics()
     pos = kin.position()
@@ -97,8 +112,9 @@ def target_object_to_track(obj) -> Dict[str, Any]:
     reality_type = _read_reality_type(obj)
 
     result: Dict[str, Any] = {
-        'trackId': int(obj.external_target_id()) if str(obj.external_target_id()).strip().isdigit() else obj.external_target_id(),
-        'uniqueId': int(obj.target_id()) if str(obj.target_id()).strip().isdigit() else obj.target_id(),
+        'trackId': int(track_id_raw) if track_id_raw.isdigit() else track_id_raw,
+        'uniqueId': int(target_id) if target_id.isdigit() else target_id,
+        'targetId': int(target_id) if target_id.isdigit() else target_id,
         'longitude': float(pos.longitude()),
         'latitude': float(pos.latitude()),
         'height': float(pos.altitude()),

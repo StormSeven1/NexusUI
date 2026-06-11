@@ -63,7 +63,18 @@ import {
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { loadSvgImage } from "@/lib/map-image-loader";
 import { getMaplibreBaseMapOptions } from "@/lib/map-2d-basemap";
+import { bootstrapMapHomeSideEffects } from "@/lib/map-home-bootstrap";
 import { parseVectorLayersForPanel } from "@/lib/map-2d-basemap-layer-panel";
+import {
+  anyRasterBasemapVisible,
+  applyMap2dRasterLayerVisibility,
+  defaultRasterVisibility,
+  installMap2dRasterLayers,
+  mapNeedsRasterLayersInstalled,
+  parseMap2dRasterLayersFromEnv,
+  rasterLayersForPanel,
+  resolveVectorBasemapLayerVisible,
+} from "@/lib/map-2d-raster-layers";
 import {
   mergeLaserDeviceWithAssetWsWhileDisposalFollow,
   mergeTdoaDeviceWithAssetWsWhileDisposalFollow,
@@ -112,6 +123,10 @@ import { useEoThirdPartyUdpDevStatusStore } from "@/stores/eo-third-party-udp-de
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
 import { useDroneDeviceLayerStore } from "@/stores/drone-device-layer-store";
+import {
+  filterAssetsByVisibleDroneAirports,
+  getVisibleDroneAirportIdsFromStores,
+} from "@/lib/drone-device-layer-visibility";
 import { useRadarDeviceLayerStore } from "@/stores/radar-device-layer-store";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import { TowerMaplibre, TOWER_LAYER_IDS, TOWER_ICON_LAYER } from "@/components/map/modules/tower-maplibre";
@@ -226,6 +241,21 @@ function queryRenderedFeaturesSafe(
 const DISABLE_MAP_TRACK_RENDERING =
   typeof process !== "undefined" && process.env.NEXT_PUBLIC_DISABLE_MAP_TRACK_RENDERING === "true";
 
+/** 图层面板可选栅格 XYZ 底图（`NEXT_PUBLIC_MAP2D_RASTER_LAYERS`） */
+const MAP2D_RASTER_LAYER_CONFIGS = parseMap2dRasterLayersFromEnv();
+
+function syncBasemapRasterPanelInfo(): void {
+  if (MAP2D_RASTER_LAYER_CONFIGS.length === 0) return;
+  useAppStore.getState().setBasemapRasterInfo({
+    layers: rasterLayersForPanel(MAP2D_RASTER_LAYER_CONFIGS),
+    defaultVisibility: defaultRasterVisibility(MAP2D_RASTER_LAYER_CONFIGS),
+  });
+}
+
+function ensureMap2dRasterLayersInstalled(map: maplibregl.Map): void {
+  installMap2dRasterLayers(map, MAP2D_RASTER_LAYER_CONFIGS);
+}
+
 /*
  * ── 限制区 / 多边形在地图上的三套东西（勿混为一谈）──
  *
@@ -278,7 +308,7 @@ const LAYER_MAPPING: Record<string, string[]> = {
   [LYR_DISTANCE_RINGS]: [...DISTANCE_RINGS_LAYER_IDS],
 };
 
-/** 图层面板签名：底图矢量 / 数据图层变化时触发 apply 与 redraw */
+/** 图层面板签名：底图矢量 / 栅格 / 数据图层变化时触发 apply 与 redraw */
 function layerPanelVisibilitySignature(s: ReturnType<typeof useAppStore.getState>): string {
   const lv = Object.keys(s.layerVisibility)
     .sort()
@@ -288,8 +318,13 @@ function layerPanelVisibilitySignature(s: ReturnType<typeof useAppStore.getState
     .sort()
     .map((k) => `${k}:${s.basemapVectorVisibility[k] === false ? "0" : "1"}`)
     .join(",");
+  const br = Object.keys(s.basemapRasterVisibility)
+    .sort()
+    .map((k) => `${k}:${s.basemapRasterVisibility[k] === false ? "0" : "1"}`)
+    .join(",");
   const bl = s.basemapVectorLayers.map((l) => l.id).join(",");
-  return `${s.basemapGroupVisible ? "1" : "0"}|${bl}|${bv}|${lv}`;
+  const rl = s.basemapRasterLayers.map((l) => l.id).join(",");
+  return `${s.basemapGroupVisible ? "1" : "0"}|${bl}|${bv}|${rl}|${br}|${lv}`;
 }
 
 /**
@@ -306,14 +341,20 @@ function applyLayerPanelVisibilityFromStore(
 ): void {
   const master = s.basemapGroupVisible;
   const per = s.basemapVectorVisibility;
+  const rasterOn = anyRasterBasemapVisible(s.basemapRasterVisibility, MAP2D_RASTER_LAYER_CONFIGS);
   for (const l of s.basemapVectorLayers) {
     try {
       if (!map.getLayer(l.id)) continue;
-      map.setLayoutProperty(l.id, "visibility", master && per[l.id] !== false ? "visible" : "none");
+      const vis = resolveVectorBasemapLayerVisible(l.id, master, per, rasterOn);
+      map.setLayoutProperty(l.id, "visibility", vis ? "visible" : "none");
     } catch { /* 图层尚未就绪，跳过 */ }
   }
+  applyMap2dRasterLayerVisibility(map, MAP2D_RASTER_LAYER_CONFIGS, s.basemapRasterVisibility);
   for (const [lid, mlIds] of Object.entries(LAYER_MAPPING)) {
-    const v = s.layerVisibility[lid] ?? true;
+    let v = s.layerVisibility[lid] ?? true;
+    if (lid === LYR_AIRPORT) {
+      v = getVisibleDroneAirportIdsFromStores().size > 0;
+    }
     for (const ml of mlIds) {
       try {
         if (!map.getLayer(ml)) continue;
@@ -470,6 +511,22 @@ export function Map2D() {
     tdoa: TdoaMaplibre;
   } | null>(null);
   const [polyPending, setPolyPending] = useState<PolygonDrawCompletePayload | null>(null);
+  /** 等待 app-config 后再建图；`undefined` 表示加载中 */
+  const [mapHomeBoot, setMapHomeBoot] = useState<
+    import("@/lib/map-home-config").AppConfigMapHome | null | undefined
+  >(undefined);
+
+  useEffect(() => {
+    void useAppConfigStore
+      .getState()
+      .ensureLoaded()
+      .then((cfg) => {
+        bootstrapMapHomeSideEffects(cfg.mapHome);
+        setMapHomeBoot(cfg.mapHome);
+      })
+      .catch(() => setMapHomeBoot(null));
+  }, []);
+
   const [polyAreaName, setPolyAreaName] = useState("");
   /** 对应 `DrawnArea.color` / `fillColor` / `fillOpacity`，弹窗打开时复位为默认 */
   const [polyStrokeColor, setPolyStrokeColor] = useState(POLY_DIALOG_DEFAULT_STROKE);
@@ -516,11 +573,12 @@ export function Map2D() {
     setPolyPending(null);
   }, [polyPending, polyAreaName, polyStrokeColor, polyFillColor, polyFillOpacity]);
 
-  /* 初始化 MapLibre */
+  /* 初始化 MapLibre（等 app-config 的 mapHome 就绪后再创建，保证 Home 只改配置文件即可） */
   useEffect(() => {
+    if (mapHomeBoot === undefined) return;
     if (!mapContainer.current || mapRef.current) return;
 
-    const { style, transformStyle, zoom, ...mapOpts } = getMaplibreBaseMapOptions("main");
+    const { style, transformStyle, zoom, ...mapOpts } = getMaplibreBaseMapOptions("main", mapHomeBoot);
     const map = new maplibregl.Map({
       container: mapContainer.current,
       ...mapOpts,
@@ -531,11 +589,26 @@ export function Map2D() {
     map.doubleClickZoom.disable();
     map.setStyle(style, { transformStyle });
 
-    /** style 变化后把图层面板 visibility 再写一遍（函数内逐图层 try-catch，无需守卫） */
-    const applyPanelVisIfStyleLoaded = () => {
+    const syncPanelVisibility = () => {
       applyLayerPanelVisibilityFromStore(map, useAppStore.getState());
     };
-    map.on("styledata", applyPanelVisIfStyleLoaded);
+    const ensureRasterLayers = () => {
+      if (mapNeedsRasterLayersInstalled(map, MAP2D_RASTER_LAYER_CONFIGS)) {
+        ensureMap2dRasterLayersInstalled(map);
+      }
+    };
+    /** style 整包重载后 custom layer 会被清掉，须重装栅格层 */
+    const onStyleLoad = () => {
+      ensureMap2dRasterLayersInstalled(map);
+      syncPanelVisibility();
+    };
+    /** styledata 高频触发：仅补装缺失栅格层 + 同步显隐，避免重复 addLayer */
+    const onStyleData = () => {
+      ensureRasterLayers();
+      syncPanelVisibility();
+    };
+    map.on("style.load", onStyleLoad);
+    map.on("styledata", onStyleData);
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-left");
     const pushMapScale = (lat: number) => {
@@ -554,6 +627,7 @@ export function Map2D() {
     map.on("moveend", () => pushMapScale(map.getCenter().lat));
     map.on("load", () => {
       pushMapScale(map.getCenter().lat);
+      syncBasemapRasterPanelInfo();
       /* `parseVectorLayersForPanel` → `setBasemapVectorInfo`：填充 `basemapVectorLayers` / `basemapVectorVisibility`（图层面板勾底图矢量子层） */
       try {
         const parsed = parseVectorLayersForPanel(map.getStyle());
@@ -564,6 +638,8 @@ export function Map2D() {
       } catch (e) {
         console.warn("basemap style parse:", e);
       }
+
+      ensureMap2dRasterLayersInstalled(map);
 
       /* 首帧 idle：面板显隐 + 资产图层（init 尚未跑完时 flush 对光电为 no-op，无妨） */
       map.once("idle", () => {
@@ -664,7 +740,9 @@ export function Map2D() {
         airportStatic.install();
         airportStatic.setAssetDispositionAccent(assetIconAccentEarly);
         airportStatic.applyAirportsBundle(preCfg?.airports ?? null);
-        airportStatic.setFromAssets(_assetsEarly);
+        airportStatic.setFromAssets(
+          filterAssetsByVisibleDroneAirports(_assetsEarly, getVisibleDroneAirportIdsFromStores()),
+        );
         airportStaticRef.current = airportStatic;
 
         flushMapAssetsRef.current?.();
@@ -686,7 +764,9 @@ export function Map2D() {
         radarCov.setFromAssets(_assets, currentAssetData);
         optoFov.setFromAssets(_assets);
         towerMod.setFromAssets(_assets);
-        airportStatic.setFromAssets(_assets);
+        airportStatic.setFromAssets(
+          filterAssetsByVisibleDroneAirports(_assets, getVisibleDroneAirportIdsFromStores()),
+        );
 
         /* 与 `adaptAssetsForMap` 友方第二回退一致：根键 `assetFriendlyColor` 须参与预注册，否则 `drones.devices` 为空时 `asset-drone-*-mf#…` 未 addImage */
         const assetIconPreregRootFriendlyTints = PUBLIC_MAP_ASSET_TYPES.map((t) => getAssetFriendlyColorForAssetType(t));
@@ -1099,8 +1179,8 @@ export function Map2D() {
         .catch((err: unknown) => console.error("Map init failed:", err))
         .finally(() => {
           /* init 抛错时仍可能已改 style；补一次 apply */
-          applyPanelVisIfStyleLoaded();
-          map.once("idle", applyPanelVisIfStyleLoaded);
+          syncPanelVisibility();
+          map.once("idle", syncPanelVisibility);
         });
     });
 
@@ -1132,11 +1212,12 @@ export function Map2D() {
       dronesRef.current = null;
       tracksRef.current?.dispose();
       tracksRef.current = null;
-      map.off("styledata", applyPanelVisIfStyleLoaded);
+      map.off("style.load", onStyleLoad);
+      map.off("styledata", onStyleData);
       map.remove();
       mapRef.current = null;
     };
-  }, [setZoomLevel]);
+  }, [mapHomeBoot, setZoomLevel]);
 
   /* flyTo 订阅 */
   useEffect(() => {
@@ -1492,12 +1573,23 @@ export function Map2D() {
       const vis = useDroneDeviceLayerStore.getState().deviceVisibility;
       dronesRef.current?.setPerDeviceVisibility(vis);
       const adapted = adaptAssetsForMap(useAssetStore.getState().assets);
+      const visibleAirports = getVisibleDroneAirportIdsFromStores();
+      airportStaticRef.current?.setFromAssets(
+        filterAssetsByVisibleDroneAirports(adapted, visibleAirports),
+      );
       dronesRef.current?.setStaticDroneSitesFromAssets(adapted, assetDispositionAccentRef.current);
+      const map = mapRef.current;
+      if (map) applyLayerPanelVisibilityFromStore(map, useAppStore.getState());
     };
     const unsubVis = useDroneDeviceLayerStore.subscribe(flushDronePerDevice);
+    const unsubDroneMaster = useAppStore.subscribe((s, p) => {
+      if ((s.layerVisibility[LYR_DRONES] ?? true) === (p.layerVisibility[LYR_DRONES] ?? true)) return;
+      flushDronePerDevice();
+    });
     flushDronePerDevice();
     return () => {
       unsubVis();
+      unsubDroneMaster();
     };
   }, []);
 
@@ -1642,7 +1734,9 @@ export function Map2D() {
         }
         optoFovRef.current?.setFromAssets(adapted);
         towerModRef.current?.setFromAssets(adapted);
-        airportStaticRef.current?.setFromAssets(adapted);
+        airportStaticRef.current?.setFromAssets(
+          filterAssetsByVisibleDroneAirports(adapted, getVisibleDroneAirportIdsFromStores()),
+        );
         dronesRef.current?.setPerDeviceVisibility(useDroneDeviceLayerStore.getState().deviceVisibility);
         dronesRef.current?.setStaticDroneSitesFromAssets(adapted, assetDispositionAccentRef.current);
       } catch {

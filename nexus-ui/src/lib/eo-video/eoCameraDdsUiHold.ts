@@ -49,6 +49,14 @@ function snapshotFromRow(row: EoCameraDdsStatusRow | undefined): EoCameraDdsHeld
   return { trackId, trackAlias, overlayTitle };
 }
 
+function heldTrackUiEqual(a: EoCameraDdsHeldTrackUi, b: EoCameraDdsHeldTrackUi): boolean {
+  return (
+    a.trackId === b.trackId &&
+    a.trackAlias === b.trackAlias &&
+    a.overlayTitle === b.overlayTitle
+  );
+}
+
 /**
  * 单目标叠层航迹号 / 别名：EXECUTING 且有航迹号时立即更新；
  * 航迹号丢失或任务非执行态后保留 3s；期间再次 EXECUTING+航迹号则刷新计时。
@@ -92,13 +100,13 @@ export function useEoCameraDdsHeldTrackUi(camId: string): EoCameraDdsHeldTrackUi
       clearHold();
       wasActiveRef.current = true;
       lastActiveRef.current = snap;
-      setHeld(snap);
+      setHeld((prev) => (heldTrackUiEqual(prev, snap) ? prev : snap));
       return clearHold;
     }
 
     if (wasActiveRef.current && lastActiveRef.current.trackId != null) {
       wasActiveRef.current = false;
-      setHeld(lastActiveRef.current);
+      setHeld((prev) => (heldTrackUiEqual(prev, lastActiveRef.current) ? prev : lastActiveRef.current));
       clearHold();
       holdTimerRef.current = setTimeout(() => {
         holdTimerRef.current = null;
@@ -109,7 +117,7 @@ export function useEoCameraDdsHeldTrackUi(camId: string): EoCameraDdsHeldTrackUi
     }
 
     if (!holdTimerRef.current) {
-      setHeld(EMPTY_HELD);
+      setHeld((prev) => (heldTrackUiEqual(prev, EMPTY_HELD) ? prev : EMPTY_HELD));
     }
 
     return clearHold;

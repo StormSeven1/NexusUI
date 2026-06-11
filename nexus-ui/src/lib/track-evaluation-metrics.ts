@@ -6,6 +6,14 @@ import {
   FALLBACK_TRACK_EVAL_RADAR_CHANNELS,
   shortTrackEvalRadarLabel,
 } from "@/lib/track-evaluation-radar-config";
+import {
+  getAirSecondaryRadarId,
+  getAirSecondaryRadarSensorId,
+  getAirSelfReportId,
+  hasAirRadarBesidesSelfReport,
+  listAirFusionRadars,
+  parseAirFusionSources,
+} from "@/lib/air-fusion-source";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -468,14 +476,40 @@ interface IdCountStat {
 // Accuracy / Recall / False alarm
 // ---------------------------------------------------------------------------
 
+function accumulateAirRadarIdCount(
+  counts: Map<string, IdCountStat>,
+  radarId: number | string | undefined,
+  fusionTrackId: number | string,
+  selfReportId: unknown,
+  timestamp: number,
+): void {
+  if (!isValidOriginalId(radarId)) return;
+  const idStr = String(radarId);
+  if (!counts.has(idStr)) {
+    counts.set(idStr, {
+      count: 0,
+      timeRange: { min: timestamp, max: timestamp },
+      fusionTrackIds: new Set(),
+      selfReportIds: new Set(),
+    });
+  }
+  const stat = counts.get(idStr)!;
+  stat.count++;
+  stat.fusionTrackIds.add(fusionTrackId);
+  if (isValidOriginalId(selfReportId)) stat.selfReportIds.add(String(selfReportId));
+  if (timestamp > 0) {
+    stat.timeRange.min = Math.min(stat.timeRange.min, timestamp);
+    stat.timeRange.max = Math.max(stat.timeRange.max, timestamp);
+  }
+}
+
 function calculateAccuracy(features: EvalTrackFeature[]): Pick<
   TrackEvalMetricsResult,
   "birdTrackAccuracy" | "kuRadarAccuracy"
 > {
   const airFusionTracks = features.filter((f) => {
     if (f.sensorId !== 6) return false;
-    const od = f.originalData;
-    return isValidOriginalId(od.original_track_id2);
+    return getAirSelfReportId(f.originalData) !== undefined;
   });
 
   if (airFusionTracks.length === 0) {
@@ -487,51 +521,25 @@ function calculateAccuracy(features: EvalTrackFeature[]): Pick<
 
   airFusionTracks.forEach((f) => {
     const originalData = f.originalData;
+    const sources = parseAirFusionSources(originalData);
     const timestamp = getFeatureTimestamp(f);
     const fusionTrackId = f.trackId;
-    const selfReportId = originalData.original_track_id2;
+    const selfReportId = sources.selfReport;
 
-    const birdTrackId = originalData.original_track_id1;
-    if (isValidOriginalId(birdTrackId)) {
-      const birdIdStr = String(birdTrackId);
-      if (!birdTrackIdCounts.has(birdIdStr)) {
-        birdTrackIdCounts.set(birdIdStr, {
-          count: 0,
-          timeRange: { min: timestamp, max: timestamp },
-          fusionTrackIds: new Set(),
-          selfReportIds: new Set(),
-        });
-      }
-      const stat = birdTrackIdCounts.get(birdIdStr)!;
-      stat.count++;
-      stat.fusionTrackIds.add(fusionTrackId);
-      if (isValidOriginalId(selfReportId)) stat.selfReportIds.add(String(selfReportId));
-      if (timestamp > 0) {
-        stat.timeRange.min = Math.min(stat.timeRange.min, timestamp);
-        stat.timeRange.max = Math.max(stat.timeRange.max, timestamp);
-      }
-    }
-
-    const kuRadarId = originalData.original_track_id3;
-    if (isValidOriginalId(kuRadarId)) {
-      const kuIdStr = String(kuRadarId);
-      if (!kuRadarIdCounts.has(kuIdStr)) {
-        kuRadarIdCounts.set(kuIdStr, {
-          count: 0,
-          timeRange: { min: timestamp, max: timestamp },
-          fusionTrackIds: new Set(),
-          selfReportIds: new Set(),
-        });
-      }
-      const stat = kuRadarIdCounts.get(kuIdStr)!;
-      stat.count++;
-      stat.fusionTrackIds.add(fusionTrackId);
-      if (isValidOriginalId(selfReportId)) stat.selfReportIds.add(String(selfReportId));
-      if (timestamp > 0) {
-        stat.timeRange.min = Math.min(stat.timeRange.min, timestamp);
-        stat.timeRange.max = Math.max(stat.timeRange.max, timestamp);
-      }
-    }
+    accumulateAirRadarIdCount(
+      birdTrackIdCounts,
+      sources.bird,
+      fusionTrackId,
+      selfReportId,
+      timestamp,
+    );
+    accumulateAirRadarIdCount(
+      kuRadarIdCounts,
+      getAirSecondaryRadarId(sources),
+      fusionTrackId,
+      selfReportId,
+      timestamp,
+    );
   });
 
   const birdTracks = features.filter((f) => f.sensorId === 5);
@@ -558,12 +566,12 @@ function calculateAccuracy(features: EvalTrackFeature[]): Pick<
   });
   birdAccuracyData.sort((a, b) => b.accuracy - a.accuracy);
 
-  const kuRadarTracks = features.filter((f) => f.sensorId === 7);
+  const secondaryRadarTracks = features.filter((f) => f.sensorId === 7 || f.sensorId === 203);
   const kuAccuracyData: KuRadarAccuracyItem[] = [];
   kuRadarIdCounts.forEach((stat, kuId) => {
     const timeMin = stat.timeRange.min - ONE_HOUR_MS;
     const timeMax = stat.timeRange.max + ONE_HOUR_MS;
-    const kuTracksInRange = kuRadarTracks.filter((f) => {
+    const kuTracksInRange = secondaryRadarTracks.filter((f) => {
       if (String(f.trackId) !== String(kuId)) return false;
       const timestamp = getFeatureTimestamp(f);
       return timestamp > 0 && timestamp >= timeMin && timestamp <= timeMax;
@@ -591,7 +599,7 @@ function calculateRecall(features: EvalTrackFeature[]): Pick<
 > {
   const airFusionTracksWithSelfReport = features.filter((f) => {
     if (f.sensorId !== 6) return false;
-    return isValidOriginalId(f.originalData.original_track_id2);
+    return getAirSelfReportId(f.originalData) !== undefined;
   });
 
   if (airFusionTracksWithSelfReport.length === 0) {
@@ -604,9 +612,9 @@ function calculateRecall(features: EvalTrackFeature[]): Pick<
   >();
 
   airFusionTracksWithSelfReport.forEach((f) => {
-    const originalData = f.originalData;
-    const selfReportId = originalData.original_track_id2;
-    if (!isValidOriginalId(selfReportId)) return;
+    const sources = parseAirFusionSources(f.originalData);
+    const selfReportId = sources.selfReport;
+    if (selfReportId === undefined) return;
     const selfReportIdStr = String(selfReportId);
     if (!selfReportIdStats.has(selfReportIdStr)) {
       selfReportIdStats.set(selfReportIdStr, {
@@ -617,8 +625,8 @@ function calculateRecall(features: EvalTrackFeature[]): Pick<
     }
     const stat = selfReportIdStats.get(selfReportIdStr)!;
     stat.selfReportCount++;
-    if (isValidOriginalId(originalData.original_track_id1)) stat.birdCount++;
-    if (isValidOriginalId(originalData.original_track_id3)) stat.kuCount++;
+    if (sources.bird !== undefined) stat.birdCount++;
+    if (getAirSecondaryRadarId(sources) !== undefined) stat.kuCount++;
   });
 
   const birdRecallData: BirdTrackRecallItem[] = [];
@@ -661,7 +669,7 @@ function calculateFalseAlarm(features: EvalTrackFeature[]): Pick<
 > {
   const airFusionTracks = features.filter((f) => {
     if (f.sensorId !== 6) return false;
-    return isValidOriginalId(f.originalData.original_track_id2);
+    return getAirSelfReportId(f.originalData) !== undefined;
   });
 
   if (airFusionTracks.length === 0) {
@@ -673,51 +681,25 @@ function calculateFalseAlarm(features: EvalTrackFeature[]): Pick<
 
   airFusionTracks.forEach((f) => {
     const originalData = f.originalData;
+    const sources = parseAirFusionSources(originalData);
     const timestamp = getFeatureTimestamp(f);
     const fusionTrackId = f.trackId;
-    const selfReportId = originalData.original_track_id2;
+    const selfReportId = sources.selfReport;
 
-    const birdTrackId = originalData.original_track_id1;
-    if (isValidOriginalId(birdTrackId)) {
-      const birdIdStr = String(birdTrackId);
-      if (!birdTrackIdCounts.has(birdIdStr)) {
-        birdTrackIdCounts.set(birdIdStr, {
-          count: 0,
-          timeRange: { min: timestamp, max: timestamp },
-          fusionTrackIds: new Set(),
-          selfReportIds: new Set(),
-        });
-      }
-      const stat = birdTrackIdCounts.get(birdIdStr)!;
-      stat.count++;
-      stat.fusionTrackIds.add(fusionTrackId);
-      if (isValidOriginalId(selfReportId)) stat.selfReportIds.add(String(selfReportId));
-      if (timestamp > 0) {
-        stat.timeRange.min = Math.min(stat.timeRange.min, timestamp);
-        stat.timeRange.max = Math.max(stat.timeRange.max, timestamp);
-      }
-    }
-
-    const kuRadarId = originalData.original_track_id3;
-    if (isValidOriginalId(kuRadarId)) {
-      const kuIdStr = String(kuRadarId);
-      if (!kuRadarIdCounts.has(kuIdStr)) {
-        kuRadarIdCounts.set(kuIdStr, {
-          count: 0,
-          timeRange: { min: timestamp, max: timestamp },
-          fusionTrackIds: new Set(),
-          selfReportIds: new Set(),
-        });
-      }
-      const stat = kuRadarIdCounts.get(kuIdStr)!;
-      stat.count++;
-      stat.fusionTrackIds.add(fusionTrackId);
-      if (isValidOriginalId(selfReportId)) stat.selfReportIds.add(String(selfReportId));
-      if (timestamp > 0) {
-        stat.timeRange.min = Math.min(stat.timeRange.min, timestamp);
-        stat.timeRange.max = Math.max(stat.timeRange.max, timestamp);
-      }
-    }
+    accumulateAirRadarIdCount(
+      birdTrackIdCounts,
+      sources.bird,
+      fusionTrackId,
+      selfReportId,
+      timestamp,
+    );
+    accumulateAirRadarIdCount(
+      kuRadarIdCounts,
+      getAirSecondaryRadarId(sources),
+      fusionTrackId,
+      selfReportId,
+      timestamp,
+    );
   });
 
   const birdTracks = features.filter((f) => f.sensorId === 5);
@@ -747,12 +729,14 @@ function calculateFalseAlarm(features: EvalTrackFeature[]): Pick<
   });
   birdFalseAlarmData.sort((a, b) => b.falseAlarm - a.falseAlarm);
 
-  const kuRadarTracks = features.filter((f) => f.sensorId === 7);
+  const secondaryRadarTracksForFalseAlarm = features.filter(
+    (f) => f.sensorId === 7 || f.sensorId === 203,
+  );
   const kuFalseAlarmData: KuRadarFalseAlarmItem[] = [];
   kuRadarIdCounts.forEach((stat, kuId) => {
     const timeMin = stat.timeRange.min - ONE_HOUR_MS;
     const timeMax = stat.timeRange.max + ONE_HOUR_MS;
-    const kuTracksInRange = kuRadarTracks.filter((f) => {
+    const kuTracksInRange = secondaryRadarTracksForFalseAlarm.filter((f) => {
       if (String(f.trackId) !== String(kuId)) return false;
       const timestamp = getFeatureTimestamp(f);
       return timestamp > 0 && timestamp >= timeMin && timestamp <= timeMax;
@@ -881,9 +865,9 @@ function calculateTrackingStabilityPoints(
   >();
 
   airFusionTracks.forEach((f) => {
-    const originalData = f.originalData;
-    const selfReportId = originalData.original_track_id2;
-    if (!isValidOriginalId(selfReportId)) return;
+    const sources = parseAirFusionSources(f.originalData);
+    const selfReportId = sources.selfReport;
+    if (selfReportId === undefined) return;
     const selfReportIdStr = String(selfReportId);
     const fusionTrackId = f.trackId;
     if (!selfReportIdStats.has(selfReportIdStr)) {
@@ -891,9 +875,7 @@ function calculateTrackingStabilityPoints(
     }
     const stat = selfReportIdStats.get(selfReportIdStr)!;
     stat.fusionTrackIds.add(fusionTrackId);
-    const hasBird = isValidOriginalId(originalData.original_track_id1);
-    const hasKuRadar = isValidOriginalId(originalData.original_track_id3);
-    if (hasBird || hasKuRadar) stat.radarCount++;
+    if (hasAirRadarBesidesSelfReport(sources)) stat.radarCount++;
   });
 
   const airStabilityBySelfReportData: AirFusionStabilityBySelfReportItem[] = [];
@@ -1013,9 +995,9 @@ function calculateTrackingStabilityDuration(
   const airSelfReportToFusionTrackIds = new Map<string, Set<number | string>>();
 
   airFusionTracks.forEach((f) => {
-    const originalData = f.originalData;
-    const selfReportId = originalData.original_track_id2;
-    if (!isValidOriginalId(selfReportId)) return;
+    const sources = parseAirFusionSources(f.originalData);
+    const selfReportId = sources.selfReport;
+    if (selfReportId === undefined) return;
     const fusionTrackId = f.trackId;
     const selfReportIdStr = String(selfReportId);
     const timestamp = getFeatureTimestamp(f);
@@ -1033,9 +1015,7 @@ function calculateTrackingStabilityDuration(
     }
     airSelfReportToFusionTrackIds.get(selfReportIdStr)!.add(fusionTrackId);
 
-    const hasBird = isValidOriginalId(originalData.original_track_id1);
-    const hasKuRadar = isValidOriginalId(originalData.original_track_id3);
-    if (hasBird || hasKuRadar) {
+    if (hasAirRadarBesidesSelfReport(sources)) {
       if (!airSelfReportRadarTimeRanges.has(selfReportIdStr)) {
         airSelfReportRadarTimeRanges.set(selfReportIdStr, { min: timestamp, max: timestamp });
       } else {
@@ -1099,7 +1079,7 @@ function calculateMaxTrackingDuration(
   const seaRadar1Label = shortTrackEvalRadarLabel(radarChannels.radar1?.name, "码头");
   const seaRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar2?.name, "靖子头");
   const airRadar1Label = shortTrackEvalRadarLabel(radarChannels.radar5?.name, "探鸟");
-  const airRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar6?.name, "KU");
+  const airRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar6?.name, "反无车");
 
   const seaFusionTracks = features.filter((f) => f.sensorId === 0);
   const seaAisRadarStats = new Map<
@@ -1233,9 +1213,9 @@ function calculateMaxTrackingDuration(
   >();
 
   airFusionTracks.forEach((f) => {
-    const originalData = f.originalData;
-    const selfReportId = originalData.original_track_id2;
-    if (!isValidOriginalId(selfReportId)) return;
+    const sources = parseAirFusionSources(f.originalData);
+    const selfReportId = sources.selfReport;
+    if (selfReportId === undefined) return;
     const fusionTrackId = f.trackId;
     const timestamp = getFeatureTimestamp(f);
     if (timestamp === 0) return;
@@ -1250,33 +1230,17 @@ function calculateMaxTrackingDuration(
     stat.selfReportTimeRange.min = Math.min(stat.selfReportTimeRange.min, timestamp);
     stat.selfReportTimeRange.max = Math.max(stat.selfReportTimeRange.max, timestamp);
 
-    const birdTrackId = originalData.original_track_id1;
-    const kuRadarId = originalData.original_track_id3;
-    if (isValidOriginalId(birdTrackId)) {
-      const radarIdStr = `${airRadar1Label}_${birdTrackId}`;
+    for (const radar of listAirFusionRadars(sources, {
+      bird: airRadar1Label,
+      secondary: airRadar2Label,
+    })) {
+      const radarIdStr = `${radar.label}_${radar.id}`;
       if (!stat.radarTimeRanges.has(radarIdStr)) {
         stat.radarTimeRanges.set(radarIdStr, {
           min: timestamp,
           max: timestamp,
-          radarId: birdTrackId as number | string,
-          radarType: airRadar1Label,
-          fusionTrackIds: new Set([fusionTrackId]),
-        });
-      } else {
-        const radarRange = stat.radarTimeRanges.get(radarIdStr)!;
-        radarRange.min = Math.min(radarRange.min, timestamp);
-        radarRange.max = Math.max(radarRange.max, timestamp);
-        radarRange.fusionTrackIds.add(fusionTrackId);
-      }
-    }
-    if (isValidOriginalId(kuRadarId)) {
-      const radarIdStr = `${airRadar2Label}_${kuRadarId}`;
-      if (!stat.radarTimeRanges.has(radarIdStr)) {
-        stat.radarTimeRanges.set(radarIdStr, {
-          min: timestamp,
-          max: timestamp,
-          radarId: kuRadarId as number | string,
-          radarType: airRadar2Label,
+          radarId: radar.id,
+          radarType: radar.label,
           fusionTrackIds: new Set([fusionTrackId]),
         });
       } else {
@@ -1389,14 +1353,12 @@ function calculateBreakCount(
   const airSelfReportTracks = new Map<string, Array<{ timestamp: number; hasRadar: boolean }>>();
 
   airFusionTracks.forEach((f) => {
-    const originalData = f.originalData;
-    const selfReportId = originalData.original_track_id2;
-    if (!isValidOriginalId(selfReportId)) return;
+    const sources = parseAirFusionSources(f.originalData);
+    const selfReportId = sources.selfReport;
+    if (selfReportId === undefined) return;
     const timestamp = getFeatureTimestamp(f);
     if (timestamp === 0) return;
-    const hasRadar =
-      isValidOriginalId(originalData.original_track_id1) ||
-      isValidOriginalId(originalData.original_track_id3);
+    const hasRadar = hasAirRadarBesidesSelfReport(sources);
     const selfReportIdStr = String(selfReportId);
     if (!airSelfReportTracks.has(selfReportIdStr)) airSelfReportTracks.set(selfReportIdStr, []);
     airSelfReportTracks.get(selfReportIdStr)!.push({ timestamp, hasRadar });
@@ -1447,7 +1409,7 @@ function calculateChangeBatchCount(
   const seaRadar1Label = shortTrackEvalRadarLabel(radarChannels.radar1?.name, "码头");
   const seaRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar2?.name, "靖子头");
   const airRadar1Label = shortTrackEvalRadarLabel(radarChannels.radar5?.name, "探鸟");
-  const airRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar6?.name, "KU");
+  const airRadar2Label = shortTrackEvalRadarLabel(radarChannels.radar6?.name, "反无车");
 
   const seaFusionTracks = features.filter((f) => f.sensorId === 0);
   const seaAisTracks = new Map<string, Array<{ timestamp: number; radarId: string | null }>>();
@@ -1497,16 +1459,15 @@ function calculateChangeBatchCount(
   const airSelfReportTracks = new Map<string, Array<{ timestamp: number; radarId: string | null }>>();
 
   airFusionTracks.forEach((f) => {
-    const originalData = f.originalData;
-    const selfReportId = originalData.original_track_id2;
-    if (!isValidOriginalId(selfReportId)) return;
+    const sources = parseAirFusionSources(f.originalData);
+    const selfReportId = sources.selfReport;
+    if (selfReportId === undefined) return;
     const timestamp = getFeatureTimestamp(f);
     if (timestamp === 0) return;
-    const birdTrackId = originalData.original_track_id1;
-    const kuRadarId = originalData.original_track_id3;
-    const parts: string[] = [];
-    if (isValidOriginalId(birdTrackId)) parts.push(`${airRadar1Label}_${birdTrackId}`);
-    if (isValidOriginalId(kuRadarId)) parts.push(`${airRadar2Label}_${kuRadarId}`);
+    const parts = listAirFusionRadars(sources, {
+      bird: airRadar1Label,
+      secondary: airRadar2Label,
+    }).map((radar) => `${radar.label}_${radar.id}`);
     const radarIdKey = parts.length > 0 ? parts.sort().join(",") : null;
     const selfReportIdStr = String(selfReportId);
     if (!airSelfReportTracks.has(selfReportIdStr)) airSelfReportTracks.set(selfReportIdStr, []);
@@ -2061,7 +2022,8 @@ function calculateAirFusionErrors(
   const speedErrorMap = new Map<string, PerPointErrorSample[]>();
 
   fusionTracks.forEach((fusionTrack) => {
-    const selfReportId = fusionTrack.originalData?.original_track_id2;
+    const sources = parseAirFusionSources(fusionTrack.originalData ?? {});
+    const selfReportId = sources.selfReport;
     if (!isValidOriginalId(selfReportId)) return;
     const selfReportIdStr = String(selfReportId);
     const fusionTime = getFeatureTimestamp(fusionTrack);
@@ -2093,8 +2055,8 @@ function calculateAirFusionErrors(
     const selfReportCourse = selfReportInfo.course;
     const selfReportSpeed = selfReportInfo.speed;
 
-    const tanNiaoId = fusionTrack.originalData?.original_track_id1;
-    const kuRadarId = fusionTrack.originalData?.original_track_id3;
+    const tanNiaoId = sources.bird;
+    const kuRadarId = getAirSecondaryRadarId(sources);
 
     const fusionDistanceError = calculateGeoDistance(
       fusionLat,
@@ -2392,14 +2354,14 @@ function calculateErrors(
   const yuanYaoTracks = features.filter((t) => t.sensorId === 1);
   const jingZiTouTracks = features.filter((t) => t.sensorId === 2);
   const tanNiaoTracks = features.filter((t) => t.sensorId === 5);
-  const kuRadarTracks = features.filter((t) => t.sensorId === 7);
+  const secondaryRadarTracks = features.filter((t) => t.sensorId === 7 || t.sensorId === 203);
 
   const aisIndex = buildTrackIndex(aisTracks);
   const selfReportIndex = buildTrackIndex(selfReportTracks);
   const yuanYaoIndex = buildTrackIndex(yuanYaoTracks);
   const jingZiTouIndex = buildTrackIndex(jingZiTouTracks);
   const tanNiaoIndex = buildTrackIndex(tanNiaoTracks);
-  const kuIndex = buildTrackIndex(kuRadarTracks);
+  const kuIndex = buildTrackIndex(secondaryRadarTracks);
 
   const sea = calculateSeaFusionErrors(
     seaFusionTracks,

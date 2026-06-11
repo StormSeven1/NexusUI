@@ -80,12 +80,10 @@ function fmtFixed(n: number, frac: number): string {
  * 航迹细字段由 HTTP 可选传入（longitudeDeg 等）；缺省时仍输出档案行与收尾句。
  */
 export function formatTaskStatusVerificationMarkdown(p: TaskStatusChatPayload): string {
-  const targetId = p.verifyTargetId ?? p.trackID;
+  const targetId = p.verifyTargetId ?? p.uniqueId ?? p.trackID;
   const entityLabel = p.entityId?.trim();
   const lines: string[] = [];
-  lines.push(
-    `**${entityLabel && /^uav/i.test(entityLabel) ? "无人机" : "相机"}查证** · 告警 \`${p.alarmId}\``,
-  );
+  lines.push(`**${entityLabel && /^uav/i.test(entityLabel) ? "无人机" : "相机"}查证**`);
   if (entityLabel) lines.push(`- **实体**：\`${entityLabel}\``);
   lines.push("");
   if (targetId != null && Number.isFinite(Number(targetId))) {
@@ -123,7 +121,7 @@ export function buildTaskStatusVerifyBannerMarkdown(payload: TaskStatusChatPaylo
 /** 无 trackID/cameraIndex、或其它状态时仍用单条气泡完整展示 */
 export function formatTaskStatusAssistantMarkdown(p: TaskStatusChatPayload): string {
   const lines: string[] = [];
-  lines.push(`**相机查证** · 告警 \`${p.alarmId}\``);
+  lines.push("**相机查证**");
   lines.push("");
   lines.push(`- **阶段**：${statusLabel(p.taskStatus)}（码 ${p.taskStatus}）`);
   if (p.taskID) lines.push(`- **任务 ID**：${p.taskID}`);

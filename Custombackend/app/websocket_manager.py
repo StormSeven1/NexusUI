@@ -192,13 +192,18 @@ class WebSocketManager:
         区分对空融合、探鸟与对海/雷达，避免仅靠 source_name 导致全为对海、前端全画船标。
         """
         tlk = str(track_data.get("track_layer_key", "") or "").strip().lower().replace("-", "_")
-        if tlk in ("fuse_air", "bird_radar", "uav_pose_track"):
+        if tlk in ("fuse_air", "bird_radar", "fanwu_car_radar", "uav_pose_track"):
             track_data["is_air_track"] = True
         elif tlk in ("fuse_sea", "radar_wharf", "radar_jingzi"):
             track_data["is_air_track"] = False
 
         dds = str(track_data.get("dds_source_id", "") or "").strip().lower()
-        if dds in ("dds_forward_fuse_bird_radar_track", "dds_forward_bird_radar_track", "dds_forward_uav_pose_track"):
+        if dds in (
+            "dds_forward_fuse_bird_radar_track",
+            "dds_forward_bird_radar_track",
+            "dds_forward_fanwu_car_track",
+            "dds_forward_uav_pose_track",
+        ):
             track_data["is_air_track"] = True
         elif dds in ("dds_forward_fuse_track", "dds_forward_radar_track1", "dds_forward_radar_track2"):
             track_data["is_air_track"] = False

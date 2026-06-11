@@ -43,7 +43,7 @@ constexpr uint32_t TargetFull_Kinematics_max_cdr_typesize {360UL};
 constexpr uint32_t TargetFull_Kinematics_max_key_cdr_typesize {0UL};
 
 
-constexpr uint32_t TargetFull_TargetAlarmItem_max_cdr_typesize {2032UL};
+constexpr uint32_t TargetFull_TargetAlarmItem_max_cdr_typesize {3064UL};
 constexpr uint32_t TargetFull_TargetAlarmItem_max_key_cdr_typesize {0UL};
 
 constexpr uint32_t TargetFull_FusionSourceItem_max_cdr_typesize {528UL};
@@ -74,6 +74,9 @@ constexpr uint32_t TargetFull_Aimpoint_max_key_cdr_typesize {0UL};
 
 constexpr uint32_t TargetFull_AlternateId_max_cdr_typesize {524UL};
 constexpr uint32_t TargetFull_AlternateId_max_key_cdr_typesize {0UL};
+
+constexpr uint32_t TargetFull_AlarmSpatialInfo_max_cdr_typesize {1032UL};
+constexpr uint32_t TargetFull_AlarmSpatialInfo_max_key_cdr_typesize {0UL};
 
 constexpr uint32_t TargetFull_TargetOutputSet_max_cdr_typesize {20UL};
 constexpr uint32_t TargetFull_TargetOutputSet_max_key_cdr_typesize {0UL};
@@ -119,6 +122,7 @@ constexpr uint32_t TargetFull_DecorrelatedEntity_max_key_cdr_typesize {0UL};
 
 constexpr uint32_t TargetFull_RadarObservationContext_max_cdr_typesize {648UL};
 constexpr uint32_t TargetFull_RadarObservationContext_max_key_cdr_typesize {0UL};
+
 
 constexpr uint32_t TargetFull_TargetCorrelationInfo_max_cdr_typesize {2404UL};
 constexpr uint32_t TargetFull_TargetCorrelationInfo_max_key_cdr_typesize {0UL};
@@ -398,6 +402,10 @@ eProsima_user_DllExport void serialize_key(
 eProsima_user_DllExport void serialize_key(
         eprosima::fastcdr::Cdr& scdr,
         const TargetFull::AlarmAreaRef& data);
+
+eProsima_user_DllExport void serialize_key(
+        eprosima::fastcdr::Cdr& scdr,
+        const TargetFull::AlarmSpatialInfo& data);
 
 eProsima_user_DllExport void serialize_key(
         eprosima::fastcdr::Cdr& scdr,
