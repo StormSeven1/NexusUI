@@ -1,5 +1,12 @@
 /**
- * 告警面板「消灭」：按 trackId 查正在执行的方案 → POST 处置结束 → 仅有飞弹时 DELETE。
+ * 告警面板“消灭”：
+ * 1. 按 trackId 组装当前 destroy 任务体
+ * 2. 只发一次 HTTP 到 Custombackend
+ * 3. 后端再负责走 gRPC 广播
+ *
+ * 说明：
+ * - 前端只调用 Custombackend 这一条 HTTP。
+ * - destroy 的 gRPC 订阅流与 REST 不共用同一个端口，但监听地址复用后端 HOST。
  */
 
 import {
@@ -7,8 +14,6 @@ import {
   resolveIsAirTrackFromRenderCache,
 } from "@/lib/disposal/disposal-active-devices";
 import { getHttpChatConfig } from "@/lib/map-app-config";
-import { destroyMunitionOnMap } from "@/lib/munition/munition-runtime";
-import { useAssetStore } from "@/stores/asset-store";
 
 const FILTER_SPEC_SEA_TARGET = 0;
 const FILTER_SPEC_AIR_TARGET = 1;
@@ -68,29 +73,39 @@ function buildFilterTargetOrForceBody(
   };
 }
 
-async function postFilterTargetOrForceToUrl(
-  url: string,
+async function postDestroyPublish(
   body: FilterTargetOrForceBody,
   timeoutMs: number,
-): Promise<boolean> {
+): Promise<{ ok: boolean; connectedClients: number }> {
+  const cfg = getHttpChatConfig();
+  const url = cfg.destroyPublishUrl.trim();
+  if (!url) {
+    console.warn("[alert-destroy] destroyPublishUrl 未配置");
+    return { ok: false, connectedClients: 0 };
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch("/api/disposal/filter-target-or-force", {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, body }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.error("[alert-destroy] 处置结束 POST 失败:", url, res.status, text);
-      return false;
+      console.error("[alert-destroy] destroy publish POST 失败:", url, res.status, text);
+      return { ok: false, connectedClients: 0 };
     }
-    return true;
+    const json = (await res.json().catch(() => ({}))) as { ok?: unknown; connectedClients?: unknown };
+    return {
+      ok: json.ok !== false,
+      connectedClients: Number.isFinite(Number(json.connectedClients)) ? Number(json.connectedClients) : 0,
+    };
   } catch (e) {
-    console.error("[alert-destroy] 处置结束 POST 异常:", url, e);
-    return false;
+    console.error("[alert-destroy] destroy publish POST 异常:", url, e);
+    return { ok: false, connectedClients: 0 };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -100,90 +115,35 @@ async function postFilterTargetOrForceTask(
   specType: number,
   targetId: string,
   creatorEntityId: string,
-): Promise<boolean> {
+): Promise<{ ok: boolean; connectedClients: number }> {
   const cfg = getHttpChatConfig();
-  const urls = cfg.filterTargetOrForceUrls.map((u) => u.trim()).filter(Boolean);
-  if (urls.length === 0) {
-    console.warn("[alert-destroy] filterTargetOrForceUrls 未配置");
-    return false;
-  }
   const id = String(targetId ?? "").trim();
-  if (!id) return false;
+  if (!id) return { ok: false, connectedClients: 0 };
   const body = buildFilterTargetOrForceBody(specType, id, creatorEntityId);
-  const timeoutMs = cfg.filterTargetOrForceTimeoutMs > 0 ? cfg.filterTargetOrForceTimeoutMs : 8000;
-  const results = await Promise.all(
-    urls.map((url) => postFilterTargetOrForceToUrl(url, body, timeoutMs)),
-  );
-  return results.every(Boolean);
-}
-
-async function deleteMunitionEntity(entityId: string): Promise<boolean> {
-  const cfg = getHttpChatConfig();
-  const template = cfg.entityDeleteUrl?.trim();
-  if (!template) {
-    console.warn("[alert-destroy] entityDeleteUrl 未配置");
-    return false;
-  }
-  if (!template.includes("{entityId}")) {
-    console.warn("[alert-destroy] entityDeleteUrl 须包含 {entityId}");
-    return false;
-  }
-  const eid = encodeURIComponent(String(entityId ?? "").trim());
-  if (!eid) return false;
-  const url = template.replace(/\{entityId\}/g, eid);
-  const timeoutMs = cfg.entityDeleteTimeoutMs > 0 ? cfg.entityDeleteTimeoutMs : 5000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { method: "DELETE", headers: { "Content-Type": "application/json" }, signal: controller.signal });
-    if (!res.ok) {
-      console.error("[alert-destroy] DELETE 飞弹失败:", res.status, await res.text().catch(() => ""));
-      return false;
-    }
-    return true;
-  } catch (e) {
-    console.error("[alert-destroy] DELETE 飞弹异常:", e);
-    return false;
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  const timeoutMs = cfg.destroyPublishTimeoutMs > 0 ? cfg.destroyPublishTimeoutMs : 8000;
+  return postDestroyPublish(body, timeoutMs);
 }
 
 export interface AlertDestroyHttpResult {
-  adjudicationOk: boolean;
+  publishOk: boolean;
+  connectedClients: number;
   deviceEntityIds: string[];
-  munitionEntityIds: string[];
 }
 
-async function deleteMunitionDevicesOnly(munitionEntityIds: string[]): Promise<void> {
-  const assets = useAssetStore.getState().assets;
-  for (const entityId of munitionEntityIds) {
-    const eid = String(entityId ?? "").trim();
-    if (!eid) continue;
-    const asset = assets.find((a) => a.id === eid);
-    await deleteMunitionEntity(eid);
-    const lat = asset?.lat;
-    const lng = asset?.lng;
-    if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      destroyMunitionOnMap(eid, lat!, lng!);
-    } else {
-      destroyMunitionOnMap(eid, 0, 0, { skipExplosion: true });
-    }
-  }
-}
-
-/** 告警消灭：始终 POST；仅当有飞弹时 DELETE 飞弹 */
-export async function runAlertDestroyHttp(trackId: string): Promise<AlertDestroyHttpResult> {
+/** 告警消灭：只发一次 HTTP，由后端负责继续向 gRPC 客户端广播。 */
+export async function runAlertDestroyHttp(trackId: string, uniqueId?: string): Promise<AlertDestroyHttpResult> {
   const tid = String(trackId ?? "").trim();
-  const { deviceEntityIds, munitionEntityIds } = collectActiveDisposalForTrack(tid);
+  const uid = String(uniqueId ?? "").trim();
+  const destroyTargetId = uid || tid;
+  const { deviceEntityIds } = collectActiveDisposalForTrack(tid);
   const creatorEntityId = deviceEntityIds.join(",");
   const specType = resolveIsAirTrackFromRenderCache(tid) ? FILTER_SPEC_AIR_TARGET : FILTER_SPEC_SEA_TARGET;
 
-  const adjudicationOk = await postFilterTargetOrForceTask(specType, tid, creatorEntityId);
+  const publishResult = await postFilterTargetOrForceTask(specType, destroyTargetId, creatorEntityId);
 
-  if (munitionEntityIds.length > 0) {
-    await deleteMunitionDevicesOnly(munitionEntityIds);
-  }
-
-  return { adjudicationOk, deviceEntityIds, munitionEntityIds };
+  return {
+    publishOk: publishResult.ok,
+    connectedClients: publishResult.connectedClients,
+    deviceEntityIds,
+  };
 }

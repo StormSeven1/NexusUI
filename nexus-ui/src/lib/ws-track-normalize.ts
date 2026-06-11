@@ -10,7 +10,7 @@
  * 【核心字段说明】
  *   - `showID` = `uniqueID`（缓存主键，整个工程统一用此做 key）
  *   - `uniqueID` — 后端唯一标识（报文 uniqueID / uniqueId）
- *   - `trackId` — 业务 trackId（告警匹配用，与 alert-store AlertData.trackId 对应）
+ *   - `trackId` — 业务 trackId
  *   - `isAirTrack` — 对空标记（影响航迹图标旋转角度、ID 显示截断逻辑）
  *   - `targetType` — 目标类型（如 "对空融合航迹"、"drone"）
  *   - `sensor` — 传感器/来源信息（有 fusionSources 时组装为 "源名(trackId)" 格式）
@@ -139,9 +139,8 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const rec = raw as Record<string, unknown>;
 
   const uniqueID = resolveUniqueID(rec);
-  const fallbackId = String(rec.id ?? "");
-  const showID = uniqueID || fallbackId;
-  if (!showID) return null;
+  if (!uniqueID) return null;
+  const showID = uniqueID;
 
   const rawLat = Number(rec.lat ?? rec.latitude);
   const rawLng = Number(rec.lng ?? rec.longitude);
@@ -208,6 +207,15 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
 
   const dataSourceId = rec.dataSourceId ?? rec.data_source_id;
   const dataSourceIdStr = dataSourceId != null ? String(dataSourceId) : undefined;
+  const alarms = Array.isArray(rec.alarms)
+    ? (rec.alarms.filter((item): item is Record<string, unknown> => !!item && typeof item === "object") as Record<string, unknown>[])
+    : undefined;
+  const alarmCountRaw = rec.alarmCount;
+  const alarmCount =
+    alarmCountRaw != null && Number.isFinite(Number(alarmCountRaw))
+      ? Number(alarmCountRaw)
+      : alarms?.length;
+  const hasAlarm = rec.hasAlarm === true;
 
   return {
     id: showID,
@@ -233,6 +241,9 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     ...(dataSourceIdStr ? { dataSourceId: dataSourceIdStr } : {}),
     ...(isVirtual ? { isVirtual: true } : {}),
     ...(isUav ? { isUav: true } : {}),
+    ...(typeof alarmCount === "number" ? { alarmCount } : {}),
+    ...(hasAlarm ? { hasAlarm: true } : {}),
+    ...(alarms ? { alarms } : {}),
   };
 }
 

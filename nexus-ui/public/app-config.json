@@ -503,7 +503,7 @@
     "maxFovRange": 1500,
     "horizontalFov": 30,
     "showFovSector": false,
-    "maxHistoryPoints": 100,
+    "maxHistoryPoints": 200,
     "timeoutSeconds": 30,
     "timeoutCheckIntervalMs": 2000,
     "highFreqPositionMaxAgeMs": 2500,
@@ -703,19 +703,19 @@
 
   "trackRendering": {
     "trackTypeStyles": {
-      "sea": { "idColor": "#FFFFFF", "pointSize": 4, "idSize": 10 },
-      "air": { "idColor": "#FFFF00", "pointSize": 4, "idSize": 10 },
+      "sea": { "idColor": "#FFFFFF", "pointSize": 3, "idSize": 10 },
+      "air": { "idColor": "#FFFF00", "pointSize": 3, "idSize": 10 },
       "underwater": { "idColor": "#FFFFFF", "pointSize": 4, "idSize": 10 }
     },
     "trackDisplay": {
       "showTrackId": true,
       "maxViewportPoints": 2000,
-      "maxHistoryPointsPerTrack": 10
+      "maxHistoryPointsPerTrack": 20
     },
     "trackTimeout": {
       "enabled": true,
-      "seconds": 60,
-      "uavSeconds": 60,
+      "seconds": 20,
+      "uavSeconds": 20,
       "checkIntervalMs": 2000
     },
     "airIconHeadingOffsetDeg": -45,
@@ -747,22 +747,18 @@
     "imagePollIntervalMs": 3000,
     "imageFetchTimeoutMs": 1000,
     "chat": {
-      "_说明": "处置 HTTP：产生方案、执行方案；消灭走 filterTargetOrForceUrls；巡飞弹删除走 entityDeleteUrl",
-      "disposalPlanWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream",
-      "disposalManualGeneratePlanUrl": "http://192.168.18.103:8000/api/v1/tasks/target-engagement/manual-generate-plan",
-      "disposalExecuteUrl": "http://192.168.18.103:8000/api/v1/tasks/grpc-disposal/execute",
-      "filterTargetOrForceUrls": [
-        "http://192.168.18.141:8019/api/alarm_filter"
-      ],
-      "filterTargetOrForceTimeoutMs": 8000,
-      "entityDeleteUrl": "http://192.168.18.141:8090/api/v1/entities/{entityId}",
-      "entityDeleteTimeoutMs": 5000,
+      "_说明": "处置 HTTP：产生方案、执行方案；消灭只发一次 destroyPublishUrl，由 Custombackend 再广播给 gRPC 客户端",
+      "disposalPlanWsUrl": "ws://192.168.18.141:8888/api/v1/ws/workflow-stream",
+      "disposalManualGeneratePlanUrl": "http://192.168.18.141:8888/api/v1/tasks/target-engagement/manual-generate-plan",
+      "disposalExecuteUrl": "http://192.168.18.141:8888/api/v1/tasks/grpc-disposal/execute",
+      "destroyPublishUrl": "http://192.168.18.141:26003/api/destroy/publish",
+      "destroyPublishTimeoutMs": 8000,
       "disposalHttpTimeoutMs": 8000,
       "disposalExecuteTimeoutMs": 8000,
       "autoDisposalWsConnectTimeoutMs": 10000,
-      "quickWorkflowUrl": "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
+      "quickWorkflowUrl": "http://192.168.18.141:8888/api/v1/chat/quick-workflow",
       "quickWorkflowTimeoutMs": 5000,
-      "quickWorkflowStatusWsUrl": "ws://192.168.18.103:8000/api/v1/ws/workflow-stream"
+      "quickWorkflowStatusWsUrl": "ws://192.168.18.141:8888/api/v1/ws/workflow-stream"
     }
   },
 
@@ -782,7 +778,7 @@
     {
       "id": "local-raster-tiles",
       "name": "本地瓦片地图",
-      "url": "https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}",
+      "url": "http://192.168.18.222:8200/localtiles/{z}/{x}/{y}.png",
       "enabled": false,
       "minZoom": 0,
       "maxZoom": 18,

@@ -80,7 +80,7 @@ import {
   laserLabelStyleFromBundle,
   type AppConfigSectorBundle,
 } from "@/lib/map-app-config";
-import { HIDE_RENDER_DRONE_SNS } from "@/lib/map-display-filters";
+import { shouldHideDroneEntityId } from "@/lib/map-display-filters";
 import { readMunitionQuantityFromPayload } from "@/lib/drone-runtime-utils";
 import { useAssetStore, type AssetRelationshipGraph } from "@/stores/asset-store";
 import type { ForceDisposition } from "@/lib/theme-colors";
@@ -102,7 +102,7 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 }
 
 export interface DroneRenderable {
-  sn: string;
+  entityId: string;
   displayName: string;
   virtualTroop: boolean;
   disposition?: ForceDisposition;
@@ -122,9 +122,9 @@ export interface DroneRenderable {
 }
 
 /** 从 asset-store 查找无人机 disposition，默认 friendly */
-function droneDispositionFromAssetStore(sn: string): ForceDisposition {
+function droneDispositionFromAssetStore(entityId: string): ForceDisposition {
   const asset = useAssetStore.getState().assets.find(
-    (a) => a.id === sn && a.asset_type === "drone",
+    (a) => a.id === entityId && a.asset_type === "drone",
   );
   return asset?.disposition ?? "friendly";
 }
@@ -166,6 +166,16 @@ function dockBatteryPercentFromAsset(asset: AssetData | undefined): number | nul
   return Number.isFinite(direct) ? direct : null;
 }
 
+function droneBatteryPercentFromStatus(props: Record<string, unknown> | null | undefined): number | null {
+  const status = asRecord(props?.drone_status);
+  const direct = Number(
+    status?.battery_capacity_percent ??
+    status?.batteryPercent ??
+    status?.battery_percent,
+  );
+  return Number.isFinite(direct) ? direct : null;
+}
+
 /**
  * Convert normalized asset rows into the compact structure consumed by drone renderers.
  * This keeps map code insulated from raw WS payload shape and allows 2D/3D to share
@@ -182,7 +192,7 @@ export function collectDroneRenderablesFromAssets(
     const props = asRecord(asset.properties) ?? {};
     const dockId = findDockParentByDrone(asset.id, relationships);
     out[asset.id] = {
-      sn: asset.id,
+      entityId: asset.id,
       displayName: asset.name || asset.id,
       virtualTroop: isVirtualFromProperties(props),
       disposition: asset.disposition,
@@ -198,7 +208,9 @@ export function collectDroneRenderablesFromAssets(
       lastPacketAtMs: Number.isFinite(Number(props.last_packet_at_ms)) ? Number(props.last_packet_at_ms) : null,
       historyTrail: readHistoryTrail(props.history_trail),
       munitionQuantity: Number.isFinite(Number(props.munition_quantity)) ? Number(props.munition_quantity) : null,
-      batteryPercent: dockBatteryPercentFromAsset(dockId ? assetById.get(dockId) : undefined),
+      batteryPercent:
+        dockBatteryPercentFromAsset(dockId ? assetById.get(dockId) : undefined) ??
+        droneBatteryPercentFromStatus(props),
     };
   }
   return out;
@@ -366,7 +378,7 @@ export function buildStaticDroneSitesGeoJSON(
   const features: GeoJSON.Feature[] = [];
   for (const a of assetList) {
     if (a.type !== "drone") continue;
-    if (HIDE_RENDER_DRONE_SNS.has(a.id)) continue;
+    if (shouldHideDroneEntityId(a.id)) continue;
     if (a.centerIconVisible === false) continue;
     // 有实时遥测数据的无人机由实时层渲染，跳过静态图标
     const live = liveDrones[a.id];
@@ -390,7 +402,7 @@ export function buildStaticDroneSitesGeoJSON(
   }
   for (const a of assetList) {
     if (a.type !== "drone") continue;
-    if (HIDE_RENDER_DRONE_SNS.has(a.id)) continue;
+    if (shouldHideDroneEntityId(a.id)) continue;
     if (a.nameLabelVisible === false || !String(a.name ?? "").trim()) continue;
     // 有实时遥测数据的无人机由实时层渲染标签，跳过静态标签
     const liveLbl = liveDrones[a.id];
@@ -482,7 +494,7 @@ function fovFeatureForDrone(tele: DroneRenderable): GeoJSON.Feature<GeoJSON.Poly
   const ring = geoSectorCoords(pose.lng, pose.lat, rangeM / 1000, bearing, cfg.horizontalFov, 24);
   return {
     type: "Feature",
-    properties: { kind: "fov", sn: tele.sn },
+    properties: { kind: "fov", entityId: tele.entityId },
     geometry: { type: "Polygon", coordinates: [ring] },
   };
 }
@@ -567,6 +579,13 @@ function waypointsLineString(
     }
     if (Number.isFinite(lng) && Number.isFinite(lat)) coords.push([lng, lat]);
   }
+  console.log("[flight_path:render]", {
+    entityId: task.entityId ?? task.entity_id ?? null,
+    deviceSn: task.deviceSn ?? task.device_sn ?? task.drone_sn ?? null,
+    waypointCount: Array.isArray(wps) ? wps.length : 0,
+    coords,
+    raw: task,
+  });
   if (coords.length < 2) return null;
   return {
     type: "Feature",
@@ -580,7 +599,7 @@ function trailLineString(tele: DroneRenderable): GeoJSON.Feature<GeoJSON.LineStr
   if (!cfg.showHistoryTrail || tele.historyTrail.length < 2) return null;
   return {
     type: "Feature",
-    properties: { kind: "trail", sn: tele.sn, virt: tele.virtualTroop ? 1 : 0 },
+    properties: { kind: "trail", entityId: tele.entityId, virt: tele.virtualTroop ? 1 : 0 },
     geometry: { type: "LineString", coordinates: tele.historyTrail },
   };
 }
@@ -754,7 +773,7 @@ function buildDroneGeoJSON(drones: Record<string, DroneRenderable>): GeoJSON.Fea
   const cfg = getDroneMapRenderingConfig();
   const features: GeoJSON.Feature[] = [];
   for (const [, tele] of Object.entries(drones)) {
-    if (HIDE_RENDER_DRONE_SNS.has(tele.sn)) continue;
+    if (shouldHideDroneEntityId(tele.entityId)) continue;
     /* 航线不依赖无人机自身坐标，先于 pose 检查渲染，避免 drone_status 未到时航线迟迟不画 */
     if (cfg.showPlannedRoute) {
       const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
@@ -771,28 +790,30 @@ function buildDroneGeoJSON(drones: Record<string, DroneRenderable>): GeoJSON.Fea
     const fov = fovFeatureForDrone(tele);
     if (fov) features.push(fov);
 
-    const disp = tele.disposition ?? droneDispositionFromAssetStore(tele.sn);
+    const disp = tele.disposition ?? droneDispositionFromAssetStore(tele.entityId);
     features.push({
       type: "Feature",
       properties: {
         kind: "marker",
-        sn: tele.sn,
+        id: tele.entityId,
+        entityId: tele.entityId,
         heading: pose.headingDeg,
         virt: tele.virtualTroop ? 1 : 0,
         disp,
         ...(droneFleetIconUsesGeneratedMode()
-          ? { alert: droneSnIsMapIconAlert(tele.sn) ? 1 : 0 }
+          ? { alert: droneSnIsMapIconAlert(tele.entityId) ? 1 : 0 }
           : {}),
       },
       geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
     });
     if (cfg.showSnLabel) {
-      const dn = tele.displayName || tele.sn;
+      const dn = tele.displayName || tele.entityId;
       features.push({
         type: "Feature",
         properties: {
           kind: "label",
-          sn: tele.sn,
+          id: tele.entityId,
+          entityId: tele.entityId,
           displayName: dn,
         },
         geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
@@ -1082,7 +1103,7 @@ export class DronesMaplibre {
           source: DRONES_SOURCE,
           filter: ["==", ["get", "kind"], "label"],
           layout: {
-            "text-field": ["coalesce", ["get", "displayName"], ["get", "sn"]],
+            "text-field": ["coalesce", ["get", "displayName"], ["get", "entityId"]],
             "text-font": ["Open Sans Regular"],
             "text-size": 10,
             "text-offset": [0, 2.1],
@@ -1223,9 +1244,9 @@ export class DronesMaplibre {
       const drones = collectDroneRenderablesFromAssets(assetState.assets, assetState.relationships);
       const cfg = getDroneMapRenderingConfig();
       const features: GeoJSON.Feature[] = [];
-      for (const sn of Object.keys(drones)) {
-        if (HIDE_RENDER_DRONE_SNS.has(sn)) continue;
-        const tele = drones[sn];
+      for (const entityId of Object.keys(drones)) {
+        if (shouldHideDroneEntityId(entityId)) continue;
+        const tele = drones[entityId];
         if (!tele?.flightPath) continue;
         const route = waypointsLineString(tele.flightPath, tele.virtualTroop);
         if (!route) continue;
@@ -1236,12 +1257,12 @@ export class DronesMaplibre {
         features.push({
           type: "Feature",
           geometry: { type: "Polygon", coordinates: [geoCircleCoords(lng, lat, innerRadius / 1000)] },
-          properties: { ringType: "inner", ringColor, fillOpacity: 0.2, sn },
+          properties: { ringType: "inner", ringColor, fillOpacity: 0.2, entityId },
         });
         features.push({
           type: "Feature",
           geometry: { type: "Polygon", coordinates: [geoCircleCoords(lng, lat, outerRadius / 1000)] },
-          properties: { ringType: "outer", ringColor, fillOpacity: 0.12 + 0.1 * (1 - t), sn },
+          properties: { ringType: "outer", ringColor, fillOpacity: 0.12 + 0.1 * (1 - t), entityId },
         });
       }
       src.setData({ type: "FeatureCollection", features });

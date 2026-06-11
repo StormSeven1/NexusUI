@@ -8,7 +8,7 @@
  * 本模块是前端所有实时数据的唯一入口，负责：
  *   1. 建立 WebSocket 连接（地址、心跳间隔等从 app-config.json 的 websocket 节读取）
  *   2. 接收消息 → JSON.parse → 按 msg.type 分发
- *   3. 解析后的数据写入对应的 Zustand store（track-store / alert-store / asset-store / db-area-store）
+ *   3. 解析后的数据写入对应的 Zustand store（track-store / asset-store / db-area-store）
  *
  * ── 各资产类型全链路数据流 ──
  *
@@ -149,7 +149,6 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { getRenderCache, useTrackStore } from "@/stores/track-store";
-import { useAlertStore } from "@/stores/alert-store";
 import type {
   AssetData,
   AssetRelationshipEdge,
@@ -175,7 +174,6 @@ import {
   stampDeviceStateOnAsset,
 } from "@/lib/map-app-config";
 import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
-import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
 import { normalizeAssetType, type Track } from "@/lib/map-entity-model";
 import { recordTrackReceived, recordAlertReceived, recordEntityReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived, recordDbAreasReceived, recordEoDetectionReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
@@ -230,7 +228,9 @@ function patchExistingCameraAsset(
   entityId: string,
   patch: Partial<AssetData>,
 ): boolean {
-  const existing = useAssetStore.getState().assets.find((item) => item.id === entityId);
+  const existing =
+    lastWsAssetList.find((item) => item.id === entityId) ??
+    useAssetStore.getState().assets.find((item) => item.id === entityId);
   if (!existing) return false;
   const existingProps =
     existing.properties && typeof existing.properties === "object"
@@ -240,13 +240,25 @@ function patchExistingCameraAsset(
     patch.properties && typeof patch.properties === "object"
       ? (patch.properties as Record<string, unknown>)
       : {};
-  useAssetStore.getState().mergeAssetFields(entityId, {
+  const nextRow: AssetData = {
+    ...existing,
     ...patch,
     properties: {
       ...existingProps,
       ...patchProps,
     },
+    updated_at: new Date().toISOString(),
+  };
+  let replaced = false;
+  lastWsAssetList = lastWsAssetList.map((row) => {
+    if (row.id !== entityId) return row;
+    replaced = true;
+    return nextRow;
   });
+  if (!replaced) {
+    lastWsAssetList = [...lastWsAssetList, nextRow];
+  }
+  rebuildAndCommitAssetSnapshot();
   return true;
 }
 
@@ -1058,25 +1070,6 @@ function payloadArray(msg: Record<string, unknown>): unknown[] | null {
 
 // ── 告警 taskStatus 判断 ──
 
-function isVerifySuccessAlarmRaw(raw: Record<string, unknown>): boolean {
-  const status = raw.taskStatus ?? raw.task_status;
-  if (status == null) return false;
-  if (typeof status === "string") {
-    const n = status.trim().toUpperCase();
-    return n === "VERIFY_SUCCESS" || n.endsWith("::VERIFY_SUCCESS");
-  }
-  return Number(status) === 3;
-}
-
-/** 统一的 alarm 处理：判断 alarm vs threat 后写入 store */
-function handleAlarmItem(raw: Record<string, unknown>) {
-  const normalized = normalizeWsAlertItem(raw);
-  if (!normalized) return;
-  const alertStore = useAlertStore.getState();
-  if (isVerifySuccessAlarmRaw(raw)) alertStore.upsertAlarm(normalized);
-  else alertStore.upsertThreat(normalized);
-}
-
 /**
  * 【消息分发】WebSocket 收到消息后的统一入口。
  *
@@ -1084,7 +1077,6 @@ function handleAlarmItem(raw: Record<string, unknown>) {
  *
  * ┌─ type ─────────────┬─ 处理说明 ────────────────────────────────────────────────────────┐
  * │ trackbatch / track │ 航迹数据 → normalizeIncomingTrack → track-store.setTracks       │
- * │ alarm / alert      │ 告警数据 → normalizeWsAlertItem → alert-store.upsertAlarm/Threat │
  * │ DbAreas            │ 区域/航线数据 → shouldDisplayDbArea → db-area-store.setRows       │
  * │ entity_status      │ 【核心】实体状态（雷达/相机/无人机/机场），见下方详细流程           │
  * │ camera / optoelec  │ 光电实时数据（PTZ朝向/视场角/坐标）→ 更新 asset-store 已有光电    │
@@ -1154,51 +1146,12 @@ function dispatchWsMessage(raw: string) {
       }
 
       // ── 告警 ──
-      case "alarm": {
-        // V2 Alarm: data = { alarms: [...] } 或 data 直接是单条
-        const d = msg.data as Record<string, unknown> | undefined;
-        if (d) {
-          if (Array.isArray(d.alarms)) {
-            for (const a of d.alarms) {
-              if (a && typeof a === "object") handleAlarmItem(a as Record<string, unknown>);
-            }
-          } else {
-            handleAlarmItem(d);
-          }
-          recordAlertReceived();
-        }
-        break;
-      }
-      case "alert_batch": {
-        const list = msg.alerts as unknown[] | undefined;
-        if (Array.isArray(list)) {
-          for (const r of list) {
-            if (r && typeof r === "object") handleAlarmItem(r as Record<string, unknown>);
-          }
-          recordAlertReceived();
-        }
-        break;
-      }
-      case "alert": {
-        const inner = (msg.data ?? msg) as Record<string, unknown>;
-        handleAlarmItem(inner);
-        recordAlertReceived();
-        break;
-      }
-
       // ── map_command ──
       case "map_command": {
         const wrap = msg.data;
         if (!wrap || typeof wrap !== "object") break;
         const w = wrap as Record<string, unknown>;
-        if (w.command !== "alert") break;
-        const inner = w.data;
-        const payload =
-          inner != null && typeof inner === "object" && !Array.isArray(inner)
-            ? (inner as Record<string, unknown>)
-            : w;
-        const one = normalizeWsAlertItem(payload);
-        if (one) useAlertStore.getState().upsertAlarm(one);
+        if (w.command === "alert") break;
         break;
       }
 
@@ -1499,8 +1452,12 @@ function dispatchWsMessage(raw: string) {
       case "drone_flight_path": {
         const d = msg.data as Record<string, unknown> | undefined;
         if (d && typeof d === "object") {
-          recordDroneFlightPathReceived();
           const droneEntityId = resolveDroneEntityIdFromAssets(d);
+          console.log("[flight_path:recv]", {
+            executionState: d.executionState ?? d.execution_state ?? null,
+            entityId: droneEntityId ?? d.entityId ?? d.entity_id ?? null,
+          });
+          recordDroneFlightPathReceived();
           if (droneEntityId) {
             const existing = useAssetStore.getState().assets.find((a) => a.id === droneEntityId);
             if (existing) {
@@ -1511,6 +1468,7 @@ function dispatchWsMessage(raw: string) {
                 properties: {
                   ...prevProps,
                   drone_flight_path: isComplete ? null : { ...d },
+                  flight_path_received_at_ms: isComplete ? null : Date.now(),
                   entityId: droneEntityId,
                   entity_id: droneEntityId,
                   deviceSn: d.deviceSn ?? d.device_sn ?? d.drone_sn ?? prevProps.deviceSn,
@@ -1775,7 +1733,6 @@ function startDroneRuntimePrune() {
           history_trail: [],
           high_freq: null,
           drone_status: null,
-          drone_flight_path: null,
           high_freq_received_at_ms: null,
           status_received_at_ms: null,
           last_packet_at_ms: null,
@@ -1791,7 +1748,6 @@ function startDroneRuntimePrune() {
           history_trail: [],
           high_freq: null,
           drone_status: null,
-          drone_flight_path: null,
           high_freq_received_at_ms: null,
           status_received_at_ms: null,
           last_packet_at_ms: null,
@@ -1807,7 +1763,7 @@ function startDroneRuntimePrune() {
       }, {
         staleMs,
         clearedHistoryTrailLength: historyTrail.length,
-        clearedPlannedRoute: props.drone_flight_path != null,
+        clearedPlannedRoute: false,
       });
     }
   }, 1000);
@@ -1816,12 +1772,7 @@ function startDroneRuntimePrune() {
 function startAlarmCleanup() {
   if (ws.alarmCleanupTimer) clearInterval(ws.alarmCleanupTimer);
   ws.alarmCleanupTimer = setInterval(() => {
-    const before = useAlertStore.getState().alerts.length;
-    useAlertStore.getState().removeStaleAlarms();
-    const after = useAlertStore.getState().alerts.length;
-    if (before !== after) {
-      useTrackStore.getState().syncWithAlarms(useAlertStore.getState().alarmTrackIds);
-    }
+    return;
   }, 5_000);
 }
 
@@ -1844,14 +1795,7 @@ function stopSpeedCameraDetectionPrune() {
 }
 
 function startAlertRevisionSync() {
-  if (ws.alertRevisionUnsub) return;
-  let lastRev = useAlertStore.getState().alarmTrackRevision;
-  ws.alertRevisionUnsub = useAlertStore.subscribe((state) => {
-    if (state.alarmTrackRevision !== lastRev) {
-      lastRev = state.alarmTrackRevision;
-      useTrackStore.getState().syncWithAlarms(state.alarmTrackIds);
-    }
-  });
+  return;
 }
 
 function stopAlertRevisionSync() {

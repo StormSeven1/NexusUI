@@ -30,7 +30,14 @@ export const EXCLUDE_TDOA_IDS = new Set<string>([]);
 export const EXCLUDE_AIRPORT_IDS = new Set<string>(["whzdh01"]);
 export const EXCLUDE_DRONE_IDS = new Set<string>(["uav_jo-001"]);
 export const EXCLUDE_DRONE_NAMES = new Set<string>(["远遥码头"]);
-export const HIDE_RENDER_DRONE_SNS = new Set<string>(["1581F6Q8D244300C47RP", "1581F6Q8X251H00G04XX", "1581F6Q8D249C00GR66R"]);
+// 这里统一填写无人机实体 ID（asset.id / entityId）
+export const HIDE_RENDER_DRONE_ENTITY_IDS = new Set<string>(["uav-005", "uav-006", "uav-007"]);
+
+export function shouldHideDroneEntityId(entityId: string): boolean {
+  const id = String(entityId ?? "").trim();
+  if (!id) return false;
+  return HIDE_RENDER_DRONE_ENTITY_IDS.has(id);
+}
 
 /**
  * 注册区域/航线显示过滤：

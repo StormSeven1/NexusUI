@@ -53,6 +53,9 @@ export interface Track {
   dataSourceId?: string;
   isVirtual?: boolean;
   isUav?: boolean;
+  hasAlarm?: boolean;
+  alarmCount?: number;
+  alarms?: Record<string, unknown>[];
   historyTrail?: [number, number][];
   verificationImage?: string;
 }

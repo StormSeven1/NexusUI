@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-航迹模拟器 - 起点↔终点往返循环（SPx UDP 组播）
-起点: (122.1174, 37.5585) <-> 终点: (122.0969, 37.5489)
-速度: 20 m/s；每秒一步，航向实时指向当前航段终点
+航迹模拟器。
+
+直接通过 UDP 向 TrackManager 的“对空融合”接收口发送 FusionTrack 二进制报文。
+默认目标取自 default_process_config.json 中的 dui_kong_rong_he：
+239.192.63.43:6343
 """
 
 import asyncio
+import math
 import socket
 import struct
 import time
-import math
-from loguru import logger
 from typing import Optional
 
-from config import get_settings
+from loguru import logger
 
-# ===== SPx 协议常量 =====
+
+TRACK_MANAGER_HOST = "239.192.63.43"
+TRACK_MANAGER_PORT = 6343
+LOCAL_INTERFACE = "192.168.18.141"
+
 RDR_PACKET_TYPEB_TRACK_EXT = 0x112
 SPX_PACKET_TRACK_EXT_LATLONG = 0x00000004
 SPX_PACKET_TRACK_EXT_MSGTIME = 0x00000008
@@ -24,39 +29,43 @@ SPX_PACKET_TRACK_EXT_FUSION = 0x00000040
 
 
 def _bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """(lat1,lon1) 指向 (lat2,lon2) 的航向角，0°北顺时针 0–360"""
-    φ1, λ1 = math.radians(lat1), math.radians(lon1)
-    φ2, λ2 = math.radians(lat2), math.radians(lon2)
-    dλ = λ2 - λ1
-    x = math.sin(dλ) * math.cos(φ2)
-    y = math.cos(φ1) * math.sin(φ2) - math.sin(φ1) * math.cos(φ2) * math.cos(dλ)
-    brng = math.degrees(math.atan2(x, y))
-    return (brng + 360.0) % 360.0
+    lat1_rad, lon1_rad = math.radians(lat1), math.radians(lon1)
+    lat2_rad, lon2_rad = math.radians(lat2), math.radians(lon2)
+    delta_lon = lon2_rad - lon1_rad
+    x = math.sin(delta_lon) * math.cos(lat2_rad)
+    y = (
+        math.cos(lat1_rad) * math.sin(lat2_rad)
+        - math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon)
+    )
+    bearing = math.degrees(math.atan2(x, y))
+    return (bearing + 360.0) % 360.0
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    R = 6371000.0
-    φ1, φ2 = math.radians(lat1), math.radians(lat2)
-    dφ = math.radians(lat2 - lat1)
-    dλ = math.radians(lon2 - lon1)
-    a = math.sin(dφ / 2) ** 2 + math.cos(φ1) * math.cos(φ2) * math.sin(dλ / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(min(1.0, a)))
+    radius = 6371000.0
+    lat1_rad, lat2_rad = math.radians(lat1), math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    )
+    return 2 * radius * math.asin(math.sqrt(min(1.0, a)))
 
 
 class TrackSimulator:
-    """航迹模拟器类"""
-
     def __init__(self):
         self.running = False
         self.task: Optional[asyncio.Task] = None
-        tm = time.localtime()
-        self.track_id_counter = 40000 + tm.tm_min * 100 + tm.tm_sec - 1
+
+        now = time.localtime()
+        self.track_id_counter = 40000 + now.tm_min * 100 + now.tm_sec - 1
         self.current_track_id = self.track_id_counter
 
-        self.host = "239.192.63.43"
-        self.port = 6343
-        self.iface = get_settings().LOCAL_INTERFACE
+        self.host = TRACK_MANAGER_HOST
+        self.port = TRACK_MANAGER_PORT
         self.ttl = 16
+        self.interface = LOCAL_INTERFACE
 
         self.start_lon = 122.1174
         self.start_lat = 37.5585
@@ -76,28 +85,36 @@ class TrackSimulator:
         self.current_lon = self.start_lon
         self.current_lat = self.start_lat
         self.current_course = self.transit_bearing
+        self._leg_to_end = True
 
         self.sock: Optional[socket.socket] = None
         self.mmsi = 413000001
-        # True：正飞向终点；False：正飞回起点
-        self._leg_to_end = True
 
-    def _create_socket(self):
+    def _is_multicast_host(self) -> bool:
+        try:
+            first_octet = int(str(self.host).split(".", 1)[0])
+        except Exception:
+            return False
+        return 224 <= first_octet <= 239
+
+    def _create_socket(self) -> socket.socket:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(
-            socket.IPPROTO_IP,
-            socket.IP_MULTICAST_TTL,
-            struct.pack("B", max(0, min(255, self.ttl))),
-        )
-        if self.iface:
-            try:
-                sock.setsockopt(
-                    socket.IPPROTO_IP,
-                    socket.IP_MULTICAST_IF,
-                    socket.inet_aton(self.iface),
-                )
-            except Exception as e:
-                logger.warning(f"[TrackSim] 设置组播接口失败: {e}")
+        if self._is_multicast_host():
+            sock.setsockopt(
+                socket.IPPROTO_IP,
+                socket.IP_MULTICAST_TTL,
+                struct.pack("B", max(0, min(255, self.ttl))),
+            )
+            sock.setsockopt(
+                socket.IPPROTO_IP,
+                socket.IP_MULTICAST_IF,
+                socket.inet_aton(self.interface),
+            )
+            sock.setsockopt(
+                socket.IPPROTO_IP,
+                socket.IP_MULTICAST_LOOP,
+                1,
+            )
         return sock
 
     def _build_packet(
@@ -131,7 +148,6 @@ class TrackSimulator:
             0,
             0,
         )
-        # trackClass=1 与 TrackManager 对空融合认知规则一致（1/3/5/6 有效），0 会被丢弃不推前端
         normal_tail = struct.pack(
             ">ffffffffffHHIQ",
             0.0,
@@ -190,28 +206,33 @@ class TrackSimulator:
 
     def _calculate_next_position(
         self, lon: float, lat: float, course: float, speed: float, dt: float
-    ):
+    ) -> tuple[float, float]:
         course_rad = math.radians(course)
         distance = speed * dt
-        R = 6371000
-        delta_lat = (distance * math.cos(course_rad)) / R
-        delta_lat_deg = math.degrees(delta_lat)
+        radius = 6371000.0
+        delta_lat = (distance * math.cos(course_rad)) / radius
         delta_lon = (distance * math.sin(course_rad)) / (
-            R * math.cos(math.radians(lat))
+            radius * math.cos(math.radians(lat))
         )
-        delta_lon_deg = math.degrees(delta_lon)
-        return lon + delta_lon_deg, lat + delta_lat_deg
+        return lon + math.degrees(delta_lon), lat + math.degrees(delta_lat)
 
     async def _run_simulation(self):
         logger.info(
-            f"[TrackSim] 开始循环模拟 track_id={self.current_track_id}, "
-            f"({self.start_lon},{self.start_lat}) <-> ({self.end_lon},{self.end_lat})"
+            "[TrackSim] 开始循环模拟 track_id={} target={}:{} iface={} ({},{}) <-> ({},{})",
+            self.current_track_id,
+            self.host,
+            self.port,
+            self.interface,
+            self.start_lon,
+            self.start_lat,
+            self.end_lon,
+            self.end_lat,
         )
         try:
             self.sock = self._create_socket()
             while self.running:
                 now_sec = int(time.time())
-                pkt = self._build_packet(
+                packet = self._build_packet(
                     self.current_track_id,
                     self.current_lon,
                     self.current_lat,
@@ -219,16 +240,21 @@ class TrackSimulator:
                     self.speed_mps,
                     now_sec,
                 )
+
                 try:
-                    self.sock.sendto(pkt, (self.host, self.port))
-                    leg = "去程" if self._leg_to_end else "回程"
+                    self.sock.sendto(packet, (self.host, self.port))
                     logger.debug(
-                        f"[TrackSim] id={self.current_track_id} {leg} "
-                        f"lon={self.current_lon:.6f} lat={self.current_lat:.6f} "
-                        f"course={self.current_course:.1f}°"
+                        "[TrackSim] sent id={} lon={:.6f} lat={:.6f} course={:.1f} "
+                        "target={}:{}",
+                        self.current_track_id,
+                        self.current_lon,
+                        self.current_lat,
+                        self.current_course,
+                        self.host,
+                        self.port,
                     )
-                except Exception as e:
-                    logger.error(f"[TrackSim] 发送失败: {e}")
+                except Exception as exc:
+                    logger.error("[TrackSim] 发送失败: {}", exc)
 
                 dest_lat = self.end_lat if self._leg_to_end else self.start_lat
                 dest_lon = self.end_lon if self._leg_to_end else self.start_lon
@@ -238,16 +264,14 @@ class TrackSimulator:
                     dest_lat,
                     dest_lon,
                 )
+
                 if dist <= self.arrival_threshold_m:
                     self.current_lon = dest_lon
                     self.current_lat = dest_lat
                     self._leg_to_end = not self._leg_to_end
-                    if self._leg_to_end:
-                        self.current_course = self.transit_bearing
-                        logger.info("[TrackSim] 到达起点，转向去程")
-                    else:
-                        self.current_course = self.return_bearing
-                        logger.info("[TrackSim] 到达终点，转向回程")
+                    self.current_course = (
+                        self.transit_bearing if self._leg_to_end else self.return_bearing
+                    )
                 else:
                     self.current_course = _bearing_deg(
                         self.current_lat,
@@ -265,9 +289,9 @@ class TrackSimulator:
 
                 await asyncio.sleep(self.interval)
         except asyncio.CancelledError:
-            logger.info("[TrackSim] 模拟任务被取消")
-        except Exception as e:
-            logger.error(f"[TrackSim] 模拟出错: {e}")
+            logger.info("[TrackSim] 模拟任务已取消")
+        except Exception as exc:
+            logger.error("[TrackSim] 模拟出错: {}", exc)
         finally:
             if self.sock:
                 self.sock.close()
@@ -276,7 +300,6 @@ class TrackSimulator:
             logger.info("[TrackSim] 模拟已停止")
 
     async def start(self) -> dict:
-        """启动模拟；若已在运行则先停止再启动新的模拟"""
         if self.running:
             await self.stop()
 
@@ -289,17 +312,16 @@ class TrackSimulator:
 
         self.running = True
         self.task = asyncio.create_task(self._run_simulation())
-        logger.info(f"[TrackSim] 模拟已启动，track_id={self.current_track_id}")
+        logger.info("[TrackSim] 模拟已启动，track_id={}", self.current_track_id)
         return {
             "success": True,
             "message": "模拟已启动",
             "track_id": self.current_track_id,
+            "target_host": self.host,
+            "target_port": self.port,
             "start_position": {"lon": self.start_lon, "lat": self.start_lat},
             "end_position": {"lon": self.end_lon, "lat": self.end_lat},
-            "transit_bearing": self.transit_bearing,
-            "return_bearing": self.return_bearing,
             "speed": self.speed_mps,
-            "loop": True,
         }
 
     async def stop(self) -> dict:
@@ -316,21 +338,39 @@ class TrackSimulator:
             self.task = None
 
         logger.info("[TrackSim] 模拟已停止")
-        return {"success": True, "message": "模拟已停止", "track_id": self.current_track_id}
+        return {
+            "success": True,
+            "message": "模拟已停止",
+            "track_id": self.current_track_id,
+        }
 
     def get_status(self) -> dict:
         return {
             "running": self.running,
             "track_id": self.current_track_id,
+            "target_host": self.host,
+            "target_port": self.port,
             "current_position": {"lon": self.current_lon, "lat": self.current_lat},
             "current_course": self.current_course,
             "speed": self.speed_mps,
-            "end_position": {"lon": self.end_lon, "lat": self.end_lat},
             "leg": "to_end" if self._leg_to_end else "to_start",
-            "transit_bearing": self.transit_bearing,
-            "return_bearing": self.return_bearing,
-            "loop": True,
         }
 
 
 track_simulator = TrackSimulator()
+
+
+async def _run_standalone():
+    await track_simulator.start()
+    try:
+        while True:
+            await asyncio.sleep(1.0)
+    except KeyboardInterrupt:
+        logger.info("[TrackSim] 收到 Ctrl+C，准备停止")
+    finally:
+        if track_simulator.running:
+            await track_simulator.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(_run_standalone())

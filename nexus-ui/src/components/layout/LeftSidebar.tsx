@@ -1,7 +1,7 @@
 "use client";
 
 import { useAppStore } from "@/stores/app-store";
-import { useAlertStore } from "@/stores/alert-store";
+import { useTrackStore } from "@/stores/track-store";
 import { cn } from "@/lib/utils";
 import {
   Crosshair,
@@ -24,7 +24,7 @@ const TABS = [
 
 export function LeftSidebar() {
   const { leftSidebarOpen, toggleLeftSidebar, leftPanelTab, setLeftPanelTab } = useAppStore();
-  const alertTotal = useAlertStore((s) => s.alerts.length);
+  const alertTotal = useTrackStore((s) => s.tracks.length);
 
   const handleTabClick = (tabId: typeof leftPanelTab) => {
     if (leftPanelTab === tabId && leftSidebarOpen) {

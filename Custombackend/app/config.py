@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     # `<EO_VIDEO_CAPTURE_VIDEO_DIR>/<streamLabel>/<fileName>`
     # 这同样只是导出/归档路径，不参与实时视频播放。
     EO_VIDEO_CAPTURE_VIDEO_DIR: str = r".\data\eo-video\record"
+
+    # destroy gRPC 复用上面的 HOST，只额外占用一个端口。
+    # 当前 FastAPI/uvicorn 负责 HTTP/WS，gRPC 需要独立的 HTTP/2 server，
+    # 所以 destroy 订阅流不能和 REST 共用同一个 PORT。
+    DESTROY_GRPC_PORT: int = 50061
     
     # WebSocket配置
     HEARTBEAT_INTERVAL: int = 10
@@ -205,24 +210,6 @@ MQTT_RECEIVERS: List[Dict[str, Any]] = [
 #          data_class_name, pubsub_type_class_name, type_name
 DDS_RECEIVERS: List[Dict[str, Any]] = [
     {
-        "id": "dds_alarm_event",
-        "name": "DDS威胁告警列表",
-        "enabled": True,
-        "domain_id": 135,
-        "topic_name": "AlarmEventTopic",
-        "profile_name": "participant_alarmevent_recv_multi",
-        "discovery_server_ip": "192.168.18.141",
-        "discovery_server_port": 11611,
-        "multicast_ip": "239.255.0.1",
-        "multicast_port": 12359,
-        "dds_module_path": "./DDSReferences/AlarmEvent",
-        "structure_type": "alarm_data",
-        "data_class_name": "AlarmEvent",
-        "pubsub_type_class_name": "AlarmEventPubSubType",
-        "type_name": "AlarmEvent",
-        "use_default_xml": False
-    },
-    {
         "id": "dds_camera_status",
         "name": "DDS相机实时状态",
         "enabled": True,
@@ -297,43 +284,6 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "type_name": "TargetMinimal::TargetOutputSet",
         "use_default_xml": False
     },
-        {
-        "id": "dds_forward_fuse_track",
-        "name": "融合航迹",
-        "enabled": True,
-        "domain_id": 141,
-        "topic_name": "TrackTopic_NewStruct_FuseTrack_virtual",
-        "profile_name": "track_subscriber_newstruct",
-        "discovery_server_ip": "192.168.18.141",
-        "discovery_server_port": 11611,
-        "multicast_ip": "239.255.0.1",
-        "multicast_port": 12355,
-        "dds_module_path": "./DDSReferences/NewTrackStruct/build",
-        "structure_type": "new_track_struct",
-        "dds_module_name": "NewTrackRealTimeStatus",
-        "data_class_name": "TargetOutputSet",
-        "pubsub_type_class_name": "TargetOutputSetPubSubType",
-        "type_name": "TargetMinimal::TargetOutputSet",
-        "use_default_xml": False
-    },
-    # {
-    #     "id": "dds_forward_radar_track1",
-    #     "name": "远遥航迹",
-    #     "enabled": True,
-    #     "domain_id": 141,
-    #     "topic_name": "TrackDataClassTopic_RadarTrack1",
-    #     "profile_name": "track_publisher_forward_RadarTrack1",
-    #     "discovery_server_ip": "192.168.18.141",
-    #     "discovery_server_port": 11611,
-    #     "multicast_ip": "239.255.0.1",
-    #     "multicast_port": 12355,
-    #     "dds_module_path": "./DDSReferences/fusion",
-    #     "structure_type": "radar_track",
-    #     "data_class_name": "TrackDataClass",
-    #     "pubsub_type_class_name": "TrackDataClassPubSubType",
-    #     "type_name": "TrackDataClass",
-    #     "use_default_xml": False
-    # },
     # {
     #     "id": "dds_forward_radar_track2",
     #     "name": "靖子头航迹",
@@ -417,25 +367,6 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "discovery_server_port": 11611,
         "multicast_ip": "239.255.0.1",
         "multicast_port": 12370,
-        "dds_module_path": "./DDSReferences/NewTrackStruct/build",
-        "structure_type": "new_track_struct",
-        "dds_module_name": "NewTrackRealTimeStatus",
-        "data_class_name": "TargetOutputSet",
-        "pubsub_type_class_name": "TargetOutputSetPubSubType",
-        "type_name": "TargetMinimal::TargetOutputSet",
-        "use_default_xml": False
-    },
-     {
-        "id": "dds_forward_fuse_bird_radar_track",
-        "name": "对空融合航迹",
-        "enabled": True,
-        "domain_id": 141,
-        "topic_name": "TrackTopic_NewStruct_FuseBirdTrack_virtual",
-        "profile_name": "track_subscriber_newstruct",
-        "discovery_server_ip": "192.168.18.141",
-        "discovery_server_port": 11611,
-        "multicast_ip": "239.255.0.1",
-        "multicast_port": 12355,
         "dds_module_path": "./DDSReferences/NewTrackStruct/build",
         "structure_type": "new_track_struct",
         "dds_module_name": "NewTrackRealTimeStatus",

@@ -1,0 +1,482 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Camera, CameraIcon, Loader2, Video } from "lucide-react";
+import { EoDetectionOverlay } from "@/components/eo-video/EoDetectionOverlay";
+import { EoVideoViewport } from "@/components/eo-video/EoVideoViewport";
+import { DraggableModal } from "@/components/ui/DraggableModal";
+import { Button } from "@/components/ui/button";
+import { useEoSyncedDetections } from "@/hooks/useEoSyncedDetections";
+import { getHttpConfig } from "@/lib/map-app-config";
+import { useAppConfigStore } from "@/stores/app-config-store";
+import { useAssetStore, type AssetData } from "@/stores/asset-store";
+import { useAppStore } from "@/stores/app-store";
+import {
+  buildCaptureFileName,
+  capturePlaybackToPngBlob,
+  createVideoRecorder,
+  pickRecordMimeAndExtension,
+  saveCaptureBlobToServer,
+  type EoVideoRecordController,
+} from "@/lib/eo-video/capture";
+import { createEoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
+import type { EoWebCodecsPresentation } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
+import type { EoRuntimeStream, EoVideoIceServer } from "@/lib/eo-video/types";
+import { signalingUrlFromWebrtcUrl } from "@/lib/eo-video/buildSignalingUrl";
+
+const DEFAULT_ICE_SERVERS: EoVideoIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+
+function readStringProperty(properties: Record<string, unknown> | null | undefined, key: string): string {
+  if (!properties) return "";
+  const value = properties[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function toRuntimeStream(asset: AssetData): EoRuntimeStream | null {
+  const properties =
+    asset.properties && typeof asset.properties === "object"
+      ? (asset.properties as Record<string, unknown>)
+      : null;
+  const sensorVideoUrl = readStringProperty(properties, "sensor_video_url");
+  if (!sensorVideoUrl) return null;
+  return {
+    id: asset.id,
+    label: asset.name || asset.id,
+    entityId: asset.id,
+    sensorVideoUrl,
+  };
+}
+
+function detectionEntityIdFromAsset(asset: AssetData | null | undefined): string {
+  return asset?.id?.trim() ?? "";
+}
+
+function toPlaybackUrl(sensorVideoUrl: string): string {
+  if (!sensorVideoUrl.trim()) {
+    throw new Error("Missing sensor video url from realtime entity");
+  }
+  if (sensorVideoUrl.startsWith("webrtc://")) {
+    return signalingUrlFromWebrtcUrl(sensorVideoUrl);
+  }
+  if (sensorVideoUrl.includes("/index/api/webrtc")) {
+    return sensorVideoUrl;
+  }
+  if (sensorVideoUrl.startsWith("rtsp://") || sensorVideoUrl.startsWith("rtsps://")) {
+    throw new Error(`Current EO player does not support direct RTSP playback: ${sensorVideoUrl}`);
+  }
+  throw new Error(`Unsupported stream url format: ${sensorVideoUrl.slice(0, 120)}`);
+}
+
+function buildBackendCaptureUrl(): string {
+  const backendUrl = getHttpConfig().backendUrl.trim();
+  if (!backendUrl) {
+    throw new Error("Missing backendUrl in app-config");
+  }
+  return `${backendUrl.replace(/\/+$/, "")}/api/eo-video/capture/save`;
+}
+
+function readTargetDomainLabel(asset: AssetData | null): string {
+  const props =
+    asset?.properties && typeof asset.properties === "object"
+      ? (asset.properties as Record<string, unknown>)
+      : null;
+  const candidates = [
+    props?.targetType,
+    props?.target_type,
+    props?.currentTargetType,
+    props?.current_target_type,
+    props?.missionTargetType,
+    props?.mission_target_type,
+    props?.mode,
+    props?.taskMode,
+    props?.task_mode,
+  ];
+  for (const candidate of candidates) {
+    const text = String(candidate ?? "").trim().toLowerCase();
+    if (!text) continue;
+    if (text === "1" || text.includes("air") || text.includes("对空") || text.includes("uav")) return "对空";
+    if (text === "0" || text.includes("sea") || text.includes("对海") || text.includes("ship")) return "对海";
+  }
+  return "空闲中";
+}
+
+export function EoVideoModal() {
+  const appConfigStatus = useAppConfigStore((s) => s.status);
+  const assets = useAssetStore((s) => s.assets);
+  const selectedAssetId = useAppStore((s) => s.selectedAssetId);
+  const open = useAppStore((s) => s.eoVideoModalOpen);
+  const setOpen = useAppStore((s) => s.setEoVideoModalOpen);
+  const runtimeStreams = useMemo(
+    () => assets.map(toRuntimeStream).filter((item): item is EoRuntimeStream => Boolean(item)),
+    [assets],
+  );
+  const [activeStreamId, setActiveStreamId] = useState("");
+  const [, setCaptureHint] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"snapshot" | "record" | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [captureReady, setCaptureReady] = useState(false);
+  const [overlayIntrinsic, setOverlayIntrinsic] = useState({ width: 0, height: 0 });
+  const [contextMenu, setContextMenu] = useState({ open: false, x: 0, y: 0 });
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const videoReceiverRef = useRef<RTCRtpReceiver | null>(null);
+  const webCodecsPresentationRef = useRef<EoWebCodecsPresentation>({
+    active: false,
+    width: 0,
+    height: 0,
+    canvas: null,
+  });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const recordControllerRef = useRef<EoVideoRecordController | null>(null);
+  const encodedSyncHub = useMemo(() => createEoEncodedSyncHub(), []);
+
+  useEffect(() => {
+    if (appConfigStatus === "idle") {
+      void useAppConfigStore.getState().ensureLoaded();
+    }
+  }, [appConfigStatus]);
+
+  useEffect(() => {
+    if (!runtimeStreams.length) {
+      setActiveStreamId("");
+      return;
+    }
+    const selectedStream =
+      selectedAssetId ? runtimeStreams.find((item) => item.id === selectedAssetId) ?? null : null;
+    setActiveStreamId((prev) => {
+      if (selectedStream) return selectedStream.id;
+      if (prev && runtimeStreams.some((item) => item.id === prev)) return prev;
+      return runtimeStreams[0]?.id ?? "";
+    });
+  }, [runtimeStreams, selectedAssetId]);
+
+  useEffect(() => {
+    return () => {
+      recordControllerRef.current?.stop();
+    };
+  }, []);
+
+  const activeStream = useMemo(
+    () => runtimeStreams.find((item) => item.id === activeStreamId) ?? runtimeStreams[0] ?? null,
+    [activeStreamId, runtimeStreams],
+  );
+  const activeAsset = useMemo(
+    () => assets.find((item) => item.id === activeStream?.id) ?? null,
+    [activeStream, assets],
+  );
+  const targetDomainLabel = useMemo(() => readTargetDomainLabel(activeAsset), [activeAsset]);
+
+  const playbackState = useMemo(() => {
+    if (!activeStream) {
+      return { playbackUrl: "", error: "等待后端实体实时数据..." };
+    }
+    try {
+      return { playbackUrl: toPlaybackUrl(activeStream.sensorVideoUrl), error: null as string | null };
+    } catch (error) {
+      return { playbackUrl: "", error: error instanceof Error ? error.message : String(error) };
+    }
+  }, [activeStream]);
+
+  const backendState = useMemo(() => {
+    if (appConfigStatus !== "ready") {
+      return {
+        captureSaveUrl: "",
+        error: "App config is still loading",
+      };
+    }
+    try {
+      return {
+        captureSaveUrl: buildBackendCaptureUrl(),
+        error: null as string | null,
+      };
+    } catch (error) {
+      return {
+        captureSaveUrl: "",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }, [appConfigStatus]);
+
+  const detection = useEoSyncedDetections({
+    entityId: detectionEntityIdFromAsset(activeAsset),
+    enabled: open && Boolean(activeStream) && !backendState.error,
+    encodedSyncHub,
+    videoIntrinsicWidth: overlayIntrinsic.width,
+    videoIntrinsicHeight: overlayIntrinsic.height,
+    videoRef,
+  });
+
+  useEffect(() => {
+    const syncReady = () => {
+      const video = videoRef.current;
+      const videoReady = Boolean(video && video.videoWidth > 0 && video.videoHeight > 0);
+      const canvasReady = Boolean(
+        webCodecsPresentationRef.current.active &&
+          webCodecsPresentationRef.current.width > 0 &&
+          webCodecsPresentationRef.current.height > 0 &&
+          webCodecsPresentationRef.current.canvas,
+      );
+      setCaptureReady(videoReady || canvasReady);
+      if (canvasReady) {
+        const { width, height } = webCodecsPresentationRef.current;
+        setOverlayIntrinsic((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+        return;
+      }
+      setOverlayIntrinsic((prev) => (prev.width === 0 && prev.height === 0 ? prev : { width: 0, height: 0 }));
+    };
+    syncReady();
+    const video = videoRef.current;
+    video?.addEventListener("loadeddata", syncReady);
+    video?.addEventListener("loadedmetadata", syncReady);
+    video?.addEventListener("canplay", syncReady);
+    video?.addEventListener("playing", syncReady);
+    video?.addEventListener("resize", syncReady);
+    const timer = window.setInterval(syncReady, 300);
+    return () => {
+      video?.removeEventListener("loadeddata", syncReady);
+      video?.removeEventListener("loadedmetadata", syncReady);
+      video?.removeEventListener("canplay", syncReady);
+      video?.removeEventListener("playing", syncReady);
+      video?.removeEventListener("resize", syncReady);
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!contextMenu.open) return;
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Node && contextMenuRef.current?.contains(target)) return;
+      setContextMenu((prev) => (prev.open ? { ...prev, open: false } : prev));
+    };
+    const closeMenuOnBlur = () => {
+      setContextMenu((prev) => (prev.open ? { ...prev, open: false } : prev));
+    };
+    window.addEventListener("mousedown", closeMenu);
+    window.addEventListener("blur", closeMenuOnBlur);
+    return () => {
+      window.removeEventListener("mousedown", closeMenu);
+      window.removeEventListener("blur", closeMenuOnBlur);
+    };
+  }, [contextMenu.open]);
+
+  const contextMenuMaxHeight = Math.max(160, (containerRef.current?.clientHeight ?? 0) - contextMenu.y - 12);
+
+  const onSnapshot = async () => {
+    if (!activeStream) {
+      setCaptureHint("当前没有可用相机实体。");
+      return;
+    }
+    if (!captureReady) {
+      setCaptureHint("视频还没准备好，暂时无法截图。");
+      return;
+    }
+    if (!backendState.captureSaveUrl) {
+      setCaptureHint("后端截图保存地址不可用。");
+      return;
+    }
+    setBusy("snapshot");
+    try {
+      const blob = await capturePlaybackToPngBlob(videoRef.current, webCodecsPresentationRef.current.canvas);
+      const fileName = buildCaptureFileName(activeStream.label, "snapshot", "png");
+      const savedPath = await saveCaptureBlobToServer(blob, backendState.captureSaveUrl, {
+        kind: "snapshot",
+        streamLabel: activeStream.label,
+        fileName,
+      });
+      setCaptureHint(`截图已保存: ${savedPath}`);
+    } catch (error) {
+      setCaptureHint(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onToggleRecord = async () => {
+    if (!activeStream) {
+      setCaptureHint("当前没有可用相机实体。");
+      return;
+    }
+    if (!isRecording) {
+      if (!videoRef.current) {
+        setCaptureHint("视频元素尚未就绪，暂时无法录像。");
+        return;
+      }
+      if (!backendState.captureSaveUrl) {
+        setCaptureHint("后端录像保存地址不可用。");
+        return;
+      }
+      const picked = pickRecordMimeAndExtension();
+      const fileName = buildCaptureFileName(activeStream.label, "record", picked.ext);
+      recordControllerRef.current = createVideoRecorder({
+        video: videoRef.current,
+        fileName,
+        mimeType: picked.mimeType,
+        onSaveBlob: async (blob, savedFileName) => {
+          setBusy("record");
+          try {
+            const savedPath = await saveCaptureBlobToServer(blob, backendState.captureSaveUrl, {
+              kind: "record",
+              streamLabel: activeStream.label,
+              fileName: savedFileName,
+            });
+            setCaptureHint(`录像已保存: ${savedPath}`);
+          } catch (error) {
+            setCaptureHint(error instanceof Error ? error.message : String(error));
+          } finally {
+            setBusy(null);
+          }
+        },
+        onError: (message) => setCaptureHint(message),
+        onStarted: () => {
+          setIsRecording(true);
+          setCaptureHint("开始录像。");
+        },
+        onStopped: () => {
+          setIsRecording(false);
+        },
+      });
+      recordControllerRef.current.start();
+      return;
+    }
+
+    recordControllerRef.current?.stop();
+  };
+
+  return (
+    <DraggableModal
+      open={open}
+      onClose={() => setOpen(false)}
+      title="光电视频"
+      icon={Camera}
+      size="auto"
+      minWidth={520}
+      minHeight={320}
+      initialX={260}
+      initialY={120}
+      className="overflow-hidden"
+      headerClassName="px-3 py-2"
+      contentClassName="flex min-h-0 flex-1 px-3 py-2"
+    >
+      <div className="flex min-h-0 h-full min-w-0 w-full flex-1 flex-col">
+        <div
+          ref={containerRef}
+          className="relative min-h-0 flex-1 rounded-md border border-nexus-border bg-black"
+          onContextMenu={(event) => {
+            event.preventDefault();
+            const container = containerRef.current;
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+            setContextMenu({
+              open: true,
+              x: Math.max(12, Math.min(event.clientX - rect.left, rect.width - 252)),
+              y: Math.max(12, Math.min(event.clientY - rect.top, rect.height - 360)),
+            });
+          }}
+        >
+          <EoVideoViewport
+            signalingUrl={playbackState.playbackUrl}
+            iceServers={DEFAULT_ICE_SERVERS}
+            enabled={open && Boolean(playbackState.playbackUrl)}
+            videoRef={videoRef}
+            peerConnectionRef={peerConnectionRef}
+            encodedSyncHub={encodedSyncHub}
+            videoReceiverRef={videoReceiverRef}
+            webCodecsPresentationRef={webCodecsPresentationRef}
+          />
+
+          <div className="pointer-events-none absolute left-3 top-3 z-[6] rounded-md bg-black/55 px-2.5 py-1 text-xs font-medium text-white/95 backdrop-blur-sm">
+            当前目标: {targetDomainLabel}
+          </div>
+
+          <div className="pointer-events-none absolute left-3 top-12 z-[6] max-w-[calc(100%-104px)] rounded-md bg-black/45 px-2.5 py-1 text-[11px] font-medium text-cyan-100/95 backdrop-blur-sm">
+            检测ID: {detectionEntityIdFromAsset(activeAsset) || "-"} | {detection.diag || "等待检测数据..."}
+          </div>
+
+          <div className="absolute right-3 top-1/2 z-[6] flex -translate-y-1/2 flex-col gap-2">
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="outline"
+              className="border-white/20 bg-black/35 text-white hover:bg-white/15"
+              onClick={() => void onSnapshot()}
+              disabled={busy === "snapshot" || !activeStream}
+              title="截图"
+              aria-label="截图"
+            >
+              {busy === "snapshot" ? <Loader2 className="size-4 animate-spin" /> : <CameraIcon className="size-4" />}
+            </Button>
+            <Button
+              type="button"
+              size="icon-sm"
+              variant={isRecording ? "destructive" : "outline"}
+              className={!isRecording ? "border-white/20 bg-black/35 text-white hover:bg-white/15" : undefined}
+              onClick={() => void onToggleRecord()}
+              disabled={busy === "record" || !activeStream}
+              title={isRecording ? "停止录像" : "开始录像"}
+              aria-label={isRecording ? "停止录像" : "开始录像"}
+            >
+              {busy === "record" ? <Loader2 className="size-4 animate-spin" /> : <Video className="size-4" />}
+            </Button>
+          </div>
+
+          <div className="pointer-events-none absolute bottom-3 left-3 z-[6] rounded-md bg-black/45 px-2.5 py-1 text-sm font-medium text-white/95 backdrop-blur-sm">
+            {activeStream?.label ?? "等待相机实体..."}
+          </div>
+
+          {contextMenu.open ? (
+            <div
+              ref={contextMenuRef}
+              className="absolute z-[12] flex min-w-60 max-w-[calc(100%-24px)] flex-col overflow-hidden rounded-lg border border-white/10 bg-[#2b2d36]/95 shadow-2xl backdrop-blur-md"
+              style={{
+                left: `${contextMenu.x}px`,
+                top: `${contextMenu.y}px`,
+                maxHeight: `${contextMenuMaxHeight}px`,
+              }}
+            >
+              <div className="border-b border-white/10 px-3 py-2 text-xs font-semibold text-cyan-300">
+                视频源
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+                {runtimeStreams.length ? (
+                  runtimeStreams.map((stream) => {
+                    const active = stream.id === activeStream?.id;
+                    return (
+                      <button
+                        key={stream.id}
+                        type="button"
+                        className={`flex w-full items-center px-3 py-2 text-left text-sm transition-colors ${
+                          active
+                            ? "bg-white/10 font-medium text-white"
+                            : "text-white/85 hover:bg-white/8 hover:text-white"
+                        }`}
+                        onClick={() => {
+                          setActiveStreamId(stream.id);
+                          setContextMenu((prev) => ({ ...prev, open: false }));
+                        }}
+                      >
+                        {stream.label}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="px-3 py-2 text-sm text-white/55">等待相机实体...</div>
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          <EoDetectionOverlay
+            containerRef={containerRef}
+            videoRef={videoRef}
+            boxes={detection.boxes}
+            videoObjectFit="fill"
+            videoIntrinsicWidth={overlayIntrinsic.width}
+            videoIntrinsicHeight={overlayIntrinsic.height}
+          />
+        </div>
+      </div>
+    </DraggableModal>
+  );
+}

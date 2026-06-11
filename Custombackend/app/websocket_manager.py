@@ -155,6 +155,11 @@ class WebSocketManager:
 
     def queue_track_data(self, track_data: Dict[str, Any]):
         """Queue one track message for batched broadcast."""
+        # alarms = track_data.get("alarms")
+        # has_alarm = bool(track_data.get("hasAlarm")) or (isinstance(alarms, list) and len(alarms) > 0)
+        # if not has_alarm:
+        #     return
+
         if "is_air_track" not in track_data:
             track_data["is_air_track"] = self._determine_air_track(track_data)
 
@@ -168,7 +173,12 @@ class WebSocketManager:
     def _determine_air_track(self, track_data: Dict[str, Any]) -> bool:
         """Return True for air tracks, otherwise sea track."""
         source_name = track_data.get("source_name", "")
-        air_keywords = ["对空", "无人机", "自报位", "机场"]
+        data_source_id = str(track_data.get("dataSourceId") or track_data.get("data_source_id") or "").strip()
+        if data_source_id in {"dds_forward_fuse_bird_radar_track", "dds_forward_fanwucar_track"}:
+            return True
+        if data_source_id == "dds_forward_fuse_track":
+            return False
+        air_keywords = ["对空", "无人机", "自报位", "机场", "反无车"]
         return any(keyword in source_name for keyword in air_keywords)
 
     def queue_message(self, message: Dict[str, Any]):

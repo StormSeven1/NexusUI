@@ -17,7 +17,6 @@
  * 测试时常亮 FOV：把 HS_CAMERA_FOV_TEST_ALWAYS_ON 改为 true（测完改回 false）
  */
 import { useAssetStore } from "@/stores/asset-store";
-import { useAlertStore } from "@/stores/alert-store";
 
 /** 测试开关：true = 四个高速相机 FOV 始终显示（不受检测超时影响） */
 export const HS_CAMERA_FOV_TEST_ALWAYS_ON = false;
@@ -75,10 +74,6 @@ export function applyHsCameraFovProps(entityId: string, props: Record<string, un
   props.fov_fill_opacity = HS_CAMERA_FOV_FILL_OPACITY;
 }
 
-function alertTrackId(entityId: string) {
-  return `hs-cam:${entityId}`;
-}
-
 /** 通过 displayOverride 即时改 FOV；Map2D.flushAssets 时会合并进 properties */
 function setFovVisible(entityId: string, visible: boolean, rebuild?: () => void) {
   useAssetStore.getState().setDisplayOverride(entityId, { fov_sector_visible: visible });
@@ -87,7 +82,7 @@ function setFovVisible(entityId: string, visible: boolean, rebuild?: () => void)
 
 /**
  * 处理 SpeedCameraDetection WS 消息
- * - boxes 非空：记时间、开 FOV、弹告警（告警面板无「消灭」按钮）
+ * - boxes 非空：记时间、开 FOV
  * - entityId 不在 HS_CAMERA_IDS：忽略
  */
 export function onHsCameraDetection(payload: Record<string, unknown>, rebuild?: () => void) {
@@ -108,27 +103,10 @@ export function onHsCameraDetection(payload: Record<string, unknown>, rebuild?: 
 
   lastDetectionMs[entityId] = Date.now();
   setFovVisible(entityId, true, rebuild);
-
-  const trackId = alertTrackId(entityId);
-  const now = Date.now();
-  useAlertStore.getState().upsertAlarm({
-    id: trackId,
-    trackId,
-    severity: "warning",
-    title: "高速相机检测",
-    message: `${entityId} 检测到目标（${boxes.length} 框）`,
-    timestamp: new Date().toISOString(),
-    type: "高速相机",
-    source: entityId,
-    alarmType: "alert",
-    suppressDestroy: true,
-    firstSeenTime: now,
-    lastUpdateTime: now,
-  });
 }
 
 /**
- * 定时清理：2s 内无新检测 → 关 FOV、删对应告警
+ * 定时清理：2s 内无新检测 → 关 FOV
  * 由 useUnifiedWsFeed 每 500ms 调用一次
  */
 export function tickHsCameraDetection(rebuild?: () => void) {
@@ -139,6 +117,5 @@ export function tickHsCameraDetection(rebuild?: () => void) {
     if (now - seenAt <= DETECTION_STALE_MS) continue;
     delete lastDetectionMs[entityId];
     setFovVisible(entityId, false, rebuild);
-    useAlertStore.getState().removeAlarmItemsByTrackId(alertTrackId(entityId));
   }
 }

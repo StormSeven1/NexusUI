@@ -15,6 +15,8 @@ from loguru import logger
 
 from config import DDS_RECEIVERS, HTTP_POLLERS, MQTT_RECEIVERS, TCP_CLIENTS, UDP_RECEIVERS, get_settings
 from database import DatabaseManager
+from grpc_services.destroy.proto_codegen import ensure_destroy_proto_generated
+from grpc_services.destroy.service import destroy_grpc_service
 from http_api import router as api_router, set_db_manager
 from receivers.receiver_manager import receiver_manager
 from websocket_manager import ws_manager
@@ -90,6 +92,12 @@ async def lifespan(app: FastAPI):
 
     receiver_manager.local_interface = settings.LOCAL_INTERFACE
 
+    logger.info("Ensuring destroy gRPC proto python files are generated...")
+    ensure_destroy_proto_generated()
+
+    logger.info("Starting destroy gRPC server on HOST with a dedicated gRPC port...")
+    await destroy_grpc_service.start(settings.HOST, settings.DESTROY_GRPC_PORT)
+
     ws_manager.heartbeat_interval = settings.HEARTBEAT_INTERVAL
     ws_manager.broadcast_interval = settings.BROADCAST_INTERVAL
     ws_manager.start_tasks()
@@ -114,6 +122,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info(f"Service started: http://{settings.HOST}:{settings.PORT}")
     logger.info(f"WebSocket endpoint: ws://{settings.HOST}:{settings.PORT}/ws")
+    logger.info(f"Destroy gRPC endpoint: {settings.HOST}:{settings.DESTROY_GRPC_PORT}")
     logger.info("=" * 60)
 
     yield
@@ -123,6 +132,7 @@ async def lifespan(app: FastAPI):
     receiver_manager.stop_all()
     await receiver_manager.stop_http_pollers()
     ws_manager.stop_tasks()
+    await destroy_grpc_service.stop()
 
     if db_manager:
         await db_manager.close()

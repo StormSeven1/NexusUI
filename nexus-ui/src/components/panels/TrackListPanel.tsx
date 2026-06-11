@@ -226,9 +226,9 @@ export function TrackListPanel() {
                     </span>
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
-                    {typeof track.speed === "number" ? track.speed.toFixed(1) : track.speed} kn · 航向 {formatHeading2(track.heading)}°
-                    {track.type === "air" && track.altitude ? ` · 高度 ${track.altitude.toFixed(1)}ft` : ""}
-                    {track.type === "underwater" ? ` · 深度 ${track.altitude || 0}m` : ""}
+                    {typeof track.speed === "number" ? track.speed.toFixed(1) : track.speed} m/s·航向 {formatHeading2(track.course)}°
+                    {track.type === "air" && track.altitude ? `·高度 ${track.altitude.toFixed(1)}m` : ""}
+                    {track.type === "underwater" ? `·深度 ${track.altitude || 0}m` : ""}
                   </div>
                 </div>
               </button>

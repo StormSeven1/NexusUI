@@ -2,25 +2,34 @@
 
 import Image from "next/image";
 
-/**
- * 告警面板 — 消费 alert-store 的实时数据。
- *
- * 【数据流】`useUnifiedWsFeed`（`alert_batch` / `map_command` alert / `alert`）经 `ws-alert-normalize` 归一化 → `addAlerts` → 本列表。
- */
-
 import { useAppStore } from "@/stores/app-store";
-import { useAlertStore, type AlertData } from "@/stores/alert-store";
+import { type Track } from "@/lib/map-entity-model";
 import { useTrackStore, getRenderCache } from "@/stores/track-store";
 import { useDisposedStore } from "@/stores/disposed-store";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import { useTaskProgressStore } from "@/stores/task-progress-store";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
-import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { cn } from "@/lib/utils";
 import { runAlertDestroyHttp } from "@/lib/disposal/alert-destroy";
 import { AlertTriangle, AlertCircle, Info, X, ArrowUpDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+
+type PanelAlertItem = {
+  id: string;
+  severity: SeverityKey;
+  timestamp: string;
+  trackId?: string;
+  uniqueID?: string;
+  lat?: number;
+  lng?: number;
+  type?: string;
+  alarmLevel?: number;
+  areaName?: string;
+  detail?: string;
+  imageUrl?: string;
+  suppressDestroy?: boolean;
+};
 
 const SEVERITY_STYLES = {
   critical: {
@@ -36,7 +45,7 @@ const SEVERITY_STYLES = {
     border: "border-l-amber-500",
     bg: "bg-amber-500/5",
     iconColor: "text-amber-400",
-    label: "警告",
+    label: "告警",
     labelColor: "text-amber-400",
   },
   info: {
@@ -64,20 +73,9 @@ function naturalNameCompare(a: string, b: string): number {
   return a.localeCompare(b, "zh-CN", { numeric: true, sensitivity: "base" });
 }
 
-/**
- * 告警面板 — 消费 alert-store 的实时数据。
- *
- * 【数据流】`useUnifiedWsFeed`（`alert_batch` / `map_command` alert / `alert`）经 `ws-alert-normalize` 归一化 → `addAlerts` → 本列表。
- *
- * 【消灭按钮逻辑】
- * 1. runAlertDestroyHttp：按本条告警 trackId 严格匹配正在执行的方案 → POST（entityId 逗号拼接，可为空）→ 仅有飞弹时 DELETE 飞弹
- * 2. 标记已处置、清告警、清选中、清处置连线等（本地）
- */
 export function AlertPanel() {
   const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
-  const alerts = useAlertStore((s) => s.alerts);
-  const removeAlarmItemsByTrackId = useAlertStore((s) => s.removeAlarmItemsByTrackId);
-  const shadowTracks = useTrackStore((s) => s.shadowTracks);
+  const tracks = useTrackStore((s) => s.tracks);
   const addDisposedTrack = useDisposedStore((s) => s.addDisposedTrack);
   const cleanupEffectsForMissingTargets = useDisposalPlanStore((s) => s.cleanupEffectsForMissingTargets);
   const aliases = useTrackAliasStore((s) => s.aliases);
@@ -85,42 +83,25 @@ export function AlertPanel() {
 
   useEffect(() => {
     const aliasStore = useTrackAliasStore.getState();
-    for (const alert of alerts) {
-      if (!alert.trackId) continue;
-      const k = resolveAliasKey({ trackId: alert.trackId, uniqueID: alert.uniqueID ?? alert.trackId, isAirTrack: undefined });
+    for (const track of tracks) {
+      if (!track.trackId) continue;
+      const k = resolveAliasKey({
+        trackId: track.trackId,
+        uniqueID: track.uniqueID ?? track.trackId,
+        isAirTrack: track.isAirTrack,
+      });
       if (k) aliasStore.getOrCreate(k);
     }
-  }, [alerts]);
+  }, [tracks]);
 
-  /** 告警 trackId → 航迹 showID（用于 selectTrack） */
-  const resolveShowIdFromAlarmTrackId = useCallback(
-    (alarmTrackId: string): string | null => {
-      if (!getTrackIdModeConfig().distinguishSeaAir) {
-        // 18.141：先查渲染层，再查影子层
-        for (const [, t] of getRenderCache()) {
-          if (t.trackId === alarmTrackId) return t.showID;
-        }
-        for (const [, t] of shadowTracks) {
-          if (t.trackId === alarmTrackId) return t.showID;
-        }
-        return null;
-      }
-      // 28.9：对海 trackId 就是 uniqueID/showID，直接用
-      // 但也可能是对空的业务 trackId，先直查再遍历
-      if (getRenderCache().has(alarmTrackId)) return alarmTrackId;
-      if (shadowTracks.has(alarmTrackId)) return alarmTrackId;
-      for (const [, t] of getRenderCache()) {
-        if (t.trackId === alarmTrackId) return t.showID;
-      }
-      for (const [, t] of shadowTracks) {
-        if (t.trackId === alarmTrackId) return t.showID;
-      }
-      return null;
-    },
-    [shadowTracks],
-  );
+  const resolveShowIdFromAlarmTrackId = useCallback((alarmTrackId: string): string | null => {
+    for (const [, t] of getRenderCache()) {
+      if (t.trackId === alarmTrackId) return t.showID;
+    }
+    return null;
+  }, []);
 
-  /** 告警 trackId → 查证图片（从 renderCache 查匹配 trackId 的航迹） */
+  /** 告警 trackId 对应的核验图片从 renderCache 里读取。 */
   const alertImageMap = useMemo(() => {
     const map = new Map<string, string>();
     const cache = getRenderCache();
@@ -130,14 +111,41 @@ export function AlertPanel() {
       }
     }
     return map;
-  }, [alerts, shadowTracks]); // alerts/shadowTracks 变化时重算
+  }, [tracks]);
 
   const allAlerts = useMemo(() => {
-    const mapped = alerts.map((a: AlertData) => ({
-      ...a,
-      severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
-      imageUrl: a.trackId ? alertImageMap.get(a.trackId) : undefined,
-    }));
+    const mapped: PanelAlertItem[] = tracks
+      .map((track: Track) => {
+        const alarm =
+          Array.isArray(track.alarms) && track.alarms.length > 0
+            ? (track.alarms[0] as Record<string, unknown>)
+            : null;
+        if (!alarm) return null;
+
+        const levelRaw = alarm.level;
+        const alarmLevel = levelRaw != null && Number.isFinite(Number(levelRaw)) ? Number(levelRaw) : undefined;
+        const severity: SeverityKey =
+          alarmLevel != null && alarmLevel >= 2 ? "critical" : alarmLevel === 1 ? "warning" : "info";
+        const area = alarm.area && typeof alarm.area === "object" ? (alarm.area as Record<string, unknown>) : null;
+        const detail = typeof alarm.content === "string" ? alarm.content : undefined;
+
+        return {
+          id: `${track.showID}:${String(alarm.alarm_id)}`,
+          severity,
+          timestamp: track.lastUpdate,
+          trackId: track.trackId,
+          uniqueID: track.uniqueID,
+          lat: track.lat,
+          lng: track.lng,
+          type: Array.isArray(alarm.categories) ? String(alarm.categories.join(",")) : undefined,
+          alarmLevel,
+          areaName: area ? String(area.name ?? area.area_name ?? "") || undefined : undefined,
+          detail,
+          imageUrl: track.trackId ? alertImageMap.get(track.trackId) : undefined,
+        } as PanelAlertItem;
+      })
+      .filter((item): item is PanelAlertItem => item != null);
+
     if (sortMode === "name") {
       mapped.sort((a, b) => {
         const aliasA = (() => {
@@ -157,8 +165,9 @@ export function AlertPanel() {
     } else if (sortMode === "severity") {
       mapped.sort((a, b) => SEVERITY_SCORE[b.severity] - SEVERITY_SCORE[a.severity]);
     }
+
     return mapped;
-  }, [alerts, alertImageMap, aliases, sortMode]);
+  }, [tracks, alertImageMap, aliases, sortMode]);
 
   const criticalCount = allAlerts.filter((a) => a.severity === "critical").length;
 
@@ -201,16 +210,16 @@ export function AlertPanel() {
             <div
               key={alert.id}
               className={cn(
-                "border-b border-white/[0.03] border-l-2 px-3 py-3 cursor-pointer transition-colors hover:bg-white/[0.03]",
+                "cursor-pointer border-b border-l-2 border-white/[0.03] px-3 py-3 transition-colors hover:bg-white/[0.03]",
                 style.border,
-                style.bg
+                style.bg,
               )}
               onClick={() => {
                 if (!alert.trackId) return;
                 const showId = resolveShowIdFromAlarmTrackId(alert.trackId);
                 if (!showId) return;
                 selectTrack(showId);
-                /* 从渲染缓存获取航迹坐标，飞过去 */
+                // 从渲染缓存获取航迹坐标并飞过去。
                 const t = getRenderCache().get(showId);
                 if (t) requestFlyTo(t.lat, t.lng, 14);
               }}
@@ -219,40 +228,22 @@ export function AlertPanel() {
                 <Icon size={14} className={cn("mt-0.5 shrink-0", style.iconColor)} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className={cn("text-[10px] font-bold", style.labelColor)}>
-                      {style.label}
-                    </span>
-                    <span className="font-mono text-[10px] text-nexus-text-muted">
-                      {alert.timestamp}
-                    </span>
+                    <span className={cn("text-[10px] font-bold", style.labelColor)}>{style.label}</span>
+                    <span className="font-mono text-[10px] text-nexus-text-muted">{alert.timestamp}</span>
                   </div>
-                  {/* {alert.title && (
-                    <p className="mt-0.5 text-[11px] font-medium text-nexus-text-primary">{alert.title}</p>
-                  )} */}
-                  {/* <p className="mt-0.5 text-xs leading-relaxed text-nexus-text-primary">
-                    {alert.message}
-                  </p> */}
                   {alert.trackId && (
                     <p className="mt-0.5 text-[12px] font-bold text-nexus-text-primary">
                       {(() => {
-                        const k = resolveAliasKey({ trackId: alert.trackId, uniqueID: alert.uniqueID ?? alert.trackId, isAirTrack: undefined });
-                        return (k && aliases[k]) ? aliases[k] : alert.trackId;
+                        const k = resolveAliasKey({
+                          trackId: alert.trackId,
+                          uniqueID: alert.uniqueID ?? alert.trackId,
+                          isAirTrack: undefined,
+                        });
+                        return k && aliases[k] ? aliases[k] : alert.trackId;
                       })()}
                     </p>
                   )}
                   <div className="mt-1 space-y-0.5 text-[10px] text-nexus-text-muted">
-                    {alert.trackId && (
-                      <div>
-                        <span className="text-nexus-text-secondary">目标 ID：</span>
-                        {alert.trackId}
-                      </div>
-                    )}
-                    {alert.uniqueID && alert.uniqueID !== alert.trackId && (
-                      <div>
-                        <span className="text-nexus-text-secondary">uniqueID：</span>
-                        {alert.uniqueID}
-                      </div>
-                    )}
                     {alert.lat != null && alert.lng != null && Number.isFinite(alert.lat) && Number.isFinite(alert.lng) && (
                       <div>
                         <span className="text-nexus-text-secondary">坐标：</span>
@@ -265,33 +256,12 @@ export function AlertPanel() {
                         {alert.areaName}
                       </div>
                     )}
-                    {alert.source && (
-                      <div>
-                        <span className="text-nexus-text-secondary">来源：</span>
-                        {alert.source}
-                      </div>
-                    )}
-                    {alert.alarmLevel != null && Number.isFinite(alert.alarmLevel) && (
-                      <div>
-                        <span className="text-nexus-text-secondary">等级：</span>
-                        {alert.alarmLevel}
-                      </div>
-                    )}
-                    {alert.type && (
-                      <div>
-                        <span className="text-nexus-text-secondary">类型：</span>
-                        {alert.type}
-                      </div>
-                    )}
-                    {alert.detail && (
-                      <div className="text-nexus-text-secondary/90">{alert.detail}</div>
-                    )}
                   </div>
                   {alert.imageUrl && (
                     <div className="mt-1.5 overflow-hidden rounded border border-white/[0.06]">
                       <Image
                         src={alert.imageUrl}
-                        alt="查证图片"
+                        alt="核验图片"
                         width={640}
                         height={360}
                         className="h-auto w-full object-cover"
@@ -305,48 +275,44 @@ export function AlertPanel() {
                         onClick={async (e) => {
                           e.stopPropagation();
                           const trackId = alert.trackId!;
+                          const uniqueId = alert.uniqueID;
 
                           try {
-                            const http = await runAlertDestroyHttp(trackId);
-                            const adjudicationOk = http.adjudicationOk;
+                            const http = await runAlertDestroyHttp(trackId, uniqueId);
+                            const publishOk = http.publishOk;
 
-                            // 标记已处置（后续 WS 推送的该航迹点和告警都会被过滤）
-                            const showId = resolveShowIdFromAlarmTrackId(trackId);
+                            // 标记已处置，后续同目标的航迹点和告警都会被过滤。
+                            const showId = alert.uniqueID;
                             addDisposedTrack(showId ?? undefined, trackId);
+                            useTrackStore.getState().removeDisposedTracks(showId ?? undefined, trackId);
 
-                            // 4. 清除告警列表中该 trackId 的条目
-                            removeAlarmItemsByTrackId(trackId);
-
-                            // 5. 若当前选中的是该航迹，取消选中/高亮
+                            // 如果当前选中的就是该航迹，则取消选中和高亮。
                             if (selectedTrackId && selectedTrackId === showId) {
                               selectTrack(null);
                             }
 
-                            // 6. 清除处置方案连接线与激光/TDOA 激活状态
+                            // 清理处置方案连线以及相关地图效果。
                             cleanupEffectsForMissingTargets();
 
-                            // 7. 任务进展：该目标所有执行中条目 → 处置结束
+                            // 结束该目标的执行中任务进度。
                             useTaskProgressStore.getState().endByTarget(trackId);
 
                             const devHint =
                               http.deviceEntityIds.length > 0
                                 ? `设备 ${http.deviceEntityIds.join(",")}`
                                 : "无执行中处置设备";
-                            const munHint =
-                              http.munitionEntityIds.length > 0
-                                ? `；已处理巡飞弹 ${http.munitionEntityIds.join(",")}`
-                                : "";
+                            const grpcHint = `gRPC 客户端 ${http.connectedClients} 个`;
                             toast.success(
-                              adjudicationOk
-                                ? `已消灭目标 ${trackId}（${devHint}${munHint}）`
-                                : `已消灭目标 ${trackId}（处置结束可能未全部成功；${devHint}${munHint}）`,
+                              publishOk
+                                ? `已消灭目标 ${trackId}，${devHint}；${grpcHint}`
+                                : `已消灭目标 ${trackId}，但后端发布可能未成功；${devHint}；${grpcHint}`,
                             );
                           } catch (err) {
                             console.error("[AlertPanel] 消灭操作失败:", err);
                             toast.error(`消灭失败: ${err instanceof Error ? err.message : "未知错误"}`);
                           }
                         }}
-                        className="flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 hover:border-emerald-500/60"
+                        className="flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 transition-colors hover:border-emerald-500/60 hover:bg-emerald-500/20"
                       >
                         <X size={10} />
                         消灭

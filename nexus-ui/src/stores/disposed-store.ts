@@ -7,7 +7,7 @@
  * 【数据流】
  * 1. AlertPanel「消灭」按钮 → addDisposedTrack(uniqueID, businessTrackId)
  * 2. track-store.setTracks 入口检查 isTrackDisposed → 已处置航迹直接跳过
- * 3. alert-store.addAlerts 入口检查 isBusinessTrackDisposed → 已处置告警直接跳过
+ * 3. 有告警目标再次到达时，按 businessTrackId 继续过滤
  *
  * 【两种 ID 索引】
  * - disposedUniqueIDs: 按 uniqueID（= showID，渲染缓存 key），用于航迹过滤

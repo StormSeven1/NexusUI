@@ -7,11 +7,12 @@ from fastapi.responses import JSONResponse
 from datetime import datetime
 from typing import Optional
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from websocket_manager import ws_manager
 from track_simulator import track_simulator
 from config import get_settings
 from entity_area_service import map_entity_id, publish_area_entity, delete_area_entity
+from grpc_services.destroy.service import destroy_grpc_service
 import base64
 
 
@@ -352,6 +353,105 @@ class CreateAreaRequest(BaseModel):
     area_points: Optional[str] = None
     line_color: Optional[str] = None
     line_width: Optional[int] = None
+
+
+class DestroyVersionRequest(BaseModel):
+    """Destroy HTTP body.version。"""
+
+    definitionVersion: int
+    statusVersion: int
+
+
+class DestroySpecificationRequest(BaseModel):
+    """Destroy HTTP body.specification。"""
+
+    at_type: str = Field(alias="@type")
+    type: int
+    id: str
+
+    model_config = {"populate_by_name": True}
+
+
+class DestroyCreatedBySystemRequest(BaseModel):
+    """Destroy HTTP body.createdBy.system。"""
+
+    serviceName: str
+    entityId: str
+    managesOwnScheduling: bool
+    priority: int
+
+
+class DestroyCreatedByRequest(BaseModel):
+    """Destroy HTTP body.createdBy。"""
+
+    system: DestroyCreatedBySystemRequest
+
+
+class DestroyOwnerRequest(BaseModel):
+    """Destroy HTTP body.owner。"""
+
+    entityId: str
+
+
+class DestroyPublishRequest(BaseModel):
+    """
+    前端“消灭”唯一 HTTP 请求体。
+
+    这里直接按前端现有 body 结构收，不再让前端拆字段，也不再走 JSON blob 转 gRPC。
+    """
+
+    taskId: str
+    parentTaskId: str
+    version: DestroyVersionRequest
+    displayName: str
+    taskType: str
+    maxExecutionTimeMs: int
+    specification: DestroySpecificationRequest
+    createdBy: DestroyCreatedByRequest
+    owner: DestroyOwnerRequest
+
+
+@router.post('/destroy/publish')
+async def publish_destroy_event(request: DestroyPublishRequest):
+    """
+    告警面板“消灭”唯一 HTTP 出口。
+
+    这条接口只做两件事：
+    1. 把前端请求体逐字段映射为 destroy proto 消息。
+    2. 广播给当前所有在线的 gRPC 订阅客户端，并把在线数回给前端。
+
+    注意：
+    - 这里不再转发多个地址。
+    - 这里不再做实体删除。
+    - gRPC 订阅服务监听地址复用后端 HOST，但使用独立端口承载订阅流。
+    """
+    connected_clients = await destroy_grpc_service.publish_destroy_event(
+        {
+            "task_id": request.taskId,
+            "parent_task_id": request.parentTaskId,
+            "version_definition_version": request.version.definitionVersion,
+            "version_status_version": request.version.statusVersion,
+            "display_name": request.displayName,
+            "task_type": request.taskType,
+            "max_execution_time_ms": request.maxExecutionTimeMs,
+            "specification_at_type": request.specification.at_type,
+            "specification_type": request.specification.type,
+            "specification_id": request.specification.id,
+            "created_by_service_name": request.createdBy.system.serviceName,
+            "created_by_entity_id": request.createdBy.system.entityId,
+            "created_by_manages_own_scheduling": request.createdBy.system.managesOwnScheduling,
+            "created_by_priority": request.createdBy.system.priority,
+            "owner_entity_id": request.owner.entityId,
+        }
+    )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "taskId": request.taskId,
+            "connectedClients": connected_clients,
+        },
+    )
 
 
 @router.post('/areas')

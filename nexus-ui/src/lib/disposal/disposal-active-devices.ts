@@ -3,7 +3,6 @@
  */
 
 import type { MappedDisposalTask } from "@/lib/disposal/disposal-types";
-import { taskLooksLikeMunition } from "@/lib/disposal/disposal-execution-utils";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import { useTaskProgressStore } from "@/stores/task-progress-store";
 import { getRenderCache } from "@/stores/track-store";
@@ -20,23 +19,9 @@ function taskBelongsToTrack(task: MappedDisposalTask, trackId: string): boolean 
   return !taskTarget || taskTarget === tid;
 }
 
-function minimalTask(deviceId: string): MappedDisposalTask {
-  return {
-    deviceId,
-    deviceName: deviceId,
-    targetId: "",
-    actionName: "",
-    recommendationScore: 0,
-    redForceInfo: {},
-    blueForceInfo: {},
-  };
-}
-
 export interface ActiveDisposalForTrack {
   /** 参与处置的全部设备 entityId（POST body createdBy.entityId 逗号拼接） */
   deviceEntityIds: string[];
-  /** 其中识别为巡飞弹/飞弹的 entityId（仅此列表走 DELETE） */
-  munitionEntityIds: string[];
 }
 
 /**
@@ -47,27 +32,20 @@ export interface ActiveDisposalForTrack {
 export function collectActiveDisposalForTrack(trackId: string): ActiveDisposalForTrack {
   const tid = norm(trackId);
   const deviceSeen = new Set<string>();
-  const munitionSeen = new Set<string>();
   const deviceEntityIds: string[] = [];
-  const munitionEntityIds: string[] = [];
 
-  const pushDevice = (id: string, task?: MappedDisposalTask) => {
+  const pushDevice = (id: string) => {
     const d = norm(id);
     if (!d || deviceSeen.has(d)) return;
     deviceSeen.add(d);
     deviceEntityIds.push(d);
-    const t = task ?? minimalTask(d);
-    if (taskLooksLikeMunition(t) && !munitionSeen.has(d)) {
-      munitionSeen.add(d);
-      munitionEntityIds.push(d);
-    }
   };
 
-  if (!tid) return { deviceEntityIds, munitionEntityIds };
+  if (!tid) return { deviceEntityIds };
 
   for (const e of useTaskProgressStore.getState().entries) {
     if (e.targetId === tid && e.status === "executing") {
-      pushDevice(e.deviceId, minimalTask(e.deviceId));
+      pushDevice(e.deviceId);
     }
   }
 
@@ -82,13 +60,13 @@ export function collectActiveDisposalForTrack(trackId: string): ActiveDisposalFo
 
         for (const task of sch.tasks ?? []) {
           if (!taskBelongsToTrack(task, tid)) continue;
-          pushDevice(task.deviceId, task);
+          pushDevice(task.deviceId);
         }
       }
     }
   }
 
-  return { deviceEntityIds, munitionEntityIds };
+  return { deviceEntityIds };
 }
 
 /** 对空/对海：仅查渲染层航迹缓存 */

@@ -1,19 +1,3 @@
-/**
- * TargetPlacard — 目标属性卡片（航迹/资产选中时弹出）
- *
- * 【数据流】
- *   - 选中航迹/资产 → appStore.selectedTrackId / selectedAssetId
- *   → 本组件从 track-store / asset-store 取数据 → 展示属性
- *
- * 【一键处置】
- *   - 点击「一键处置」按钮 → buildTargetInfoFromTrack 构建请求体
- *   → fetchDisposalPlansHttp POST disposalManualGeneratePlanUrl
- *   → disposalPlanStore.appendFromNormalized(_, "http")
- *   → DisposalPlanFeed 展示方案卡片
- *
- * 【消灭】仅 AlertPanel 告警条提供；飞弹资产属性框无消灭按钮。
- */
-
 "use client";
 
 import { cn } from "@/lib/utils";
@@ -45,10 +29,9 @@ import {
   getAssetFriendlyColorForAssetType,
   isMunitionAsset,
 } from "@/lib/map-app-config";
-import { useAlertStore } from "@/stores/alert-store";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 import { useAssetStore } from "@/stores/asset-store";
-import { useTrackStore, isTrackMatchedByAlarm } from "@/stores/track-store";
+import { useTrackStore } from "@/stores/track-store";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
@@ -63,22 +46,20 @@ export interface TargetPlacardProps {
   className?: string;
 }
 
+type PlacardAlarm = {
+  alarm_id: string;
+  categories: unknown[];
+  level: number;
+  area?: {
+    name?: string;
+  };
+};
+
 function formatLatLng(lat: number | null | undefined, lng: number | null | undefined) {
   if (lat == null || lng == null) return "-";
   const ns = lat >= 0 ? "N" : "S";
   const ew = lng >= 0 ? "E" : "W";
   return `${Math.abs(lat).toFixed(4)}°${ns}, ${Math.abs(lng).toFixed(4)}°${ew}`;
-}
-
-function alertMatchKeyForTrack(trackId: string, rawType: unknown): string {
-  const s = String(rawType ?? "").trim().toLowerCase();
-  const domain =
-    rawType === 1 || rawType === "1" || s.includes("air") || s.includes("uav") || s.includes("drone") || s.includes("空")
-      ? "air"
-      : rawType === 0 || rawType === "0" || s.includes("sea") || s.includes("ship") || s.includes("boat") || s.includes("海")
-        ? "sea"
-        : "";
-  return domain ? `${domain}:${trackId}` : "";
 }
 
 function DispositionBadge({ d }: { d: ForceDisposition }) {
@@ -122,19 +103,31 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
+function toPlacardAlarm(value: unknown): PlacardAlarm | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const rec = value as Record<string, unknown>;
+  if (typeof rec.alarm_id !== "string" || !rec.alarm_id.trim()) return null;
+  return {
+    alarm_id: rec.alarm_id,
+    categories: Array.isArray(rec.categories) ? rec.categories : [],
+    level: Number(rec.level ?? -1),
+    area:
+      rec.area && typeof rec.area === "object" && !Array.isArray(rec.area)
+        ? { name: typeof (rec.area as Record<string, unknown>).name === "string" ? String((rec.area as Record<string, unknown>).name) : undefined }
+        : undefined,
+  };
+}
+
 export function TargetPlacard(props: TargetPlacardProps) {
   const { kind, id, onClose, className } = props;
 
   const allAssets = useAssetStore((s) => s.assets);
   const entityIdToDeviceSn = useAssetStore((s) => s.entityIdToDeviceSn);
   const track = useTrackStore((s) => s.tracks.find((t) => t.id === id)) as Track | undefined;
-
   const asset = useMemo(
     () => findAssetInStore(allAssets, id, entityIdToDeviceSn),
     [allAssets, id, entityIdToDeviceSn],
   );
-  // console.log("[TargetPlacard] id=", id, "kind=", kind, "asset=", asset ? { id: asset.id, asset_type: asset.asset_type, name: asset.name } : null, "allAssetIds=", allAssets.map(a => `${a.id}(${a.asset_type})`));
-  const alerts = useAlertStore((s) => s.alerts);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
   const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar);
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
@@ -142,7 +135,6 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const [oneClickLoading, setOneClickLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  /* 目标丢失时自动关闭属性框 */
   useEffect(() => {
     if (kind === "track" && !track) onClose();
     if (kind === "asset" && !asset) onClose();
@@ -198,25 +190,17 @@ export function TargetPlacard(props: TargetPlacardProps) {
       ? assetTypeDisplayLabel(normalizeAssetType(asset.asset_type))
       : "资产";
 
-  /** 构建告警 trackId 集合，复用 isTrackMatchedByAlarm 逻辑匹配 */
   const relatedAlerts = useMemo(() => {
-    if (kind !== "track" || !track) return [];
-    return alerts
-      .filter((a) => {
-        if (!a.trackId) return false;
-        const key = alertMatchKeyForTrack(a.trackId, a.targetType ?? a.type);
-        return key ? isTrackMatchedByAlarm(track, new Set([key])) : false;
-      })
-      .slice(0, 5);
-  }, [alerts, track, kind]);
+    if (kind !== "track" || !track || !Array.isArray(track.alarms)) return [];
+    return track.alarms.map(toPlacardAlarm).filter((item): item is PlacardAlarm => item != null).slice(0, 5);
+  }, [track, kind]);
 
   const isMunition = kind === "asset" && isMunitionAsset(asset);
-
   const subtitle = kind === "track" ? "航迹" : assetTypeLabel;
   const titleText = useMemo(() => {
     if (kind === "track") {
-      const k = track ? resolveAliasKey(track) : null;
-      const alias = k ? useTrackAliasStore.getState().getOrCreate(k) : "";
+      const key = track ? resolveAliasKey(track) : null;
+      const alias = key ? useTrackAliasStore.getState().getOrCreate(key) : "";
       return alias || track?.name || track?.showID || id;
     }
     return asset?.name || id;
@@ -246,8 +230,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const [assetIconLoaded, setAssetIconLoaded] = useState<{ id: string; url: string } | null>(null);
 
   useEffect(() => {
-    if (kind !== "asset") return;
-    if (!asset) return;
+    if (kind !== "asset" || !asset) return;
     let cancelled = false;
     const aid = id;
     const t = normalizeAssetType(asset.asset_type);
@@ -280,32 +263,26 @@ export function TargetPlacard(props: TargetPlacardProps) {
     try {
       const targetInfo = buildTargetInfoFromTrack(track);
       const normalized = await fetchDisposalPlansHttp({ targetInfo });
-      if (!normalized?.items?.length) {
-        console.warn("[TargetPlacard] 响应中未解析到处置方案");
-        return;
-      }
+      if (!normalized?.items?.length) return;
       appendDisposalFromHttp(normalized, "http");
       if (!rightSidebarOpen) toggleRightSidebar();
       setRightPanelTab("chat");
     } catch (e) {
-      console.error("[TargetPlacard] 一键处置失败", e);
       const msg = e instanceof Error ? e.message : "网络不通畅，请检查网络后重试";
       toast.error("一键处置失败", { description: msg });
     } finally {
       setOneClickLoading(false);
     }
-  }, [
-    kind,
-    track,
-    appendDisposalFromHttp,
-    setRightPanelTab,
-    toggleRightSidebar,
-    rightSidebarOpen,
-  ]);
+  }, [kind, track, appendDisposalFromHttp, setRightPanelTab, toggleRightSidebar, rightSidebarOpen]);
 
-  const headerColor = kind === "track"
-    ? (track ? (FORCE_COLORS[track.disposition] ?? "#a1a1aa") : "#a1a1aa")
-    : (assetFriendlyColorFromProperties(asset?.properties as Record<string, unknown> | null) ?? (asset?.asset_type ? getAssetFriendlyColorForAssetType(normalizeAssetType(asset.asset_type)) : null) ?? FORCE_COLORS.friendly);
+  const headerColor =
+    kind === "track"
+      ? track
+        ? (FORCE_COLORS[track.disposition] ?? "#a1a1aa")
+        : "#a1a1aa"
+      : assetFriendlyColorFromProperties(asset?.properties as Record<string, unknown> | null) ??
+        (asset?.asset_type ? getAssetFriendlyColorForAssetType(normalizeAssetType(asset.asset_type)) : null) ??
+        FORCE_COLORS.friendly;
 
   return (
     <div
@@ -323,32 +300,24 @@ export function TargetPlacard(props: TargetPlacardProps) {
             style={{ boxShadow: `0 0 0 1px ${headerColor}40 inset` }}
           >
             {symbolUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
               <img src={symbolUrl} alt="symbol" className="h-4 w-4" />
             ) : (
               <div className="h-4 w-4 rounded bg-white/5" />
             )}
           </div>
           <div className="min-w-0">
-            {kind === "track" && (
-              <div className="truncate text-[11px] font-bold text-nexus-text-primary">
-                {titleText}
-              </div>
-            )}
-            {kind === "asset" && (
-              <div className="truncate text-[11px] font-bold text-nexus-text-primary">{titleText}</div>
-            )}
+            <div className="truncate text-[11px] font-bold text-nexus-text-primary">{titleText}</div>
             <div className="flex items-center gap-1">
-              {kind === "track" && track?.disposition && (
-                <DispositionBadge d={track.disposition} />
-              )}
+              {kind === "track" && track?.disposition && <DispositionBadge d={track.disposition} />}
               {kind === "track" && track && (
-                <span className={cn(
-                  "rounded-full border px-1.5 py-0.5 text-[8px] font-semibold",
-                  track.type === "air"
-                    ? "border-sky-500/30 bg-sky-500/10 text-sky-400"
-                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-                )}>
+                <span
+                  className={cn(
+                    "rounded-full border px-1.5 py-0.5 text-[8px] font-semibold",
+                    track.type === "air"
+                      ? "border-sky-500/30 bg-sky-500/10 text-sky-400"
+                      : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+                  )}
+                >
                   {track.type === "air" ? "对空" : "对海"}
                 </span>
               )}
@@ -373,14 +342,12 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
       {kind === "track" ? (
         <>
-          {/* 默认显示：位置、速度、航向 */}
           <div className="mt-1 flex flex-col gap-y-1">
             <Row k="坐标" v={formatLatLng(track?.lat, track?.lng)} />
             <Row k="航速" v={track ? `${track.speed.toFixed(1)} kn` : "-"} />
-            <Row k="航向" v={track ? `${track.heading.toFixed(1)}°` : "-"} />
+            <Row k="航向" v={track && typeof track.course === "number" ? `${track.course.toFixed(1)}°` : "-"} />
           </div>
 
-          {/* 一键处置（默认显示） */}
           <div className="mt-2">
             <button
               type="button"
@@ -393,11 +360,10 @@ export function TargetPlacard(props: TargetPlacardProps) {
             </button>
           </div>
 
-          {/* 展开/收起 按钮 */}
           <button
             type="button"
             onClick={() => setExpanded(!expanded)}
-            className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 py-0.5 text-[9px] text-nexus-text-secondary hover:bg-white/10 hover:text-nexus-text-primary transition-colors"
+            className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 py-0.5 text-[9px] text-nexus-text-secondary transition-colors hover:bg-white/10 hover:text-nexus-text-primary"
           >
             {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
             {expanded ? "收起详情" : "展开详情"}
@@ -415,34 +381,29 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
               <div className="mt-1 space-y-2">
                 {relatedAlerts.length ? (
-                  relatedAlerts.map((a) => {
+                  relatedAlerts.map((alarm) => {
                     const sevColor =
-                      a.severity === "critical"
+                      alarm.level >= 2
                         ? "text-red-400"
-                        : a.severity === "warning"
+                        : alarm.level >= 0
                           ? "text-amber-400"
                           : "text-zinc-400";
-                    const sevLabel =
-                      a.severity === "critical"
-                        ? "严重"
-                        : a.severity === "warning"
-                          ? "警告"
-                          : "";
+                    const sevLabel = alarm.level >= 2 ? "严重" : alarm.level >= 0 ? "告警" : "";
+                    const category =
+                      alarm.categories.length > 0 ? String(alarm.categories[0]) : "告警";
                     return (
                       <div
-                        key={a.id}
+                        key={alarm.alarm_id}
                         className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-1.5 py-1 text-[9px]"
                       >
                         {sevLabel && <span className={cn("font-bold", sevColor)}>{sevLabel}</span>}
-                        {a.alarmType && (
-                          <span className="text-nexus-text-muted">
-                            {a.alarmType === "threat" ? "威胁" : "告警"}
-                          </span>
+                        <span className="text-nexus-text-muted">{category}</span>
+                        {Number.isFinite(alarm.level) && (
+                          <span className="text-nexus-text-muted">Lv.{alarm.level}</span>
                         )}
-                        {a.alarmLevel != null && (
-                          <span className="text-nexus-text-muted">Lv.{a.alarmLevel}</span>
+                        {alarm.area?.name && (
+                          <span className="truncate text-nexus-text-muted">{alarm.area.name}</span>
                         )}
-                        {a.areaName && <span className="text-nexus-text-muted truncate">{a.areaName}</span>}
                       </div>
                     );
                   })
@@ -455,7 +416,6 @@ export function TargetPlacard(props: TargetPlacardProps) {
         </>
       ) : (
         <>
-          {/* 资产默认显示：坐标、状态 */}
           <div className="mt-1 space-y-1">
             <Row k="坐标" v={formatLatLng(assetLat, assetLng)} />
             <Row k="状态" v={formatAssetDeviceStateDisplay(asset)} />
@@ -463,11 +423,10 @@ export function TargetPlacard(props: TargetPlacardProps) {
             {assetHeading != null ? <Row k="航向" v={`${assetHeading.toFixed(1)}°`} /> : null}
           </div>
 
-          {/* 展开/收起 按钮 */}
           <button
             type="button"
             onClick={() => setExpanded(!expanded)}
-            className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 py-0.5 text-[9px] text-nexus-text-secondary hover:bg-white/10 hover:text-nexus-text-primary transition-colors"
+            className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-md border border-white/10 bg-white/5 py-0.5 text-[9px] text-nexus-text-secondary transition-colors hover:bg-white/10 hover:text-nexus-text-primary"
           >
             {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
             {expanded ? "收起详情" : "展开详情"}

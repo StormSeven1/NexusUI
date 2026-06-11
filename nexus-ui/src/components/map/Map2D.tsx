@@ -376,6 +376,11 @@ function assetIdFromPickFeature(f: maplibregl.MapGeoJSONFeature): string | undef
   if (typeof p.id === "string" && p.id.length) return p.id;
   if (typeof p.radarId === "string" && p.radarId.length) return p.radarId;
   if (typeof p.sn === "string" && p.sn.length) return p.sn;
+  // Live drone features use entityId/entity_id instead of id/sn.
+  if (typeof p.entityId === "string" && p.entityId.length) return p.entityId;
+  if (typeof p.entity_id === "string" && p.entity_id.length) return p.entity_id;
+  if (typeof p.assetId === "string" && p.assetId.length) return p.assetId;
+  if (typeof p.droneSn === "string" && p.droneSn.length) return p.droneSn;
   return undefined;
 }
 
@@ -1072,7 +1077,9 @@ export function Map2D() {
       if (tracksFlushRafRef.current != null) return;
       tracksFlushRafRef.current = requestAnimationFrame(flush);
       /* 目标消失后：同步清理资产→目标连线，并释放激光/TDOA 的处置激活态 */
-      useDisposalPlanStore.getState().cleanupEffectsForMissingTargets();
+      queueMicrotask(() => {
+        useDisposalPlanStore.getState().cleanupEffectsForMissingTargets();
+      });
       // 标牌跟随选中航迹位置更新
       const cur = placardRef.current;
       if (cur?.kind === "track") {
@@ -1081,7 +1088,9 @@ export function Map2D() {
           const map = mapRef.current;
           if (map) {
             const p = map.project({ lng: t.lng, lat: t.lat });
-            setPlacard({ kind: "track", id: cur.id, lng: t.lng, lat: t.lat, x: p.x, y: p.y });
+            queueMicrotask(() => {
+              setPlacard({ kind: "track", id: cur.id, lng: t.lng, lat: t.lat, x: p.x, y: p.y });
+            });
           }
         }
       }
@@ -1167,7 +1176,9 @@ export function Map2D() {
       assetsPendingRef.current = s.assets;
       displayOverridesRef.current = s.displayOverrides;
       flushAssets();
-      useDisposalPlanStore.getState().cleanupEffectsForMissingTargets();
+      queueMicrotask(() => {
+        useDisposalPlanStore.getState().cleanupEffectsForMissingTargets();
+      });
     });
     return () => {
       unsubA();

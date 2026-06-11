@@ -98,14 +98,14 @@ class ReceiverManager:
 
         for entity in entities:
             if isinstance(entity, dict) and str(entity.get("entityId", "")).strip() == "camera_004":
-                print("[YUANYAO_VISIBLE_STATUS][WS_ENTITY_STATUS_SEND]", {
-                    "source": source,
-                    "entityId": entity.get("entityId"),
-                    "status": entity.get("status"),
-                    "deviceState": entity.get("deviceState"),
-                    "platformActivity": entity.get("platformActivity"),
-                    "role": entity.get("role"),
-                })
+                # print("[YUANYAO_VISIBLE_STATUS][WS_ENTITY_STATUS_SEND]", {
+                #     "source": source,
+                #     "entityId": entity.get("entityId"),
+                #     "status": entity.get("status"),
+                #     "deviceState": entity.get("deviceState"),
+                #     "platformActivity": entity.get("platformActivity"),
+                #     "role": entity.get("role"),
+                # })
                 break
 
         ws_manager.queue_message({
@@ -255,17 +255,17 @@ class ReceiverManager:
                 data_type = parsed_data.get('data_type', '')
                 
                 if data_type == 'camera_status':
-                    if str(parsed_data.get('entityId', '')).strip() == "camera_004":
-                        print("[YUANYAO_VISIBLE_STATUS][DDS_CAMERA_SEND]", {
-                            "receiver": receiver_id,
-                            "source": source_name,
-                            "entityId": parsed_data.get("entityId"),
-                            "deviceState": parsed_data.get("deviceState"),
-                            "online": parsed_data.get("online"),
-                            "taskType": parsed_data.get("taskType"),
-                            "executionState": parsed_data.get("executionState"),
-                            "timestamp": parsed_data.get("timestamp"),
-                        })
+                    # if str(parsed_data.get('entityId', '')).strip() == "camera_004":
+                    #     print("[YUANYAO_VISIBLE_STATUS][DDS_CAMERA_SEND]", {
+                    #         "receiver": receiver_id,
+                    #         "source": source_name,
+                    #         "entityId": parsed_data.get("entityId"),
+                    #         "deviceState": parsed_data.get("deviceState"),
+                    #         "online": parsed_data.get("online"),
+                    #         "taskType": parsed_data.get("taskType"),
+                    #         "executionState": parsed_data.get("executionState"),
+                    #         "timestamp": parsed_data.get("timestamp"),
+                    #     })
                     if(parsed_data['entityId'] in ["camera_004","camera_001","camera-hs-001","camera-hs-002","camera-hs-003","camera-hs-004"]):
                         # print("*"*50)
                         # print("解析相机状态:",parsed_data)
@@ -275,12 +275,6 @@ class ReceiverManager:
                             'type': 'Camera',
                             'data': parsed_data
                         })
-                elif data_type == 'alarm_event':
-                    # 告警数据，发送为 Alarm 类型
-                    ws_manager.queue_message({
-                        'type': 'Alarm',
-                        'data': parsed_data
-                    })
                 elif data_type == 'multi_track_result':
                     # 多目标检测框消息在后端这里不做重同步，只做转发。
                     # 前端收到后会继续：

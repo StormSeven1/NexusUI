@@ -11,6 +11,8 @@ from datetime import datetime
 # 无人机数据存储开关 - 设置为False即可关闭所有存储
 ENABLE_DRONE_DATA_STORAGE = True
 
+_DRONE_STATUS_FILTERED_MODES = {0, 1, 2, 4, 14}
+
 
 def _store_drone_jsonl(result: Dict[str, Any], log_prefix: str) -> None:
     """可选：将无人机相关 DDS 解析结果追加到 data/drone_logs/*.jsonl"""
@@ -70,8 +72,6 @@ def parse_dds_data(
             return _parse_radar_track(dds_object)
         elif structure_type == 'ais_track':
             return _parse_ais_track(dds_object)
-        elif structure_type in ['alarm_event', 'alarm_data']:
-            return _parse_alarm_event(dds_object)
         elif structure_type == 'camera_status':
             return _parse_camera_status(dds_object)
         elif structure_type in ['MultiCameraTrack', 'multi_track_result']:
@@ -244,104 +244,6 @@ def _parse_ais_track(dds_object) -> Optional[Dict]:
     except Exception as e:
         logger.error(f"解析AIS航迹失败: {e}")
         return None
-
-
-def _parse_alarm_event(dds_object) -> Optional[Dict]:
-    """解析告警事件（AlarmEvent 继承自 BaseEvent）"""
-    try:
-        result = {
-            'event_type': 'alarm',
-            # BaseEvent 字段
-            'eventId': dds_object.eventId() if hasattr(dds_object, 'eventId') else None,
-            'sourceId': dds_object.sourceId() if hasattr(dds_object, 'sourceId') else None,
-            'sourceType': dds_object.sourceType() if hasattr(dds_object, 'sourceType') else None,
-            'severity': dds_object.severity() if hasattr(dds_object, 'severity') else None,
-            'message': dds_object.message() if hasattr(dds_object, 'message') else None,
-            'timestamp': dds_object.timestamp() if hasattr(dds_object, 'timestamp') else None,
-            'userId': dds_object.userId() if hasattr(dds_object, 'userId') else None,
-            'deviceId': list(dds_object.deviceId()) if hasattr(dds_object, 'deviceId') else [],
-            # AlarmEvent 字段
-            'alarms': [],
-            'source': 'DDS',
-            'data_type': 'alarm_event'
-        }
-        
-        if hasattr(dds_object, 'alarm'):
-            alarm_list = dds_object.alarm()
-            for alarm in alarm_list:
-                alarm_data = {
-                    'alarmId': alarm.alarmId() if hasattr(alarm, 'alarmId') else None,
-                    'alarmType': list(alarm.alarmType()) if hasattr(alarm, 'alarmType') else [],
-                    'status': alarm.status() if hasattr(alarm, 'status') else None,
-                    'taskStatus': alarm.taskStatus() if hasattr(alarm, 'taskStatus') else None,
-                    'alarmContent': alarm.alarmContent() if hasattr(alarm, 'alarmContent') else None,
-                    'alarmLevel': alarm.alarmLevel() if hasattr(alarm, 'alarmLevel') else None,
-                    'areaId': alarm.areaId() if hasattr(alarm, 'areaId') else None,
-                    'areaName': alarm.areaName() if hasattr(alarm, 'areaName') else None,
-                    'trackId': alarm.trackId() if hasattr(alarm, 'trackId') else None,
-                    'classId': alarm.classId() if hasattr(alarm, 'classId') else None,
-                    'behaviorId': alarm.behaviorId() if hasattr(alarm, 'behaviorId') else None,
-                    'updateTime': alarm.updateTime() if hasattr(alarm, 'updateTime') else None,
-                    'resolvedTime': alarm.resolvedTime() if hasattr(alarm, 'resolvedTime') else None,
-                    'resolvedBy': alarm.resolvedBy() if hasattr(alarm, 'resolvedBy') else None,
-                    'resolutionDetails': alarm.resolutionDetails() if hasattr(alarm, 'resolutionDetails') else None,
-                    'alarmRuleId': list(alarm.alarmRuleId()) if hasattr(alarm, 'alarmRuleId') else [],
-                }
-                
-                # 位置信息
-                if hasattr(alarm, 'position'):
-                    position = alarm.position()
-                    alarm_data['position'] = {
-                        'longitude': position.longitude() if hasattr(position, 'longitude') else None,
-                        'latitude': position.latitude() if hasattr(position, 'latitude') else None,
-                        'altitude': position.altitude() if hasattr(position, 'altitude') else None,
-                    }
-                
-                # 目标检测框信息
-                if hasattr(alarm, 'targetBox'):
-                    target_box = alarm.targetBox()
-                    alarm_data['targetBox'] = {
-                        'cameraId': target_box.cameraId() if hasattr(target_box, 'cameraId') else None,
-                        'syncHeader': target_box.syncHeader() if hasattr(target_box, 'syncHeader') else None,
-                        'x': target_box.x() if hasattr(target_box, 'x') else None,
-                        'y': target_box.y() if hasattr(target_box, 'y') else None,
-                        'width': target_box.width() if hasattr(target_box, 'width') else None,
-                        'height': target_box.height() if hasattr(target_box, 'height') else None,
-                        'boxId': target_box.boxId() if hasattr(target_box, 'boxId') else None,
-                        'trackId': target_box.trackId() if hasattr(target_box, 'trackId') else None,
-                        'classId': target_box.classId() if hasattr(target_box, 'classId') else None,
-                        'behaviorId': target_box.behaviorId() if hasattr(target_box, 'behaviorId') else None,
-                    }
-                
-                # 航迹信息
-                if hasattr(alarm, 'track'):
-                    track = alarm.track()
-                    alarm_data['track'] = {
-                        'trackId': track.trackId() if hasattr(track, 'trackId') else None,
-                        'mmsi': track.mmsi() if hasattr(track, 'mmsi') else None,
-                        'longitude': track.longitude() if hasattr(track, 'longitude') else None,
-                        'latitude': track.latitude() if hasattr(track, 'latitude') else None,
-                        'course': track.course() if hasattr(track, 'course') else None,
-                        'speed': track.speed() if hasattr(track, 'speed') else None,
-                        'height': track.height() if hasattr(track, 'height') else None,
-                        'timeStamp': track.timeStamp() if hasattr(track, 'timeStamp') else None,
-                        'trackType': track.trackType() if hasattr(track, 'trackType') else None,
-                    }
-                
-                result['alarms'].append(alarm_data)
-        
-        # print("*"*50)
-        # print("解析告警事件:",result)
-        # print("*"*50)
-        return result
-    except Exception as e:
-        logger.error(f"解析告警事件失败: {e}")
-        return None
-
-
-# ── EntityRealTimeStatus（各 build/test_*.py 单 topic 订阅，字段一一对应）──
-
-_DRONE_STATUS_FILTERED_MODES = {0, 1, 2, 4, 14}
 
 
 def _dds_device_state(dds_object) -> Optional[int]:
@@ -594,12 +496,12 @@ def _parse_drone_task(dds_object) -> Optional[Dict]:
     munition_raw = _read_munition_info_raw(dds_object)
     munition_info = _parse_drone_munition_info(dds_object)
     dock_sn = _resolve_dock_sn_for_task(entity_id)
-    logger.info(
-        f"[无人机任务弹药] 机场SN={dock_sn or '-'} "
-        f"弹药原始quantityUnits={munition_raw['quantityUnits']!r} "
-        f"解析后quantityUnits={munition_info['quantityUnits']!r} "
-        f"(munitionId={munition_raw['munitionId']!r} name={munition_raw['name']!r})"
-    )
+    # logger.info(
+    #     f"[无人机任务弹药] 机场SN={dock_sn or '-'} "
+    #     f"弹药原始quantityUnits={munition_raw['quantityUnits']!r} "
+    #     f"解析后quantityUnits={munition_info['quantityUnits']!r} "
+    #     f"(munitionId={munition_raw['munitionId']!r} name={munition_raw['name']!r})"
+    # )
     return {
         'entityId': entity_id,
         'online': dds_object.online(),

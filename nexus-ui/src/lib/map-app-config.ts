@@ -369,6 +369,39 @@ export function preserveDdsDynamicFieldsOnRebuild(
     });
   }
 
+  if (at === "camera") {
+    const hasLiveDeviceState = lp.deviceState !== undefined && lp.deviceState !== null;
+    const hasLivePose =
+      live.heading != null && Number.isFinite(Number(live.heading));
+    const hasLiveFov =
+      live.fov_angle != null && Number.isFinite(Number(live.fov_angle));
+    const hasLiveRange =
+      live.range_km != null && Number.isFinite(Number(live.range_km));
+    const hasLiveMedia =
+      lp.sensor_video_url != null ||
+      lp.sensor_video_source_path != null ||
+      lp.videoAddress != null ||
+      lp.entity_media != null;
+
+    if (!hasLiveDeviceState && !hasLivePose && !hasLiveFov && !hasLiveRange && !hasLiveMedia) {
+      return null;
+    }
+
+    const rp = assetPropertiesRecord(row);
+    return {
+      ...row,
+      name: row.name || live.name,
+      status: hasLiveDeviceState ? live.status : row.status,
+      heading: hasLivePose ? live.heading : row.heading,
+      fov_angle: hasLiveFov ? live.fov_angle : row.fov_angle,
+      range_km: hasLiveRange ? live.range_km : row.range_km,
+      properties: {
+        ...rp,
+        ...lp,
+      },
+    };
+  }
+
   return null;
 }
 
@@ -1449,12 +1482,10 @@ export type AppConfigDroneMapRendering = {
    quickWorkflowTimeoutMs: number;
    /** 快捷工作流状态 WebSocket URL（执行时连接，独立 WS） */
    quickWorkflowStatusWsUrl: string;
-   /** 仿真裁决：向每个 URL 并行 POST 同一 filterTargetOrForce 任务体 */
-   filterTargetOrForceUrls: string[];
-   filterTargetOrForceTimeoutMs: number;
-   /** 巡飞弹 DELETE，须含 `{entityId}` 占位符 */
-   entityDeleteUrl: string;
-   entityDeleteTimeoutMs: number;
+  /** 告警“消灭”唯一 HTTP 发布地址；前端只打这一次，后续由 Custombackend 转 gRPC 广播 */
+  destroyPublishUrl: string;
+  /** 告警“消灭”唯一 HTTP 发布超时 */
+  destroyPublishTimeoutMs: number;
  }
  
  export interface AppConfigTrackIdMode {
@@ -1521,13 +1552,8 @@ export type AppConfigDroneMapRendering = {
    quickWorkflowUrl: "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
    quickWorkflowTimeoutMs: 5000,
    quickWorkflowStatusWsUrl: "ws://192.168.18.103:8000/api/v1/ws/workflow-status",
-   filterTargetOrForceUrls: [
-     "http://192.168.18.103:9000/api/v1/tasks",
-     "http://192.168.18.110:8019/api/alarm_filter",
-   ],
-   filterTargetOrForceTimeoutMs: 8000,
-   entityDeleteUrl: "http://192.168.18.141:8090/api/v1/entities/{entityId}",
-   entityDeleteTimeoutMs: 5000,
+  destroyPublishUrl: "http://192.168.18.141:26003/api/destroy/publish",
+  destroyPublishTimeoutMs: 8000,
  };
  
  const DEFAULT_TRACK_ID_MODE: AppConfigTrackIdMode = { distinguishSeaAir: false };
@@ -1578,17 +1604,9 @@ export type AppConfigDroneMapRendering = {
          quickWorkflowUrl: str(ch.quickWorkflowUrl, DEFAULT_HTTP_CHAT.quickWorkflowUrl),
          quickWorkflowTimeoutMs: num(ch.quickWorkflowTimeoutMs, DEFAULT_HTTP_CHAT.quickWorkflowTimeoutMs),
          quickWorkflowStatusWsUrl: str(ch.quickWorkflowStatusWsUrl, DEFAULT_HTTP_CHAT.quickWorkflowStatusWsUrl),
-         filterTargetOrForceUrls: parseStringUrlArray(
-           ch.filterTargetOrForceUrls,
-           DEFAULT_HTTP_CHAT.filterTargetOrForceUrls,
-         ),
-         filterTargetOrForceTimeoutMs: num(
-           ch.filterTargetOrForceTimeoutMs,
-           DEFAULT_HTTP_CHAT.filterTargetOrForceTimeoutMs,
-         ),
-         entityDeleteUrl: str(ch.entityDeleteUrl, DEFAULT_HTTP_CHAT.entityDeleteUrl),
-         entityDeleteTimeoutMs: num(ch.entityDeleteTimeoutMs, DEFAULT_HTTP_CHAT.entityDeleteTimeoutMs),
-       };
+        destroyPublishUrl: str(ch.destroyPublishUrl, DEFAULT_HTTP_CHAT.destroyPublishUrl),
+        destroyPublishTimeoutMs: num(ch.destroyPublishTimeoutMs, DEFAULT_HTTP_CHAT.destroyPublishTimeoutMs),
+      };
      }
    }
  
