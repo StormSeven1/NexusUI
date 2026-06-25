@@ -83,7 +83,6 @@ export function CommandMap() {
   const layers = useCommandStore((s) => s.layers);
   const selectedCoa = useCommandStore((s) => s.selectedCoa);
   const scrubT = useCommandStore((s) => s.scrubT);
-  const committed = useCommandStore((s) => s.committed);
   const selected = useCommandStore((s) => s.selected);
   const selectObject = useCommandStore((s) => s.selectObject);
   const selectCoa = useCommandStore((s) => s.selectCoa);
@@ -120,6 +119,21 @@ export function CommandMap() {
       map.flyTo({ center: MAP_CENTER, zoom: MAP_ZOOM, duration: 600, essential: true });
     }
   }, [mode, ready]);
+
+  /* 左栏/列表选中 → 地图联动飞到目标 */
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !ready || !selected) return;
+    let coord: [number, number] | null = null;
+    if (selected.kind === "group") {
+      const g = THREAT_GROUPS.find((x) => x.id === selected.id);
+      if (g) coord = [g.lng, g.lat];
+    } else if (selected.kind === "asset") {
+      const a = CMD_ASSETS.find((x) => x.id === selected.id);
+      if (a) coord = [a.lng, a.lat];
+    }
+    if (coord) m.flyTo({ center: coord, zoom: Math.max(m.getZoom(), 9.5), duration: 650, essential: true });
+  }, [selected, ready]);
 
   const proj = (lng: number, lat: number): Pt => {
     const m = mapRef.current!;
@@ -181,10 +195,12 @@ export function CommandMap() {
               const rangePx =
                 a.rangeKm && map ? Math.abs(proj(a.lng + a.rangeKm / 111 / Math.cos((a.lat * Math.PI) / 180), a.lat).x - p.x) : 0;
               return (
-                <g key={a.id} className="pointer-events-auto cursor-pointer" onClick={() => selectObject({ kind: "asset", id: a.id })}>
+                <g key={a.id} className="cursor-pointer" onClick={() => selectObject({ kind: "asset", id: a.id })}>
                   {rangePx > 0 && (
-                    <circle cx={p.x} cy={p.y} r={rangePx} fill="rgba(91,155,213,0.025)" stroke="rgba(91,155,213,0.18)" strokeWidth={1} strokeDasharray="3 4" />
+                    <circle cx={p.x} cy={p.y} r={rangePx} fill="rgba(91,155,213,0.025)" stroke="rgba(91,155,213,0.18)" strokeWidth={1} strokeDasharray="3 4" pointerEvents="none" />
                   )}
+                  {/* 仅中心小热区可点，其余透传给地图（可拖拽/缩放） */}
+                  <circle cx={p.x} cy={p.y} r={13} fill="transparent" className="pointer-events-auto" />
                   {isKey ? (
                     <>
                       <rect x={p.x - 7} y={p.y - 7} width={14} height={14} transform={`rotate(45 ${p.x} ${p.y})`} fill="rgba(59,184,122,0.15)" stroke="#3bb87a" strokeWidth={1.5} />
@@ -219,9 +235,11 @@ export function CommandMap() {
               const dim = mode === "highpressure" && !g.primary ? 0.3 : 1;
               const isSel = selected?.kind === "group" && selected.id === g.id;
               return (
-                <g key={g.id} className="pointer-events-auto cursor-pointer" opacity={dim} onClick={() => selectObject({ kind: "group", id: g.id })}>
-                  <path d={polyPath(hull)} fill={`${color}14`} stroke={color} strokeWidth={isSel ? 2 : 1.2} strokeDasharray={g.trust === "pending" ? "5 4" : undefined} />
-                  <circle cx={c.x} cy={c.y} r={3} fill={color} />
+                <g key={g.id} className="cursor-pointer" opacity={dim} onClick={() => selectObject({ kind: "group", id: g.id })}>
+                  <path d={polyPath(hull)} fill={`${color}14`} stroke={color} strokeWidth={isSel ? 2 : 1.2} strokeDasharray={g.trust === "pending" ? "5 4" : undefined} pointerEvents="none" />
+                  {/* 中心小热区可点，hull 面积透传给地图 */}
+                  <circle cx={c.x} cy={c.y} r={16} fill="transparent" className="pointer-events-auto" />
+                  <circle cx={c.x} cy={c.y} r={3} fill={color} pointerEvents="none" />
                   <text x={c.x} y={c.y - 10} fill={color} fontSize={11} fontWeight={700} textAnchor="middle" fontFamily="var(--font-mono)">{g.id}</text>
                   <text x={c.x} y={c.y + 18} fill="#8b8b93" fontSize={8} textAnchor="middle" fontFamily="var(--font-mono)">{g.trackCount} 迹 · 威胁 {(g.threat * 100).toFixed(0)}</text>
                   {g.decoy && (
@@ -247,7 +265,7 @@ export function CommandMap() {
                 const pts = coa.beam.map((b) => proj(b.lng, b.lat));
                 // scrubber 揭示：committed 后按 scrubT 截断显示行进
                 const ip = proj(coa.intercept.lng, coa.intercept.lat);
-                const interceptLit = committed && isSel && scrubT >= coa.intercept.t;
+                const interceptLit = isSel && scrubT >= coa.intercept.t;
                 return (
                   <g key={coa.id} opacity={baseOp}>
                     {/* 预测轨迹束 */}
@@ -262,7 +280,7 @@ export function CommandMap() {
 
                     {/* 失败红锥 */}
                     {isSel && (
-                      <path d={polyPath(coa.failCone.polygon.map((c) => proj(c[0], c[1])))} fill="rgba(220,38,38,0.12)" stroke="#dc2626" strokeWidth={1} strokeDasharray="3 3" opacity={committed && scrubT > 0.85 ? 0.9 : 0.45} />
+                      <path d={polyPath(coa.failCone.polygon.map((c) => proj(c[0], c[1])))} fill="rgba(220,38,38,0.12)" stroke="#dc2626" strokeWidth={1} strokeDasharray="3 3" opacity={scrubT > 0.85 ? 0.9 : 0.45} />
                     )}
 
                     {/* 建议拦截 ◇ + 倒计时 */}
@@ -283,8 +301,8 @@ export function CommandMap() {
                       </text>
                     </g>
 
-                    {/* committed 后的行进目标点 */}
-                    {committed && isSel && (() => {
+                    {/* 推演行进目标点（选定即预演，签订后继续执行） */}
+                    {isSel && scrubT > 0 && (() => {
                       const pos = beamPosAt(coa.beam, scrubT);
                       const pp = proj(pos.lng, pos.lat);
                       return (
@@ -316,7 +334,7 @@ export function CommandMap() {
       )}
 
       {/* FUTURE 推演水印 */}
-      {mode === "highpressure" && committed && scrubT > 0 && (
+      {mode === "highpressure" && selectedCoa && scrubT > 0 && (
         <div className="pointer-events-none absolute right-3 top-1/2 z-20 -translate-y-1/2 rotate-90 select-none">
           <span className="rounded border border-[#dc2626]/50 bg-[#dc2626]/10 px-2 py-0.5 font-mono text-[10px] font-bold tracking-widest text-[#dc2626]">
             推演 T+{tPlus}秒 · 非现实

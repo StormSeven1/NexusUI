@@ -92,7 +92,7 @@ export const useCommandStore = create<CommandState>((set, get) => ({
 
   selectCoa: (id) => set({ selectedCoa: id }),
   setCommitOpen: (v) => set({ commitOpen: v }),
-  commit: () => set({ committed: true, commitOpen: false }),
+  commit: () => set({ committed: true, commitOpen: false, scrubT: 0, playing: true }),
   setScrubT: (t) => set({ scrubT: Math.min(1, Math.max(0, t)) }),
   setPlaying: (v) => set({ playing: v }),
 

@@ -31,18 +31,8 @@ export function CopilotPanel() {
     setText("");
   };
 
-  if (!open) {
-    const latest = messages[messages.length - 1];
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="absolute right-2 top-[52px] z-30 flex w-[180px] items-center gap-1.5 rounded-lg border border-[#5b9bd5]/30 bg-nexus-bg-surface/90 px-2 py-1.5 text-left backdrop-blur-md transition-colors hover:bg-nexus-bg-surface"
-      >
-        <Sparkles size={13} className="shrink-0 text-[#5b9bd5]" />
-        <span className="line-clamp-1 text-[9.5px] text-nexus-text-secondary">{latest?.text ?? "AI 副驾 · 召唤式频道"}</span>
-      </button>
-    );
-  }
+  // 关闭态不再显示浮动条（由顶栏「向 AI 副驾下发意图」按钮统一召唤），避免遮挡与误触
+  if (!open) return null;
 
   return (
     <div className="absolute right-2 top-[52px] bottom-9 z-30 flex w-[300px] flex-col rounded-xl border border-white/[0.08] bg-nexus-bg-surface/95 backdrop-blur-md animate-slide-in-right">

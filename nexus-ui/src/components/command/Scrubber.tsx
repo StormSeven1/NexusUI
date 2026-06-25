@@ -35,14 +35,14 @@ export function Scrubber() {
     return () => cancelAnimationFrame(rafRef.current);
   }, [playing, setScrubT, setPlaying]);
 
-  if (mode !== "highpressure" || !committed) return null;
+  if (mode !== "highpressure" || !selectedCoa) return null;
 
   const coa = COAS.find((c) => c.id === selectedCoa);
   const tPlus = Math.round(scrubT * 180);
   const interceptT = coa?.intercept.t ?? 0.5;
 
   return (
-    <div className="absolute bottom-16 left-1/2 z-20 w-full max-w-[680px] -translate-x-1/2 px-3">
+    <div className="absolute bottom-9 left-1/2 z-20 w-full max-w-[680px] -translate-x-1/2 px-3">
       <div className="rounded-lg border border-white/[0.06] bg-nexus-bg-surface/92 p-2.5 backdrop-blur-md">
         <div className="mb-1.5 flex items-center gap-2">
           <button
@@ -61,12 +61,14 @@ export function Scrubber() {
             <RotateCcw size={12} />
           </button>
           <span className="font-mono text-xs" style={{ color: coa?.color }}>
-            推演 {coa?.label}
+            {committed ? "执行推演" : "签订前预演"} {coa?.label}
           </span>
           <span className="rounded border border-[#dc2626]/50 bg-[#dc2626]/10 px-1.5 py-0.5 font-mono text-[9px] font-bold text-[#dc2626]">
             推演 T+{tPlus}秒 · 非现实
           </span>
-          <span className="ml-auto font-mono text-[9px] text-nexus-text-muted">幽灵反事实方案 极淡常驻</span>
+          <span className="ml-auto font-mono text-[9px] text-nexus-text-muted">
+            {committed ? "已签订 · 按授权包络执行" : "拖拽预演结局 → 满意后签订执行"}
+          </span>
         </div>
 
         {/* 时间轴 */}
