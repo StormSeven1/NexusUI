@@ -222,6 +222,35 @@ export interface FutureCard {
   evidenceGap: string;
 }
 
+/** 我方资产在某方案中的处置动作类型 */
+export type CoaActionKind = "intercept" | "illuminate" | "recon" | "reposition";
+
+export const COA_ACTION_LABEL: Record<CoaActionKind, string> = {
+  intercept: "拦截处置",
+  illuminate: "照射引导",
+  recon: "前推确认",
+  reposition: "机动补位",
+};
+
+/** 方案中调用的一项资产编排：哪件资产、什么角色、走什么路径、何时处置 */
+export interface CoaTask {
+  /** 关联 CMD_ASSETS.id */
+  assetId: string;
+  /** 资产显示名（冗余便于渲染） */
+  assetName: string;
+  /** 角色：主拦截 / 补位冗余 / 静默照射 / 前推侦察… */
+  role: string;
+  action: CoaActionKind;
+  /** 机动路径（资产当前位 → 处置阵位）；静止资产仅 1 个点 */
+  path: [number, number][];
+  /** 到位 / 处置时间分数 0..1（对应 T+0 → T+180秒） */
+  actAtT: number;
+  /** 资源消耗说明 */
+  cost: string;
+  /** 一句话处置说明 */
+  note: string;
+}
+
 export interface COA {
   id: string;
   /** 卡片/弹层完整标签 */
@@ -239,6 +268,8 @@ export interface COA {
   exposureFan: { polygon: [number, number][]; sweepAtT: number };
   /** 失败红锥：失败时突防到的要地（多边形顶点） */
   failCone: { polygon: [number, number][]; penetrateAtT: number };
+  /** 我方资产编排：选了哪些资产/资源，在什么时间处置 */
+  tasks: CoaTask[];
   card: FutureCard;
 }
 
@@ -278,6 +309,46 @@ export const COAS: COA[] = [
       ],
       penetrateAtT: 0.9,
     },
+    tasks: [
+      {
+        assetId: "资产-拦截1",
+        assetName: "1号拦截单元",
+        role: "主拦截",
+        action: "intercept",
+        path: [
+          [-2.28, 51.28],
+          [-2.16, 51.27],
+          [-2.06, 51.26],
+        ],
+        actAtT: 0.52,
+        cost: "拦截弹 ×2",
+        note: "西线前出至 拦截点，T+90秒 实施拦截。",
+      },
+      {
+        assetId: "资产-雷达1",
+        assetName: "1号雷达",
+        role: "照射引导",
+        action: "illuminate",
+        path: [[-2.42, 51.5]],
+        actAtT: 0.42,
+        cost: "照射波束 ×1",
+        note: "持续照射 主攻群，为 1号拦截单元 提供制导。",
+      },
+      {
+        assetId: "资产-无人机1",
+        assetName: "1号侦察无人机",
+        role: "前推确认",
+        action: "recon",
+        path: [
+          [-1.95, 51.15],
+          [-2.0, 51.2],
+          [-2.04, 51.24],
+        ],
+        actAtT: 0.3,
+        cost: "续航 -18%",
+        note: "前推至束前缘，二次确认编队规模与诱饵。",
+      },
+    ],
     card: {
       outcome: "T+90秒 于 1号拦截单元 正前方拦截，主攻群被挡在要地一号外 18 公里。",
       keyFigure: "拦截窗 90秒 · 突防风险 8%",
@@ -319,6 +390,50 @@ export const COAS: COA[] = [
       ],
       penetrateAtT: 0.95,
     },
+    tasks: [
+      {
+        assetId: "资产-拦截2",
+        assetName: "2号拦截单元",
+        role: "主拦截（北线）",
+        action: "intercept",
+        path: [
+          [-2.18, 51.4],
+          [-2.08, 51.38],
+          [-2.0, 51.37],
+        ],
+        actAtT: 0.62,
+        cost: "拦截弹 ×2",
+        note: "北线前出，T+115秒 实施首层拦截。",
+      },
+      {
+        assetId: "资产-拦截1",
+        assetName: "1号拦截单元",
+        role: "补位冗余",
+        action: "reposition",
+        path: [
+          [-2.28, 51.28],
+          [-2.2, 51.31],
+          [-2.12, 51.34],
+        ],
+        actAtT: 0.5,
+        cost: "拦截弹 ×1（待命）",
+        note: "机动至二线，首层漏失即补位拦截。",
+      },
+      {
+        assetId: "资产-无人机1",
+        assetName: "1号侦察无人机",
+        role: "牵制确认",
+        action: "recon",
+        path: [
+          [-1.95, 51.15],
+          [-1.92, 51.26],
+          [-1.9, 51.34],
+        ],
+        actAtT: 0.4,
+        cost: "续航 -22%",
+        note: "侧翼监视 北翼群 是否转入，防兵力稀释。",
+      },
+    ],
     card: {
       outcome: "T+115秒 经 2号拦截单元 北线双层拦截，纵深更大、容错更高。",
       keyFigure: "拦截窗 115秒 · 突防风险 5%",
@@ -360,6 +475,46 @@ export const COAS: COA[] = [
       ],
       penetrateAtT: 0.92,
     },
+    tasks: [
+      {
+        assetId: "资产-拦截1",
+        assetName: "1号拦截单元",
+        role: "南线机动拦截",
+        action: "intercept",
+        path: [
+          [-2.28, 51.28],
+          [-2.18, 51.2],
+          [-2.08, 51.13],
+        ],
+        actAtT: 0.56,
+        cost: "拦截弹 ×2",
+        note: "无线电静默南移，T+105秒 最迟暴露处置。",
+      },
+      {
+        assetId: "资产-雷达2",
+        assetName: "2号雷达",
+        role: "静默照射",
+        action: "illuminate",
+        path: [[-2.1, 51.05]],
+        actAtT: 0.5,
+        cost: "低功率波束 ×1",
+        note: "南线低功率照射，压低被截获概率。",
+      },
+      {
+        assetId: "资产-无人机1",
+        assetName: "1号侦察无人机",
+        role: "低空跟踪",
+        action: "recon",
+        path: [
+          [-1.95, 51.15],
+          [-2.0, 51.13],
+          [-2.06, 51.13],
+        ],
+        actAtT: 0.45,
+        cost: "续航 -25%",
+        note: "贴地跟踪，补 3号雷达 衰减形成的低空盲区。",
+      },
+    ],
     card: {
       outcome: "T+105秒 南线静默拦截，最迟暴露主处置、保留隐蔽。",
       keyFigure: "拦截窗 105秒 · 暴露最低",
@@ -388,7 +543,7 @@ export const EVIDENCE_CHAINS: Record<string, EvidenceNode[]> = {
     {
       stage: "observation",
       title: "观测 · 1号雷达 + 光电2",
-      detail: "1号雷达主跟踪 14 回波，光电2 二次确认 6 目标外形。原始回波不可改写。",
+      detail: "1号雷达主跟踪 14 回波，光电2 二次��认 6 目标外形。原始回波不可改写。",
       provenance: "1号雷达 v4.2 / 光电2 v2.1",
       confidence: 0.88,
       time: "14:02:31",

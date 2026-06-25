@@ -1,9 +1,9 @@
 "use client";
 
 import { useCommandStore } from "@/stores/command-store";
-import { COAS, type TradeoffAxis } from "@/lib/command-data";
+import { COAS, COA_ACTION_LABEL, type TradeoffAxis } from "@/lib/command-data";
 import { cn } from "@/lib/utils";
-import { Check, GitFork } from "lucide-react";
+import { Check, GitFork, Users } from "lucide-react";
 
 const AXES: { key: TradeoffAxis; label: string }[] = [
   { key: "fast", label: "快" },
@@ -76,6 +76,23 @@ export function FutureCards() {
               {/* ② 共享取舍尺 */}
               <div className="mt-1.5 border-t border-white/[0.06] pt-1.5">
                 <TradeoffRuler scores={coa.card.scores} color={coa.color} />
+              </div>
+
+              {/* 资产编排：调用了哪些资产 / 何时处置 */}
+              <div className="mt-1.5 border-t border-white/[0.06] pt-1.5">
+                <div className="mb-0.5 flex items-center gap-1 text-[8px] text-nexus-text-muted">
+                  <Users size={9} /> 调用 {coa.tasks.length} 件资产
+                </div>
+                <div className="space-y-0.5">
+                  {coa.tasks.map((t) => (
+                    <div key={t.assetId} className="flex items-center gap-1 font-mono text-[8px] leading-tight">
+                      <span className="w-9 shrink-0 text-right text-nexus-text-muted">T+{Math.round(t.actAtT * 180)}s</span>
+                      <span className="h-1 w-1 shrink-0 rounded-full" style={{ background: coa.color }} />
+                      <span className="truncate text-nexus-text-secondary">{t.assetName}</span>
+                      <span className="ml-auto shrink-0 text-nexus-text-muted">{COA_ACTION_LABEL[t.action]}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* ③ 反事实常驻灰字 */}

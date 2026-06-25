@@ -13,10 +13,19 @@ import {
   MAP_ZOOM,
   KEY_AREA,
   type BeamPoint,
+  type CoaTask,
 } from "@/lib/command-data";
 import { FORCE_COLORS } from "@/lib/colors";
 
 const DARK_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+
+/* 处置动作的地图短动词（已执行时显示） */
+const COA_TASK_VERB: Record<CoaTask["action"], string> = {
+  intercept: "▸ 拦截中",
+  illuminate: "▸ 照射中",
+  recon: "▸ 确认中",
+  reposition: "▸ 已补位",
+};
 
 type Pt = { x: number; y: number };
 
@@ -33,6 +42,19 @@ function beamPosAt(beam: BeamPoint[], t: number): { lng: number; lat: number } {
     }
   }
   return beam[beam.length - 1];
+}
+
+/* ── 我方资产沿编排路径定位：actAtT 前匀速到位，之后驻留终点 ── */
+function pathPosAt(path: [number, number][], actAtT: number, t: number): { lng: number; lat: number } {
+  if (path.length === 1) return { lng: path[0][0], lat: path[0][1] };
+  const prog = actAtT <= 0 ? 1 : Math.min(1, t / actAtT); // 0..1 沿全路径
+  if (prog >= 1) return { lng: path[path.length - 1][0], lat: path[path.length - 1][1] };
+  const seg = prog * (path.length - 1);
+  const i = Math.floor(seg);
+  const f = seg - i;
+  const a = path[i];
+  const b = path[Math.min(i + 1, path.length - 1)];
+  return { lng: a[0] + (b[0] - a[0]) * f, lat: a[1] + (b[1] - a[1]) * f };
 }
 
 /* ── Catmull-Rom 平滑路径 ── */
@@ -149,6 +171,16 @@ export function CommandMap() {
 
   const map = mapRef.current;
   const tPlus = Math.round(scrubT * 180);
+  /* 主攻群当前推演位置（照射动作的目标点） */
+  const primaryGroup = THREAT_GROUPS.find((g) => g.primary);
+  const selCoaObj = COAS.find((c) => c.id === selectedCoa);
+  const primaryGroupPt =
+    ready && map && primaryGroup && selCoaObj
+      ? (() => {
+          const gp = beamPosAt(selCoaObj.beam, scrubT);
+          return proj(gp.lng, gp.lat);
+        })()
+      : null;
 
   return (
     <div className="absolute inset-0">
@@ -282,6 +314,51 @@ export function CommandMap() {
                     {isSel && (
                       <path d={polyPath(coa.failCone.polygon.map((c) => proj(c[0], c[1])))} fill="rgba(220,38,38,0.12)" stroke="#dc2626" strokeWidth={1} strokeDasharray="3 3" opacity={scrubT > 0.85 ? 0.9 : 0.45} />
                     )}
+
+                    {/* 我方资产编排：机动路径 + 处置动作（仅选定方案显示） */}
+                    {isSel &&
+                      coa.tasks.map((task) => {
+                        const pos = pathPosAt(task.path, task.actAtT, scrubT);
+                        const pp = proj(pos.lng, pos.lat);
+                        const acted = scrubT >= task.actAtT;
+                        const pathPts = task.path.map((c) => proj(c[0], c[1]));
+                        const end = pathPts[pathPts.length - 1];
+                        return (
+                          <g key={`${coa.id}-${task.assetId}`}>
+                            {/* 计划机动路径（多于 1 点才画） */}
+                            {pathPts.length > 1 && (
+                              <path d={smoothPath(pathPts)} fill="none" stroke="#5b9bd5" strokeWidth={1.4} strokeDasharray="4 4" opacity={0.55} />
+                            )}
+                            {/* 到位阵位标记 */}
+                            <rect x={end.x - 4} y={end.y - 4} width={8} height={8} transform={`rotate(45 ${end.x} ${end.y})`} fill="none" stroke="#5b9bd5" strokeWidth={1} opacity={0.5} />
+
+                            {/* 处置动作效果 */}
+                            {acted && task.action === "illuminate" && primaryGroupPt && (
+                              <line x1={pp.x} y1={pp.y} x2={primaryGroupPt.x} y2={primaryGroupPt.y} stroke="#5b9bd5" strokeWidth={0.8} strokeDasharray="2 3" opacity={0.5} />
+                            )}
+                            {acted && task.action === "recon" && (
+                              <circle cx={pp.x} cy={pp.y} r={8} fill="none" stroke="#3bb87a" strokeWidth={1} opacity={0.5}>
+                                <animate attributeName="r" values="4;14;4" dur="2s" repeatCount="indefinite" />
+                                <animate attributeName="opacity" values="0.6;0;0.6" dur="2s" repeatCount="indefinite" />
+                              </circle>
+                            )}
+                            {acted && task.action === "intercept" && (
+                              <circle cx={pp.x} cy={pp.y} r={7} fill="none" stroke={coa.color} strokeWidth={1.4} opacity={0.8}>
+                                <animate attributeName="r" values="5;12;5" dur="1s" repeatCount="indefinite" />
+                              </circle>
+                            )}
+
+                            {/* 资产本体（移动中的友方蓝） */}
+                            <circle cx={pp.x} cy={pp.y} r={4} fill="rgba(91,155,213,0.85)" stroke="#cfe2f3" strokeWidth={1} />
+                            <text x={pp.x + 7} y={pp.y - 5} fill="#9ec5e8" fontSize={8} fontFamily="var(--font-mono)">
+                              {task.assetName}
+                            </text>
+                            <text x={pp.x + 7} y={pp.y + 5} fill={acted ? coa.color : "#6b7280"} fontSize={7.5} fontFamily="var(--font-mono)">
+                              {acted ? COA_TASK_VERB[task.action] : `就位 ${Math.round(task.actAtT * 180)}s`}
+                            </text>
+                          </g>
+                        );
+                      })}
 
                     {/* 建议拦截 ◇ + 倒计时 */}
                     <g className="pointer-events-auto cursor-pointer" onClick={() => selectCoa(coa.id)}>
