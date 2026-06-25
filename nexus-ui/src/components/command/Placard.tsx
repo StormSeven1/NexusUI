@@ -45,7 +45,7 @@ function EvidenceChain({ groupId }: { groupId: string }) {
                 </div>
                 <div className="mt-1.5 flex gap-1.5">
                   <button className="flex items-center gap-1 rounded border border-white/[0.08] px-1.5 py-0.5 text-[9px] text-[#5b9bd5] hover:bg-white/[0.04]">
-                    <Repeat size={9} /> 复跑 replay
+                    <Repeat size={9} /> 复盘回放
                   </button>
                   <button
                     onClick={() =>
@@ -85,10 +85,11 @@ export function Placard() {
     const a = CMD_ASSETS.find((x) => x.id === selected.id);
     if (!a) return null;
     return (
-      <Shell onClose={() => selectObject(null)} title={a.name} sub={`${a.type} · ${a.status}`}>
+      <Shell onClose={() => selectObject(null)} title={a.name} sub={`${ASSET_TYPE_LABEL[a.type]} · ${ASSET_STATUS_LABEL[a.status]}`} accent="#5b9bd5">
         <div className="space-y-1 font-mono text-[10px] text-nexus-text-secondary">
-          <Row k="状态" v={a.status === "online" ? "在线" : a.status === "degraded" ? "衰减" : "离线"} />
-          {a.rangeKm && <Row k="覆盖" v={`${a.rangeKm} km`} />}
+          <Row k="类型" v={ASSET_TYPE_LABEL[a.type]} />
+          <Row k="状态" v={ASSET_STATUS_LABEL[a.status]} />
+          {a.rangeKm && <Row k="覆盖半径" v={`${a.rangeKm} 公里`} />}
           <Row k="坐标" v={`${a.lat.toFixed(3)}, ${a.lng.toFixed(3)}`} />
         </div>
       </Shell>
@@ -111,7 +112,7 @@ export function Placard() {
             background: lowTrust ? "rgba(212,147,42,0.12)" : "rgba(59,184,122,0.12)",
           }}
         >
-          信任 {g.trust === "trusted" ? "trusted" : g.trust === "pending" ? "待补证（禁入授权依据）" : "禁入"}
+          信任 {g.trust === "trusted" ? "可信" : g.trust === "pending" ? "待补证（禁入授权依据）" : "禁入"}
         </span>
       </div>
 
@@ -140,7 +141,7 @@ export function Placard() {
       )}
       {placardTab === "source" && (
         <div className="space-y-1 font-mono text-[10px] text-nexus-text-secondary">
-          <Row k="主源" v={g.trust === "pending" ? "RF-1 单源" : "雷达 Alpha + EO-2"} />
+          <Row k="主源" v={g.trust === "pending" ? "射频站 单源" : "1号雷达 + 2号光电"} />
           <Row k="质心" v={`${g.lat.toFixed(3)}, ${g.lng.toFixed(3)}`} />
           <Row k="航迹数" v={`${g.trackCount}`} />
         </div>
@@ -150,7 +151,7 @@ export function Placard() {
       {/* 一键补证 */}
       {lowTrust && (
         <button className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-[#5b9bd5]/40 bg-[#5b9bd5]/10 py-1.5 text-[11px] font-medium text-[#5b9bd5] transition-colors hover:bg-[#5b9bd5]/20">
-          <Plus size={12} /> 一键补证 · 调 EO-2 / RF-1 二次确认
+          <Plus size={12} /> 一键补证 · 调 2号光电 / 射频站 二次确认
         </button>
       )}
     </Shell>

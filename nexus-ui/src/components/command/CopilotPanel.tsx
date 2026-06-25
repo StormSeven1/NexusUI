@@ -11,7 +11,7 @@ const ARTIFACT_META = {
   analysis: { icon: Search, label: "分析 → 假设/证据/补证", color: "#d4932a" },
 } as const;
 
-const QUICK = ["现在有哪些资产可用？", "G-C 为什么判诱饵？", "加强东侧低空、优先确认低慢小", "查清 G-D 这个不明群"];
+const QUICK = ["现在有哪些资产可用？", "群3 为什么判诱饵？", "加强东侧低空、优先确认低慢小", "查清 群4 这个不明群"];
 
 export function CopilotPanel() {
   const open = useCommandStore((s) => s.copilotOpen);
@@ -36,7 +36,7 @@ export function CopilotPanel() {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="absolute right-2 top-2 z-30 flex w-[180px] items-center gap-1.5 rounded-lg border border-[#5b9bd5]/30 bg-nexus-bg-surface/90 px-2 py-1.5 text-left backdrop-blur-md transition-colors hover:bg-nexus-bg-surface"
+        className="absolute right-2 top-[52px] z-30 flex w-[180px] items-center gap-1.5 rounded-lg border border-[#5b9bd5]/30 bg-nexus-bg-surface/90 px-2 py-1.5 text-left backdrop-blur-md transition-colors hover:bg-nexus-bg-surface"
       >
         <Sparkles size={13} className="shrink-0 text-[#5b9bd5]" />
         <span className="line-clamp-1 text-[9.5px] text-nexus-text-secondary">{latest?.text ?? "AI 副驾 · 召唤式频道"}</span>
@@ -45,12 +45,12 @@ export function CopilotPanel() {
   }
 
   return (
-    <div className="absolute right-2 top-2 bottom-2 z-30 flex w-[300px] flex-col rounded-xl border border-white/[0.08] bg-nexus-bg-surface/95 backdrop-blur-md animate-slide-in-right">
+    <div className="absolute right-2 top-[52px] bottom-9 z-30 flex w-[300px] flex-col rounded-xl border border-white/[0.08] bg-nexus-bg-surface/95 backdrop-blur-md animate-slide-in-right">
       <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2">
         <div className="flex items-center gap-1.5">
           <Sparkles size={14} className="text-[#5b9bd5]" />
           <span className="text-xs font-semibold text-nexus-text-primary">AI 副驾</span>
-          <span className="rounded bg-white/[0.06] px-1 font-mono text-[8px] text-nexus-text-muted">SHADOW · 够不到权威</span>
+          <span className="rounded bg-white/[0.06] px-1 font-mono text-[8px] text-nexus-text-muted">影子位 · 够不到权威</span>
         </div>
         <button onClick={() => setOpen(false)} className="text-nexus-text-muted hover:text-nexus-text-primary">
           <X size={14} />

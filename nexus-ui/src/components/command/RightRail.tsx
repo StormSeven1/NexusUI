@@ -87,7 +87,7 @@ function TaskCard({ task }: { task: ExecTask }) {
           />
         </div>
         <span className="font-mono text-[8px]" style={{ color: ttlPct < 20 ? "#dc6a6a" : "#9aa0a8" }}>
-          TTL {fmt(task.envelope.ttlSec)}
+          时限 {fmt(task.envelope.ttlSec)}
         </span>
       </div>
     </button>
