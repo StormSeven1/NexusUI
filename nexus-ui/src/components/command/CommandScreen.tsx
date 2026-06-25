@@ -59,14 +59,14 @@ export function CommandScreen() {
         <TopBar />
       </div>
 
-      {/* 左缘时间梯度边栏 */}
-      <div className="pointer-events-none absolute bottom-7 left-0 top-12 z-20 flex">
-        <LeftRail />
+      {/* 相位脊：最左缘竖排 */}
+      <div className="absolute bottom-7 left-0 top-12 z-20 flex">
+        <PhaseSpine />
       </div>
 
-      {/* 相位脊：贴左栏右侧 */}
-      <div className="pointer-events-none absolute left-1/2 top-12 z-20 -translate-x-1/2">
-        <PhaseSpine />
+      {/* 左缘威胁/资产/执行边栏：紧贴相位脊右侧 */}
+      <div className="absolute bottom-7 left-11 top-12 z-20 flex">
+        <LeftRail />
       </div>
 
       {/* 右缘执行监看栏 + 决策脊 */}

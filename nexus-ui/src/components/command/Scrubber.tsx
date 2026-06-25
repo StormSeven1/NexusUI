@@ -64,9 +64,9 @@ export function Scrubber() {
             推演 {coa?.label}
           </span>
           <span className="rounded border border-[#dc2626]/50 bg-[#dc2626]/10 px-1.5 py-0.5 font-mono text-[9px] font-bold text-[#dc2626]">
-            FUTURE T+{tPlus}s · 非现实
+            推演 T+{tPlus}秒 · 非现实
           </span>
-          <span className="ml-auto font-mono text-[9px] text-nexus-text-muted">幽灵反事实 B/C 极淡常驻</span>
+          <span className="ml-auto font-mono text-[9px] text-nexus-text-muted">幽灵反事实方案 极淡常驻</span>
         </div>
 
         {/* 时间轴 */}
@@ -92,8 +92,8 @@ export function Scrubber() {
         </div>
         <div className="mt-0.5 flex justify-between font-mono text-[8.5px] text-nexus-text-muted">
           <span>T+0</span>
-          <span className="text-[#facc15]">拦截 T+{coa?.intercept.countdownSec}s</span>
-          <span>T+180s</span>
+          <span className="text-[#facc15]">拦截 T+{coa?.intercept.countdownSec}秒</span>
+          <span>T+180秒</span>
         </div>
       </div>
       <style jsx global>{`

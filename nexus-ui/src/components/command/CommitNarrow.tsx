@@ -62,7 +62,7 @@ export function CommitNarrow() {
           <span className="font-mono text-[9px] text-nexus-text-muted">③ 信任赌注</span>
           <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-nexus-text-primary">
             <ShieldCheck size={12} className="text-[#3bb87a]" />
-            G-A 信任 trusted · 双源（雷达+EO）
+            主攻群（群1）信任 可信 · 双源（雷达 + 光电）
           </p>
           <p className="mt-0.5 text-[9.5px] text-[#d4932a]">证据缺口：{coa.card.evidenceGap}</p>
         </div>
@@ -71,14 +71,14 @@ export function CommitNarrow() {
         <div className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5">
           <span className="font-mono text-[9px] text-nexus-text-muted">④ 授权包络（承重墙）+ 签字闸</span>
           <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 font-mono text-[10px] text-nexus-text-secondary">
-            <span>scope · 拦截单元引导</span>
-            <span>TTL · 180s</span>
-            <span>区域 · AOR-7 内</span>
+            <span>范围 · 拦截单元引导</span>
+            <span>时限 · 180秒</span>
+            <span>区域 · 七号责任区内</span>
             <span>预算 · 频率上限 30</span>
           </div>
           <p className="mt-1 flex items-center gap-1 text-[9.5px] text-nexus-text-muted">
             <Ban size={11} className="text-[#dc2626]" />
-            硬杀处置置灰 · 需交战合法性裁决（P1）
+            硬杀处置置灰 · 需交战合法性裁决（下一阶段）
           </p>
         </div>
 
@@ -92,10 +92,10 @@ export function CommitNarrow() {
           style={{ background: coa.color }}
         >
           <PenLine size={15} />
-          担责签字 · COACommit 责任提交
+          担责签字 · 责任提交
         </button>
         <p className="mt-1 text-center text-[8.5px] text-nexus-text-muted">
-          签字 = 责任起点入责任链 · per-envelope 授权 / per-action 问责
+          签字 = 责任起点入责任链 · 按包络授权 / 按动作问责
         </p>
       </div>
     </div>

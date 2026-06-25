@@ -30,7 +30,7 @@ export function LayerTower() {
   const totalTracks = THREAT_GROUPS.reduce((a, g) => a + g.trackCount, 0);
 
   return (
-    <aside className="z-20 flex w-[180px] flex-col gap-2 p-2">
+    <aside className="pointer-events-auto z-20 flex w-[180px] flex-col gap-2 p-2">
       {/* 图层塔 */}
       <div className="rounded-lg border border-white/[0.06] bg-nexus-bg-surface/85 p-2 backdrop-blur-md">
         <div className="mb-1.5 flex items-center gap-1.5">
@@ -89,14 +89,14 @@ export function LayerTower() {
           <span className="text-nexus-text-primary">{THREAT_GROUPS.length}</span>
           <span className="text-nexus-text-muted">→</span>
           <span className="text-[#5b9bd5]">3</span>
-          <span className="ml-1 text-[8.5px] text-nexus-text-muted">迹/群/COA</span>
+          <span className="ml-1 text-[8.5px] text-nexus-text-muted">迹 / 群 / 方案</span>
         </div>
         {expanded && (
           <div className="mt-1.5 space-y-0.5 border-t border-white/[0.06] pt-1.5 text-[9px] text-nexus-text-muted">
             <div>· {totalTracks} 原始航迹 → 融合</div>
             <div>· {THREAT_GROUPS.length} 威胁群 → 研判排序</div>
-            <div>· 3 COA 合格未来 → 待裁</div>
-            <div className="text-[#5b9bd5]">点群/卡可逐层下钻原始量</div>
+            <div>· 3 套合格未来方案 → 待裁</div>
+            <div className="text-[#5b9bd5]">点群 / 卡可逐层下钻原始量</div>
           </div>
         )}
       </button>

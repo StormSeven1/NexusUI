@@ -16,11 +16,11 @@ export function TaskDetailPanel() {
   const conf = task.confidenceCurve;
 
   return (
-    <div className="absolute bottom-9 left-[212px] z-30 w-[316px] animate-slide-in-right rounded-xl border border-white/[0.08] bg-nexus-bg-surface/95 p-3 shadow-2xl backdrop-blur-md">
+    <div className="absolute bottom-9 left-[256px] z-30 w-[316px] animate-slide-in-right rounded-xl border border-white/[0.08] bg-nexus-bg-surface/95 p-3 shadow-2xl backdrop-blur-md">
       <div className="mb-2 flex items-start justify-between">
         <div>
           <div className="text-[13px] font-semibold text-nexus-text-primary">{task.name}</div>
-          <div className="font-mono text-[9px] text-nexus-text-muted">{task.authorizationId} · per-envelope 授权 / per-action 问责</div>
+          <div className="font-mono text-[9px] text-nexus-text-muted">{task.authorizationId} · 按包络授权 / 按动作问责</div>
         </div>
         <button onClick={() => setOpenTaskId(null)} className="text-nexus-text-muted hover:text-nexus-text-primary">
           <X size={14} />
@@ -32,11 +32,11 @@ export function TaskDetailPanel() {
         <span className="font-mono text-[9px] text-nexus-text-muted">授权包络（承重墙）</span>
         <p className="mt-0.5 text-[10px] text-nexus-text-secondary">{env.scope}</p>
         <div className="mt-1.5 space-y-1">
-          <Bar label="TTL" pct={ttlPct} text={`${env.ttlSec}s / ${env.ttlTotalSec}s`} color={ttlPct < 20 ? "#dc2626" : "#5b9bd5"} />
+          <Bar label="时限" pct={ttlPct} text={`${env.ttlSec}秒 / ${env.ttlTotalSec}秒`} color={ttlPct < 20 ? "#dc2626" : "#5b9bd5"} />
           <Bar label="预算" pct={budgetPct} text={`${env.budgetUsed} / ${env.budgetTotal}`} color={budgetPct > 85 ? "#d4932a" : "#3bb87a"} />
         </div>
         <p className="mt-1 flex items-center gap-1 text-[9px] text-nexus-text-muted">
-          <AlertOctagon size={10} className="text-[#dc2626]" /> fail-closed：{env.failClosed}
+          <AlertOctagon size={10} className="text-[#dc2626]" /> 失效即止：{env.failClosed}
         </p>
       </section>
 

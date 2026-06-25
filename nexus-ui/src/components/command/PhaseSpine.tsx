@@ -21,7 +21,10 @@ export function PhaseSpine() {
   };
 
   return (
-    <div className="flex h-full w-11 flex-col items-center border-r border-white/[0.06] bg-nexus-bg-surface/85 py-3 backdrop-blur-md">
+    <div className="pointer-events-auto flex h-full w-11 flex-col items-center border-r border-white/[0.06] bg-nexus-bg-surface/85 py-3 backdrop-blur-md">
+      <span className="mb-2 font-mono text-[7px] leading-tight tracking-widest text-nexus-text-muted [writing-mode:vertical-rl]">
+        决策相位
+      </span>
       {/* 相位 */}
       <div className="flex flex-col items-center gap-2">
         {PHASES.map((p, i) => {

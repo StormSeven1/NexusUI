@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useCommandStore } from "@/stores/command-store";
-import { THREAT_GROUPS, CMD_ASSETS, EVIDENCE_CHAINS, type EvidenceNode } from "@/lib/command-data";
+import { THREAT_GROUPS, CMD_ASSETS, EVIDENCE_CHAINS, ASSET_TYPE_LABEL, ASSET_STATUS_LABEL, type EvidenceNode } from "@/lib/command-data";
 import { FORCE_COLORS, FORCE_LABELS } from "@/lib/colors";
 import { cn } from "@/lib/utils";
 import { X, Repeat, Flag, Plus, ChevronRight } from "lucide-react";

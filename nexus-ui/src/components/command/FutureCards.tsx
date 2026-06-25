@@ -42,7 +42,7 @@ export function FutureCards() {
       <div className="mb-1.5 flex items-center justify-center gap-1.5">
         <GitFork size={12} className="text-[#e8724a]" />
         <span className="font-mono text-[10px] tracking-wider text-nexus-text-secondary">
-          G-A 主攻群分叉 · 3 条合格未来 · 取舍轴 = 地形上可量的距离/角度/面积
+          主攻群（群1）分叉 · 3 条合格未来 · 取舍轴 = 地形上可量的距离 / 角度 / 面积
         </span>
       </div>
       <div className="pointer-events-auto grid grid-cols-3 gap-2">

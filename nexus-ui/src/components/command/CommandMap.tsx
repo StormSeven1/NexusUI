@@ -302,8 +302,8 @@ export function CommandMap() {
                       const mid = proj(coa.beam[2].lng, coa.beam[2].lat);
                       return (
                         <g className="pointer-events-auto cursor-pointer" onClick={() => selectCoa(coa.id)}>
-                          <rect x={mid.x - 16} y={mid.y - 26} width={32} height={15} rx={3} fill="#111113" stroke={coa.color} strokeWidth={isSel ? 1.4 : 0.8} />
-                          <text x={mid.x} y={mid.y - 15} fill={coa.color} fontSize={9.5} textAnchor="middle" fontWeight={700}>{coa.label}</text>
+                          <rect x={mid.x - 14} y={mid.y - 26} width={28} height={15} rx={3} fill="#111113" stroke={coa.color} strokeWidth={isSel ? 1.4 : 0.8} />
+                          <text x={mid.x} y={mid.y - 15} fill={coa.color} fontSize={9.5} textAnchor="middle" fontWeight={700}>{coa.short}</text>
                         </g>
                       );
                     })()}
@@ -319,7 +319,7 @@ export function CommandMap() {
       {mode === "highpressure" && committed && scrubT > 0 && (
         <div className="pointer-events-none absolute right-3 top-1/2 z-20 -translate-y-1/2 rotate-90 select-none">
           <span className="rounded border border-[#dc2626]/50 bg-[#dc2626]/10 px-2 py-0.5 font-mono text-[10px] font-bold tracking-widest text-[#dc2626]">
-            FUTURE T+{tPlus}s · 非现实
+            推演 T+{tPlus}秒 · 非现实
           </span>
         </div>
       )}
@@ -328,7 +328,7 @@ export function CommandMap() {
       <div className="pointer-events-none absolute bottom-9 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2">
         <div className="flex items-center gap-1 rounded bg-nexus-bg-surface/70 px-2 py-1 backdrop-blur-sm">
           <div className="h-px w-12 bg-nexus-text-muted" />
-          <span className="font-mono text-[9px] text-nexus-text-muted">10 km · {KEY_AREA.name}</span>
+          <span className="font-mono text-[9px] text-nexus-text-muted">10 公里 · {KEY_AREA.name}</span>
         </div>
       </div>
 

@@ -11,7 +11,7 @@ export function StatusBar() {
   }, []);
 
   return (
-    <footer className="relative z-30 flex h-[26px] items-center gap-4 border-t border-white/[0.06] bg-nexus-bg-surface/85 px-3 font-mono text-[10px] text-nexus-text-secondary backdrop-blur-md">
+    <footer className="pointer-events-auto relative z-30 flex h-[26px] items-center gap-4 border-t border-white/[0.06] bg-nexus-bg-surface/85 px-3 font-mono text-[10px] text-nexus-text-secondary backdrop-blur-md">
       {/* 类型墙盾（降为状态栏小盾） */}
       <div className="flex items-center gap-1 text-[#3bb87a]" title="类型墙：0 进入授权计数 · 三层墙守卫中">
         <ShieldCheck size={12} />
@@ -19,11 +19,11 @@ export function StatusBar() {
       </div>
       <div className="flex items-center gap-1">
         <Radio size={11} className="text-[#5b9bd5]" />
-        <span>链路 OK · 时延 42ms</span>
+        <span>链路正常 · 时延 42 毫秒</span>
       </div>
       <div className="flex items-center gap-1 text-[#d4932a]">
         <SignalLow size={11} />
-        <span>降级档 · Charlie 衰减</span>
+        <span>降级档 · 3号雷达衰减</span>
       </div>
       <div className="flex-1" />
       <button className="flex items-center gap-1 text-nexus-text-muted transition-colors hover:text-nexus-text-secondary" title="断链/受控停止/复盘 — P0 占位">
@@ -32,7 +32,7 @@ export function StatusBar() {
       </button>
       <div className="flex items-center gap-1">
         <Clock size={11} />
-        <span>{now} UTC+8</span>
+        <span>{now} 北京时间</span>
       </div>
     </footer>
   );

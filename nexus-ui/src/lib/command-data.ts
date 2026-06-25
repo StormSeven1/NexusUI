@@ -3,8 +3,8 @@ import type { ForceDisposition } from "./colors";
 /* ───────────────────────── 地理锚点 ───────────────────────── */
 
 export const KEY_AREA = {
-  id: "K-1",
-  name: "要地 K-1 · 指挥所",
+  id: "要地一号",
+  name: "要地一号 · 指挥所",
   lng: -2.35,
   lat: 51.35,
 };
@@ -38,8 +38,8 @@ export interface ThreatGroup {
 
 export const THREAT_GROUPS: ThreatGroup[] = [
   {
-    id: "G-A",
-    name: "G-A 主攻群",
+    id: "群1",
+    name: "主攻群",
     disposition: "hostile",
     lng: -1.72,
     lat: 51.18,
@@ -54,11 +54,11 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     threat: 0.92,
     primary: true,
     trust: "trusted",
-    summary: "14 航迹密集编队，航向 285°，速度 420kn，逼近 K-1。",
+    summary: "14 航迹密集编队，航向 285°，速度 420 节，逼近要地一号。",
   },
   {
-    id: "G-B",
-    name: "G-B 北翼群",
+    id: "群2",
+    name: "北翼群",
     disposition: "hostile",
     lng: -1.48,
     lat: 51.42,
@@ -71,11 +71,11 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     trackCount: 9,
     threat: 0.74,
     trust: "trusted",
-    summary: "9 航迹，北侧高度层 5500m，疑似牵制/掩护主攻。",
+    summary: "9 航迹，北侧高度层 5500 米，疑似牵制 / 掩护主攻。",
   },
   {
-    id: "G-C",
-    name: "G-C 南翼群",
+    id: "群3",
+    name: "南翼群",
     disposition: "suspect",
     lng: -1.92,
     lat: 50.96,
@@ -88,12 +88,12 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     trackCount: 11,
     threat: 0.55,
     trust: "pending",
-    summary: "11 航迹，RF 特征矛盾，机器判为诱饵（置信 0.61，单源）。",
+    summary: "11 航迹，射频特征矛盾，机器判为诱饵（置信 0.61，单源）。",
     decoy: true,
   },
   {
-    id: "G-D",
-    name: "G-D 不明群",
+    id: "群4",
+    name: "不明群",
     disposition: "unknown",
     lng: -1.28,
     lat: 51.04,
@@ -109,8 +109,8 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     summary: "8 航迹，低慢小，身份未决，待补证。",
   },
   {
-    id: "G-E",
-    name: "G-E 海上接触",
+    id: "群5",
+    name: "海上接触",
     disposition: "neutral",
     lng: -2.04,
     lat: 50.78,
@@ -123,7 +123,7 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     trackCount: 8,
     threat: 0.2,
     trust: "trusted",
-    summary: "8 民用 AIS 航迹，航运通道，威胁低。",
+    summary: "8 民用航运航迹，航运通道，威胁低。",
   },
 ];
 
@@ -139,14 +139,27 @@ export interface CmdAsset {
   rangeKm?: number;
 }
 
+export const ASSET_TYPE_LABEL: Record<CmdAsset["type"], string> = {
+  radar: "雷达",
+  interceptor: "拦截单元",
+  drone: "无人机",
+  "key-area": "要地",
+};
+
+export const ASSET_STATUS_LABEL: Record<CmdAsset["status"], string> = {
+  online: "在线",
+  degraded: "衰减",
+  offline: "离线",
+};
+
 export const CMD_ASSETS: CmdAsset[] = [
-  { id: "AST-K1", name: "要地 K-1", type: "key-area", status: "online", lng: KEY_AREA.lng, lat: KEY_AREA.lat },
-  { id: "AST-RA", name: "雷达 Alpha", type: "radar", status: "online", lng: -2.42, lat: 51.5, rangeKm: 90 },
-  { id: "AST-RB", name: "雷达 Bravo", type: "radar", status: "online", lng: -2.1, lat: 51.05, rangeKm: 80 },
-  { id: "AST-RC", name: "雷达 Charlie", type: "radar", status: "degraded", lng: -1.9, lat: 51.6, rangeKm: 55 },
-  { id: "AST-I1", name: "拦截单元 I-1", type: "interceptor", status: "online", lng: -2.28, lat: 51.28 },
-  { id: "AST-I2", name: "拦截单元 I-2", type: "interceptor", status: "online", lng: -2.18, lat: 51.4 },
-  { id: "AST-D1", name: "侦察无人机 D-1", type: "drone", status: "online", lng: -1.95, lat: 51.15, rangeKm: 25 },
+  { id: "资产-要地", name: "要地一号", type: "key-area", status: "online", lng: KEY_AREA.lng, lat: KEY_AREA.lat },
+  { id: "资产-雷达1", name: "1号雷达", type: "radar", status: "online", lng: -2.42, lat: 51.5, rangeKm: 90 },
+  { id: "资产-雷达2", name: "2号雷达", type: "radar", status: "online", lng: -2.1, lat: 51.05, rangeKm: 80 },
+  { id: "资产-雷达3", name: "3号雷达", type: "radar", status: "degraded", lng: -1.9, lat: 51.6, rangeKm: 55 },
+  { id: "资产-拦截1", name: "1号拦截单元", type: "interceptor", status: "online", lng: -2.28, lat: 51.28 },
+  { id: "资产-拦截2", name: "2号拦截单元", type: "interceptor", status: "online", lng: -2.18, lat: 51.4 },
+  { id: "资产-无人机1", name: "1号侦察无人机", type: "drone", status: "online", lng: -1.95, lat: 51.15, rangeKm: 25 },
 ];
 
 /* ───────────────────── 地理约束（责任区/禁射区） ───────────────────── */
@@ -160,8 +173,8 @@ export interface GeoZone {
 
 export const GEO_ZONES: GeoZone[] = [
   {
-    id: "ZONE-RESP",
-    name: "责任区 AOR-7",
+    id: "区-责任",
+    name: "七号责任区",
     kind: "responsibility",
     polygon: [
       [-2.7, 51.65],
@@ -171,8 +184,8 @@ export const GEO_ZONES: GeoZone[] = [
     ],
   },
   {
-    id: "ZONE-NOFIRE",
-    name: "禁射区 NF-2（民用空域）",
+    id: "区-禁射",
+    name: "二号禁射区（民用空域）",
     kind: "no-fire",
     polygon: [
       [-2.5, 51.0],
@@ -190,7 +203,7 @@ export type TradeoffAxis = "fast" | "stable" | "stealth";
 export interface BeamPoint {
   lng: number;
   lat: number;
-  /** 时间分数 0..1（对应 T+0 → T+180s） */
+  /** 时间分数 0..1（对应 T+0 → T+180秒） */
   t: number;
 }
 
@@ -211,7 +224,10 @@ export interface FutureCard {
 
 export interface COA {
   id: string;
+  /** 卡片/弹层完整标签 */
   label: string;
+  /** 地图上短标（1 字） */
+  short: string;
   /** 主导取舍维度 */
   axis: TradeoffAxis;
   color: string;
@@ -231,8 +247,9 @@ export const FORK_POINT: [number, number] = [-1.72, 51.18];
 
 export const COAS: COA[] = [
   {
-    id: "COA-A",
-    label: "A · 快",
+    id: "方案一",
+    label: "方案一 · 快",
+    short: "快",
     axis: "fast",
     color: "#5b9bd5",
     beam: [
@@ -262,17 +279,18 @@ export const COAS: COA[] = [
       penetrateAtT: 0.9,
     },
     card: {
-      outcome: "T+90s 于 I-1 正前方拦截，主攻群被挡在 K-1 外 18km。",
-      keyFigure: "拦截窗 90s · 突防风险 8%",
+      outcome: "T+90秒 于 1号拦截单元 正前方拦截，主攻群被挡在要地一号外 18 公里。",
+      keyFigure: "拦截窗 90秒 · 突防风险 8%",
       scores: { fast: 0.95, stable: 0.6, stealth: 0.35 },
-      counterfactual: "不选 A：错过 90s 窗口，G-A 在 T+150s 进入 K-1 末端防御圈。",
-      failure: "若拦截失败，G-A 由西线突防至 K-1 4km。",
-      evidenceGap: "G-A 速度估计依赖单雷达，缺第二源测速将推翻拦截时序。",
+      counterfactual: "不选方案一：错过 90秒 窗口，主攻群在 T+150秒 进入要地一号末端防御圈。",
+      failure: "若拦截失败，主攻群由西线突防至要地一号 4 公里。",
+      evidenceGap: "主攻群速度估计依赖单雷达，缺第二源测速将推翻拦截时序。",
     },
   },
   {
-    id: "COA-B",
-    label: "B · 稳",
+    id: "方案二",
+    label: "方案二 · 稳",
+    short: "稳",
     axis: "stable",
     color: "#3bb87a",
     beam: [
@@ -302,17 +320,18 @@ export const COAS: COA[] = [
       penetrateAtT: 0.95,
     },
     card: {
-      outcome: "T+115s 经 I-2 北线双层拦截，纵深更大、容错更高。",
-      keyFigure: "拦截窗 115s · 突防风险 5%",
+      outcome: "T+115秒 经 2号拦截单元 北线双层拦截，纵深更大、容错更高。",
+      keyFigure: "拦截窗 115秒 · 突防风险 5%",
       scores: { fast: 0.55, stable: 0.95, stealth: 0.5 },
-      counterfactual: "不选 B：放弃北线纵深冗余，单层拦截一旦漏失无补位。",
-      failure: "若拦截失败，G-A 偏北绕行，延后 60s 到达但暴露 Bravo。",
-      evidenceGap: "G-B 是否牵制未证实，若 G-B 转入将稀释 I-2 兵力。",
+      counterfactual: "不选方案二：放弃北线纵深冗余，单层拦截一旦漏失无补位。",
+      failure: "若拦截失败，主攻群偏北绕行，延后 60秒 到达但暴露 2号雷达。",
+      evidenceGap: "北翼群是否牵制未证实，若北翼群转入将稀释 2号拦截单元 兵力。",
     },
   },
   {
-    id: "COA-C",
-    label: "C · 隐",
+    id: "方案三",
+    label: "方案三 · 隐",
+    short: "隐",
     axis: "stealth",
     color: "#d4932a",
     beam: [
@@ -342,12 +361,12 @@ export const COAS: COA[] = [
       penetrateAtT: 0.92,
     },
     card: {
-      outcome: "T+105s 南线静默拦截，最迟暴露主处置、保留隐蔽。",
-      keyFigure: "拦截窗 105s · 暴露最低",
+      outcome: "T+105秒 南线静默拦截，最迟暴露主处置、保留隐蔽。",
+      keyFigure: "拦截窗 105秒 · 暴露最低",
       scores: { fast: 0.6, stable: 0.55, stealth: 0.95 },
-      counterfactual: "不选 C：提前暴露拦截阵位，敌可重规划绕行。",
-      failure: "若南线低空丢失跟踪，G-A 借地形遮蔽突防至 K-1 6km。",
-      evidenceGap: "南线低空雷达覆盖弱（Charlie 衰减），跟踪连续性存疑。",
+      counterfactual: "不选方案三：提前暴露拦截阵位，敌可重规划绕行。",
+      failure: "若南线低空丢失跟踪，主攻群借地形遮蔽突防至要地一号 6 公里。",
+      evidenceGap: "南线低空雷达覆盖弱（3号雷达衰减），跟踪连续性存疑。",
     },
   },
 ];
@@ -365,12 +384,12 @@ export interface EvidenceNode {
 }
 
 export const EVIDENCE_CHAINS: Record<string, EvidenceNode[]> = {
-  "G-A": [
+  群1: [
     {
       stage: "observation",
-      title: "观测 · 雷达 Alpha + EO-2",
-      detail: "雷达 Alpha 主跟踪 14 回波，EO-2 二次确认 6 目标外形。原始回波不可改写。",
-      provenance: "Radar-Alpha v4.2 / EO-2 v2.1",
+      title: "观测 · 1号雷达 + 光电2",
+      detail: "1号雷达主跟踪 14 回波，光电2 二次确认 6 目标外形。原始回波不可改写。",
+      provenance: "1号雷达 v4.2 / 光电2 v2.1",
       confidence: 0.88,
       time: "14:02:31",
       replayable: true,
@@ -378,37 +397,37 @@ export const EVIDENCE_CHAINS: Record<string, EvidenceNode[]> = {
     {
       stage: "fusion",
       title: "融合 · 编队关联",
-      detail: "按速度/航向/间距聚为单一编队 G-A，关联判据：航向偏差 <3°、间距 <2km。",
-      provenance: "FusionSvc v3.4 / model track-assoc-11",
+      detail: "按速度 / 航向 / 间距聚为单一编队 群1，关联判据：航向差 <3°、间距 <2 公里。",
+      provenance: "融合服务 v3.4 / 模型 关联-11",
       confidence: 0.84,
       time: "14:02:33",
       replayable: true,
     },
     {
       stage: "trust",
-      title: "信任 · trusted",
-      detail: "双源覆盖（雷达 + EO），无衰减、无噪声告警，可作授权依据。",
-      provenance: "TrustState v2.0",
+      title: "信任 · 可信",
+      detail: "双源覆盖（雷达 + 光电），无衰减、无噪声告警，可作授权依据。",
+      provenance: "信任态 v2.0",
       confidence: 0.86,
       time: "14:02:34",
       replayable: true,
     },
     {
       stage: "hypothesis",
-      title: "假设 · 对 K-1 实施饱和突击",
-      detail: "支持：航向直指 K-1、编队密集。反证：暂无。证伪测试：观察是否在 T+60s 散开。",
-      provenance: "HypoEngine v1.6 / rule-set saturate-3",
+      title: "假设 · 对要地一号实施饱和突击",
+      detail: "支持：航向直指要地一号、编队密集。反证：暂无。证伪测试：观察是否在 T+60秒 散开。",
+      provenance: "假设引擎 v1.6 / 规则集 饱和-3",
       confidence: 0.79,
       time: "14:02:36",
       replayable: true,
     },
   ],
-  "G-C": [
+  群3: [
     {
       stage: "observation",
-      title: "观测 · 仅 RF-1 单源",
-      detail: "RF-1 截获辐射特征，无雷达硬回波佐证，原始信噪比偏低。",
-      provenance: "RF-1 v1.9",
+      title: "观测 · 仅 射频1 单源",
+      detail: "射频1 截获辐射特征，无雷达硬回波佐证，原始信噪比偏低。",
+      provenance: "射频1 v1.9",
       confidence: 0.52,
       time: "14:02:18",
       replayable: true,
@@ -416,8 +435,8 @@ export const EVIDENCE_CHAINS: Record<string, EvidenceNode[]> = {
     {
       stage: "fusion",
       title: "融合 · 弱关联",
-      detail: "RF 特征与已知诱饵库匹配度 0.61，关联强度弱。",
-      provenance: "FusionSvc v3.4 / decoy-lib v7",
+      detail: "射频特征与已知诱饵库匹配度 0.61，关联强度弱。",
+      provenance: "融合服务 v3.4 / 诱饵库 v7",
       confidence: 0.58,
       time: "14:02:20",
       replayable: true,
@@ -425,8 +444,8 @@ export const EVIDENCE_CHAINS: Record<string, EvidenceNode[]> = {
     {
       stage: "trust",
       title: "信任 · 待补证（禁入授权依据）",
-      detail: "单源、信噪比不足，不可作授权依据。建议调 EO-2 / RF 二次确认。",
-      provenance: "TrustState v2.0",
+      detail: "单源、信噪比不足，不可作授权依据。建议调 光电2 / 射频 二次确认。",
+      provenance: "信任态 v2.0",
       confidence: 0.55,
       time: "14:02:21",
       replayable: true,
@@ -434,8 +453,8 @@ export const EVIDENCE_CHAINS: Record<string, EvidenceNode[]> = {
     {
       stage: "hypothesis",
       title: "假设 · 诱饵牵制",
-      detail: "支持：RF 特征像诱饵、无硬回波。反证：可能为低 RCS 真目标。证据缺口：缺 EO 外形确认。",
-      provenance: "HypoEngine v1.6",
+      detail: "支持：射频特征像诱饵、无硬回波。反证：可能为低反射真目标。证据缺口：缺光电外形确认。",
+      provenance: "假设引擎 v1.6",
       confidence: 0.61,
       time: "14:02:23",
       replayable: true,
@@ -469,34 +488,34 @@ export interface ExecTask {
 
 export const EXEC_TASKS: ExecTask[] = [
   {
-    id: "TSK-01",
-    authorizationId: "AUTH-2291",
-    name: "G-D 身份补证",
-    targetId: "G-D",
+    id: "任务01",
+    authorizationId: "授权2291",
+    name: "不明群 身份补证",
+    targetId: "群4",
     envelope: {
-      scope: "EO-2 / RF-1 传感器二次确认 · AOR-7 内 · 仅观测",
+      scope: "光电2 / 射频1 传感器二次确认 · 七号责任区内 · 仅观测",
       ttlSec: 420,
       ttlTotalSec: 600,
       budgetUsed: 12,
       budgetTotal: 30,
-      failClosed: "越出 AOR-7 或调用处置能力即停",
+      failClosed: "越出 七号责任区 或调用处置能力即停",
     },
     confidenceCurve: [0.41, 0.48, 0.55, 0.62, 0.71, 0.78],
     corroborationCount: 12,
     effect: "climbing",
     actions: [
-      { time: "14:01:40", actor: "EO-2", result: "外形确认：低慢小，识别 0.62" },
-      { time: "14:01:50", actor: "RF-1", result: "无武器辐射特征，识别 0.71" },
-      { time: "14:02:00", actor: "EO-2", result: "持续跟踪，识别 0.78" },
+      { time: "14:01:40", actor: "光电2", result: "外形确认：低慢小，识别 0.62" },
+      { time: "14:01:50", actor: "射频1", result: "无武器辐射特征，识别 0.71" },
+      { time: "14:02:00", actor: "光电2", result: "持续跟踪，识别 0.78" },
     ],
   },
   {
-    id: "TSK-02",
-    authorizationId: "AUTH-2287",
-    name: "G-C 诱饵证伪",
-    targetId: "G-C",
+    id: "任务02",
+    authorizationId: "授权2287",
+    name: "南翼群 诱饵证伪",
+    targetId: "群3",
     envelope: {
-      scope: "EO-2 二次确认 · NF-2 外 · 仅观测",
+      scope: "光电2 二次确认 · 二号禁射区外 · 仅观测",
       ttlSec: 180,
       ttlTotalSec: 300,
       budgetUsed: 22,
@@ -507,29 +526,29 @@ export const EXEC_TASKS: ExecTask[] = [
     corroborationCount: 22,
     effect: "ok",
     actions: [
-      { time: "14:00:30", actor: "EO-2", result: "外形不清，疑似诱饵 0.58" },
-      { time: "14:01:10", actor: "EO-2", result: "RCS 异常低，维持诱饵假设 0.61" },
+      { time: "14:00:30", actor: "光电2", result: "外形不清，疑似诱饵 0.58" },
+      { time: "14:01:10", actor: "光电2", result: "反射异常低，维持诱饵假设 0.61" },
     ],
   },
   {
-    id: "TSK-03",
-    authorizationId: "AUTH-2280",
-    name: "G-A 持续跟踪",
-    targetId: "G-A",
+    id: "任务03",
+    authorizationId: "授权2280",
+    name: "主攻群 持续跟踪",
+    targetId: "群1",
     envelope: {
-      scope: "雷达 Alpha + EO-2 融合跟踪 · AOR-7 内",
+      scope: "1号雷达 + 光电2 融合跟踪 · 七号责任区内",
       ttlSec: 60,
       ttlTotalSec: 600,
       budgetUsed: 48,
       budgetTotal: 60,
-      failClosed: "TTL 耗尽，需续签",
+      failClosed: "时限耗尽，需续签",
     },
     confidenceCurve: [0.8, 0.82, 0.85, 0.86, 0.88, 0.88],
     corroborationCount: 48,
     effect: "breach",
     actions: [
-      { time: "14:02:20", actor: "Fusion", result: "融合跟踪稳定 0.88" },
-      { time: "14:02:35", actor: "系统", result: "TTL 余 60s — 越界预警，需续签" },
+      { time: "14:02:20", actor: "融合", result: "融合跟踪稳定 0.88" },
+      { time: "14:02:35", actor: "系统", result: "时限余 60秒 — 越界预警，需续签" },
     ],
   },
 ];
@@ -545,11 +564,11 @@ export interface DecisionPacket {
 }
 
 export const DECISION_PACKETS: DecisionPacket[] = [
-  { id: "DP-07", title: "G-A 主攻群裁决", status: "active", time: "14:02:36" },
-  { id: "DP-06", title: "G-D 身份补证授权", status: "committed", time: "14:01:38", coa: "补证 EO/RF" },
-  { id: "DP-05", title: "G-C 诱饵证伪", status: "committed", time: "14:00:28", coa: "补证 EO-2" },
-  { id: "DP-04", title: "Bravo 扇区移交", status: "closed", time: "13:58:02", coa: "COA-2" },
-  { id: "DP-03", title: "海上接触 G-E 放行", status: "closed", time: "13:54:11", coa: "放行" },
+  { id: "决策07", title: "主攻群裁决", status: "active", time: "14:02:36" },
+  { id: "决策06", title: "不明群身份补证授权", status: "committed", time: "14:01:38", coa: "补证 光电/射频" },
+  { id: "决策05", title: "南翼群诱饵证伪", status: "committed", time: "14:00:28", coa: "补证 光电2" },
+  { id: "决策04", title: "2号雷达扇区移交", status: "closed", time: "13:58:02", coa: "方案二" },
+  { id: "决策03", title: "海上接触放行", status: "closed", time: "13:54:11", coa: "放行" },
 ];
 
 /* ───────────────────────── 相位脊 ───────────────────────── */
@@ -578,13 +597,13 @@ export const COPILOT_SEED: CopilotMessage[] = [
   {
     id: "m1",
     role: "commander",
-    text: "G-C 为什么判诱饵？",
+    text: "群3 为什么判诱饵？",
     time: "14:01:55",
   },
   {
     id: "m2",
     role: "copilot",
-    text: "G-C 仅 RF-1 单源，匹配诱饵库 0.61，无雷达硬回波与 EO 外形佐证，信任为「待补证」，不可作授权依据。已在地图定位 G-C，证据链见 placard。",
+    text: "群3 仅 射频1 单源，匹配诱饵库 0.61，无雷达硬回波与光电外形佐证，信任为「待补证」，不可作授权依据。已在地图定位 群3，证据链见详情卡。",
     artifact: "answer",
     time: "14:01:56",
   },

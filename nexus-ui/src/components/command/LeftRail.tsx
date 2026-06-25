@@ -1,10 +1,17 @@
 "use client";
 
 import { useCommandStore } from "@/stores/command-store";
-import { THREAT_GROUPS, EXEC_TASKS, type ExecTask } from "@/lib/command-data";
+import {
+  THREAT_GROUPS,
+  EXEC_TASKS,
+  CMD_ASSETS,
+  ASSET_TYPE_LABEL,
+  ASSET_STATUS_LABEL,
+  type ExecTask,
+} from "@/lib/command-data";
 import { FORCE_COLORS, FORCE_LABELS } from "@/lib/colors";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, ShieldQuestion, Crosshair } from "lucide-react";
+import { AlertTriangle, ShieldQuestion, Crosshair, Radar, Rocket, Plane, Building2 } from "lucide-react";
 
 /* 迷你置信曲线 */
 function Sparkline({ data, color }: { data: number[]; color: string }) {
@@ -26,7 +33,7 @@ function ThreatRail() {
   const sorted = [...THREAT_GROUPS].sort((a, b) => b.threat - a.threat);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-[1.2] flex-col">
       <div className="flex items-center justify-between px-2.5 py-1.5">
         <span className="font-mono text-[10px] font-semibold tracking-wider text-nexus-text-secondary">威胁度栏 · 待裁</span>
         <span className="font-mono text-[9px] text-nexus-text-muted">{THREAT_GROUPS.reduce((a, g) => a + g.trackCount, 0)} 迹 → {THREAT_GROUPS.length} 群</span>
@@ -49,6 +56,7 @@ function ThreatRail() {
               <div className="flex items-center gap-1.5">
                 <span className="h-2 w-2 rounded-sm" style={{ background: color }} />
                 <span className="font-mono text-[11px] font-bold" style={{ color }}>{g.id}</span>
+                <span className="text-[10px] text-nexus-text-secondary">{g.name}</span>
                 {g.primary && <AlertTriangle size={11} className="text-[#dc2626]" />}
                 {g.trust === "pending" && <ShieldQuestion size={11} className="text-[#d4932a]" />}
                 <span className="ml-auto font-mono text-[10px] text-nexus-text-secondary">{(g.threat * 100).toFixed(0)}</span>
@@ -59,6 +67,64 @@ function ThreatRail() {
               <p className="mt-1 line-clamp-1 text-[9.5px] leading-tight text-nexus-text-muted">
                 {FORCE_LABELS[g.disposition]} · {g.summary}
               </p>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const ASSET_ICON = {
+  radar: Radar,
+  interceptor: Rocket,
+  drone: Plane,
+  "key-area": Building2,
+} as const;
+
+const ASSET_STATUS_COLOR = {
+  online: "#3bb87a",
+  degraded: "#d4932a",
+  offline: "#dc2626",
+} as const;
+
+function AssetRail() {
+  const selected = useCommandStore((s) => s.selected);
+  const selectObject = useCommandStore((s) => s.selectObject);
+  const online = CMD_ASSETS.filter((a) => a.status === "online").length;
+
+  return (
+    <div className="flex min-h-0 flex-[0.9] flex-col border-t border-white/[0.06]">
+      <div className="flex items-center justify-between px-2.5 py-1.5">
+        <span className="font-mono text-[10px] font-semibold tracking-wider text-nexus-text-secondary">我方资产 · 可用</span>
+        <span className="font-mono text-[9px] text-nexus-text-muted">{online}/{CMD_ASSETS.length} 在线</span>
+      </div>
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5 pb-2">
+        {CMD_ASSETS.map((a) => {
+          const Icon = ASSET_ICON[a.type];
+          const statusColor = ASSET_STATUS_COLOR[a.status];
+          const isSel = selected?.kind === "asset" && selected.id === a.id;
+          return (
+            <button
+              key={a.id}
+              onClick={() => selectObject({ kind: "asset", id: a.id })}
+              className={cn(
+                "flex w-full items-center gap-1.5 rounded-md border px-2 py-1.5 text-left transition-all",
+                isSel ? "border-white/20 bg-white/[0.05]" : "border-white/[0.05] hover:bg-white/[0.03]",
+              )}
+            >
+              <Icon size={13} className="shrink-0 text-[#5b9bd5]" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1">
+                  <span className="truncate text-[11px] text-nexus-text-primary">{a.name}</span>
+                  <span className="font-mono text-[8px] text-nexus-text-muted">{ASSET_TYPE_LABEL[a.type]}</span>
+                </div>
+                {a.rangeKm && <div className="font-mono text-[8px] text-nexus-text-muted">覆盖 {a.rangeKm} 公里</div>}
+              </div>
+              <span className="flex items-center gap-1 font-mono text-[9px]" style={{ color: statusColor }}>
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: statusColor }} />
+                {ASSET_STATUS_LABEL[a.status]}
+              </span>
             </button>
           );
         })}
@@ -88,9 +154,9 @@ function ExecRow({ task }: { task: ExecTask }) {
         {task.effect === "breach" && <span className="ml-auto rounded bg-[#dc2626]/15 px-1 font-mono text-[8px] text-[#dc2626]">越界</span>}
       </div>
       <div className="mt-1 flex items-center gap-2">
-        {/* TTL 环（条） */}
+        {/* 时限（条） */}
         <div className="flex flex-1 items-center gap-1">
-          <span className="font-mono text-[8px] text-nexus-text-muted">TTL</span>
+          <span className="font-mono text-[8px] text-nexus-text-muted">时限</span>
           <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.05]">
             <div className="h-full rounded-full" style={{ width: `${ttlPct}%`, background: ttlPct < 20 ? "#dc2626" : "#5b9bd5" }} />
           </div>
@@ -122,8 +188,9 @@ function ExecMonitorRail() {
 
 export function LeftRail() {
   return (
-    <aside className="z-20 flex h-full w-[208px] flex-col bg-nexus-bg-surface/85 backdrop-blur-md">
+    <aside className="pointer-events-auto z-20 flex h-full w-[208px] flex-col border-r border-white/[0.06] bg-nexus-bg-surface/85 backdrop-blur-md">
       <ThreatRail />
+      <AssetRail />
       <ExecMonitorRail />
     </aside>
   );

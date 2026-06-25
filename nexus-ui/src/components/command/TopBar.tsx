@@ -30,13 +30,9 @@ export function TopBar() {
   }, [high, tickWindow]);
 
   return (
-    <header className="relative z-30 flex h-[46px] items-center gap-3 border-b border-white/[0.06] bg-nexus-bg-surface/85 px-3 backdrop-blur-md">
-      {/* 密级 */}
-      <span className="rounded-sm border border-[#e8724a]/40 bg-[#e8724a]/10 px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-wider text-[#e8724a]">
-        机密 // SECRET
-      </span>
+    <header className="pointer-events-auto relative z-30 flex h-[46px] items-center gap-3 border-b border-white/[0.06] bg-nexus-bg-surface/85 px-3 backdrop-blur-md">
       <span className="text-sm font-semibold text-nexus-text-primary">指挥员作战屏</span>
-      <span className="text-xs text-nexus-text-muted">要地 K-1 · AOR-7</span>
+      <span className="text-xs text-nexus-text-muted">要地一号 · 七号责任区</span>
 
       {/* 窗口倒计时 */}
       <div
@@ -58,8 +54,8 @@ export function TopBar() {
       {/* 优势环快慢相位 */}
       <div className="hidden items-center gap-1.5 lg:flex">
         <span className="text-[10px] text-nexus-text-muted">优势环</span>
-        <span className="rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-[#5b9bd5]">快环 OODA·研判</span>
-        <span className="rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-nexus-text-secondary">慢环 学习·飞轮</span>
+        <span className="rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-[#5b9bd5]">快环 · 研判</span>
+        <span className="rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-nexus-text-secondary">慢环 · 学习飞轮</span>
       </div>
 
       {/* 指挥员 */}
@@ -67,7 +63,7 @@ export function TopBar() {
         <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#3bb87a]/15 font-mono text-[10px] font-bold text-[#3bb87a]">指</div>
         <div className="leading-tight">
           <div className="text-[11px] text-nexus-text-primary">值班指挥员 · 上校 周</div>
-          <div className="text-[9px] text-nexus-text-muted">裁决权威 · L3</div>
+          <div className="text-[9px] text-nexus-text-muted">裁决权威 · 三级</div>
         </div>
       </div>
 
@@ -89,14 +85,16 @@ export function TopBar() {
       {/* 演示：两态切换 */}
       <button
         onClick={high ? exitHighPressure : enterHighPressure}
+        title={high ? "退出蜂群高压裁决态，回到日常监视态" : "演示入口：进入蜂群高压裁决态，主攻群将分叉出 3 条可裁决未来"}
         className={cn(
-          "rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+          "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold transition-all",
           high
-            ? "border-white/[0.1] text-nexus-text-secondary hover:bg-white/[0.04]"
-            : "border-[#dc2626]/50 bg-[#dc2626]/10 text-[#dc2626] hover:bg-[#dc2626]/20",
+            ? "border-white/[0.12] text-nexus-text-secondary hover:bg-white/[0.04]"
+            : "border-[#dc2626] bg-[#dc2626]/15 text-[#dc2626] hover:bg-[#dc2626]/25 animate-pulse-glow",
         )}
       >
-        {high ? "解除高压" : "模拟岔路触发"}
+        {high ? <Activity size={13} /> : <AlertTriangle size={13} />}
+        {high ? "退出高压态" : "进入蜂群高压态"}
       </button>
     </header>
   );
