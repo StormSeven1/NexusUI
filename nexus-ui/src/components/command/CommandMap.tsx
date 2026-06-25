@@ -9,6 +9,7 @@ import {
   CMD_ASSETS,
   GEO_ZONES,
   COAS,
+  ASSET_TYPE_LABEL,
   MAP_CENTER,
   MAP_ZOOM,
   KEY_AREA,
@@ -238,6 +239,16 @@ export function CommandMap() {
                       <rect x={p.x - 7} y={p.y - 7} width={14} height={14} transform={`rotate(45 ${p.x} ${p.y})`} fill="rgba(59,184,122,0.15)" stroke="#3bb87a" strokeWidth={1.5} />
                       <text x={p.x + 12} y={p.y + 4} fill="#3bb87a" fontSize={10} fontWeight={600} fontFamily="var(--font-mono)">{a.name}</text>
                     </>
+                  ) : a.type === "tdoa" ? (
+                    <>
+                      {/* TDOA 用三角形符号 */}
+                      <polygon
+                        points={`${p.x},${p.y - 7} ${p.x + 6},${p.y + 4} ${p.x - 6},${p.y + 4}`}
+                        fill="rgba(212,147,42,0.18)" stroke="#d4932a" strokeWidth={1.4}
+                      />
+                      <circle cx={p.x} cy={p.y} r={1.5} fill="#d4932a" />
+                      <text x={p.x + 10} y={p.y + 3} fill="#d4932a" fontSize={8.5} fontFamily="var(--font-mono)" fontWeight={600}>{a.name}</text>
+                    </>
                   ) : (
                     <>
                       <circle cx={p.x} cy={p.y} r={a.type === "interceptor" ? 5 : 4} fill="rgba(91,155,213,0.2)" stroke={a.status === "degraded" ? "#d4932a" : "#5b9bd5"} strokeWidth={1.5} />
@@ -248,7 +259,7 @@ export function CommandMap() {
               );
             })}
 
-          {/* 威胁群成员散点（监视态显示原始航迹密度） */}
+          {/* 威胁群成员散点（监视态显示原��航迹密度） */}
           {layers.tracks &&
             mode === "monitor" &&
             memberDots.map((g) =>
@@ -258,27 +269,40 @@ export function CommandMap() {
               }),
             )}
 
-          {/* 威胁群轮廓 + 标签 */}
+          {/* 威胁目标（群 + 单体统一渲染，样式有别） */}
           {layers.groups &&
             THREAT_GROUPS.map((g) => {
-              const hull = g.hull.map((c) => proj(c[0], c[1]));
               const c = proj(g.lng, g.lat);
               const color = FORCE_COLORS[g.disposition];
               const dim = mode === "highpressure" && !g.primary ? 0.3 : 1;
               const isSel = selected?.kind === "group" && selected.id === g.id;
-              return (
-                <g key={g.id} className="cursor-pointer" opacity={dim} onClick={() => selectObject({ kind: "group", id: g.id })}>
-                  <path d={polyPath(hull)} fill={`${color}14`} stroke={color} strokeWidth={isSel ? 2 : 1.2} strokeDasharray={g.trust === "pending" ? "5 4" : undefined} pointerEvents="none" />
-                  {/* 中心小热区可点，hull 面积透传给地图 */}
-                  <circle cx={c.x} cy={c.y} r={16} fill="transparent" className="pointer-events-auto" />
-                  <circle cx={c.x} cy={c.y} r={3} fill={color} pointerEvents="none" />
-                  <text x={c.x} y={c.y - 10} fill={color} fontSize={11} fontWeight={700} textAnchor="middle" fontFamily="var(--font-mono)">{g.id}</text>
-                  <text x={c.x} y={c.y + 18} fill="#8b8b93" fontSize={8} textAnchor="middle" fontFamily="var(--font-mono)">{g.trackCount} 迹 · 威胁 {(g.threat * 100).toFixed(0)}</text>
-                  {g.decoy && (
-                    <text x={c.x} y={c.y + 30} fill="#d4932a" fontSize={8} textAnchor="middle">判诱饵?</text>
-                  )}
-                </g>
-              );
+
+              if (g.isGroup) {
+                // --- 群目标：凸包轮廓 ---
+                const hull = g.hull.map((cv) => proj(cv[0], cv[1]));
+                return (
+                  <g key={g.id} className="cursor-pointer" opacity={dim} onClick={() => selectObject({ kind: "group", id: g.id })}>
+                    <path d={polyPath(hull)} fill={`${color}14`} stroke={color} strokeWidth={isSel ? 2 : 1.2} strokeDasharray={g.trust === "pending" ? "5 4" : undefined} pointerEvents="none" />
+                    <circle cx={c.x} cy={c.y} r={16} fill="transparent" className="pointer-events-auto" />
+                    <circle cx={c.x} cy={c.y} r={3} fill={color} pointerEvents="none" />
+                    <text x={c.x} y={c.y - 10} fill={color} fontSize={11} fontWeight={700} textAnchor="middle" fontFamily="var(--font-mono)">{g.name}</text>
+                    <text x={c.x} y={c.y + 18} fill="#8b8b93" fontSize={8} textAnchor="middle" fontFamily="var(--font-mono)">{g.trackCount} 迹 · T{(g.threat * 100).toFixed(0)}</text>
+                    {g.decoy && <text x={c.x} y={c.y + 28} fill="#d4932a" fontSize={7.5} textAnchor="middle" fontFamily="var(--font-mono)">疑诱饵</text>}
+                  </g>
+                );
+              } else {
+                // --- 单体目标：菱形图标，更小更精确 ---
+                return (
+                  <g key={g.id} className="cursor-pointer" opacity={dim} onClick={() => selectObject({ kind: "group", id: g.id })}>
+                    <rect x={c.x - 6} y={c.y - 6} width={12} height={12} transform={`rotate(45 ${c.x} ${c.y})`}
+                      fill={`${color}22`} stroke={color} strokeWidth={isSel ? 2 : 1.4}
+                      strokeDasharray={g.trust === "pending" ? "3 2" : undefined} pointerEvents="none" />
+                    <circle cx={c.x} cy={c.y} r={14} fill="transparent" className="pointer-events-auto" />
+                    <text x={c.x} y={c.y - 12} fill={color} fontSize={9.5} fontWeight={700} textAnchor="middle" fontFamily="var(--font-mono)">{g.name}</text>
+                    <text x={c.x} y={c.y + 18} fill="#8b8b93" fontSize={7.5} textAnchor="middle" fontFamily="var(--font-mono)">单体 · T{(g.threat * 100).toFixed(0)}</text>
+                  </g>
+                );
+              }
             })}
 
           {/* ── 高压态：分叉几何 ── */}
@@ -378,8 +402,33 @@ export function CommandMap() {
                       </text>
                     </g>
 
+                    {/* 击毁效果：拦截窗之后爆炸粒子 */}
+                    {isSel && scrubT >= coa.intercept.t && (() => {
+                      const kill = proj(coa.intercept.lng, coa.intercept.lat);
+                      const killAge = (scrubT - coa.intercept.t) / (1 - coa.intercept.t); // 0..1
+                      const opacity = Math.max(0, 1 - killAge * 1.4);
+                      // 8 个爆炸粒子向外扩散
+                      const particles = Array.from({ length: 8 }, (_, i) => {
+                        const angle = (i / 8) * Math.PI * 2;
+                        const r = killAge * 28;
+                        return { x: kill.x + Math.cos(angle) * r, y: kill.y + Math.sin(angle) * r };
+                      });
+                      return (
+                        <g opacity={opacity}>
+                          {particles.map((p, i) => (
+                            <circle key={i} cx={p.x} cy={p.y} r={2} fill={coa.color} />
+                          ))}
+                          <circle cx={kill.x} cy={kill.y} r={killAge * 18} fill="none" stroke={coa.color} strokeWidth={1.5} opacity={0.7} />
+                          <circle cx={kill.x} cy={kill.y} r={killAge * 9} fill={`${coa.color}33`} />
+                          <text x={kill.x} y={kill.y - killAge * 20 - 4} fill={coa.color} fontSize={9} textAnchor="middle" fontWeight={700} fontFamily="var(--font-mono)">
+                            击毁
+                          </text>
+                        </g>
+                      );
+                    })()}
+
                     {/* 推演行进目标点（选定即预演，签订后继续执行） */}
-                    {isSel && scrubT > 0 && (() => {
+                    {isSel && scrubT > 0 && scrubT < coa.intercept.t && (() => {
                       const pos = beamPosAt(coa.beam, scrubT);
                       const pp = proj(pos.lng, pos.lat);
                       return (

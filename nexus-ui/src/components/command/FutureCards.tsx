@@ -38,12 +38,7 @@ export function FutureCards() {
   if (mode !== "highpressure" || committed) return null;
 
   return (
-    <div
-      className={cn(
-        "pointer-events-none absolute left-1/2 z-20 w-full max-w-[760px] -translate-x-1/2 px-3 transition-all",
-        selectedCoa ? "bottom-[104px]" : "bottom-16",
-      )}
-    >
+    <div className="pointer-events-none absolute bottom-10 left-1/2 z-20 w-full max-w-[760px] -translate-x-1/2 px-3">
       <div className="mb-1.5 flex items-center justify-center gap-1.5">
         <GitFork size={12} className="text-[#e8724a]" />
         <span className="font-mono text-[10px] tracking-wider text-nexus-text-secondary">

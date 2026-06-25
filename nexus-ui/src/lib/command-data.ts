@@ -26,6 +26,8 @@ export interface ThreatGroup {
   trackCount: number;
   /** 研判威胁度 0..1 */
   threat: number;
+  /** true=群目标（多航迹），false=单体目标（单一航迹） */
+  isGroup: boolean;
   /** 是否为主攻群（高压态从此分叉） */
   primary?: boolean;
   /** 信任状态 */
@@ -52,6 +54,7 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     ],
     trackCount: 14,
     threat: 0.92,
+    isGroup: true,
     primary: true,
     trust: "trusted",
     summary: "14 航迹密集编队，航向 285°，速度 420 节，逼近要地一号。",
@@ -70,6 +73,7 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     ],
     trackCount: 9,
     threat: 0.74,
+    isGroup: true,
     trust: "trusted",
     summary: "9 航迹，北侧高度层 5500 米，疑似牵制 / 掩护主攻。",
   },
@@ -87,6 +91,7 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     ],
     trackCount: 11,
     threat: 0.55,
+    isGroup: true,
     trust: "pending",
     summary: "11 航迹，射频特征矛盾，机器判为诱饵（置信 0.61，单源）。",
     decoy: true,
@@ -105,6 +110,7 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     ],
     trackCount: 8,
     threat: 0.41,
+    isGroup: true,
     trust: "pending",
     summary: "8 航迹，低慢小，身份未决，待补证。",
   },
@@ -122,8 +128,36 @@ export const THREAT_GROUPS: ThreatGroup[] = [
     ],
     trackCount: 8,
     threat: 0.2,
+    isGroup: true,
     trust: "trusted",
     summary: "8 民用航运航迹，航运通道，威胁低。",
+  },
+  /* ── 单体目标 ── */
+  {
+    id: "目标-甲",
+    name: "低慢小-01",
+    disposition: "hostile",
+    lng: -1.62,
+    lat: 51.32,
+    hull: [[-1.63, 51.33], [-1.61, 51.33], [-1.61, 51.31], [-1.63, 51.31]],
+    trackCount: 1,
+    threat: 0.68,
+    isGroup: false,
+    trust: "trusted",
+    summary: "单体，高度 80 米，速度 95 节，疑巡飞弹，航向 260°。",
+  },
+  {
+    id: "目标-乙",
+    name: "不明飞行物-02",
+    disposition: "unknown",
+    lng: -1.45,
+    lat: 51.15,
+    hull: [[-1.46, 51.16], [-1.44, 51.16], [-1.44, 51.14], [-1.46, 51.14]],
+    trackCount: 1,
+    threat: 0.47,
+    isGroup: false,
+    trust: "pending",
+    summary: "单体，RCS 极小，速度 52 节，低空，身份待决。",
   },
 ];
 
@@ -132,7 +166,7 @@ export const THREAT_GROUPS: ThreatGroup[] = [
 export interface CmdAsset {
   id: string;
   name: string;
-  type: "radar" | "interceptor" | "drone" | "key-area";
+  type: "radar" | "interceptor" | "drone" | "tdoa" | "key-area";
   status: "online" | "degraded" | "offline";
   lng: number;
   lat: number;
@@ -143,6 +177,7 @@ export const ASSET_TYPE_LABEL: Record<CmdAsset["type"], string> = {
   radar: "雷达",
   interceptor: "拦截单元",
   drone: "无人机",
+  tdoa: "TDOA定位站",
   "key-area": "要地",
 };
 
@@ -159,7 +194,11 @@ export const CMD_ASSETS: CmdAsset[] = [
   { id: "资产-雷达3", name: "3号雷达", type: "radar", status: "degraded", lng: -1.9, lat: 51.6, rangeKm: 55 },
   { id: "资产-拦截1", name: "1号拦截单元", type: "interceptor", status: "online", lng: -2.28, lat: 51.28 },
   { id: "资产-拦截2", name: "2号拦截单元", type: "interceptor", status: "online", lng: -2.18, lat: 51.4 },
-  { id: "资产-无人机1", name: "1号侦察无人机", type: "drone", status: "online", lng: -1.95, lat: 51.15, rangeKm: 25 },
+  { id: "资产-无人机1", name: "1号无人机", type: "drone", status: "online", lng: -1.95, lat: 51.15, rangeKm: 25 },
+  { id: "资产-无人机2", name: "2号无人机", type: "drone", status: "online", lng: -2.05, lat: 51.22, rangeKm: 20 },
+  { id: "资产-无人机3", name: "3号无人机", type: "drone", status: "online", lng: -2.0, lat: 51.1, rangeKm: 20 },
+  { id: "资产-tdoa1", name: "TDOA-1站", type: "tdoa", status: "online", lng: -2.15, lat: 51.18, rangeKm: 30 },
+  { id: "资产-tdoa2", name: "TDOA-2站", type: "tdoa", status: "online", lng: -2.25, lat: 51.3, rangeKm: 30 },
 ];
 
 /* ───────────────────── 地理约束（责任区/禁射区） ───────────────────── */
@@ -348,6 +387,46 @@ export const COAS: COA[] = [
         cost: "续航 -18%",
         note: "前推至束前缘，二次确认编队规模与诱饵。",
       },
+      {
+        assetId: "资产-无人机2",
+        assetName: "2号无人机",
+        role: "蜂群拦截-1",
+        action: "intercept",
+        path: [[-2.05, 51.22], [-2.08, 51.24], [-2.06, 51.26]],
+        actAtT: 0.5,
+        cost: "弹载 ×1",
+        note: "蜂群第一波前出，与 1号拦截单元 交叉覆盖，增大杀伤概率。",
+      },
+      {
+        assetId: "资产-无人机3",
+        assetName: "3号无人机",
+        role: "蜂群拦截-2",
+        action: "intercept",
+        path: [[-2.0, 51.1], [-2.04, 51.2], [-2.06, 51.25]],
+        actAtT: 0.52,
+        cost: "弹载 ×1",
+        note: "蜂群第二波，覆盖主攻群低高度成员，补充导引头盲区。",
+      },
+      {
+        assetId: "资产-tdoa1",
+        assetName: "TDOA-1站",
+        role: "近距定位补充",
+        action: "illuminate",
+        path: [[-2.15, 51.18]],
+        actAtT: 0.35,
+        cost: "时差测量 ×1",
+        note: "在主攻群进入 30 公里后启动 TDOA 精确定位，修正拦截弹末端导引。",
+      },
+      {
+        assetId: "资产-tdoa2",
+        assetName: "TDOA-2站",
+        role: "TDOA冗余",
+        action: "illuminate",
+        path: [[-2.25, 51.3]],
+        actAtT: 0.35,
+        cost: "时差测量 ×1",
+        note: "与 TDOA-1站 联合组网，三角定位精度 < 50 米。",
+      },
     ],
     card: {
       outcome: "T+90秒 于 1号拦截单元 正前方拦截，主攻群被挡在要地一号外 18 公里。",
@@ -433,6 +512,36 @@ export const COAS: COA[] = [
         cost: "续航 -22%",
         note: "侧翼监视 北翼群 是否转入，防兵力稀释。",
       },
+      {
+        assetId: "资产-无人机2",
+        assetName: "2号无人机",
+        role: "蜂群前锋",
+        action: "intercept",
+        path: [[-2.05, 51.22], [-2.06, 51.3], [-2.04, 51.36]],
+        actAtT: 0.58,
+        cost: "弹载 ×1",
+        note: "北线蜂群前锋，T+105秒 提前接触，消耗主攻群规避机动能力。",
+      },
+      {
+        assetId: "资产-无人机3",
+        assetName: "3号无人机",
+        role: "蜂群后继",
+        action: "intercept",
+        path: [[-2.0, 51.1], [-2.02, 51.28], [-2.0, 51.37]],
+        actAtT: 0.62,
+        cost: "弹载 ×1",
+        note: "蜂群后继，覆盖前锋漏网目标，双波拦截总杀伤概率 +35%。",
+      },
+      {
+        assetId: "资产-tdoa1",
+        assetName: "TDOA-1站",
+        role: "近距定位",
+        action: "illuminate",
+        path: [[-2.15, 51.18]],
+        actAtT: 0.42,
+        cost: "时差测量 ×1",
+        note: "TDOA 组网激活，精确定位主攻群中心，修正 2号拦截单元 末端导引。",
+      },
     ],
     card: {
       outcome: "T+115秒 经 2号拦截单元 北线双层拦截，纵深更大、容错更高。",
@@ -513,6 +622,26 @@ export const COAS: COA[] = [
         actAtT: 0.45,
         cost: "续航 -25%",
         note: "贴地跟踪，补 3号雷达 衰减形成的低空盲区。",
+      },
+      {
+        assetId: "资产-无人机2",
+        assetName: "2号无人机",
+        role: "静默蜂群-1",
+        action: "intercept",
+        path: [[-2.05, 51.22], [-2.08, 51.16], [-2.1, 51.13]],
+        actAtT: 0.53,
+        cost: "弹载 ×1",
+        note: "无线电静默南线机动，T+95秒 低功率接敌，不暴露主阵地位置。",
+      },
+      {
+        assetId: "资产-tdoa2",
+        assetName: "TDOA-2站",
+        role: "近距 TDOA 补充",
+        action: "illuminate",
+        path: [[-2.25, 51.3]],
+        actAtT: 0.45,
+        cost: "时差测量 ×1",
+        note: "南线 TDOA 激活，为静默拦截提供终端精确位置，减少主动雷达辐射。",
       },
     ],
     card: {

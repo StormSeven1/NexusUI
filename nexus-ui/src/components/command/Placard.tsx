@@ -81,11 +81,22 @@ export function Placard() {
 
   if (!selected) return null;
 
+  // Compute viewport fractions for anchor-aware positioning
+  const getAnchor = (lng: number, lat: number) => {
+    const vw = typeof window !== "undefined" ? window.innerWidth : 1440;
+    const vh = typeof window !== "undefined" ? window.innerHeight : 900;
+    // Approximate: map covers full viewport, use linear normalization relative to scene bounds
+    const xFrac = (lng - (-3.0)) / ((-0.8) - (-3.0));
+    const yFrac = (lat - 51.8) / (50.6 - 51.8);
+    return { x: Math.max(0, Math.min(1, xFrac)), y: Math.max(0, Math.min(1, yFrac)) };
+  };
+
   if (selected.kind === "asset") {
     const a = CMD_ASSETS.find((x) => x.id === selected.id);
     if (!a) return null;
+    const anchor = getAnchor(a.lng, a.lat);
     return (
-      <Shell onClose={() => selectObject(null)} title={a.name} sub={`${ASSET_TYPE_LABEL[a.type]} · ${ASSET_STATUS_LABEL[a.status]}`} accent="#5b9bd5">
+      <Shell onClose={() => selectObject(null)} title={a.name} sub={`${ASSET_TYPE_LABEL[a.type]} · ${ASSET_STATUS_LABEL[a.status]}`} accent="#5b9bd5" anchorPercent={anchor}>
         <div className="space-y-1 font-mono text-[10px] text-nexus-text-secondary">
           <Row k="类型" v={ASSET_TYPE_LABEL[a.type]} />
           <Row k="状态" v={ASSET_STATUS_LABEL[a.status]} />
@@ -100,9 +111,10 @@ export function Placard() {
   if (!g) return null;
   const color = FORCE_COLORS[g.disposition];
   const lowTrust = g.trust !== "trusted";
+  const anchor = getAnchor(g.lng, g.lat);
 
   return (
-    <Shell onClose={() => selectObject(null)} title={g.name} sub={`${FORCE_LABELS[g.disposition]} · ${g.trackCount} 航迹 · 威胁 ${(g.threat * 100).toFixed(0)}`} accent={color}>
+    <Shell onClose={() => selectObject(null)} title={g.name} sub={`${FORCE_LABELS[g.disposition]} · ${g.isGroup ? g.trackCount + " 航迹" : "单体"} · 威胁 ${(g.threat * 100).toFixed(0)}`} accent={color} anchorPercent={anchor}>
       {/* 信任标 */}
       <div className="mb-2 flex items-center gap-2">
         <span
@@ -158,9 +170,36 @@ export function Placard() {
   );
 }
 
-function Shell({ onClose, title, sub, accent, children }: { onClose: () => void; title: string; sub: string; accent?: string; children: React.ReactNode }) {
+function Shell({ onClose, title, sub, accent, children, anchorPercent }: {
+  onClose: () => void;
+  title: string;
+  sub: string;
+  accent?: string;
+  children: React.ReactNode;
+  /** 0..1 fractions of viewport where the entity lives; used to decide left/right side */
+  anchorPercent?: { x: number; y: number };
+}) {
+  // Position the placard near the entity but keep it on-screen.
+  // If entity is on the right half → open to the left; otherwise open to the right.
+  const toLeft = anchorPercent ? anchorPercent.x > 0.55 : false;
+  const anchorStyle = anchorPercent
+    ? {
+        position: "fixed" as const,
+        left: toLeft
+          ? `${Math.max(4, anchorPercent.x * 100 - 36)}vw`
+          : `${Math.min(64, anchorPercent.x * 100 + 4)}vw`,
+        top: `${Math.min(72, Math.max(8, anchorPercent.y * 100 - 20))}vh`,
+      }
+    : undefined;
+
   return (
-    <div className="absolute bottom-16 right-[196px] z-30 w-[300px] animate-fade-in rounded-xl border bg-nexus-bg-surface/95 p-3 shadow-2xl backdrop-blur-md" style={{ borderColor: accent ? `${accent}55` : "rgba(255,255,255,0.08)" }}>
+    <div
+      className="z-30 w-[300px] animate-fade-in rounded-xl border bg-nexus-bg-surface/95 p-3 shadow-2xl backdrop-blur-md"
+      style={{
+        ...(anchorStyle ?? { position: "fixed" as const, bottom: "4rem", right: "16rem" }),
+        borderColor: accent ? `${accent}55` : "rgba(255,255,255,0.08)",
+      }}
+    >
       <div className="mb-2 flex items-start justify-between">
         <div>
           <div className="text-[13px] font-semibold" style={{ color: accent ?? "#d4d4d8" }}>{title}</div>

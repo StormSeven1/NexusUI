@@ -42,7 +42,7 @@ export function Scrubber() {
   const interceptT = coa?.intercept.t ?? 0.5;
 
   return (
-    <div className="absolute bottom-9 left-1/2 z-20 w-full max-w-[680px] -translate-x-1/2 px-3">
+    <div className="absolute left-[44px] right-[248px] top-[47px] z-20 px-3">
       <div className="rounded-lg border border-white/[0.06] bg-nexus-bg-surface/92 p-2.5 backdrop-blur-md">
         <div className="mb-1.5 flex items-center gap-2">
           <button
