@@ -39,10 +39,17 @@ import { buildUavZlmSignalingUrl, buildUavZlmStreamKey, getUavZlmWebrtcBaseUrl }
 import { fetchUavPlatformSignalingUrl } from "@/lib/eo-video/resolveUavLiveByPlatform";
 import { fetchResolvedUavPlaybackIds } from "@/lib/eo-video/resolveUavPlaybackByEntity";
 import type { EoDetectionBox, EoVideoStreamEntry, EoVideoStreamsConfig } from "@/lib/eo-video/types";
-import { postUavControlAction, type UavControlAction } from "@/lib/eo-video/uavControlClient";
+import { postUavControlAction, isUavControlEffectivelyOk, type UavControlAction } from "@/lib/eo-video/uavControlClient";
+import {
+  registerLangGraphUavCommandHandler,
+  unregisterLangGraphUavCommandHandler,
+} from "@/lib/langgraph-eo-uav-command-bridge";
 import { useUavQuickContextStore } from "@/stores/uav-quick-context-store";
 import { pokeDroneLiveStream } from "@/lib/eo-video/pokeDroneLiveStream";
 import { postUavGimbalReset, uavMainPayloadIndexForDrone } from "@/lib/eo-video/postUavGimbalReset";
+import { postUavImgTrackingTask } from "@/lib/eo-video/uavImgTrackingClient";
+import { postUavTaskStop } from "@/lib/eo-video/uavTaskStopClient";
+import { postUavSwitchVideoCamera, type UavVideoLensType } from "@/lib/eo-video/postUavSwitchVideoCamera";
 import { resolveEoPipPlaybackUrl } from "@/lib/eo-video/resolveEoPipPlaybackUrl";
 import { useEoVideoDdsTaskLine } from "@/hooks/useEoVideoDdsTaskLine";
 import { useEoVideoSmartWindow } from "@/hooks/useEoVideoSmartWindow";
@@ -54,6 +61,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useVlmChatInjectStore } from "@/stores/vlm-chat-inject-store";
 import { toast } from "sonner";
 import { EoUavConsoleDock } from "./EoUavConsoleDock";
+import { EoUavLensSwitchBar } from "./EoUavLensSwitchBar";
 import { EoPipFloatingPlayer } from "./EoPipFloatingPlayer";
 import { EoStreamContextMenu } from "./EoStreamContextMenu";
 import { EoVideoBottomFloater } from "./EoVideoBottomFloater";
@@ -153,6 +161,16 @@ const DRONE_MAIN_PAYLOAD_SPECIAL = "80-0-0";
 /** 已有画面则不调私有云推流；黑屏超时后再发 poke（对齐现场「仅在拉不到时再推」） */
 const BLACK_SCREEN_LIVE_POKE_MS = 5000;
 
+/** 舱内→机场 FPV；舱外→机体主摄；MQTT 未知时默认机场 */
+function pickUavPlaySignalingUrl(
+  urls: { dock: string; air: string },
+  mqttDroneInDock: boolean | null,
+): string {
+  if (mqttDroneInDock === false) return urls.air || urls.dock;
+  if (mqttDroneInDock === true) return urls.dock || urls.air;
+  return urls.dock || urls.air;
+}
+
 const EO_VIDEO_DEBUG_UI = isEoVideoDebugUiEnabled();
 
 export function EoVideoPanel({
@@ -237,6 +255,8 @@ export function EoVideoPanel({
   const [pipResolving, setPipResolving] = useState(false);
   const [pipErr, setPipErr] = useState<string | null>(null);
   const [thirdPartySubPipsVisible, setThirdPartySubPipsVisible] = useState(true);
+  const [uavTrackTaskId, setUavTrackTaskId] = useState<string | null>(null);
+  const [uavActiveLens, setUavActiveLens] = useState<UavVideoLensType>("wide");
   const [uavActionBusy, setUavActionBusy] = useState<Partial<Record<UavControlAction, boolean>>>({});
   /** 无人机底部中间反馈（对齐 C++ 的即时提示语义） */
   const [uavBottomFeedback, setUavBottomFeedback] = useState<{
@@ -267,6 +287,8 @@ export function EoVideoPanel({
   const uavDebugLoggedRef = useRef("");
   const uavPlayLoggedRef = useRef("");
   const uavUrlsRef = useRef<{ dock: string; air: string } | null>(null);
+  const mqttDroneInDockRef = useRef<boolean | null>(null);
+  const [uavUrlsEpoch, setUavUrlsEpoch] = useState(0);
   /** 实体解析得到的机场/机体 SN，用于 MQTT topic（与取流 ZLM SN 一致，避免注册表 SN 错误导致收不到舱状态） */
   const [uavMqttProductIds, setUavMqttProductIds] = useState<{ airport: string; device: string } | null>(null);
   /** 无人机控制授权状态 */
@@ -752,6 +774,13 @@ export function EoVideoPanel({
     droneEntityId: activeStream?.uav?.entityId ?? null,
   });
 
+  const uavTrackingActive = useMemo(() => {
+    if (uavTrackTaskId) return true;
+    const line = ddsBottomTaskLine.trim();
+    if (!line || line === "空闲中") return false;
+    return /跟踪|trace|tracking/i.test(line);
+  }, [ddsBottomTaskLine, uavTrackTaskId]);
+
   useEffect(() => {
     if (!ptzSupported && !isThirdPartyStream) setPtzPanelOpen(false);
   }, [ptzSupported, isThirdPartyStream]);
@@ -1064,9 +1093,8 @@ export function EoVideoPanel({
           });
         }
         uavUrlsRef.current = urls;
-
-        // 舱内/舱外切换仅由下方 MQTT effect 驱动，避免本异步与 mqtt 状态竞态导致起飞后仍卡机场
-        setUavPlaySignalingUrl(urls.dock || urls.air || "");
+        setUavUrlsEpoch((n) => n + 1);
+        setUavPlaySignalingUrl(pickUavPlaySignalingUrl(urls, mqttDroneInDockRef.current));
       } catch (e) {
         if (!cancelled) {
           setUavPlayErr(e instanceof Error ? e.message : String(e));
@@ -1090,14 +1118,14 @@ export function EoVideoPanel({
   ]);
 
   useEffect(() => {
+    mqttDroneInDockRef.current = mqttDroneInDock;
+  }, [mqttDroneInDock]);
+
+  useEffect(() => {
     const urls = uavUrlsRef.current;
     if (!activeStream?.uav || !urls) return;
-    if (mqttDroneInDock === null) {
-      if (urls.dock) setUavPlaySignalingUrl(urls.dock);
-      return;
-    }
-    setUavPlaySignalingUrl(mqttDroneInDock ? urls.dock : (urls.air || urls.dock));
-  }, [mqttDroneInDock, activeStream?.uav, activeStreamId]);
+    setUavPlaySignalingUrl(pickUavPlaySignalingUrl(urls, mqttDroneInDock));
+  }, [mqttDroneInDock, activeStream?.uav, activeStreamId, uavUrlsEpoch]);
 
   useEffect(() => {
     const s = activeStream;
@@ -1526,16 +1554,16 @@ export function EoVideoPanel({
   }, []);
 
   const triggerUavAction = useCallback(
-    async (action: UavControlAction) => {
+    async (action: UavControlAction): Promise<boolean> => {
       if (!mqttAirportSn) {
         appendClientLog(`${new Date().toLocaleTimeString()} 无法执行 ${action}：缺少 airportSN`);
-        return;
+        return false;
       }
       if (action === "takeoff" && !mqttAirportLatLon) {
         appendClientLog(
           `${new Date().toLocaleTimeString()} 无法起飞：尚未从 MQTT 解析到机场经纬（请确认已订阅 thing/product/{SN}/state|osd 且报文含 data.latitude/longitude）`,
         );
-        return;
+        return false;
       }
       setUavActionBusy((prev) => ({ ...prev, [action]: true }));
       try {
@@ -1552,10 +1580,10 @@ export function EoVideoPanel({
               }
             : {}),
         });
-        if (!ret.ok) {
+        if (!isUavControlEffectivelyOk(ret)) {
           appendClientLog(`${new Date().toLocaleTimeString()} 无人机控制 ${action} 失败`);
           showUavBottomFeedback(`控制失败：${action}`, "error");
-          return;
+          return false;
         }
         const taskLine = ret.viaTaskCancel
           ? `任务取消=${ret.viaTaskCancel.ok ? "OK" : `FAIL(${ret.viaTaskCancel.status})`}(${ret.viaTaskCancel.url || "—"})`
@@ -1579,17 +1607,28 @@ export function EoVideoPanel({
         ].filter(Boolean);
         appendClientLog(parts.join(" · "));
         showUavBottomFeedback(`${action} 指令已发送`, "success");
+        return true;
       } catch (e) {
         appendClientLog(
           `${new Date().toLocaleTimeString()} 无人机控制 ${action} 异常：${e instanceof Error ? e.message : String(e)}`,
         );
         showUavBottomFeedback(`${action} 异常`, "error");
+        return false;
       } finally {
         setUavActionBusy((prev) => ({ ...prev, [action]: false }));
       }
     },
     [appendClientLog, mqttAirportLatLon, mqttAirportSn, mqttDeviceSn, showUavBottomFeedback],
   );
+
+  /** 智能助手 uav_return_to_base / uav_emergency_stop：仅当前焦点且播放 UAV 的光电窗接线 */
+  useEffect(() => {
+    const pid = dockPidNorm;
+    if (!pid || eoFocusedDockId !== pid || !activeStream?.uav) return;
+
+    registerLangGraphUavCommandHandler(pid, triggerUavAction);
+    return () => unregisterLangGraphUavCommandHandler(pid);
+  }, [dockPidNorm, eoFocusedDockId, activeStream?.uav, triggerUavAction]);
 
   // 无人机控制授权（对应 C++ UAV_CTRL_CONNECT → enter → exit 三步骤）
   const toggleUavAuth = useCallback(async () => {
@@ -2087,6 +2126,90 @@ export function EoVideoPanel({
     [detectionEntityId, taskBackendBaseUrl],
   );
 
+  const onUavImgTrackingTask = useCallback(
+    async (payload: { rectId: number; videoDetectType: 0 | 1 }) => {
+      const ap = (mqttAirportSn ?? activeStream?.uav?.airportSN ?? "").trim();
+      if (!ap) throw new Error("缺少机场 SN");
+      const requestBody = {
+        airportSN: ap,
+        rectId: payload.rectId,
+        videoDetectType: payload.videoDetectType,
+      };
+      const stamp = Date.now();
+      try {
+        const json = await postUavImgTrackingTask({
+          airportSN: ap,
+          rectId: payload.rectId,
+          videoDetectType: payload.videoDetectType,
+        });
+        setTaskTrace({
+          request: requestBody,
+          httpStatus: json.status ?? 200,
+          responseText: JSON.stringify(json),
+          at: stamp,
+        });
+        if (json.taskId) setUavTrackTaskId(json.taskId);
+        showUavBottomFeedback("无人机目标跟踪已发送", "success");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setTaskTrace({
+          request: requestBody,
+          httpStatus: null,
+          responseText: "",
+          fetchError: msg,
+          at: stamp,
+        });
+        showUavBottomFeedback(`无人机跟踪失败：${msg}`, "error");
+        throw e;
+      }
+    },
+    [activeStream?.uav?.airportSN, mqttAirportSn, showUavBottomFeedback],
+  );
+
+  const onUavStopTrackingTask = useCallback(async () => {
+    const tid = uavTrackTaskId?.trim();
+    if (!tid) {
+      showUavBottomFeedback("无可停止的无人机跟踪任务", "warn");
+      return;
+    }
+    await postUavTaskStop({ taskIds: [tid] });
+    setUavTrackTaskId(null);
+    showUavBottomFeedback("已发送取消无人机跟踪", "success");
+  }, [showUavBottomFeedback, uavTrackTaskId]);
+
+  const onUavLensSwitch = useCallback(
+    async (lens: UavVideoLensType) => {
+      const dr = (mqttDeviceSn ?? activeStream?.uav?.deviceSN ?? "").trim();
+      if (!dr) {
+        showUavBottomFeedback("缺少无人机 SN，无法切换镜头", "warn");
+        return;
+      }
+      try {
+        await postUavSwitchVideoCamera({
+          droneSn: dr,
+          payloadIndex: uavMainPayloadIndexForDrone(dr),
+          videoType: lens,
+        });
+        setUavActiveLens(lens);
+        showUavBottomFeedback(
+          lens === "wide" ? "已切换广角" : lens === "ir" ? "已切换红外" : "已切换变焦",
+          "success",
+        );
+      } catch (e) {
+        showUavBottomFeedback(
+          `镜头切换失败：${e instanceof Error ? e.message : String(e)}`,
+          "error",
+        );
+        throw e;
+      }
+    },
+    [activeStream?.uav?.deviceSN, mqttDeviceSn, showUavBottomFeedback],
+  );
+
+  useEffect(() => {
+    setUavTrackTaskId(null);
+  }, [activeStreamId]);
+
   if (loadErr) {
     return (
       <div
@@ -2181,15 +2304,29 @@ export function EoVideoPanel({
                     onClearCaptureLocalFolder={handleClearCaptureLocalFolder}
                     detectionBoxes={detectionBoxes}
                     onDetectionBoxesChange={setDetectionBoxes}
-                    onBottomCenterToast={showCameraBottomFeedback}
+                    onBottomCenterToast={(p) => showUavBottomFeedback(p.text, p.tone ?? "success")}
                     sideToolbarReserved
                     onCaptureReadyChange={onEoCaptureReadyChange}
                     snapshotCanvasRef={snapshotCanvasRef}
                     uavCameraAim={uavCameraAimUi}
                     expandedMode={expandedMode}
                     ddsCameraEntityId={cameraDdsEntityId}
+                    uavAirportSn={mqttAirportSn ?? activeStream?.uav?.airportSN ?? null}
+                    onUavImgTrackingTask={onUavImgTrackingTask}
+                    onUavStopTrackingTask={onUavStopTrackingTask}
+                    uavTrackingActive={uavTrackingActive}
                   />
                 )}
+                {expandedMode && uavPlaySignalingUrl && !uavPlayErr ? (
+                  <div className="pointer-events-none absolute inset-x-0 top-2 z-[28] flex justify-center px-2">
+                    <EoUavLensSwitchBar
+                      droneSn={(mqttDeviceSn ?? activeStream?.uav?.deviceSN ?? "").trim()}
+                      activeLens={uavActiveLens}
+                      disabled={!mqttDeviceSn?.trim() && !activeStream?.uav?.deviceSN?.trim()}
+                      onSwitch={onUavLensSwitch}
+                    />
+                  </div>
+                ) : null}
                 <div className="pointer-events-none absolute inset-0 z-30">
                   <div className="pointer-events-none absolute right-2 top-1/2 flex max-h-[min(88vh,560px)] -translate-y-1/2 flex-col items-center justify-center gap-1.5">
                     <Button

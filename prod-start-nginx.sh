@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 生产 HTTPS 启动（Nginx 反代）
-# - 外部访问: https://<host>:22401
+# - 外部访问: https://<host>:21911
 # - 内部前端: http://127.0.0.1:22411 (next start)
 # - 后端保持: http://127.0.0.1:27004
 # - public/app-config.prod.json 的 websocket / http.backendUrl 由本脚本写入（与 dev 的 app-config.dev.json 分离）
@@ -10,14 +10,29 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-PUBLIC_HTTPS_PORT="${PUBLIC_HTTPS_PORT:-22401}"
+if [[ -f "$ROOT/site-host.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT/site-host.env"
+fi
+
+# shellcheck disable=SC1091
+source "$ROOT/docker/render-prod-nginx.sh"
+
+if [[ -f "$ROOT/site-mode.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT/site-mode.env"
+fi
+
+if [[ -z "${PUBLIC_HTTPS_PORT:-}" ]]; then
+  PUBLIC_HTTPS_PORT="$(load_site_mode_public_port "$ROOT")"
+fi
+PUBLIC_HTTPS_PORT="${PUBLIC_HTTPS_PORT:-21911}"
 INTERNAL_FRONTEND_PORT="${INTERNAL_FRONTEND_PORT:-22411}"
 BACKEND_PORT="${BACKEND_PORT:-27004}"
 BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}"
-# 航迹明文 WS upstream（Nginx `location /wss-track/` → 该主机端口上的 `/ws`）。
-# 默认 **等于 BACKEND_PORT**（生产 xk_docker_prod 内 Custombackend 与航迹同源 **27004**；与 `dev-start.sh` 单机 **27003** 不同属刻意分工）。
-# 若航迹单独起在其它端口：`export TRACK_WS_BACKEND_PORT=26003` 等覆盖。
-# 须与 `public/app-config.prod.json` → `websocket.url` / `http.backendUrl` 端口一致，否则 502 或 HTTPS 混合内容拦截。
+# 生产 HTTPS 航迹 WS：app-config.prod 27004 → wss://…:21911/ws（location /ws）。
+# /wss-track/ 可选，默认同 BACKEND_PORT（28.9 deploy-28.9.sh 会 export TRACK_WS_BACKEND_PORT=$BP）。
+# 开发 HTTPS WSS 由 dev-wss-nginx.sh :22402 独立提供，本脚本不依赖 dev 27003。
 TRACK_WS_BACKEND_PORT="${TRACK_WS_BACKEND_PORT:-${BACKEND_PORT}}"
 MQTT_WS_BACKEND_PORT="${MQTT_WS_BACKEND_PORT:-8083}"
 EO_DETECTION_WS_BACKEND_PORT="${EO_DETECTION_WS_BACKEND_PORT:-2088}"
@@ -42,8 +57,10 @@ echo "   TRACK_WS_BACKEND_PORT=${TRACK_WS_BACKEND_PORT}（/wss-track upstream �
 
 chmod +x "$ROOT/docker/apply-app-config-endpoints.sh" 2>/dev/null || true
 _cfg_host="${APP_CONFIG_LAN_HOST:-${_tunnel_ip}}"
-echo "== 写入 nexus-ui/public/app-config.prod.json（生产: API ${BACKEND_PORT} / 航迹 WS ${TRACK_WS_BACKEND_PORT} @ ${_cfg_host}）=="
-APP_CONFIG_OUT=app-config.prod.json "$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BACKEND_PORT" "$TRACK_WS_BACKEND_PORT"
+echo "== 写入 nexus-ui/public/app-config.prod.json（生产: API/WS ${BACKEND_PORT} @ ${_cfg_host}）=="
+APP_CONFIG_OUT=app-config.prod.json "$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BACKEND_PORT" "$BACKEND_PORT"
+chmod +x "$ROOT/docker/apply-proxy-links-to-app-config.sh" 2>/dev/null || true
+"$ROOT/docker/apply-proxy-links-to-app-config.sh" "$ROOT"
 
 DO_SKIP_FRONTEND_BUILD=0
 PROD_START_ARGS=()
@@ -65,134 +82,7 @@ else
   echo "== 跳过宿主机 prod-build（--no-build）=="
 fi
 
-NGINX_DIR="$ROOT/docker/nginx"
-CERT_DIR="$NGINX_DIR/certs"
-CONF_FILE="$NGINX_DIR/prod-https.conf"
-CERT_FILE="$CERT_DIR/server.crt"
-KEY_FILE="$CERT_DIR/server.key"
-
-mkdir -p "$CERT_DIR"
-
-if [[ ! -f "$CERT_FILE" || ! -f "$KEY_FILE" ]]; then
-  HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  if [[ -z "${HOST_IP:-}" ]]; then
-    HOST_IP="127.0.0.1"
-  fi
-  echo "未检测到证书，正在生成自签证书（IP SAN: ${HOST_IP}）..."
-  openssl req -x509 -nodes -newkey rsa:2048 \
-    -keyout "$KEY_FILE" \
-    -out "$CERT_FILE" \
-    -days 3650 \
-    -subj "/CN=${HOST_IP}" \
-    -addext "subjectAltName=IP:${HOST_IP},IP:127.0.0.1"
-fi
-
-cat > "$CONF_FILE" <<EOF
-# HTTPS 同源 wss → 各明文 WS（与浏览器混合内容策略、wsHttpsRewrite 端口映射一致）
-server {
-    listen ${PUBLIC_HTTPS_PORT} ssl;
-    server_name _;
-
-    ssl_certificate     /etc/nginx/certs/server.crt;
-    ssl_certificate_key /etc/nginx/certs/server.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_timeout 10m;
-    ssl_session_cache shared:SSL:10m;
-    client_max_body_size 100m;
-
-    location /wss-track/ {
-        proxy_pass http://${TRACK_WS_BACKEND_HOST}:${TRACK_WS_BACKEND_PORT}/;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-        proxy_buffering off;
-    }
-
-    location /wss-mqtt/ {
-        proxy_pass http://127.0.0.1:${MQTT_WS_BACKEND_PORT}/;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-        proxy_buffering off;
-    }
-
-    location /wss-detection/ {
-        proxy_pass http://127.0.0.1:${EO_DETECTION_WS_BACKEND_PORT}/;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-        proxy_buffering off;
-    }
-
-    location /wss-track-eval/ {
-        proxy_pass http://127.0.0.1:${TRACK_EVAL_WS_BACKEND_PORT}/;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-        proxy_buffering off;
-    }
-
-    location /ws {
-        proxy_pass http://127.0.0.1:${BACKEND_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-        proxy_buffering off;
-    }
-
-    # 图标由容器内挂载文件直连返回，不经 Next（避免 upstream 22411 未就绪/failed 时出现 favicon.ico 502）
-    location = /favicon.ico {
-        alias /etc/nginx/static/favicon.ico;
-        default_type image/x-icon;
-        access_log off;
-        expires 7d;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:${INTERNAL_FRONTEND_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_connect_timeout 10s;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-}
-EOF
+render_prod_nginx_conf "$ROOT"
 
 wait_tcp_port() {
   local port="$1"
@@ -212,7 +102,7 @@ wait_tcp_port() {
 }
 
 echo "启动应用容器（前端内部端口 ${INTERNAL_FRONTEND_PORT}，后端 ${BACKEND_PORT}）..."
-# 先停 Nginx，避免 build 期间旧反代仍对外 22401 但 upstream 已断开 → 502
+# 先停 Nginx，避免 build 期间旧反代仍对外 21911 但 upstream 已断开 → 502
 docker rm -f "$NGINX_CONTAINER_NAME" 2>/dev/null || true
 FRONTEND_PORT="${INTERNAL_FRONTEND_PORT}" \
 BACKEND_PORT="${BACKEND_PORT}" \
@@ -224,24 +114,7 @@ wait_tcp_port "${BACKEND_PORT}" "Custombackend"
 wait_tcp_port "${INTERNAL_FRONTEND_PORT}" "Next.js (next start)"
 
 echo "启动 Nginx HTTPS 容器（外部端口 ${PUBLIC_HTTPS_PORT}）..."
-# 对已挂载的单文件改动若用 sed -i「原地换 inode」，仅 nginx -s reload 仍看得到旧副本，须 rm 后重建本容器。
-docker rm -f "$NGINX_CONTAINER_NAME" 2>/dev/null || true
-FAV_PUBLIC="${ROOT}/nexus-ui/public/favicon.ico"
-FAV_FALLBACK="${ROOT}/docker/nginx/static/favicon.ico"
-FAV_MOUNT="$FAV_PUBLIC"
-[[ -f "$FAV_MOUNT" ]] || FAV_MOUNT="$FAV_FALLBACK"
-if [[ ! -f "$FAV_MOUNT" ]]; then
-  echo "错误: 缺少 favicon（$FAV_PUBLIC 或 $FAV_FALLBACK），请补全图标文件后再启动。" >&2
-  exit 1
-fi
-
-docker run -d \
-  --name "$NGINX_CONTAINER_NAME" \
-  --network host \
-  -v "${CONF_FILE}:/etc/nginx/conf.d/default.conf:ro" \
-  -v "${CERT_DIR}:/etc/nginx/certs:ro" \
-  -v "${FAV_MOUNT}:/etc/nginx/static/favicon.ico:ro" \
-  "$NGINX_IMAGE" >/dev/null
+restart_prod_nginx_container "$ROOT"
 
 echo ""
 echo "✅ HTTPS 已就绪"

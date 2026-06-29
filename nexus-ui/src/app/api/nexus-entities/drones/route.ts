@@ -52,6 +52,7 @@ async function fetchAllEntityRecords(listUrl: string): Promise<unknown[]> {
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
+  const includeSimulated = searchParams.get("includeSimulated") === "1";
   const listUrl = (
     searchParams.get("url")?.trim() ||
     process.env.NEXUS_ENTITIES_LIST_URL?.trim() ||
@@ -60,7 +61,7 @@ export async function GET(req: Request) {
 
   try {
     const records = await fetchAllEntityRecords(listUrl);
-    const devices = mapEntityRecordsToDevices(records);
+    const devices = mapEntityRecordsToDevices(records, { includeSimulated });
     return NextResponse.json(
       {
         ok: true,

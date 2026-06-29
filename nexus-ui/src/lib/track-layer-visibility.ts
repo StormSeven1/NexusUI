@@ -19,12 +19,25 @@ export type AirFusionSubtypeVisibility = {
 
 export const DEFAULT_AIR_FUSION_SUBTYPE_VISIBLE: AirFusionSubtypeVisibility = {
   uav: true,
-  bird: true,
+  bird: false,
+};
+
+/** 新用户默认：仅对海融合 + 对空融合（子项仅无人机） */
+export const DEFAULT_TRACK_SUBTYPE_VISIBLE: TrackSubtypeVisibility = {
+  fuse_sea: true,
+  fuse_air: true,
+  bird_radar: false,
+  fanwu_car_radar: false,
+  radar_wharf: false,
+  radar_jingzi: false,
+  ais_track: false,
+  uav_pose_track: false,
 };
 
 /** 与 Custombackend `receiver_manager.TRACK_LAYER_KEY_BY_RECEIVER` 一致 */
 export const TRACK_LAYER_KEY_BY_DDS_SOURCE_ID: Record<string, TrackLayerKey> = {
   dds_forward_fuse_track: "fuse_sea",
+  dds_forward_fuse_track_legacy: "fuse_sea",
   dds_forward_fuse_bird_radar_track: "fuse_air",
   dds_forward_bird_radar_track: "bird_radar",
   dds_forward_fanwu_car_track: "fanwu_car_radar",

@@ -5,6 +5,7 @@ import { getDronePlatformBaseUrl } from "@/lib/drone-platform-base-url";
 import {
   fetchWithTimeout,
   getUavTaskApiBase,
+  getUavTaskServiceFetchTimeoutMs,
   loginAndGetSession,
   type LoginSession,
 } from "@/lib/server/uav-platform-server-session";
@@ -27,7 +28,7 @@ type ControlBody = {
 
 const TIMEOUT_MS = 15000;
 
-/** 与 uavctrlboard::sendCancelAllTasksRequest 请求体一致（POST m_struUrlConfig.UAV_TRACE_TASK） */
+/** 与 uavctrlboard::sendCancelAllTasksRequest 请求体一致（POST m_struUrlConfig.UAV_TRACE_TASK）；任务网关不可达时不抛错，继续走 HTTP/MQTT */
 async function postCancelAllMetaTasks(
   token: string,
   airportSN: string,
@@ -62,23 +63,28 @@ async function postCancelAllMetaTasks(
     owner: { entityId: ownerEntityId },
   };
   const url = `${taskBase}/api/v1/tasks`;
-  const res = await fetchWithTimeout(
-    url,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "x-auth-token": token,
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify(taskJson),
+        cache: "no-store",
       },
-      body: JSON.stringify(taskJson),
-      cache: "no-store",
-    },
-    TIMEOUT_MS,
-    "uav_cancel_meta_tasks",
-  );
-  const txt = await res.text().catch(() => "");
-  return { ok: res.ok, status: res.status, body: txt.slice(0, 800), url };
+      getUavTaskServiceFetchTimeoutMs(),
+      "uav_cancel_meta_tasks",
+    );
+    const txt = await res.text().catch(() => "");
+    return { ok: res.ok, status: res.status, body: txt.slice(0, 800), url };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, status: 0, body: msg.slice(0, 800), url };
+  }
 }
 
 function resolveMqttConnect(): (url: string, opts?: IClientOptions) => MqttClient {
@@ -263,24 +269,29 @@ async function callHttpControl(
   const method = (envByAction(action, "METHOD") || "POST").toUpperCase();
   const fullUrl = /^https?:\/\//i.test(urlFromEnv) ? fillTemplate(urlFromEnv, airportSN, deviceSN) : `${base}${fillTemplate(urlFromEnv, airportSN, deviceSN)}`;
   const payload = defaultHttpPayload(action, airportSN);
-  const res = await fetchWithTimeout(
-    fullUrl,
-    {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "x-auth-token": token,
+  try {
+    const res = await fetchWithTimeout(
+      fullUrl,
+      {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify(payload),
+        cache: "no-store",
       },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-    },
-    TIMEOUT_MS,
-    `uav_${action}_http`,
-  );
-  const txt = await res.text().catch(() => "");
-  const ok = bizOkFromDronePlatformBody(txt, res.ok);
-  return { ok, status: res.status, body: txt.slice(0, 800), url: fullUrl };
+      TIMEOUT_MS,
+      `uav_${action}_http`,
+    );
+    const txt = await res.text().catch(() => "");
+    const ok = bizOkFromDronePlatformBody(txt, res.ok);
+    return { ok, status: res.status, body: txt.slice(0, 800), url: fullUrl };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, status: 0, body: msg.slice(0, 800), url: fullUrl };
+  }
 }
 
 async function publishMqttControl(
@@ -374,7 +385,12 @@ export async function POST(req: NextRequest) {
     /** WatchSys uavctrlboard::onStopFlightSlot / onBackFlightSlot：先发 sendCancelAllTasksRequest，再发 api4third */
     let viaTaskCancel: { ok: boolean; status: number; body: string; url: string } | undefined;
     if (action === "stop" || action === "back") {
-      viaTaskCancel = await postCancelAllMetaTasks(session.token, airportSN);
+      try {
+        viaTaskCancel = await postCancelAllMetaTasks(session.token, airportSN);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        viaTaskCancel = { ok: false, status: 0, body: msg.slice(0, 800), url: getUavTaskApiBase() ?? "" };
+      }
     }
 
     const httpRes = await callHttpControl(action, base, session.token, airportSN, deviceSN);
@@ -383,7 +399,11 @@ export async function POST(req: NextRequest) {
       detail: e instanceof Error ? e.message : String(e),
     }));
 
-    const ok = httpRes.ok || mqttRes.ok;
+    /** 返航/停止：WatchSys 先发 DroneFlightBack 元任务，HTTP/MQTT 未配或平台 code≠0 时仍可能已生效 */
+    const ok =
+      httpRes.ok ||
+      mqttRes.ok ||
+      ((action === "stop" || action === "back") && Boolean(viaTaskCancel?.ok));
     const status = ok ? 200 : 502;
     return NextResponse.json(
       {

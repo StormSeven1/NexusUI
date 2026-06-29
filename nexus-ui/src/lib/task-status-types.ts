@@ -4,7 +4,10 @@
  */
 export type TaskStatusRequestBody = {
   taskStatus: number;
+  /** 相机子任务 taskId（原 taskID） */
   taskID?: string;
+  /** 工作流主任务 thread_id（与 chat_notification details.thread_id 一致） */
+  parentTaskId?: string;
   /** 上报方实体 id（`EntityId` / `entityId`），如 `camera_004`、`uav-007` */
   entityId?: string;
   /** legacy：标准光电序号；可由 `entityId` 推导，库表查图仍依赖此字段 */

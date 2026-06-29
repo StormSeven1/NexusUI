@@ -155,7 +155,7 @@ const WORKSPACE_CONFIGS = {
     statistics: [
       { label: "监控目标", value: "0", icon: MapPin, color: "text-blue-400" },
       { label: "跟踪航迹", value: "0", icon: Route, color: "text-green-400" },
-      { label: "预警事件", value: "0", icon: BarChart3, color: "text-orange-400" },
+      { label: "告警事件", value: "0", icon: BarChart3, color: "text-orange-400" },
       { label: "图层显示", value: "0", icon: Layers, color: "text-purple-400" },
     ] as StatRow[],
     tools: [],
@@ -277,7 +277,6 @@ export function WorkspaceDetails() {
   const basemapVectorVisibility = useAppStore((s) => s.basemapVectorVisibility);
   const basemapRasterLayers = useAppStore((s) => s.basemapRasterLayers);
   const basemapRasterVisibility = useAppStore((s) => s.basemapRasterVisibility);
-  const drawnAreas = useAppStore((s) => s.drawnAreas);
   const routeLines = useAppStore((s) => s.routeLines);
   const dbAreaRows = useDbAreaStore((s) => s.rows);
   const dbAreaVisibility = useDbAreaStore((s) => s.areaVisibility);
@@ -337,7 +336,7 @@ export function WorkspaceDetails() {
     return [
       { label: "监控目标", value: String(assets.length), icon: MapPin, color: "text-blue-400" },
       { label: "跟踪航迹", value: String(tracks.length), icon: Route, color: "text-green-400" },
-      { label: "预警事件", value: String(alerts.length), icon: BarChart3, color: "text-orange-400" },
+      { label: "告警事件", value: String(alerts.length), icon: BarChart3, color: "text-orange-400" },
       { label: "图层显示", value: String(layerN), icon: Layers, color: "text-purple-400" },
     ];
   }, [
@@ -412,7 +411,7 @@ export function WorkspaceDetails() {
       radarPanelIds,
     );
     const markers = tracks.length + assets.length;
-    const drawings = drawnAreas.length + routeLines.length;
+    const drawings = routeLines.length;
     return [
       { label: "加载图层", value: String(loaded), icon: Layers, color: "text-blue-400" },
       { label: "可见图层", value: String(visible), icon: MapPin, color: "text-green-400" },
@@ -430,7 +429,6 @@ export function WorkspaceDetails() {
     basemapRasterVisibility,
     trackSubtypeVisible,
     airFusionSubtypeVisible,
-    drawnAreas,
     routeLines,
     dbAreaRows,
     dbAreaVisibility,

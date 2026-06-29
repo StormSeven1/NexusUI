@@ -21,15 +21,11 @@ export function numericTargetIdForCameraTask(track: Pick<Track, "uniqueID" | "sh
 }
 
 /**
- * 无人机跟踪任务 `MultiDroneTracking.trackID_List` 用业务 track_id（`external_target_id` → 前端 `trackId`）。
- * 与告警/相机用的全局 `target_id`（`uniqueID`）分离。
+ * 无人机跟踪任务 `MultiDroneTracking.trackID_List` 用新 DDS `target_id`（前端 `uniqueID` / `showID`）。
+ * @deprecated 请用 `numericTargetIdForCameraTask`；保留别名避免遗漏引用。
  */
-export function numericTrackIdForDroneTask(track: Pick<Track, "trackId" | "uniqueID" | "showID">): number {
-  const s =
-    String(track.trackId ?? "").trim() ||
-    String(track.uniqueID ?? "").trim() ||
-    String(track.showID ?? "").trim();
-  return parsePositiveIntId(s);
+export function numericTrackIdForDroneTask(track: Pick<Track, "uniqueID" | "showID">): number {
+  return numericTargetIdForCameraTask(track);
 }
 
 /** @deprecated 请用 `numericTargetIdForCameraTask`；保留别名避免遗漏引用 */

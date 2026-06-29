@@ -39,6 +39,8 @@ import {
 } from "@/lib/opto-device-layer-visibility";
 import type { AssetData } from "@/stores/asset-store";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
+import { isCameraMapTaskExecuting } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import type { EoCameraDdsStatusRow } from "@/stores/eo-camera-dds-status-store";
 import {
   isThirdPartyCameraEntityId,
   normThirdPartyEntityId,
@@ -50,6 +52,7 @@ import {
   assetMapLabelTextColor,
   geoCircleCoords,
   geoSectorCoords,
+  geoSectorSideLineCoords,
   getAssetSymbolId,
   MAP_FRIENDLY_COLOR_PROP,
   MAP_LABEL_FONT_COLOR_PROP,
@@ -192,6 +195,15 @@ function assetStatusFromLabel(s: string | undefined): AssetStatus {
   return "online";
 }
 
+function resolveCameraDdsRow(
+  assetId: string,
+  cameraDdsById?: Readonly<Record<string, EoCameraDdsStatusRow | undefined>>,
+): EoCameraDdsStatusRow | undefined {
+  if (!cameraDdsById) return undefined;
+  const norm = canonicalEntityId(assetId);
+  return cameraDdsById[norm] ?? cameraDdsById[assetId];
+}
+
 /** 构建 FOV 多边形 + 名称点：仅处理 camera（光电），不含 tower（电侦） */
 export function buildFovGeoJSON(
   assetList: Asset[],
@@ -200,6 +212,9 @@ export function buildFovGeoJSON(
   panelCameraIds?: ReadonlySet<string> | null,
   /** 第三方 PTZ 相机：视场由 `ThirdPartyPtzFovModule` 用 DDS `originPtz.pan` 绘制，此处不画紫色扇形 */
   excludeFromOptoFovIds?: ReadonlySet<string> | null,
+  cameraDdsById?: Readonly<Record<string, EoCameraDdsStatusRow | undefined>>,
+  /** `sectorBorder.lineWidth>0` 时沿用整圈描边；否则仅任务执行中画两侧虚线 */
+  fovBorderOutline = false,
 ) {
   /* 仅光电(camera)画 FOV 扇区；电侦(tower)由 tower-maplibre 独立渲染 */
   const polyFeatures = assetList
@@ -234,6 +249,39 @@ export function buildFovGeoJSON(
       };
     });
 
+  const sideLineFeatures: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+  if (!fovBorderOutline) {
+    for (const a of assetList) {
+      if (a.type !== "camera") continue;
+      if (a.showFov === false) continue;
+      if (
+        isThirdPartyCameraEntityId(a.id) &&
+        excludeFromOptoFovIds?.has(normThirdPartyEntityId(a.id))
+      ) {
+        continue;
+      }
+      if (!shouldRenderOptoCameraFov(a.id, perDevice ?? {}, panelCameraIds ?? null)) continue;
+      if (!a.range || a.range <= 0) continue;
+      if (a.fovAngle === undefined || a.fovAngle >= 360 || a.heading === undefined) continue;
+
+      const taskExecuting = isCameraMapTaskExecuting(resolveCameraDdsRow(a.id, cameraDdsById));
+      if (!taskExecuting) continue;
+
+      for (const line of geoSectorSideLineCoords(a.lng, a.lat, a.range, a.heading, a.fovAngle)) {
+        sideLineFeatures.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: line },
+          properties: {
+            geomKind: "side",
+            id: a.id,
+            assetType: a.type,
+            isVirtual: a.isVirtual === true ? 1 : 0,
+          },
+        });
+      }
+    }
+  }
+
   const labelFeatures: GeoJSON.Feature<GeoJSON.Point>[] = [];
   for (const a of assetList) {
     /* 仅光电(camera)画 FOV 名称标签；电侦(tower)由 tower-maplibre 独立渲染 */
@@ -260,7 +308,7 @@ export function buildFovGeoJSON(
 
   return {
     type: "FeatureCollection" as const,
-    features: [...polyFeatures, ...labelFeatures] as GeoJSON.Feature[],
+    features: [...polyFeatures, ...sideLineFeatures, ...labelFeatures] as GeoJSON.Feature[],
   };
 }
 
@@ -343,6 +391,9 @@ export class OptoelectronicFovModule {
   private assetDispositionAccent: AssetDispositionIconAccent | null = null;
   /** `applyCamerasBundle` 最后一次配置；style 重建后 `install()` 需再套用，避免虚线/颜色回退 */
   private camerasBundle: AppConfigSectorBundle | null = null;
+  /** `sectorBorder.lineWidth>0` 时整圈描边；否则仅任务态两侧虚线 */
+  private fovBorderOutline = false;
+  private cameraDdsByEntityId: Record<string, EoCameraDdsStatusRow | undefined> = {};
   private lastFovAssets: Asset[] | null = null;
   private lastFovDataSig = "";
   private lastIconDataSig = "";
@@ -368,7 +419,7 @@ export class OptoelectronicFovModule {
           filter: ["==", ["get", "geomKind"], "poly"],
           paint: {
             /* 光电 FOV 填充色（仅 camera） */
-            "fill-color": "rgba(147,51,234,0.10)",
+            "fill-color": "#eab308",
             "fill-opacity": 0.10,
           },
         },
@@ -381,17 +432,12 @@ export class OptoelectronicFovModule {
           id: FOV_LINE,
           type: "line",
           source: FOV_SOURCE,
-          filter: ["==", ["get", "geomKind"], "poly"],
+          filter: ["==", ["get", "geomKind"], "side"],
           paint: {
-            /* 光电 FOV 线色（仅 camera） */
+            /* 光电 FOV 侧缘虚线（仅 camera 任务执行中输出 side 要素） */
             "line-color": "#9333ea",
             "line-width": 1.2,
-            "line-dasharray": [
-              "case",
-              ["==", ["get", "isVirtual"], 1],
-              ["literal", [6, 4]],
-              ["literal", [3, 3]],
-            ],
+            "line-dasharray": FOV_LINE_DASH_BY_VIRTUAL,
             "line-opacity": 0.4,
           },
         },
@@ -458,6 +504,21 @@ export class OptoelectronicFovModule {
     this.applyCoverageLayerVisibility();
   }
 
+  private applyFovLineLayerFilter() {
+    const m = this.map;
+    if (!m.getLayer(FOV_LINE)) return;
+    try {
+      m.setFilter(
+        FOV_LINE,
+        this.fovBorderOutline
+          ? (["==", ["get", "geomKind"], "poly"] as maplibregl.FilterSpecification)
+          : (["==", ["get", "geomKind"], "side"] as maplibregl.FilterSpecification),
+      );
+    } catch {
+      /* style 过渡 */
+    }
+  }
+
   /**
    * 从 cameras bundle 读取光电 FOV 扇区颜色（fill / line / dash）并应用到 MapLibre 图层。
    * bundle 为 null 时使用代码内默认值（与历史行为一致）。
@@ -482,12 +543,7 @@ export class OptoelectronicFovModule {
       m.setPaintProperty(FOV_LINE, "line-color", style.lineColor);
       m.setPaintProperty(FOV_LINE, "line-width", style.lineWidth);
       m.setPaintProperty(FOV_LINE, "line-opacity", style.lineOpacity);
-      m.setPaintProperty(FOV_LINE, "line-dasharray", [
-        "case",
-        ["==", ["get", "isVirtual"], 1],
-        ["literal", style.lineDashVirtual],
-        ["literal", style.lineDashReal],
-      ] as maplibregl.ExpressionSpecification);
+      m.setPaintProperty(FOV_LINE, "line-dasharray", FOV_LINE_DASH_BY_VIRTUAL);
     }
   }
 
@@ -530,7 +586,14 @@ export class OptoelectronicFovModule {
 
   setExcludeFromOptoFovIds(ids: ReadonlySet<string>) {
     this.excludeFromOptoFovIds = ids;
-    this.lastFovDataSig = "";
+    this.refreshFovGeoJson();
+  }
+
+  setCameraDdsStatus(byEntityId: Readonly<Record<string, EoCameraDdsStatusRow | undefined>>) {
+    this.cameraDdsByEntityId = { ...byEntityId };
+    if (!this.lastFovAssets) return;
+    const nextSig = this.buildFovDataSig(this.lastFovAssets);
+    if (nextSig === this.lastFovDataSig) return;
     this.refreshFovGeoJson();
   }
 
@@ -557,8 +620,11 @@ export class OptoelectronicFovModule {
         this.perDeviceVisibility,
         this.panelCameraIds,
         this.excludeFromOptoFovIds,
+        this.cameraDdsByEntityId,
+        this.fovBorderOutline,
       ) as GeoJSON.FeatureCollection,
     );
+    this.lastFovDataSig = this.buildFovDataSig(this.lastFovAssets);
   }
 
   private refreshFovLabelGeoJson() {
@@ -584,16 +650,21 @@ export class OptoelectronicFovModule {
     this.camerasBundle = bundle;
     const m = this.map;
     const border = laserSectorBorderFromBundle(bundle);
+    this.fovBorderOutline = border.emit;
     const vis = bundle?.visibility;
     this.applyFovLabelStyleFromBundle(bundle);
     this.applyFovStyleFromBundle(bundle);
+    this.applyFovLineLayerFilter();
     this.setCoverageLayerVisibility({
       fovFillVisible: vis?.sectorFillVisible !== false,
-      fovLineVisible: border.emit,
+      fovLineVisible: true,
       fovLabelVisible: sectorBundleAnyMergedVisible(bundle, "centerNameVisible"),
       fovIconVisible: sectorBundleAnyMergedVisible(bundle, "centerIconVisible"),
     });
-    if (!m.getLayer(FOV_LINE)) return;
+    if (!m.getLayer(FOV_LINE)) {
+      this.refreshFovGeoJson();
+      return;
+    }
     const rm = m as maplibregl.Map & { removePaintProperty?: (id: string, prop: string) => void };
     if (border.emit) {
       m.setPaintProperty(FOV_LINE, "line-width", border.lineWidth);
@@ -611,13 +682,9 @@ export class OptoelectronicFovModule {
       const style = resolveOptoFovStyle(bundle);
       m.setPaintProperty(FOV_LINE, "line-width", style.lineWidth);
       m.setPaintProperty(FOV_LINE, "line-color", _fovLineColor);
-      m.setPaintProperty(FOV_LINE, "line-dasharray", [
-        "case",
-        ["==", ["get", "isVirtual"], 1],
-        ["literal", _fovLineDashVirtual],
-        ["literal", _fovLineDashReal],
-      ] as maplibregl.ExpressionSpecification);
+      m.setPaintProperty(FOV_LINE, "line-dasharray", FOV_LINE_DASH_BY_VIRTUAL);
     }
+    this.refreshFovGeoJson();
   }
 
   private applyCoverageLayerVisibility() {
@@ -655,6 +722,8 @@ export class OptoelectronicFovModule {
           this.perDeviceVisibility,
           this.panelCameraIds,
           this.excludeFromOptoFovIds,
+          this.cameraDdsByEntityId,
+          this.fovBorderOutline,
         ) as GeoJSON.FeatureCollection,
       );
       this.lastFovDataSig = nextFovSig;
@@ -691,6 +760,7 @@ export class OptoelectronicFovModule {
           quantizeDeg(a.fovAngle ?? 360),
           a.showFov === false ? "0" : "1",
           shouldRenderOptoCameraFov(a.id, this.perDeviceVisibility, this.panelCameraIds) ? "1" : "0",
+          isCameraMapTaskExecuting(resolveCameraDdsRow(a.id, this.cameraDdsByEntityId)) ? "1" : "0",
           a.nameLabelVisible === false ? "0" : "1",
           a.name ?? "",
           a.status ?? "",

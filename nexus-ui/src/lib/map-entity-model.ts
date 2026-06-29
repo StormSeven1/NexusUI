@@ -188,19 +188,6 @@ export interface Alert {
   trackId?: string;
 }
 
-export interface RestrictedZone {
-  id: string;
-  name: string;
-  type: "no-fly" | "warning" | "exercise";
-  /** polygon 坐标环 [lng, lat][] */
-  coordinates: Array<[number, number]>;
-  /** WS `fill_color`；与 `fillOpacity` 在 3D 中合并，缺省用内置 `ZONE_STYLES` */
-  fillColor?: string | null;
-  /** WS `color`（边线/标签） */
-  lineColor?: string | null;
-  fillOpacity?: number;
-}
-
 /** 图层面板「实体图层」单行（航迹显隐在独立「目标图层」块） */
 export type DataLayerPanelRow = { id: string; name: string };
 
@@ -215,7 +202,6 @@ export const LYR_LASER = "lyr-laser";
 export const LYR_TDOA = "lyr-tdoa";
 /** 电侦（电子侦察）图标图层；与光电（LYR_OPTO_FOV）为不同类型 */
 export const LYR_TOWER = "lyr-tower";
-export const LYR_ZONES = "lyr-zones";
 /** Postgres `area_table` 区域（矩形/圆/多边形），见 `/api/db-areas`（连库 `NEXUS_POSTGRES_URL`）+ `useDbAreasPoll` */
 export const LYR_DB_AREAS = "lyr-db-areas";
 /** 显示控制面板配置的态势同心圆/区域（`distance-rings-maplibre`） */
@@ -233,7 +219,6 @@ export const ALL_DATA_LAYER_IDS = [
   LYR_AIRPORT,
   LYR_LASER,
   LYR_TDOA,
-  LYR_ZONES,
   LYR_DB_AREAS,
   LYR_DISTANCE_RINGS,
 ] as const;

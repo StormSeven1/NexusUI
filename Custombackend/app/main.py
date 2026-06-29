@@ -25,6 +25,7 @@ from config import (
     TCP_CLIENTS,
     MQTT_RECEIVERS,
     DDS_RECEIVERS,
+    DDS_CAMERA_STATUS_MODE,
     HTTP_POLLERS,
     WORK_MODE_DDS_PUBLISHER,
 )
@@ -46,16 +47,21 @@ async def _receiver_stats_log_loop():
     while True:
         try:
             stats = receiver_manager.get_stats()
-            cam = stats.get("dds_camera_status")
+            cam_entity = stats.get("dds_camera_status")
+            cam_legacy = stats.get("dds_camera_status_legacy")
+            if cam_entity or cam_legacy:
+                logger.info(
+                    "[receiver_stats] dds_camera_status(entity/200) received={} parsed={} failed={} | "
+                    "dds_camera_status_legacy(149) received={} parsed={} failed={}",
+                    (cam_entity or {}).get("received", 0),
+                    (cam_entity or {}).get("parsed", 0),
+                    (cam_entity or {}).get("failed", 0),
+                    (cam_legacy or {}).get("received", 0),
+                    (cam_legacy or {}).get("parsed", 0),
+                    (cam_legacy or {}).get("failed", 0),
+                )
             fuse_bird = stats.get("dds_forward_fuse_bird_radar_track")
             fuse_sea = stats.get("dds_forward_fuse_track")
-            if cam:
-                logger.info(
-                    "[receiver_stats] dds_camera_status received={} parsed={} failed={}",
-                    cam.get("received", 0),
-                    cam.get("parsed", 0),
-                    cam.get("failed", 0),
-                )
             if fuse_bird or fuse_sea:
                 logger.info(
                     "[receiver_stats] 航迹 dds_forward_fuse_bird_radar_track received={} | dds_forward_fuse_track received={}",
@@ -68,7 +74,7 @@ async def _receiver_stats_log_loop():
                     "[receiver_stats] 航迹 DDS 尚无 matched/样本 | subscription_matched={}",
                     health.get("subscription_matched"),
                 )
-            elif _RECEIVER_STATS_LOG_INTERVAL_SEC > 0 and not cam and not fuse_bird and not fuse_sea:
+            elif _RECEIVER_STATS_LOG_INTERVAL_SEC > 0 and not cam_entity and not cam_legacy and not fuse_bird and not fuse_sea:
                 logger.info(
                     "[receiver_stats] 当前计数键: {}",
                     sorted(stats.keys()),
@@ -228,6 +234,13 @@ async def lifespan(app: FastAPI):
     receiver_manager.start_mqtt_receivers(MQTT_RECEIVERS)
     
     # 启动DDS接收器（航迹主要来自 config.DDS_RECEIVERS；无 fastdds 时全部跳过）
+    logger.info(
+        "相机 DDS 订阅模式 NEXUS_DDS_CAMERA_STATUS_MODE={} "
+        "(dds_camera_status/200={}, dds_camera_status_legacy/149={})",
+        DDS_CAMERA_STATUS_MODE,
+        any(c.get("id") == "dds_camera_status" and c.get("enabled") for c in DDS_RECEIVERS),
+        any(c.get("id") == "dds_camera_status_legacy" and c.get("enabled") for c in DDS_RECEIVERS),
+    )
     logger.info("正在启动DDS接收器...")
     receiver_manager.start_dds_receivers(DDS_RECEIVERS)
     from receivers.network import DDS_AVAILABLE as _dds_py_ok

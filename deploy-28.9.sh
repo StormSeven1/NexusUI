@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # NexusUI 28.9 现场部署（生产 HTTPS：prod-start-nginx.sh）
 # 用法：在 28.9 上 cd /home/dell/zhu_heng/NexusUI && ./deploy-28.9.sh
-# 开发模式（22301/27003）：./dev-start.sh（同目录，自动 hostname -I → 28.9）
+# 开发模式（22301/27003 + dev WSS :22402）：./dev-start.sh（与生产 :21911/:27004 独立，可并行）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,7 +13,7 @@ if [[ -f "$ROOT/site-host.env" ]]; then
   HOST="${SITE_LAN_HOST:-$HOST}"
 fi
 BP="${BACKEND_PORT:-27004}"
-FP="${PUBLIC_HTTPS_PORT:-22401}"
+FP="${PUBLIC_HTTPS_PORT:-21911}"
 
 echo "== NexusUI 28.9 部署 =="
 
@@ -41,6 +41,7 @@ NEXT_PUBLIC_MAP2D_STYLE_URL=/map-styles/offline-map.json
 NEXT_PUBLIC_MAP2D_MINI_STYLE_URL=/map-styles/offline-map.json
 NEXT_PUBLIC_MAP2D_INITIAL_CENTER=122.0890,37.5450
 NEXT_PUBLIC_MAP2D_INITIAL_ZOOM=14
+NEXT_PUBLIC_MAP2D_RASTER_LAYERS=[{"id":"local-raster-tiles","name":"本地瓦片地图","url":"http://${HOST}:8200/localtiles/{z}/{x}/{y}.png","enabled":false,"minZoom":0,"maxZoom":18,"tileSize":256,"type":"xyz"}]
 NEXT_PUBLIC_MAP3D_IMAGERY_URL=https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png
 NEXT_PUBLIC_MAP3D_INITIAL_CENTER=122.0890,37.5450
 NEXT_PUBLIC_MAP3D_INITIAL_ZOOM=14
@@ -48,6 +49,7 @@ NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL=http://${HOST}:8089
 NEXUS_ENTITIES_LIST_URL=http://${HOST}:8090/api/v1/entities?page=1&size=100
 NEXUS_TASK_SERVER_HOST=${HOST}
 NEXUS_WEATHER_PORT=8090
+ENABLE_DRONE_DATA_STORAGE=false
 NEXUS_DRONE_PLATFORM_BASE_URL=http://${HOST}:8890
 NEXUS_DRONE_PLATFORM_USERNAME=adminPC
 NEXUS_DRONE_PLATFORM_PASSWORD=adminPC
@@ -63,6 +65,15 @@ VLM_IMAGE_ANALYSIS_MODEL=Qwen/Qwen3-VL-8B-Instruct
 EOF
 echo "[ok] 已写入 $ENV_FILE"
 
+# Custombackend：无人机 DDS 落盘开关（生效于 uvicorn，非 nexus-ui .env.local）
+CB_ENV="$ROOT/Custombackend/app/.env"
+if [[ -f "$CB_ENV" ]] && grep -q '^ENABLE_DRONE_DATA_STORAGE=' "$CB_ENV"; then
+  sed -i 's/^ENABLE_DRONE_DATA_STORAGE=.*/ENABLE_DRONE_DATA_STORAGE=false/' "$CB_ENV"
+else
+  printf '\n# DDS 无人机数据落盘 data/drone_logs（jsonl）；true 开启，改后须重启 Custombackend\nENABLE_DRONE_DATA_STORAGE=false\n' >> "$CB_ENV"
+fi
+echo "[ok] 已写入 $CB_ENV ENABLE_DRONE_DATA_STORAGE=false"
+
 # 2. 28.9 航迹模式、相机槽位、外链 IP
 python3 - "$ROOT" "$HOST" <<'PY'
 import json, pathlib, sys
@@ -72,8 +83,8 @@ link_ip = {
     "实体管理": f"http://{host}:7880/",
     "任务管理": f"http://{host}:8888/chat",
     "雷达管理": f"http://{host}:22231/dashboard",
-    "相机管理": f"https://{host}:9443/home",
-    "告警管理": f"http://{host}:8711/area-management",
+    "相机管理": f"https://{host}:21915/home",
+    "告警管理": f"http://{host}:21917/area-management",
 }
 for name in ("app-config.json", "app-config.prod.json", "app-config.dev.json"):
     p = root / name
@@ -103,14 +114,14 @@ if ! docker image inspect "$IMG" >/dev/null 2>&1; then
   exit 1
 fi
 
-# 4. 启动生产 HTTPS（Nginx 22401 + 内部 next 22411）
+# 4. 启动生产 HTTPS（Nginx 21911 + 内部 next 22411）
 export APP_CONFIG_LAN_HOST="$HOST"
 export BACKEND_PORT="$BP"
 export PUBLIC_HTTPS_PORT="$FP"
 export BACKEND_URL="http://127.0.0.1:${BP}"
 export TRACK_WS_BACKEND_HOST="$HOST"
 export TRACK_WS_BACKEND_PORT="$BP"
-chmod +x "$ROOT/prod-start.sh" "$ROOT/prod-start-nginx.sh" "$ROOT/dev-start.sh" "$ROOT/docker/start.sh" 2>/dev/null || true
+chmod +x "$ROOT/prod-start.sh" "$ROOT/prod-start-nginx.sh" "$ROOT/dev-start.sh" "$ROOT/dev-wss-nginx.sh" "$ROOT/docker/start.sh" 2>/dev/null || true
 
 # Custombackend DDS XML discovery 地址 → 28.9
 find "$ROOT/Custombackend" -name '*.xml' -type f -print0 2>/dev/null | while IFS= read -r -d '' f; do
@@ -125,7 +136,8 @@ done
 
 echo ""
 echo "== NexusUI 28.9 部署完成 =="
-echo "  生产 HTTPS: https://${HOST}:${FP}/"
-echo "  开发模式:   ./dev-start.sh  → https://${HOST}:22301/"
-echo "  后端 API:   http://${HOST}:${BP}/api"
+echo "  生产 HTTPS: https://${HOST}:${FP}/  （xk_docker_prod + xk_nginx_prod）"
+echo "  开发模式:   ./dev-start.sh  → https://${HOST}:22301/  （xk_docker + dev WSS :22402，与生产独立）"
+echo "  后端 API:   生产 http://${HOST}:${BP}/api  |  开发 http://${HOST}:27003/api"
 echo "  日志: docker logs -f xk_docker_prod | docker logs -f xk_nginx_prod"
+echo "  开发日志: docker logs -f xk_docker | docker logs -f xk_nginx_dev_wss"

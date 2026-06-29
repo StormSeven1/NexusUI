@@ -22,20 +22,17 @@ const BODY_TARGET_ID_KEYS = [
 
 /**
  * 从 7774 查证 JSON 解析 canonical `target_id`（与航迹 `uniqueID`、库表 `unique_id` 对齐）。
- * 迁移后相机 `trackID` 字段即为 `target_id`，作为兜底。
+ * 不使用 legacy `trackID`：库表 `trackid` 为 external_target_id，与 `target_id` 不同。
  */
 export function resolveVerifyTargetIdFromBody(o: Record<string, unknown>): number | undefined {
   for (const k of BODY_TARGET_ID_KEYS) {
     const v = normTargetIdDigits(o[k]);
     if (v != null) return v;
   }
-  return normTargetIdDigits(o.trackID ?? o.track_id ?? o.trackId ?? o.TrackID);
+  return undefined;
 }
 
+/** 查证会话唯一键：仅 `target_id` / verifyTargetId / uniqueId，不用 HTTP trackID */
 export function resolveVerifyTargetIdFromPayload(p: TaskStatusChatPayload): number | undefined {
-  return (
-    normTargetIdDigits(p.verifyTargetId) ??
-    normTargetIdDigits(p.uniqueId) ??
-    normTargetIdDigits(p.trackID)
-  );
+  return normTargetIdDigits(p.verifyTargetId) ?? normTargetIdDigits(p.uniqueId);
 }

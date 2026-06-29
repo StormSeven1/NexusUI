@@ -1,7 +1,7 @@
 /**
  * 与 Qt `PgDataAccessLayer::getLatestScreenshotMetadata` 同源：
  * 表 `minio_multi_metadata`，`file_name LIKE screenshot_0_{cameraIndex}_%`。
- * 优先 `unique_id`；无则按 `trackid` 兜底（与 HTTP `trackID` 对齐时）。
+ * **仅**按 `unique_id`（= HTTP `target_id`）+ `cameraIndex` 查最近截图；不做 trackid 或其它兜底。
  */
 import { Pool, type PoolClient } from "pg";
 import { resolvePostgresConnectionString } from "@/lib/postgres-connection.server";
@@ -48,7 +48,10 @@ async function queryOne(
   return { minioBucket: b, minioObjectKey: k, downloadUrl: du };
 }
 
-async function byUniqueId(uniqueId: bigint | number, cameraIndex: number): Promise<MinioMetadataRow | null> {
+async function byTargetIdAndCamera(
+  targetId: number,
+  cameraIndex: number,
+): Promise<MinioMetadataRow | null> {
   const p = getPool();
   if (!p) return null;
   const prefix = `screenshot_0_${cameraIndex}_`;
@@ -61,44 +64,7 @@ async function byUniqueId(uniqueId: bigint | number, cameraIndex: number): Promi
         AND file_name LIKE $2
       ORDER BY uploaded_at DESC
       LIMIT 1`;
-    return await queryOne(client, sql, [uniqueId, `${prefix}%`]);
-  } finally {
-    client.release();
-  }
-}
-
-/** 仅按 unique_id 取最近一条（相机 file_name 规则不一致时兜底） */
-async function byUniqueIdLatest(uniqueId: number): Promise<MinioMetadataRow | null> {
-  const p = getPool();
-  if (!p) return null;
-  const client = await p.connect();
-  try {
-    const sql = `
-      SELECT minio_bucket, minio_object_key, download_url
-      FROM minio_multi_metadata
-      WHERE "unique_id" = $1
-      ORDER BY uploaded_at DESC
-      LIMIT 1`;
-    return await queryOne(client, sql, [uniqueId]);
-  } finally {
-    client.release();
-  }
-}
-
-async function byTrackId(trackId: number, cameraIndex: number): Promise<MinioMetadataRow | null> {
-  const p = getPool();
-  if (!p) return null;
-  const prefix = `screenshot_0_${cameraIndex}_`;
-  const client = await p.connect();
-  try {
-    const sql = `
-      SELECT minio_bucket, minio_object_key, download_url
-      FROM minio_multi_metadata
-      WHERE trackid = $1
-        AND file_name LIKE $2
-      ORDER BY uploaded_at DESC
-      LIMIT 1`;
-    return await queryOne(client, sql, [trackId, `${prefix}%`]);
+    return await queryOne(client, sql, [targetId, `${prefix}%`]);
   } finally {
     client.release();
   }
@@ -106,25 +72,18 @@ async function byTrackId(trackId: number, cameraIndex: number): Promise<MinioMet
 
 /** Qt 在查询前有约 2s 延迟，可通过 TASK_STATUS_METADATA_QUERY_DELAY_MS 对齐 */
 export async function resolveScreenshotMetadataFromDb(options: {
-  uniqueId?: number | null;
-  trackId?: number | null;
+  uniqueId: number;
   cameraIndex: number;
 }): Promise<MinioMetadataRow | null> {
+  const targetId = Math.trunc(Number(options.uniqueId));
+  const cam = Math.trunc(Number(options.cameraIndex));
+  if (!Number.isFinite(targetId) || targetId <= 0) return null;
+  if (!Number.isFinite(cam) || cam < 0) return null;
+
   const delayMs = Number(process.env.TASK_STATUS_METADATA_QUERY_DELAY_MS ?? "0");
   if (Number.isFinite(delayMs) && delayMs > 0) {
     await sleep(delayMs);
   }
 
-  const cam = options.cameraIndex;
-  if (options.uniqueId != null && Number.isFinite(Number(options.uniqueId))) {
-    const uid = Number(options.uniqueId);
-    const row = await byUniqueId(uid, cam);
-    if (row) return row;
-    const latest = await byUniqueIdLatest(uid);
-    if (latest) return latest;
-  }
-  if (options.trackId != null && Number.isFinite(options.trackId)) {
-    return byTrackId(options.trackId, cam);
-  }
-  return null;
+  return byTargetIdAndCamera(targetId, cam);
 }

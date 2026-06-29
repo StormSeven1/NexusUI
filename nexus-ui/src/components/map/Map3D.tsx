@@ -6,7 +6,7 @@ import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { metersPerPixelCesium } from "@/lib/map-scale-bar";
 import { useTrackStore, getTrackDispositionForRendering } from "@/stores/track-store";
 import { useVerifiedTrackStore } from "@/stores/verified-track-store";
-import { shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
+import { shouldApplyVerifiedTrackYellow } from "@/lib/verified-track-color";
 import {
   useTrackDisplayStore,
   neutralFusionColorForTrack,
@@ -21,7 +21,6 @@ import {
   LYR_OPTO_FOV,
   LYR_TRACKS,
   type Asset,
-  type RestrictedZone,
   trackMapDisplayId,
   type Track,
 } from "@/lib/map-entity-model";
@@ -43,8 +42,6 @@ import {
 } from "@/lib/opto-device-layer-visibility";
 import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
-import { mergeZoneFillColor } from "@/components/map/modules/polygon-draw-maplibre";
-import { useZoneStore } from "@/stores/zone-store";
 import { useDbAreaStore } from "@/stores/db-area-store";
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import {
@@ -54,6 +51,7 @@ import {
   dbAreaVisibilityKey,
   parseAreaLineColor,
 } from "@/lib/area-table-geometry";
+import { isDbAreaLeafVisible } from "@/lib/db-area-panel-helpers";
 import { ringSouthEastLabelLngLat } from "@/lib/build-db-areas-geojson";
 import {
   DEFAULT_AREA_LAYER_LINE_COLOR,
@@ -62,7 +60,6 @@ import {
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
 import { useAssetStore } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
-import type { ZoneData } from "@/stores/zone-store";
 import {
   getTrackRenderingConfig,
   laserLabelStyleFromBundle,
@@ -89,7 +86,7 @@ import {
   resolveTrackPointFill,
   isAirTrackBirdGlyph,
 } from "@/lib/map-icons";
-import { resolveVerifiedTrackPointFill } from "@/lib/verified-track-color";
+import { resolveTrackMapHighlightFill } from "@/lib/track-map-highlight-color";
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { AlertTriangle } from "lucide-react";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
@@ -144,7 +141,6 @@ type GroupKey =
   | "optoFov"
   | "airportFov"
   | "droneFov"
-  | "zones"
   | "dbAreas";
 
 type DroneLabelStyleResolved = ReturnType<typeof laserLabelStyleFromBundle>;
@@ -162,76 +158,14 @@ function cesiumDroneLabelPixelOffset(Cesium: CesiumModule, L: DroneLabelStyleRes
   return new Cesium.Cartesian2(x, y);
 }
 
-function adaptZones(zones: ZoneData[]): RestrictedZone[] {
-  return zones.map((z) => ({
-    id: z.id,
-    name: z.name,
-    type: z.zone_type as RestrictedZone["type"],
-    coordinates: z.coordinates,
-    fillColor: z.fill_color,
-    lineColor: z.color,
-    fillOpacity: z.fill_opacity,
-  }));
-}
-
 /**
  * 说明：
- * 资产 `AssetData -> Asset` 统一适配已迁移到 `src/lib/map-asset-adapter.ts`（`adaptAssetsForMap`）。
+ * 资产 `AssetData -> Asset` 的通用映射逻辑已迁移到 `src/lib/map-asset-adapter.ts`（`adaptAssetsForMap`），
  * 本文件是 3D 编排层，负责：
  * - Cesium 生命周期
  * - 3D 资产/航迹/区域实体同步
  * - 3D 交互与层显隐
  */
-
-/** 批量创建/刷新 3D 区域实体（先清旧再建新） */
-function syncCesiumZones(
-  viewer: CesiumViewer,
-  C: CesiumModule,
-  groups: { zones: CesiumEntity[] },
-  zones: RestrictedZone[],
-) {
-  for (const e of groups.zones) viewer.entities.remove(e);
-  groups.zones.length = 0;
-
-  const rgba = (c: RGBA) => new C.Color(c[0], c[1], c[2], c[3]);
-  for (const zone of zones) {
-    const style = ZONE_STYLES[zone.type] ?? ZONE_STYLES["warning"];
-    const coords = zone.coordinates.slice(0, -1);
-    const positions = coords.map(([lng, lat]) => C.Cartesian3.fromDegrees(lng, lat));
-    const centerLng = coords.reduce((s, c) => s + c[0], 0) / coords.length;
-    const centerLat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
-
-    const hasWsFill = zone.fillColor != null && String(zone.fillColor).trim() !== "";
-    const fillMat = hasWsFill
-      ? C.Color.fromCssColorString(mergeZoneFillColor(zone.fillColor, zone.fillOpacity ?? 0.25))
-      : rgba(style.fill);
-    const lineCss = zone.lineColor?.trim();
-    const labelFill = lineCss ? C.Color.fromCssColorString(lineCss) : rgba(style.line);
-
-    const ent = viewer.entities.add({
-      polygon: {
-        hierarchy: new C.PolygonHierarchy(positions),
-        material: fillMat,
-        outline: false,
-        heightReference: C.HeightReference.CLAMP_TO_GROUND,
-      },
-      label: {
-        text: zone.name,
-        font: '12px Roboto, "Noto Sans SC", sans-serif',
-        fillColor: labelFill,
-        outlineColor: C.Color.fromCssColorString("#09090b"),
-        outlineWidth: 2,
-        style: C.LabelStyle.FILL_AND_OUTLINE,
-        verticalOrigin: C.VerticalOrigin.CENTER,
-        scaleByDistance: new C.NearFarScalar(1e4, 1, 5e5, 0.4),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-      position: C.Cartesian3.fromDegrees(centerLng, centerLat, 100),
-      properties: { zoneId: zone.id },
-    });
-    groups.zones.push(ent);
-  }
-}
 
 /** Postgres `area_table` → 3D 多边形（与 `lyr-db-areas` 显隐一致） */
 function syncCesiumDbAreas(
@@ -248,7 +182,7 @@ function syncCesiumDbAreas(
 
   for (const row of rows) {
     if (!layerMasterOn) continue;
-    if (areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] === false) continue;
+    if (!isDbAreaLeafVisible(row.group_id, row.area_id, areaVisibility)) continue;
     const ring = areaRowToPolygonRing(row);
     if (!ring || ring.length < 4) continue;
     const coords = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]
@@ -410,13 +344,13 @@ async function syncCesiumTrackBillboards(
 
   const pickTrackPointCss = (t: Track, eff: ReturnType<typeof getTrackDispositionForRendering>, friendlyFill?: string) => {
     if (resolveTrackLayerKey(t) === "uav_pose_track") {
-      return resolveVerifiedTrackPointFill(t, uavPoseTrackDotColor(td));
+      return resolveTrackMapHighlightFill(t, uavPoseTrackDotColor(td));
     }
     const base =
       eff === "neutral"
         ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor)
         : resolveTrackPointFill(t, eff, accent, friendlyFill);
-    return resolveVerifiedTrackPointFill(t, base);
+    return resolveTrackMapHighlightFill(t, base);
   };
 
   for (const ent of groups.trackTrails) {
@@ -461,7 +395,7 @@ async function syncCesiumTrackBillboards(
     const fusionTint =
       eff === "neutral" ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor) : undefined;
     const wantDot = isDotTrackLayerKey(resolveTrackLayerKey(track));
-    const opticallyVerified = shouldApplyVerifiedTrackGreen(track);
+    const opticallyVerified = shouldApplyVerifiedTrackYellow(track);
     const labelCommon = {
       text: trackMapDisplayId(track),
       font: '11px Roboto, "Noto Sans SC", sans-serif',
@@ -528,7 +462,7 @@ async function syncCesiumTrackBillboards(
     const pc = pickTrackPointCss(t, eff, friendlyFill);
     const fusionTint =
       eff === "neutral" ? neutralFusionColorForTrack(t, td.seaFusionColor, td.airFusionColor) : undefined;
-    const opticallyVerified = shouldApplyVerifiedTrackGreen(t);
+    const opticallyVerified = shouldApplyVerifiedTrackYellow(t);
     if (ent.point) {
       ent.point.color = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc).withAlpha(0.92));
       if (ent.label) {
@@ -611,7 +545,6 @@ export function Map3D() {
   const lastFlySeqRef = useRef<number>(-1);
   const highlightEntitiesRef = useRef<CesiumEntity[]>([]);
   const routeEntitiesRef = useRef<Map<string, CesiumEntity>>(new Map());
-  const areaEntitiesRef = useRef<Map<string, CesiumEntity[]>>(new Map());
   const distanceRingGroupsRef = useRef<CesiumDistanceRingGroups>({ rings: [], labels: [] });
   const entityGroupsRef = useRef<Record<GroupKey, CesiumEntity[]>>({
     tracks: [],
@@ -621,7 +554,6 @@ export function Map3D() {
     optoFov: [],
     airportFov: [],
     droneFov: [],
-    zones: [],
     dbAreas: [],
   });
   /** 供 `syncCesiumTrackBillboards` 与订阅 flush 使用（`loadResolvedAppConfig` 的 `assetDispositionIconAccent`） */
@@ -694,10 +626,9 @@ export function Map3D() {
 
         const v = viewer;
         const groups = entityGroupsRef.current;
-
-        /* 1) 限制区 */
         const rgba = (c: RGBA) => new Cesium.Color(c[0], c[1], c[2], c[3]);
-        syncCesiumZones(v, Cesium, groups, adaptZones(useZoneStore.getState().zones));
+
+        /* Postgres「区域图层」 */
         syncCesiumDbAreas(
           v,
           Cesium,
@@ -915,7 +846,6 @@ export function Map3D() {
         for (const ent of groups.trackTrails) ent.show = layerOn("lyr-tracks");
         for (const ent of groups.radarCoverage) ent.show = layerOn("lyr-radar-coverage");
         applyNonRadarFovLayerVisibility(groups, layerOn);
-        for (const ent of groups.zones) ent.show = layerOn("lyr-zones");
         for (const ent of groups.dbAreas) ent.show = layerOn("lyr-db-areas");
         const visibleAirports = getVisibleDroneAirportIdsFromStores();
         for (const ent of groups.assets) {
@@ -995,7 +925,6 @@ export function Map3D() {
         optoFov: [],
         airportFov: [],
         droneFov: [],
-        zones: [],
         dbAreas: [],
       };
     };
@@ -1147,7 +1076,6 @@ export function Map3D() {
       for (const ent of g.trackTrails) ent.show = layerOn("lyr-tracks");
       for (const ent of g.radarCoverage) ent.show = layerOn("lyr-radar-coverage");
       applyNonRadarFovLayerVisibility(g, layerOn);
-      for (const ent of g.zones) ent.show = layerOn("lyr-zones");
       for (const ent of g.dbAreas) ent.show = layerOn("lyr-db-areas");
       const drVis = layerOn(LYR_DISTANCE_RINGS);
       for (const ent of distanceRingGroupsRef.current.rings) ent.show = drVis;
@@ -1290,18 +1218,7 @@ export function Map3D() {
     return unsub;
   }, []);
 
-  /* 区域：响应式同步（WS 推送新区域时自动刷新） */
-  useEffect(() => {
-    const unsub = useZoneStore.subscribe((s) => {
-      const v = viewerRef.current;
-      const C = cesiumRef.current;
-      if (!v || !C || v.isDestroyed()) return;
-      syncCesiumZones(v, C, entityGroupsRef.current, adaptZones(s.zones));
-    });
-    return unsub;
-  }, []);
-
-  /* 数据库区域图层：子项显隐 / 总开关 → Cesium 实体 */
+  /* Postgres 区域图层：子项显隐 / 总开关 → Cesium 实体 */
   useEffect(() => {
     const flush = () => {
       const v = viewerRef.current;
@@ -1387,58 +1304,6 @@ export function Map3D() {
       unsubLayerVis();
       unsubVerified();
     };
-  }, []);
-
-  /* 同步 drawnAreas */
-  useEffect(() => {
-    const unsub = useAppStore.subscribe((state) => {
-      const v = viewerRef.current;
-      const C = cesiumRef.current;
-      if (!v || !C || v.isDestroyed()) return;
-
-      const currentIds = new Set(state.drawnAreas.map((a) => a.id));
-      for (const [id, ents] of areaEntitiesRef.current) {
-        if (!currentIds.has(id)) {
-          for (const e of ents) v.entities.remove(e);
-          areaEntitiesRef.current.delete(id);
-        }
-      }
-      for (const area of state.drawnAreas) {
-        if (areaEntitiesRef.current.has(area.id)) continue;
-        const positions = area.points.map((p) => C.Cartesian3.fromDegrees(p.lng, p.lat));
-        const ents: CesiumEntity[] = [];
-        const polyEnt = v.entities.add({
-          polygon: {
-            hierarchy: new C.PolygonHierarchy(positions),
-            material: C.Color.fromCssColorString(area.fillColor).withAlpha(area.fillOpacity),
-            outline: false,
-            heightReference: C.HeightReference.CLAMP_TO_GROUND,
-          },
-          properties: { _areaId: area.id },
-        });
-        ents.push(polyEnt);
-        if (area.label) {
-          const cLng = area.points.reduce((s, p) => s + p.lng, 0) / area.points.length;
-          const cLat = area.points.reduce((s, p) => s + p.lat, 0) / area.points.length;
-          const lblEnt = v.entities.add({
-            position: C.Cartesian3.fromDegrees(cLng, cLat, 100),
-            label: {
-              text: area.label,
-              font: '12px Roboto, "Noto Sans SC", sans-serif',
-              fillColor: C.Color.fromCssColorString(area.color),
-              outlineColor: C.Color.fromCssColorString("#09090b"),
-              outlineWidth: 2,
-              style: C.LabelStyle.FILL_AND_OUTLINE,
-              verticalOrigin: C.VerticalOrigin.CENTER,
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-            },
-          });
-          ents.push(lblEnt);
-        }
-        areaEntitiesRef.current.set(area.id, ents);
-      }
-    });
-    return unsub;
   }, []);
 
   if (error) {

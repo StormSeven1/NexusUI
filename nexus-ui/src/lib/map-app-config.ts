@@ -93,19 +93,22 @@ function finiteNumberOrNull(v: unknown): number | null {
  *   - "DOCK" / "AIRPORT" / "GATEWAY"                         → "airport"
  *   - "DRONE" / "UAV"                                         → "drone"
  *   - "LASER" / "激光" / "激光武器"                           → "laser"
- *   - "TDOA"                                                   → "tdoa"
+ *   - "JAMMER"（8090 电侦/干扰设备，原 TDOA 虚兵）             → "tdoa"
+ *   - "TDOA"（遗留 ontology / entityId）                       → "tdoa"
+ *   - "MUNITION"（巡飞弹）                                     → "drone"
  *   - "SYSTEM"（8090 虚兵/系统设备）→ 从 entityId `system-{KIND}-*` 解析：
- *       TDOA → tdoa，LASER → laser，RADAR → radar，…；MUNITION 等非地图子类 → "unknown"（静默）
+ *       JAMMER/TDOA → tdoa，LASER → laser，MUNITION → drone，RADAR → radar，…
  *   - "SURVEILLANCE_AREA" / "RESTRICTED_AREA" / "AREA" / "AREA_TYPE_*" / "SURVEILLANCE" / "FIXED_WING" / "FRAME"
  *     → "unknown"（非地图资产类型，跳过不入库，不报错）
- *   - 其余回退：尝试 r.asset_type / r.type，仍无法识别 → "unknown"
+ *   - 其余回退：尝试 r.asset_type / r.type，仍无法识别 → "unknown"（静默跳过，不入库）
  */
 /** 8090 `ontology.specificType=SYSTEM` 时，子类型在 entityId：`system-{KIND}-*` */
 function wsEntityTypeFromSystemEntityId(entityId: string): string | null {
   const m = /^system-([^-]+)-/i.exec(entityId.trim());
   if (!m) return null;
   const kind = m[1].toUpperCase();
-  if (kind === "TDOA") return "tdoa";
+  if (kind === "JAMMER" || kind === "TDOA") return "tdoa";
+  if (kind === "MUNITION") return "drone";
   if (kind === "LASER") return "laser";
   if (kind === "RADAR") return "radar";
   if (kind === "CAMERA" || kind === "OPTO" || kind === "OPTICAL" || kind === "光电") return "camera";
@@ -161,8 +164,10 @@ function wsEntityTypeRaw(r: Record<string, unknown>): string {
   ) return "tower";
   // 激光武器
   if (stu === "LASER" || stu === "激光" || stu === "激光武器") return "laser";
-  // TDOA
-  if (stu === "TDOA") return "tdoa";
+  // 电侦/干扰（8090 ontology JAMMER；entityId 可能仍为 system-TDOA-*）
+  if (stu === "JAMMER" || stu === "TDOA") return "tdoa";
+  // 巡飞弹
+  if (stu === "MUNITION") return "drone";
   // 8090 系统/虚兵设备：specificType=SYSTEM，子类型编码在 entityId（如 system-TDOA-001）
   if (stu === "SYSTEM") {
     const fromId = wsEntityTypeFromSystemEntityId(eid);
@@ -188,9 +193,7 @@ function wsEntityTypeRaw(r: Record<string, unknown>): string {
   if (fallbackType && (PUBLIC_MAP_ASSET_TYPES as readonly string[]).includes(fallbackType)) {
     return fallbackType;
   }
-  console.error(
-    `[wsEntityTypeRaw] ✘ 无法识别实体类型: specificType="${st}", asset_type="${r.asset_type ?? ""}", type="${r.type ?? ""}", entityId=${eid}`
-  );
+  /* 未在 app-config / 类型映射中配置的 ontology 实体（如 VISION_DETECTION_MODEL）静默跳过 */
   return "unknown";
 }
 
@@ -260,8 +263,15 @@ export function mapOneEntityRow(
 
   /* ── 4. 提取朝向（度）与视场角（度）── */
   /* entity_status 仅做通用实体字段解析；相机 PTZ 专用解析在 useUnifiedWsFeed 的 camera/optoelectronic 分支 */
-  const headingDeg = finiteNumberOrNull(r.heading ?? r.bearing ?? r.azimuth);
-  const fovDeg = finiteNumberOrNull(r.fov_angle ?? r.fovAngle ?? r.openingDeg ?? r.angle);
+  let headingDeg = finiteNumberOrNull(r.heading ?? r.bearing ?? r.azimuth);
+  if (headingDeg == null) {
+    const loc = asRecord(r.location);
+    const orient = asRecord(loc?.orientation);
+    const yaw = finiteNumberOrNull(orient?.yaw ?? orient?.heading);
+    /* 8090 光电 orientation.yaw 常为 0 占位；真实朝向在 ptz.pan + panoOffset */
+    if (yaw != null && yaw !== 0) headingDeg = yaw;
+  }
+  let fovDeg = finiteNumberOrNull(r.fov_angle ?? r.fovAngle ?? r.openingDeg ?? r.angle);
 
   /* ── 5. 雷达专用参数提取 ── */
   /* 后端 radarParameters.range 单位为海里，需转换为公里写入 range_km；
@@ -337,11 +347,24 @@ export function mapOneEntityRow(
   let effectiveStatus: string;
   if (assetType === "camera" && isOnline !== undefined && isOnline !== null) {
     effectiveStatus = isOnline === 0 || isOnline === false ? "offline" : "online";
+  } else if (assetType === "drone" || assetType === "airport") {
+    /* 8090 UAV/机场实体常 isLive=0，实时在线由 WS 遥测/relationships 判定，此处仅看 health */
+    effectiveStatus = status;
   } else {
     effectiveStatus = (isLive === 0 || isOnline === 0) ? "offline" : status;
   }
   /* 雷达为全向扫描，fov_angle 强制 360° */
   const effectiveFovDeg = assetType === "radar" ? 360 : fovDeg;
+
+  const indicators = asRecord(r.indicators);
+  const entitySectorProps: Record<string, unknown> = {};
+  if (assetType === "laser" || assetType === "tdoa") {
+    entitySectorProps.config_kind = assetType;
+    entitySectorProps.center_icon_visible = false;
+  }
+  if (indicators?.simulated === true) {
+    entitySectorProps.virtual_troop = true;
+  }
 
   /* ── 9. 组装 AssetData（雷达 fov 等）── */
   const result: AssetData = {
@@ -359,6 +382,7 @@ export function mapOneEntityRow(
       ...((r.properties as Record<string, unknown> | null) ?? { ...r }),
       ...radarParams,
       ...radarExtraProps,
+      ...entitySectorProps,
       ...(panelNoCoords ? { _assetPanelNoCoords: true as const } : {}),
     },
     mission_status: String(r.mission_status ?? "monitoring"),
@@ -1495,7 +1519,7 @@ export function getAssetLabelFontColorForAssetType(t: PublicMapAssetType): strin
   return typeof c === "string" && c.trim() ? c.trim() : undefined;
 }
 
-export { shouldDisplayAssetId, shouldDisplayZone } from "./map-display-filters";
+export { shouldDisplayAssetId } from "./map-display-filters";
 
 /** 从 deviceId/asset id 中提取数字用于「相机001」等展示 */
 function digitsFromAssetId(id: string): string {
@@ -1856,7 +1880,7 @@ export function sectorBundleToTdoaLayerVis(b: AppConfigSectorBundle | null): Par
 /** 光电 FOV 扇区样式：从 cameras bundle 读取填充色/线色/线宽/透明度 */
 export function resolveOptoFovStyle(b: AppConfigSectorBundle | null) {
   return {
-    fillColor: b?.sectorFill ?? "rgba(147,51,234,0.10)",
+    fillColor: b?.sectorFill ?? "#eab308",
     fillOpacity: b?.sectorFillOpacity ?? 0.10,
     lineColor: b?.sectorLine ?? "#9333ea",
     lineWidth: b?.sectorLineWidth ?? 1.2,

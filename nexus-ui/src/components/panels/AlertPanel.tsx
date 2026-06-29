@@ -16,20 +16,20 @@ import {
   resolveTrackFromAlarmTrackId,
   runGisTrackVerification,
 } from "@/lib/run-gis-track-verification";
-import {
-  fuseTypeFromTrackKind,
-  sendAlarmTrackFilterRequest,
-  type AlarmFilterFuseType,
-} from "@/lib/alarm-filter-api";
+import { dismissAlarmByTargetId, dismissAlarmForTrack } from "@/lib/dismiss-alarm-for-track";
 import {
   resolveUniqueIdForAlert,
   sendAlarmConfirmRequest,
 } from "@/lib/alarm-confirm-api";
 import { resolveAlertFuseType } from "@/lib/alarm-track-match";
 import { AlertTriangle, AlertCircle, Info, Plane, ScanSearch, Ship, Trash2, Video, CheckCircle2 } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback } from "react";
 import { toast } from "sonner";
 import { THIRD_PARTY_DETECT_ALERT_TYPE } from "@/lib/third-party-ptz-fov";
+import { AlertScreenshotThumb } from "@/components/panels/AlertScreenshotThumb";
+
+const ALERT_ACTION_BTN =
+  "inline-flex h-6 shrink-0 items-center gap-0.5 rounded border px-1.5 text-[10px] font-medium leading-none transition-colors";
 
 const SEVERITY_STYLES = {
   critical: {
@@ -116,22 +116,9 @@ export function AlertPanel() {
     [shadowTracks],
   );
 
-  /** 告警 trackId → 查证图片（从 renderCache 查匹配 trackId 的航迹） */
-  const alertImageMap = useMemo(() => {
-    const map = new Map<string, string>();
-    const cache = getRenderCache();
-    for (const [, t] of cache) {
-      if (t.trackId && t.verificationImage) {
-        map.set(t.trackId, t.verificationImage);
-      }
-    }
-    return map;
-  }, [alerts, shadowTracks]);
-
   const allAlerts = alerts.map((a: AlertData) => ({
     ...a,
     severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
-    imageUrl: a.trackId ? alertImageMap.get(a.trackId) : undefined,
   }));
 
   const criticalCount = allAlerts.filter((a) => a.severity === "critical").length;
@@ -145,33 +132,15 @@ export function AlertPanel() {
         return;
       }
 
-      let fuseType: AlarmFilterFuseType | undefined = alert.fuseType;
-      if (fuseType !== 0 && fuseType !== 1) {
-        let isAirTrack = false;
-        for (const [, t] of getRenderCache()) {
-          if (t.trackId === trackId) {
-            isAirTrack = t.isAirTrack === true;
-            break;
-          }
-        }
-        if (!isAirTrack) {
-          const shadow = resolveTrackFromAlarmTrackId(trackId, shadowTracks, alert);
-          if (shadow) isAirTrack = shadow.isAirTrack === true;
-        }
-        fuseType = fuseTypeFromTrackKind(isAirTrack);
-      }
-
       try {
-        const result = await sendAlarmTrackFilterRequest(trackId, fuseType);
+        const track = resolveTrackFromAlarmTrackId(trackId, shadowTracks, alert);
+        const result = track
+          ? await dismissAlarmForTrack(track, { clearManualAffiliation: true })
+          : await dismissAlarmByTargetId(trackId);
         if (!result.ok) {
           toast.error("删除告警失败", { description: result.message ?? "告警服务无响应" });
           return;
         }
-        const showId = resolveShowIdFromAlarmTrackId(trackId, shadowTracks, alert);
-        if (showId) {
-          useTrackStore.getState().clearManualTrackAffiliation(showId);
-        }
-        removeAlarmItemsByTrackId(trackId);
         toast.success(`已删除航迹告警 ${trackId}`);
       } catch (err) {
         console.error("[AlertPanel] 删除告警失败:", err);
@@ -261,6 +230,7 @@ export function AlertPanel() {
                 ? "text-emerald-400"
                 : style.labelColor;
           const summaryLine = `目标：${summary.target}, 位置：${summary.position}, 区域：${summary.area}, 等级：${summary.level}`;
+          const alarmTrackId = isTrackAlarmItem(alert) ? alert.trackId?.trim() ?? null : null;
 
           return (
             <div
@@ -272,7 +242,7 @@ export function AlertPanel() {
               )}
               onClick={() => {
                 if (alert.type === THIRD_PARTY_DETECT_ALERT_TYPE && alert.lat != null && alert.lng != null) {
-                  requestFlyTo(alert.lat, alert.lng, 14);
+                  requestFlyTo(alert.lat, alert.lng);
                   return;
                 }
                 if (!alert.trackId) return;
@@ -280,7 +250,7 @@ export function AlertPanel() {
                 if (!showId) return;
                 selectTrack(showId);
                 const t = getRenderCache().get(showId);
-                if (t) requestFlyTo(t.lat, t.lng, 11);
+                if (t) requestFlyTo(t.lat, t.lng);
               }}
             >
               <div className="flex items-start gap-1.5">
@@ -306,7 +276,10 @@ export function AlertPanel() {
                           <button
                             type="button"
                             onClick={(e) => void handleConfirmAlarm(e, alert)}
-                            className="flex items-center gap-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 transition-colors hover:border-emerald-500/60 hover:bg-emerald-500/20"
+                            className={cn(
+                              ALERT_ACTION_BTN,
+                              "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:border-emerald-500/60 hover:bg-emerald-500/20",
+                            )}
                           >
                             <CheckCircle2 size={10} />
                             确认告警
@@ -315,7 +288,10 @@ export function AlertPanel() {
                         <button
                           type="button"
                           onClick={(e) => void handleDelete(e, alert)}
-                          className="flex items-center gap-0.5 rounded border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-400 transition-colors hover:border-rose-500/60 hover:bg-rose-500/20"
+                          className={cn(
+                            ALERT_ACTION_BTN,
+                            "border-rose-500/40 bg-rose-500/10 text-rose-400 hover:border-rose-500/60 hover:bg-rose-500/20",
+                          )}
                         >
                           <Trash2 size={10} />
                           删除
@@ -323,11 +299,21 @@ export function AlertPanel() {
                         <button
                           type="button"
                           onClick={(e) => void handleVerify(e, alert)}
-                          className="flex items-center gap-0.5 rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-400 transition-colors hover:border-sky-500/60 hover:bg-sky-500/20"
+                          className={cn(
+                            ALERT_ACTION_BTN,
+                            "border-sky-500/40 bg-sky-500/10 text-sky-400 hover:border-sky-500/60 hover:bg-sky-500/20",
+                          )}
                         >
                           <ScanSearch size={10} />
                           查证
                         </button>
+                        {alarmTrackId ? (
+                          <AlertScreenshotThumb
+                            key={alarmTrackId}
+                            trackId={alarmTrackId}
+                            preferredUniqueId={alert.uniqueID}
+                          />
+                        ) : null}
                       </div>
                     )}
                   </div>
@@ -355,15 +341,6 @@ export function AlertPanel() {
                     </p>
                   )}
 
-                  {alert.imageUrl && (
-                    <div className="mt-1 overflow-hidden rounded border border-white/[0.06]">
-                      <img
-                        src={alert.imageUrl}
-                        alt="查证图片"
-                        className="max-h-16 w-full object-cover"
-                      />
-                    </div>
-                  )}
                 </div>
               </div>
             </div>

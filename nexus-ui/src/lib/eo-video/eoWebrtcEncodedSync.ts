@@ -17,8 +17,16 @@ export interface EoEncodedSyncSnapshot {
 const RING_CAP = 128;
 const DEFAULT_PRESENTATION_LAG_FRAMES = 6;
 const PRESENTATION_WALL_STALE_MS = 3000;
+/** 90kHz 下 25fps 约 3600 tick/帧；近邻匹配不超过 2 帧 */
+export const EO_RTP_TICKS_PER_FRAME = 3600;
+export const EO_RTP_MAX_NEAR_TICKS = EO_RTP_TICKS_PER_FRAME * 2;
 
 type RingEntry = { syncHeader: Uint8Array; wallMs: number; rtpTimestamp: number };
+
+function rtpClockDelta(a: number, b: number): number {
+  const raw = Math.abs(a - b);
+  return Math.min(raw, 0x100000000 - raw);
+}
 
 export interface EoEncodedSyncHub {
   pushFromEncodedFrame(encodedFrame: RTCEncodedVideoFrame): void;
@@ -86,16 +94,26 @@ export function createEoEncodedSyncHub(): EoEncodedSyncHub {
       if (age > PRESENTATION_WALL_STALE_MS || age < -60_000) return null;
       return { syncHeader: best.syncHeader, wallMs: best.wallMs };
     },
-    snapshotByRtpTimestamp(rtpTimestamp: number, maxClockDelta = 9000): EoEncodedSyncSnapshot | null {
+    snapshotByRtpTimestamp(rtpTimestamp: number, maxClockDelta = EO_RTP_MAX_NEAR_TICKS) {
       if (!ring.length) return null;
+      /** 从环尾向前：优先精确 RTP（与 rvfc / Canvas 显示帧一致） */
+      for (let i = ring.length - 1; i >= 0; i--) {
+        const e = ring[i]!;
+        if (e.rtpTimestamp === rtpTimestamp) {
+          const age = Date.now() - e.wallMs;
+          if (age > PRESENTATION_WALL_STALE_MS || age < -60_000) return null;
+          return { syncHeader: e.syncHeader, wallMs: e.wallMs };
+        }
+      }
       let best: RingEntry | null = null;
       let bestDelta = Infinity;
-      for (const e of ring) {
-        const raw = Math.abs(e.rtpTimestamp - rtpTimestamp);
-        const delta = Math.min(raw, 0x100000000 - raw);
+      for (let i = ring.length - 1; i >= 0; i--) {
+        const e = ring[i]!;
+        const delta = rtpClockDelta(e.rtpTimestamp, rtpTimestamp);
         if (delta < bestDelta) {
           bestDelta = delta;
           best = e;
+          if (delta === 0) break;
         }
       }
       if (!best || bestDelta > maxClockDelta) return null;

@@ -5,6 +5,7 @@ import { canonicalEntityId } from "@/lib/camera-entity-id";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
 import { mergeSingleTrackTelemetry } from "@/lib/eo-video/mergeSingleTrackTelemetry";
 import { mapEoBoxToPresentationNorm } from "@/lib/eo-video/detectionSyncUtils";
+import { resolveEoDetectionHitAtClient } from "@/lib/eo-video/resolveEoDetectionHit";
 import { getVideoContentRect, resolveEoVideoIntrinsicSize } from "@/lib/eo-video/videoContentRect";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 import { useTrackStore } from "@/stores/track-store";
@@ -425,6 +426,53 @@ export function EoDetectionOverlay({
     },
     [boxes, containerRef, videoRef, videoObjectFit, videoIntrinsicWidth, videoIntrinsicHeight],
   );
+
+  /** 无人机等：`interactive=false` 时不挡瞄准，但在容器上监听双击发跟踪 */
+  useEffect(() => {
+    if (interactive || !onDoubleClickPoint) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const onDbl = (e: MouseEvent) => {
+      const hit = resolveEoDetectionHitAtClient({
+        container,
+        video: videoRef.current,
+        boxes,
+        videoObjectFit,
+        videoIntrinsicWidth,
+        videoIntrinsicHeight,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+      if (!hit) return;
+      let out = hit;
+      if (!hit.hitBox && selectedBoxId) {
+        const b = boxes.find((x) => x.id === selectedBoxId) ?? null;
+        if (b) {
+          out = {
+            normalizedX: b.x + b.w / 2,
+            normalizedY: b.y + b.h / 2,
+            hitBoxId: selectedBoxId,
+            hitBox: b,
+          };
+        }
+      }
+      if (onSelectBox) onSelectBox(out.hitBoxId);
+      onDoubleClickPoint(out);
+    };
+    container.addEventListener("dblclick", onDbl);
+    return () => container.removeEventListener("dblclick", onDbl);
+  }, [
+    boxes,
+    containerRef,
+    interactive,
+    onDoubleClickPoint,
+    onSelectBox,
+    selectedBoxId,
+    videoIntrinsicHeight,
+    videoIntrinsicWidth,
+    videoObjectFit,
+    videoRef,
+  ]);
 
   return (
     <canvas

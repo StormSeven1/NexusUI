@@ -27,8 +27,9 @@ function LayoutMenuFlyout(props: {
   anchorRect: DOMRect;
   children: React.ReactNode;
   menuRef: React.RefObject<HTMLUListElement | null>;
+  onMouseLeave?: (e: React.MouseEvent) => void;
 }) {
-  const { anchorRect, children, menuRef } = props;
+  const { anchorRect, children, menuRef, onMouseLeave } = props;
   const width = 200;
   return createPortal(
     <ul
@@ -36,11 +37,13 @@ function LayoutMenuFlyout(props: {
       role="menu"
       className="fixed z-[620] max-h-[min(320px,70vh)] overflow-y-auto rounded-md border border-nexus-border bg-nexus-bg-elevated py-1 text-xs shadow-xl"
       style={{
-        left: anchorRect.right + 4,
+        // 与一级菜单重叠 4px，避免移入二级时经过间隙触发 mouseLeave
+        left: anchorRect.right - 4,
         top: anchorRect.top,
         minWidth: width,
       }}
       onMouseDown={(e) => e.stopPropagation()}
+      onMouseLeave={onMouseLeave}
     >
       {children}
     </ul>,
@@ -86,6 +89,16 @@ export function useDockLayoutSubmenu() {
     setFlyoutAnchor(rowEl.getBoundingClientRect());
   };
 
+  const closeNestedFlyoutUnlessEntering = (
+    e: React.MouseEvent,
+    otherMenuRef: React.RefObject<HTMLUListElement | null>,
+  ) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && otherMenuRef.current?.contains(next)) return;
+    setFlyout(null);
+    setFlyoutAnchor(null);
+  };
+
   const persistLayout = (name: string, overwriteId?: string) => {
     const snapshot = captureDockLayoutSnapshot();
     const result = upsertPreset(name, snapshot, overwriteId);
@@ -128,10 +141,7 @@ export function useDockLayoutSubmenu() {
           minWidth: 168,
         }}
         onMouseDown={(e) => e.stopPropagation()}
-        onMouseLeave={() => {
-          setFlyout(null);
-          setFlyoutAnchor(null);
-        }}
+        onMouseLeave={(e) => closeNestedFlyoutUnlessEntering(e, flyoutMenuRef)}
       >
         <li role="none">
           <button
@@ -177,6 +187,7 @@ export function useDockLayoutSubmenu() {
     LayoutMenuFlyout({
       anchorRect: flyoutAnchor,
       menuRef: flyoutMenuRef,
+      onMouseLeave: (e) => closeNestedFlyoutUnlessEntering(e, layoutMenuRef),
       children: (
         <>
           <li role="none">
@@ -244,6 +255,7 @@ export function useDockLayoutSubmenu() {
     LayoutMenuFlyout({
       anchorRect: flyoutAnchor,
       menuRef: flyoutMenuRef,
+      onMouseLeave: (e) => closeNestedFlyoutUnlessEntering(e, layoutMenuRef),
       children: (
         <>
           <li role="none">
@@ -306,6 +318,7 @@ export function useDockLayoutSubmenu() {
   return {
     layoutRowRef,
     layoutMenuRef,
+    flyoutMenuRef,
     openLayoutFlyout,
     closeLayoutFlyouts,
     layoutFlyoutOpen,

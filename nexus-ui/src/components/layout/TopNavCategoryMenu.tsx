@@ -110,6 +110,7 @@ const MENU_CATEGORIES: MenuCategory[] = [
     icon: Settings2,
     description: "系统评估、资产与布局",
     items: [
+      { kind: "dock", panelId: "alerts", label: "告警" },
       { kind: "dock", panelId: "system-evaluation", label: "系统评估" },
       { kind: "dock", panelId: "assets", label: "资产列表" },
       { kind: "action", label: "数据状态", title: "各数据源接收间隔" },
@@ -182,6 +183,7 @@ export function TopNavCategoryMenu() {
   const {
     layoutRowRef,
     layoutMenuRef,
+    flyoutMenuRef,
     openLayoutFlyout,
     closeLayoutFlyouts,
     layoutFlyoutOpen,
@@ -238,6 +240,7 @@ export function TopNavCategoryMenu() {
       if (menuRef.current?.contains(t)) return;
       if (softFlyoutRef.current?.contains(t)) return;
       if (layoutMenuRef.current?.contains(t)) return;
+      if (flyoutMenuRef.current?.contains(t)) return;
       closeAll();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -249,7 +252,7 @@ export function TopNavCategoryMenu() {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [openCategoryId, closeAll, layoutMenuRef]);
+  }, [openCategoryId, closeAll, layoutMenuRef, flyoutMenuRef]);
 
   const panelOpenMap = useCallback(
     (panelId: PanelId) => {

@@ -34,6 +34,18 @@ export async function GET(req: Request) {
         { status: 502 },
       );
     }
+    const format = searchParams.get("format")?.trim().toLowerCase();
+    if (format === "upstream") {
+      return NextResponse.json(
+        {
+          ok: true,
+          listUrl,
+          fetchedAt: new Date().toISOString(),
+          payload,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
     const items = buildCatalogFromEntitiesPayload(payload);
     return NextResponse.json(
       {

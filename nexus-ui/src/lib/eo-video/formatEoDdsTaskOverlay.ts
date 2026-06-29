@@ -20,6 +20,29 @@ export function isCameraExecutionActive(executionState: unknown): boolean {
   return false;
 }
 
+/** 日常区域查证任务类型（对海 / 对空子任务在 DDS 上的 taskType） */
+export function isDailyAreaVerificationTaskType(taskType: unknown): boolean {
+  const t = String(taskType ?? "").trim();
+  return (
+    t === "type.casia.tasks.v1.CameraVerification" ||
+    t === "type.casia.tasks.v1.CameraSkyVerification"
+  );
+}
+
+/** DDS 相机状态超过此时间未更新则不再视为「正在查证」（避免断流后按钮常亮） */
+export const DDS_CAMERA_STATUS_STALE_MS = 15000;
+
+/**
+ * 任一路相机 DDS 报 CameraVerification 且 EXECUTING（含日常查证、区域航迹查证、告警查证等）。
+ * 不可单独用于顶栏「日常查证」按钮——请用 `useAutoDutyDailyVerificationActive`（查 auto_duty_workflow history）。
+ */
+export function isDailyAreaVerificationActiveFromDdsRow(row: EoCameraDdsStatusRow | undefined): boolean {
+  if (!row) return false;
+  if (Date.now() - row.updatedAt > DDS_CAMERA_STATUS_STALE_MS) return false;
+  if (!isDailyAreaVerificationTaskType(row.taskType)) return false;
+  return isCameraExecutionActive(row.executionState);
+}
+
 /** 与 BaseDeviceStatus.idl 顺序一致：1..4 为已完成/取消/暂存/失败 */
 function isCameraExecutionCompleted(executionState: unknown): boolean {
   if (executionState === null || executionState === undefined) return false;
@@ -113,6 +136,47 @@ export function formatEoDdsCameraLine(row: EoCameraDdsStatusRow | undefined): st
     return `正在跟踪${tid}号目标`;
   }
   return "空闲中";
+}
+
+/**
+ * 态势地图光电视场两侧虚线：仅相机任务执行中时显示。
+ * 与右下角 `formatEoDdsCameraLine` 同源：任务条为「空闲中」时不画侧缘虚线。
+ * （跟踪类任务在 executionState 仍为 EXECUTING 但 trackID 已空时，任务条与地图均视为空闲。）
+ */
+export function isCameraMapTaskExecuting(row: EoCameraDdsStatusRow | undefined): boolean {
+  return formatEoDdsCameraLine(row) !== "空闲中";
+}
+
+/**
+ * 是否处于应显示单目标检测框的跟踪态（与右下角 `formatEoDdsCameraLine`「正在跟踪{n}号目标」一致）。
+ * 不能只用 executionState===0：任务结束后 EXECUTING 可能仍为 0，但 trackID 已空 → 应收多目标。
+ */
+export function isCameraSingleTrackDetectionActive(row: EoCameraDdsStatusRow | undefined): boolean {
+  if (!row) return false;
+  if (isCameraExecutionCompleted(row.executionState)) return false;
+
+  const taskType = String(row.taskType ?? "").trim();
+  const tid = parsePositiveTrackId(row.trackID) ?? parsePositiveTrackId(row.targetID);
+  const active = isCameraExecutionActive(row.executionState);
+  const ex = row.executionState;
+
+  const transient = formatEoDdsCameraTransientTaskLine(taskType, active);
+  if (transient != null) return false;
+
+  if (
+    taskType === "type.casia.tasks.v1.TargetCollectionChildTask" ||
+    taskType === "type.casia.tasks.v1.TargetCollectionIMChildTask"
+  ) {
+    return active && tid != null;
+  }
+  if (taskType === "type.casia.tasks.v1.TargetStrikeChildTask") {
+    return active && tid != null;
+  }
+
+  if (tid == null) return false;
+  if (active) return true;
+  if (ex === undefined || ex === null || String(ex).trim() === "") return true;
+  return false;
 }
 
 /** 右下角一行：无人机 EntityRealTimeStatus `drone_task_action` */

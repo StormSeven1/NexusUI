@@ -31,16 +31,25 @@ def _build_relationships(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     # 机场 SN -> 任选一个关联 UAV 的机场位置/状态（用于拼机场项）
     airport_by_sn: Dict[str, Dict[str, Any]] = {}
 
-    # 第一轮：遍历所有实体，找出同时带有 DEVICE_SN 和 GATEWAY_SN 的（无人机↔机场关系）
+    # 第一轮：遍历 UAV 实体（跳过 DOCK 行，避免与 uav-* 重复且 entityId 错误）
     for entity in records:
         entity_id = (entity.get("entityId") or "").strip()
+        specific = str(
+            (entity.get("ontology") or {}).get("specificType")
+            or entity.get("specificType")
+            or ""
+        ).strip().upper()
+        if specific == "DOCK" or entity_id.startswith("dock-"):
+            continue
         name = (entity.get("aliases") or {}).get("name") or ""
         device_sn = _get_alt_id(entity, "DEVICE_SN")
         gateway_sn = _get_alt_id(entity, "GATEWAY_SN")
         if not device_sn or not gateway_sn:
             continue
         drone_to_airport[device_sn] = gateway_sn
-        airport_to_drones.setdefault(gateway_sn, []).append(device_sn)
+        dock_drones = airport_to_drones.setdefault(gateway_sn, [])
+        if device_sn not in dock_drones:
+            dock_drones.append(device_sn)
         position = (entity.get("location") or {}).get("position") or {}
         # 机场位置：优先用机场经纬度，否则用当前经纬度
         lat = position.get("airportLatitudeDegrees") if position.get("airportLatitudeDegrees") is not None else position.get("latitudeDegrees")

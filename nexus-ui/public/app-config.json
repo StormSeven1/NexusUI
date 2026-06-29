@@ -447,7 +447,7 @@
   "cameras": {
     "assetFriendlyColor": "#34d399",
     "defaultRange": 15000,
-    "sectorFill": "#4704f3",
+    "sectorFill": "#eab308",
     "sectorFillOpacity": 0.1,
     "sectorLine": "#a3eb1d",
     "sectorLineWidth": 1.2,
@@ -632,32 +632,7 @@
       "centerIconVisible": true,
       "centerNameVisible": false
     },
-    "devices": [
-      {
-        "deviceId": "TDOA",
-        "name": "TDOA",
-        "assetType": "tdoa",
-        "center": [
-          122.098,
-          37.5489
-        ],
-        "bearing": 0,
-        "angle": 60,
-        "range": 5000,
-        "color": "#ef1313",
-        "opacity": 0.2,
-        "virtualTroop": false,
-        "disposition": "friendly",
-        "centerNameVisible": true,
-        "activationEnabled": false,
-        "scan": {
-          "cycleMs": 2000,
-          "tickMs": 100,
-          "bandCount": 9,
-          "bandWidthMeters": 2
-        }
-      }
-    ]
+    "devices": []
   },
   "laserWeapons": {
     "activationEnabled": false,
@@ -695,31 +670,7 @@
       "centerIconVisible": true,
       "centerNameVisible": true
     },
-    "devices": [
-      {
-        "deviceId": "laser-1",
-        "name": "激光武器",
-        "assetType": "laser",
-        "center": [
-          122.0872,
-          37.5463
-        ],
-        "bearing": 0,
-        "angle": 3,
-        "range": 1500,
-        "color": "#ffffff",
-        "opacity": 0.35,
-        "virtualTroop": false,
-        "disposition": "friendly",
-        "centerNameVisible": true,
-        "scan": {
-          "cycleMs": 2000,
-          "tickMs": 90,
-          "bandCount": 9,
-          "bandWidthMeters": 1
-        }
-      }
-    ]
+    "devices": []
   },
   "trackRendering": {
     "trackTypeStyles": {
@@ -817,12 +768,16 @@
       "url": "http://192.168.18.141:8888/chat"
     },
     {
+      "label": "作战管理",
+      "url": "http://192.168.18.141:24000/"
+    },
+    {
       "label": "雷达管理",
       "url": "http://192.168.18.141:22231/dashboard"
     },
     {
       "label": "相机管理",
-      "url": "https://192.168.18.141:9443/home"
+      "url": "https://192.168.18.141:21915/home"
     },
     {
       "label": "无人机管理",
@@ -830,7 +785,7 @@
     },
     {
       "label": "告警管理",
-      "url": "http://192.168.18.141:8711/area-management"
+      "url": "http://192.168.18.141:21917/area-management"
     },
     {
       "label": "数据管理",
@@ -845,6 +800,7 @@
     "userPriority": 1,
     "seaCameraIndex": 1,
     "skyCameraIndex": 4,
+    "mapFovCameraEntityIds": ["camera_001", "camera_004"],
     "requestTimeoutMs": 60000
   }
 }

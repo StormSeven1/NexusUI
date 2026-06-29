@@ -3,6 +3,10 @@
  * 在 Web 端直接根据当前 `useTrackStore` 航迹计算并生成用户可见文案（不依赖工作流里的进度字符串）。
  */
 
+import {
+  dispatchLangGraphUavControl,
+  langGraphCommandToUavAction,
+} from "@/lib/langgraph-eo-uav-command-bridge";
 import type { Track } from "@/lib/map-entity-model";
 import { useTrackStore } from "@/stores/track-store";
 
@@ -70,7 +74,9 @@ function findTrackById(idStr: string): Track | null {
  * 处理 LangGraph `event === "tool_call"` 时 `data` 对象（含 `matched_command`、`extracted_parameters`）。
  * @returns 要追加到助手气泡的文案；不需要追加则返回 null
  */
-export function executeLangGraphToolCallFromData(data: Record<string, unknown>): string | null {
+export async function executeLangGraphToolCallFromData(
+  data: Record<string, unknown>,
+): Promise<string | null> {
   const cmd = String(data.matched_command ?? "").trim();
   if (!cmd) return null;
 
@@ -125,6 +131,12 @@ export function executeLangGraphToolCallFromData(data: Record<string, unknown>):
       Number.isFinite(sp) ? `速度 ${sp.toFixed(2)} m/s` : null,
     ].filter(Boolean);
     return parts.join("，");
+  }
+
+  const uavAction = langGraphCommandToUavAction(cmd);
+  if (uavAction) {
+    const result = await dispatchLangGraphUavControl(uavAction);
+    return result.message;
   }
 
   return `已识别指令「${cmd}」，Web 端暂未实现与 Qt 完全相同的地图联动；可在后续版本接线。`;

@@ -22,7 +22,7 @@
                         <udpv4>
                             <!-- 组播的目标IP和端口 -->
                             <address>239.255.0.1</address>
-                            <port>12355</port>
+                            <port>12370</port>
                         </udpv4>
                     </locator>
                 </defaultMulticastLocatorList>

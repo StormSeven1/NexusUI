@@ -10,7 +10,8 @@ import {
   isAirTrackBirdGlyph,
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
-import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
+import { resolveTrackMapHighlightFill, shouldApplySuspiciousTrackGreen } from "@/lib/track-map-highlight-color";
+import { shouldApplyVerifiedTrackYellow } from "@/lib/verified-track-color";
 import { loadSvgImage } from "@/lib/map-image-loader";
 import { threatRankBadgeImageId } from "@/lib/map-icons";
 import { isTrackVirtualTroop } from "@/lib/track-reality-type";
@@ -220,7 +221,7 @@ function trackPointFillAndStyle(t: Track, accent: AssetDispositionIconAccent | n
   const disp = getTrackDispositionForRendering(t);
   const style = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
   if (resolveTrackLayerKey(t) === "uav_pose_track") {
-    const pointFill = resolveVerifiedTrackPointFill(t, uavPoseTrackDotColor(td));
+    const pointFill = resolveTrackMapHighlightFill(t, uavPoseTrackDotColor(td));
     return { pointFill, disp, neutralFusion: undefined, style };
   }
   const seaCol = td.seaFusionColor;
@@ -228,7 +229,7 @@ function trackPointFillAndStyle(t: Track, accent: AssetDispositionIconAccent | n
   const neutralFusion = disp === "neutral" ? neutralFusionColorForTrack(t, seaCol, airCol) : undefined;
   const friendlyFill = disp === "friendly" ? style.idColor : undefined;
   const baseFill = neutralFusion ?? resolveTrackPointFill(t, disp, accent ?? null, friendlyFill);
-  const pointFill = resolveVerifiedTrackPointFill(t, baseFill);
+  const pointFill = resolveTrackMapHighlightFill(t, baseFill);
   return { pointFill, disp, neutralFusion, style };
 }
 
@@ -308,7 +309,8 @@ export function buildTrackFusionPointsGeoJSON(
     const isFuseAirTrack = layerKey === "fuse_air";
     const airFuseGlyph = isFuseAirTrack && airBirdGlyph;
     const seaFuseGlyph = layerKey === "fuse_sea" && t.type === "sea";
-    const opticallyVerified = shouldApplyVerifiedTrackGreen(t);
+    const opticallyVerified = shouldApplyVerifiedTrackYellow(t);
+    const suspiciousTarget = shouldApplySuspiciousTrackGreen(t);
     const baseProps: Record<string, unknown> = {
       id: t.id,
       showID: t.showID,
@@ -328,7 +330,10 @@ export function buildTrackFusionPointsGeoJSON(
       isAirBirdGlyph: airBirdGlyph,
       altitude: t.altitude ?? null,
       color: pointFill,
-      labelColor: shouldApplyVerifiedTrackGreen(t) || disp === "neutral" ? pointFill : style.idColor,
+      labelColor:
+        suspiciousTarget || shouldApplyVerifiedTrackYellow(t) || disp === "neutral"
+          ? pointFill
+          : style.idColor,
       labelTextSize: Math.max(6, Math.min(22, style.idSize)),
       symbolId: getMarkerSymbolId(
         t.type,
@@ -340,6 +345,7 @@ export function buildTrackFusionPointsGeoJSON(
         airFuseGlyph,
         opticallyVerified,
         seaFuseGlyph,
+        suspiciousTarget,
       ),
       iconScale,
     };
@@ -380,7 +386,7 @@ export function buildTrackRadarPointsGeoJSON(
       course: t.course ?? null,
       altitude: t.altitude ?? null,
       color: pointFill,
-      labelColor: shouldApplyVerifiedTrackGreen(t) || disp === "neutral" ? pointFill : style.idColor,
+      labelColor: shouldApplyVerifiedTrackYellow(t) || disp === "neutral" ? pointFill : style.idColor,
       labelTextSize: Math.max(6, Math.min(22, style.idSize)),
     };
     features.push({
@@ -501,7 +507,7 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
     const azm = t.azimuth;
     h ^= azm != null && Number.isFinite(azm) ? Math.round((azm as number) * 100) : 0x71a2b33f;
     h = Math.imul(h, 16777619) >>> 0;
-    h ^= shouldApplyVerifiedTrackGreen(t) ? 1 : 0;
+    h ^= shouldApplyVerifiedTrackYellow(t) ? 1 : 0;
     h = Math.imul(h, 16777619) >>> 0;
   }
   return h >>> 0;
@@ -933,10 +939,12 @@ export class TracksMaplibre {
       const layerKey = resolveTrackLayerKey(t);
       const airFuseGlyph = layerKey === "fuse_air" && airBirdGlyph;
       const seaFuseGlyph = layerKey === "fuse_sea" && t.type === "sea";
-      const opticallyVerified = shouldApplyVerifiedTrackGreen(t);
-      const needsCustomNeutral = disp === "neutral" && !opticallyVerified;
+      const opticallyVerified = shouldApplyVerifiedTrackYellow(t);
+      const suspiciousTarget = shouldApplySuspiciousTrackGreen(t);
+      const needsCustomNeutral = disp === "neutral" && !opticallyVerified && !suspiciousTarget;
       const needsVerifiedIcon = opticallyVerified;
-      if (!needsCustomNeutral && !needsVerifiedIcon) continue;
+      const needsSuspiciousIcon = suspiciousTarget;
+      if (!needsCustomNeutral && !needsVerifiedIcon && !needsSuspiciousIcon) continue;
 
       const id = getMarkerSymbolId(
         t.type,
@@ -948,6 +956,7 @@ export class TracksMaplibre {
         airFuseGlyph,
         opticallyVerified,
         seaFuseGlyph,
+        suspiciousTarget,
       );
       if (seen.has(id)) continue;
       seen.add(id);
@@ -967,6 +976,7 @@ export class TracksMaplibre {
               airFuseGlyph,
               opticallyVerified,
               seaFuseGlyph,
+              suspiciousTarget,
             ),
             64,
           ),

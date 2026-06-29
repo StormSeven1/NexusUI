@@ -35,7 +35,7 @@ function pruneVisibility(
   }
   for (const r of rows) {
     const k = dbAreaVisibilityKey(r.group_id, r.area_id);
-    if (!(k in next)) next[k] = true;
+    if (!(k in next)) next[k] = false;
   }
   return next;
 }
@@ -79,8 +79,8 @@ export const useDbAreaStore = create<DbAreaState>()(
         const { rows, areaVisibility } = get();
         const inGroup = rows.filter((r) => r.group_id === groupId);
         if (inGroup.length === 0) return;
-        const allOn = inGroup.every(
-          (r) => areaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] !== false,
+        const allOn = inGroup.every((r) =>
+          areaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] === true,
         );
         get().setGroupAllAreasVisible(groupId, !allOn);
       },

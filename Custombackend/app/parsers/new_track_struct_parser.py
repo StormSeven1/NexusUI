@@ -160,3 +160,18 @@ def parse_target_output_set(output_set) -> Optional[List[Dict[str, Any]]]:
     """TargetOutputSet → 航迹 dict 列表。"""
     targets = output_set.targets()
     return [target_object_to_track(targets[i]) for i in range(len(targets))]
+
+
+def parse_suspicious_target_set(output_set) -> Optional[Dict[str, Any]]:
+    """TargetOutputSet（NewTrackStructSuspicious）→ 可疑 unique_id 列表，不写航迹 store。"""
+    target_ids: List[str] = []
+    targets = output_set.targets()
+    for i in range(len(targets)):
+        tid = str(targets[i].target_id() or "").strip()
+        if tid:
+            target_ids.append(tid)
+    return {
+        "data_type": "suspicious_target",
+        "target_ids": target_ids,
+        "count": len(target_ids),
+    }

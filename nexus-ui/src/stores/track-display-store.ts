@@ -10,14 +10,13 @@ import {
 } from "@/lib/map-entity-model";
 import {
   DEFAULT_AIR_FUSION_SUBTYPE_VISIBLE,
+  DEFAULT_TRACK_SUBTYPE_VISIBLE,
   resolveTrackLayerKey,
   type AirFusionSubtypeVisibility,
 } from "@/lib/track-layer-visibility";
 
 function defaultTrackSubtypeVisible(): Record<TrackLayerKey, boolean> {
-  return Object.fromEntries(
-    TRACK_LAYER_KEYS_ORDERED.map((k) => [k, true]),
-  ) as Record<TrackLayerKey, boolean>;
+  return { ...DEFAULT_TRACK_SUBTYPE_VISIBLE };
 }
 
 function defaultSecondsByLayer(defaultSec: number): Record<TrackLayerKey, number> {

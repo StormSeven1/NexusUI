@@ -355,6 +355,7 @@ export function ingestEntityDetectionPayload(
     }
     if (validRects !== null) {
       if (validRects.length === 0) {
+        /** 对齐 base-vue：显式空 singleRect 清空缓冲并重置 sync 滞回 */
         singleBuf.length = 0;
         cleared.clearedSingle = true;
       } else {

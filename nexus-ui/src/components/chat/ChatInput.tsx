@@ -79,6 +79,9 @@ interface ChatInputProps {
   leadingToolbar?: ReactNode;
   /** 为 true 时在发送按钮后显示语音按钮（长按录音 → `/api/speech-to-text`） */
   enableVoiceInput?: boolean;
+  /** 只读模式：禁止输入与发送（如值班助手 Tab） */
+  readOnly?: boolean;
+  placeholder?: string;
 }
 
 function resizeTextarea(ta: HTMLTextAreaElement) {
@@ -87,7 +90,15 @@ function resizeTextarea(ta: HTMLTextAreaElement) {
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
-  { onSend, onStop, isLoading, leadingToolbar, enableVoiceInput = false },
+  {
+    onSend,
+    onStop,
+    isLoading,
+    leadingToolbar,
+    enableVoiceInput = false,
+    readOnly = false,
+    placeholder = "输入指令...",
+  },
   ref,
 ) {
   // —— 下面两个是「受控输入」状态：UI 显示的值完全由 state 决定，类似 Vue v-model 拆开写 ——
@@ -152,6 +163,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   }, []);
 
   const applyDraftText = useCallback((text: string) => {
+    if (readOnly) return;
     setInput(text);
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
@@ -160,7 +172,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       ta.focus();
       ta.setSelectionRange(text.length, text.length);
     });
-  }, []);
+  }, [readOnly]);
 
   useImperativeHandle(ref, () => ({
     setDraft: applyDraftText,
@@ -278,6 +290,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
    * - 父组件若稳定传入 onSend，可减少无谓重建（一般 ChatPanel 里 useCallback 包了 onSend）。
    */
   const handleSend = useCallback(() => {
+    if (readOnly) return;
     const trimmed = input.trim();
     // 既没有字也没有附件：不发
     if (!trimmed && attachments.length === 0) return;
@@ -289,13 +302,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [input, attachments, onSend]);
+  }, [input, attachments, onSend, readOnly]);
 
   /**
    * 键盘事件：Enter 发送、Shift+Enter 换行（常见 IM 行为）。
    * 不是 useCallback：每次渲染新建函数也没关系，因为只绑在 textarea 上，开销可忽略。
    */
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (readOnly) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault(); // 阻止浏览器默认「换行」
       if (!isLoading) handleSend(); // 生成中不允许用 Enter 再发一条
@@ -403,14 +417,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           value={input}
           onChange={handleTextareaInput}
           onKeyDown={handleKeyDown}
-          placeholder="输入指令..."
+          placeholder={placeholder}
+          readOnly={readOnly}
           rows={1}
           className={cn(
             "flex-1 resize-none rounded-md border border-white/[0.06] bg-white/[0.03]",
             "px-2.5 py-1.5 text-[11px] leading-relaxed text-nexus-text-primary",
             "placeholder:text-nexus-text-muted",
             "focus:border-white/[0.12] focus:outline-none focus:ring-1 focus:ring-white/[0.08]",
-            "transition-colors"
+            "transition-colors",
+            readOnly && "cursor-default opacity-70",
           )}
           style={{ minHeight: 32, maxHeight: 120 }}
         />
@@ -429,10 +445,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           <button
             type="button"
             onClick={handleSend}
-            disabled={!input.trim() && attachments.length === 0}
+            disabled={readOnly || (!input.trim() && attachments.length === 0)}
             className={cn(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors",
-              input.trim() || attachments.length > 0
+              !readOnly && (input.trim() || attachments.length > 0)
                 ? "border border-sky-500/30 bg-sky-500/15 text-sky-400 hover:bg-sky-500/25"
                 : "border border-white/[0.06] bg-white/[0.03] text-nexus-text-muted"
             )}
@@ -442,7 +458,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           </button>
         )}
 
-        {enableVoiceInput && (
+        {enableVoiceInput && !readOnly && (
           <button
             type="button"
             disabled={isTranscribing}

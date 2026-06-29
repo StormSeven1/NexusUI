@@ -100,12 +100,19 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
       : taskIDL != null && taskIDL !== ""
         ? String(taskIDL)
         : undefined;
+  const parentTaskIdL = o.parentTaskId ?? o.parent_task_id;
+  const parentTaskId =
+    typeof parentTaskIdL === "string"
+      ? parentTaskIdL.trim() || undefined
+      : parentTaskIdL != null && parentTaskIdL !== ""
+        ? String(parentTaskIdL).trim() || undefined
+        : undefined;
   const cameraIndexRaw = numField("cameraIndex", "camera_index", "CameraIndex");
   const entityRef = resolveVerifyEntityRef(o, cameraIndexRaw);
   const { entityId, cameraIndex } = entityRef;
-  const trackID = numField("trackID", "track_id", "trackId", "TrackID");
+  /** legacy 显示用；`track_id` 为 target_id，勿与此字段混读 */
+  const trackID = numField("trackID", "trackId", "TrackID");
   const verifyTargetId = resolveVerifyTargetIdFromBody(o);
-  const uniqueIdFromBody = verifyTargetId ?? numField("uniqueId", "unique_id", "uniqueID");
   const longitudeDeg = numField("longitudeDeg", "longitude_deg", "lon", "longitude");
   const latitudeDeg = numField("latitudeDeg", "latitude_deg", "lat", "latitude");
   const distanceNm = numField("distanceNm", "distance_nm", "distanceNauticalMiles");
@@ -146,11 +153,10 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
     return undefined;
   };
 
-  const targetId = verifyTargetId ?? uniqueIdFromBody ?? trackID;
-  const targetOk = targetId != null && Number.isFinite(targetId);
+  const targetOk = verifyTargetId != null;
   const trackOk = trackID != null && Number.isFinite(trackID);
   const camOk = cameraIndex != null && Number.isFinite(cameraIndex);
-  const sessionKey = targetOk ? buildVerifySessionKey(targetId!, entityRef) : null;
+  const sessionKey = targetOk ? buildVerifySessionKey(verifyTargetId!, entityRef) : null;
 
   if (taskStatus === 4 && sessionKey) {
     resetVerifyObjectKeyAccumulatorForSession(sessionKey);
@@ -188,12 +194,11 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
     objectKeyForUrl = mergedKeySuffix;
   }
 
-  /** 与 Qt 一致：未带 bucket/key 时读 PostgreSQL `minio_multi_metadata`（需可解析的 cameraIndex）。
-   *  taskStatus=4 仅为「开始查证」，此时库中可能是历史截图，不应展示。 */
-  if (!downloadUrl && camOk && taskStatus >= 5) {
+  /** 与 Qt 一致：未带 bucket/key 时读 PostgreSQL `minio_multi_metadata`。
+   *  必须带有效 `target_id` + `cameraIndex`；taskStatus=4 仅为「开始查证」，不查历史图。 */
+  if (!downloadUrl && camOk && targetOk && taskStatus >= 5) {
     const dbRow = await resolveScreenshotMetadataFromDb({
-      uniqueId: targetOk ? targetId : uniqueIdFromBody ?? undefined,
-      trackId: !targetOk && trackOk ? trackID : undefined,
+      uniqueId: verifyTargetId!,
       cameraIndex: cameraIndex!,
     });
     if (dbRow) {
@@ -243,15 +248,16 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
   const payload: TaskStatusRequestBody = {
     taskStatus,
     taskID,
+    parentTaskId,
     entityId,
     cameraIndex: camOk ? cameraIndex : undefined,
     trackID: trackID != null && Number.isFinite(trackID) ? trackID : undefined,
-    uniqueId: uniqueIdFromBody != null && Number.isFinite(uniqueIdFromBody) ? uniqueIdFromBody : undefined,
+    uniqueId: verifyTargetId,
     description: description || undefined,
     downloadUrl,
     imageMediaType,
     imageFileName,
-    verifyTargetId: targetOk ? targetId : undefined,
+    verifyTargetId,
     longitudeDeg: longitudeDeg != null && Number.isFinite(longitudeDeg) ? longitudeDeg : undefined,
     latitudeDeg: latitudeDeg != null && Number.isFinite(latitudeDeg) ? latitudeDeg : undefined,
     distanceNm: distanceNm != null && Number.isFinite(distanceNm) ? distanceNm : undefined,
@@ -278,9 +284,10 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
     entityId: entityId ?? null,
     cameraIndex: camOk ? cameraIndex : null,
     trackID: trackOk ? trackID : null,
-    targetId: targetOk ? targetId : null,
-    uniqueId: uniqueIdFromBody ?? null,
+    targetId: verifyTargetId ?? null,
+    uniqueId: verifyTargetId ?? null,
     taskID: taskID ?? null,
+    parentTaskId: parentTaskId ?? null,
     sessionKey,
     hasImage: Boolean(downloadUrl),
     imageSource: imageSource ?? (downloadUrl ? "resolved" : "none"),

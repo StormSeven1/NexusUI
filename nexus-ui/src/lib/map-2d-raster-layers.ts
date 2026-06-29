@@ -155,7 +155,7 @@ export function applyMap2dRasterLayerVisibility(
   }
 }
 
-/** 栅格与矢量底图平级：栅格开启时隐藏不透明矢量面，避免盖住卫星瓦片 */
+/** 栅格与矢量底图平级：栅格开启时隐藏不透明矢量面，避免盖住本地瓦片底图 */
 export function resolveVectorBasemapLayerVisible(
   layerId: string,
   master: boolean,

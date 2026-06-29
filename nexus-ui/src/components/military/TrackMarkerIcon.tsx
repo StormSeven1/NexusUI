@@ -12,7 +12,8 @@ import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import { getTrackDispositionForRendering } from "@/stores/track-store";
 import { isTrackVirtualTroop } from "@/lib/track-reality-type";
-import { shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
+import { shouldApplyVerifiedTrackYellow } from "@/lib/verified-track-color";
+import { shouldApplySuspiciousTrackGreen } from "@/lib/track-map-highlight-color";
 
 /** 与 GIS 左键标牌、地图军标同源：{@link buildMarkerSymbolDataUrl} */
 export function useTrackMarkerSymbolUrl(track: Track | null | undefined): string | null {
@@ -31,8 +32,9 @@ export function useTrackMarkerSymbolUrl(track: Track | null | undefined): string
       eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
       isAirTrackBirdGlyph(track),
       resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
-      shouldApplyVerifiedTrackGreen(track),
+      shouldApplyVerifiedTrackYellow(track),
       resolveTrackLayerKey(track) === "fuse_sea" && track.type === "sea",
+      shouldApplySuspiciousTrackGreen(track),
     );
   }, [track]);
 }

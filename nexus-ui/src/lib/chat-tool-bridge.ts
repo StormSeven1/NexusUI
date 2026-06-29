@@ -81,7 +81,6 @@ import type { LeftPanelTab, RightPanelTab } from "@/stores/app-store";
 type ToolOutput = Record<string, unknown>;
 
 let _routeIdSeq = 0;
-let _areaIdSeq = 0;
 
 /**
  * action 字符串 → 客户端副作用函数。
@@ -177,28 +176,6 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
 
   query_assets: () => {
     /* 纯信息型工具，供 LLM 查询资产使用，无 UI 副作用 */
-  },
-
-  /* 写入 `app-store.drawnAreas`；颜色由工具输出决定，缺省琥珀色（与 `Map2D.commitPolyArea` 手写蓝色不同） */
-  draw_area: (output) => {
-    if (!output.success) return;
-    const { zone_id, points, color, fillColor, fillOpacity, label } = output as {
-      zone_id?: string;
-      points: Array<{ lat: number; lng: number }>;
-      color?: string;
-      fillColor?: string;
-      fillOpacity?: number;
-      label?: string;
-    };
-    if (!points?.length) return;
-    useAppStore.getState().addDrawnArea({
-      id: zone_id ?? `area-${++_areaIdSeq}`,
-      points,
-      color: color ?? "#f59e0b",
-      fillColor: fillColor ?? color ?? "#f59e0b",
-      fillOpacity: fillOpacity ?? 0.15,
-      label,
-    });
   },
 
   plan_route: () => {

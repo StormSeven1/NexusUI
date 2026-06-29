@@ -26,7 +26,7 @@ function tsFlightsubtask(): string {
 
 /**
  * WatchSys `PtzMainWidget::SendUavFlightTask`：`rectID`/`rectType`≤0 且 `radarid` 非 7/8 时
- * `type.casia.tasks.v1.MultiDroneTracking`（`trackID_List` 为业务 track_id / external_target_id）。
+ * `type.casia.tasks.v1.MultiDroneTracking`（`trackID_List` 为新 DDS `target_id`）。
  */
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
@@ -43,7 +43,8 @@ export async function POST(req: NextRequest) {
         ? body.deviceSN.trim()
         : "";
   const airportSN = rawAirport;
-  const trackId = typeof body.trackId === "number" ? body.trackId : Number(body.trackId);
+  const rawTargetId = body.targetId ?? body.target_id ?? body.trackId;
+  const targetId = typeof rawTargetId === "number" ? rawTargetId : Number(rawTargetId);
   const lat = typeof body.latitude === "number" ? body.latitude : Number(body.latitude);
   const lon = typeof body.longitude === "number" ? body.longitude : Number(body.longitude);
   const targetSourceId =
@@ -56,8 +57,8 @@ export async function POST(req: NextRequest) {
   if (!airportSN || airportSN === "whzdh01") {
     return NextResponse.json({ ok: false, error: "invalid_or_skipped_airport_sn" }, { status: 400 });
   }
-  if (!Number.isFinite(trackId) || trackId === 0) {
-    return NextResponse.json({ ok: false, error: "trackId_required" }, { status: 400 });
+  if (!Number.isFinite(targetId) || targetId === 0) {
+    return NextResponse.json({ ok: false, error: "targetId_required" }, { status: 400 });
   }
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     return NextResponse.json({ ok: false, error: "invalid_lat_lon" }, { status: 400 });
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
   const specification: Record<string, unknown> = {
     "@type": "type.casia.tasks.v1.MultiDroneTracking",
     transition_distance: 200,
-    trackID_List: [Math.trunc(trackId)],
+    trackID_List: [Math.trunc(targetId)],
     lon: lonR,
     lat: latR,
     deviceSn: airportSN,

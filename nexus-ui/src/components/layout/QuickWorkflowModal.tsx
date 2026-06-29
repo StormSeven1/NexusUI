@@ -26,6 +26,7 @@ import { useState, useEffect } from "react";
 import { AlertTriangle, Shield, Target, Radar, X, Loader2, Play, ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getHttpChatConfig } from "@/lib/map-app-config";
+import { resolveQuickWorkflowPostUrl } from "@/lib/quick-workflow-client";
 import { toast } from "sonner";
 
 /** 快捷工作流配置项 */
@@ -198,8 +199,9 @@ export function QuickWorkflowModal({ open, onClose }: Props) {
   if (!open) return null;
 
   const handleExecute = async (wf: QuickWorkflowItem, parameters: Record<string, unknown>) => {
-    const url = getHttpChatConfig().quickWorkflowUrl;
-    if (!url) { toast.error("未配置快捷工作流 URL"); onClose(); return; }
+    const upstreamUrl = getHttpChatConfig().quickWorkflowUrl;
+    if (!upstreamUrl) { toast.error("未配置快捷工作流 URL"); onClose(); return; }
+    const url = resolveQuickWorkflowPostUrl(upstreamUrl);
     setExecutingId(wf.id);
     const threadId = `qw_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const body = { thread_id: threadId, workflow_id: wf.id, parameters };

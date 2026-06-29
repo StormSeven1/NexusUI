@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useEoEntityDetection } from "@/hooks/useEoEntityDetection";
 import { eoDetectionBoxesEqual } from "@/lib/eo-video/detectionSyncUtils";
 import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
+import type { EoWebCodecsPresentation } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
 import { EoDetectionOverlay } from "./EoDetectionOverlay";
 
@@ -27,6 +28,8 @@ export interface EoVideoDetectionLayerProps {
   videoObjectFit?: "contain" | "cover";
   videoIntrinsicWidth?: number;
   videoIntrinsicHeight?: number;
+  /** WebCodecs 呈现 ref：检测按 lastRenderedRtpTimestamp 与 hub 对齐 */
+  webCodecsPresentationRef?: React.MutableRefObject<EoWebCodecsPresentation>;
   /** 与父级放大窗口一致：影响单目标跟踪框标签文案（航迹信息） */
   expandedMode?: boolean;
   /** 与 DDS `trackAlias` 对应的相机 entityId（可与 detection entityId 不同） */
@@ -54,6 +57,7 @@ export function EoVideoDetectionLayer({
   videoObjectFit,
   videoIntrinsicWidth,
   videoIntrinsicHeight,
+  webCodecsPresentationRef,
   expandedMode = false,
   ddsCameraEntityId,
   interactive = true,
@@ -69,6 +73,7 @@ export function EoVideoDetectionLayer({
     ddsCameraEntityId,
     presentationWidth: videoIntrinsicWidth,
     presentationHeight: videoIntrinsicHeight,
+    webCodecsPresentationRef,
   });
 
   const onBoxesChangeRef = useRef(onBoxesChange);

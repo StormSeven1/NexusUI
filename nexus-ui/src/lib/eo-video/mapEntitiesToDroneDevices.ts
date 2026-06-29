@@ -36,7 +36,7 @@ function pickFromChild(
 }
 
 /** 与设备管理接口一致：aliases.alternateIds 里 type=DEVICE_SN / GATEWAY_SN 等 */
-function pickAlternateIdByType(raw: Record<string, unknown>, typeLiteral: string): string {
+export function pickAlternateIdByType(raw: Record<string, unknown>, typeLiteral: string): string {
   const want = typeLiteral.toUpperCase();
   const aliases = raw.aliases;
   if (!isRecord(aliases)) return "";
@@ -111,17 +111,11 @@ export function extractEntityRecords(payload: unknown): unknown[] {
   return walk(payload, 0) ?? [];
 }
 
-function mapOne(raw: unknown): EoDroneDeviceRow | null {
-  if (!isRecord(raw)) return null;
-  if (!entityIndicatorsSimulatedIsFalse(raw)) return null;
-  const entityId = pickStr(raw, ["entityId", "entity_id", "id", "uuid", "deviceId", "device_id"]);
-  let name = pickStr(raw, ["name", "entityName", "entity_name", "title", "label", "displayName", "deviceName"]);
-  if (!name) {
-    const aliases = raw.aliases;
-    if (isRecord(aliases)) {
-      name = pickStr(aliases, ["name", "displayName", "label"]);
-    }
-  }
+/** 从 8090 实体原始行（或 asset.properties）提取无人机/机场 SN */
+export function extractDroneSnsFromEntityRaw(raw: Record<string, unknown>): {
+  deviceSN: string;
+  airportSN: string;
+} {
   let deviceSN = pickStr(raw, [
     "deviceSN",
     "device_sn",
@@ -190,6 +184,22 @@ function mapOne(raw: unknown): EoDroneDeviceRow | null {
       pickAlternateIdByType(raw, "NEST_SN");
   }
 
+  return { deviceSN, airportSN };
+}
+
+function mapOne(raw: unknown, options?: { includeSimulated?: boolean }): EoDroneDeviceRow | null {
+  if (!isRecord(raw)) return null;
+  if (!options?.includeSimulated && !entityIndicatorsSimulatedIsFalse(raw)) return null;
+  const entityId = pickStr(raw, ["entityId", "entity_id", "id", "uuid", "deviceId", "device_id"]);
+  let name = pickStr(raw, ["name", "entityName", "entity_name", "title", "label", "displayName", "deviceName"]);
+  if (!name) {
+    const aliases = raw.aliases;
+    if (isRecord(aliases)) {
+      name = pickStr(aliases, ["name", "displayName", "label"]);
+    }
+  }
+  const { deviceSN, airportSN } = extractDroneSnsFromEntityRaw(raw);
+
   if (!entityId || !deviceSN || !airportSN) return null;
   if (!isUavOntology(raw)) return null;
 
@@ -210,11 +220,14 @@ function mapOne(raw: unknown): EoDroneDeviceRow | null {
   };
 }
 
-export function mapEntityRecordsToDevices(records: unknown[]): EoDroneDeviceRow[] {
+export function mapEntityRecordsToDevices(
+  records: unknown[],
+  options?: { includeSimulated?: boolean },
+): EoDroneDeviceRow[] {
   const out: EoDroneDeviceRow[] = [];
   const seen = new Set<string>();
   for (const r of records) {
-    const d = mapOne(r);
+    const d = mapOne(r, options);
     if (!d) continue;
     const k = `${d.entityId}:${d.deviceSN}:${d.airportSN}`;
     if (seen.has(k)) continue;

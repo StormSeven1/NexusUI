@@ -1,5 +1,5 @@
 import type { PanelId } from "@/stores/dock-store";
-import { useDockStore } from "@/stores/dock-store";
+import { getDockInitialLayoutSnapshot, useDockStore } from "@/stores/dock-store";
 import { useAppStore } from "@/stores/app-store";
 import { getWindowConfig } from "@/components/dock/windowRegistry";
 
@@ -14,6 +14,9 @@ function resolvePartitionId(panelId: PanelId): string {
   const panel = state.panels.find((p) => p.id === panelId);
   if (panel?.location?.startsWith("left")) return panel.location;
   if (panel?.location?.startsWith("right")) return panel.location;
+
+  const defaultPanel = getDockInitialLayoutSnapshot().panels.find((p) => p.id === panelId);
+  if (defaultPanel?.location) return defaultPanel.location;
 
   const cfg = getWindowConfig(panelId);
   const loc = cfg?.defaultLocation;

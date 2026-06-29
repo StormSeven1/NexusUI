@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore, getTrackDispositionForRendering, isTrackAlarmLinked } from "@/stores/track-store";
 import { getFusionTrackMarkerFill, resolveTrackPointFill, isAirTrackBirdGlyph } from "@/lib/map-icons";
-import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackGreen } from "@/lib/verified-track-color";
+import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackYellow } from "@/lib/verified-track-color";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
 import { LYR_TRACKS, trackMapDisplayId, type Track } from "@/lib/map-entity-model";
@@ -87,7 +87,7 @@ function TrackListRow({
           virtual={isTrackVirtualTroop(track)}
           seaFuse={resolveTrackLayerKey(track) === "fuse_sea" && track.type === "sea"}
           neutralFusionFill={disp === "neutral" ? getFusionTrackMarkerFill(track) : undefined}
-          opticallyVerified={shouldApplyVerifiedTrackGreen(track)}
+          opticallyVerified={shouldApplyVerifiedTrackYellow(track)}
           size="sm"
           className="mt-0.5 shrink-0"
         />

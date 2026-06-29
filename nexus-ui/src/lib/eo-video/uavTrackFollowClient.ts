@@ -13,13 +13,13 @@ export type UavTrackFollowResult = {
 
 /**
  * WatchSys `PtzMainWidget::SendUavFlightTask`（`rectID`/`rectType` 为 -1、`targetSourceId` 0/9）→ `MultiDroneTracking`。
- * `trackId` 为业务 track_id（external_target_id），非 NewTrack 全局 target_id。
+ * `targetId` 为新 DDS `target_id`（与航迹 `uniqueID` / 相机 POS 一致）→ `trackID_List`。
  */
 export async function postUavTrackFollowTask(args: {
   /** 机巢 / 机场 gateway SN（任务 JSON `specification.deviceSn`） */
   airportSN: string;
-  /** 业务 track_id（external_target_id）→ `trackID_List` */
-  trackId: number;
+  /** 新 DDS `target_id` → `trackID_List` */
+  targetId: number;
   latitude: number;
   longitude: number;
   targetSourceId: number;
@@ -32,7 +32,7 @@ export async function postUavTrackFollowTask(args: {
   const { flightHeight } = getDroneTaskFlightParams();
   const clientBody = {
     airportSN: args.airportSN.trim(),
-    trackId: args.trackId,
+    targetId: args.targetId,
     latitude: args.latitude,
     longitude: args.longitude,
     targetSourceId: args.targetSourceId,

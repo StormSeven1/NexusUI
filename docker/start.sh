@@ -7,6 +7,26 @@ echo "========================================"
 echo "NexusUI 启动中（Docker / workspace）"
 echo "========================================"
 
+# Mode 2 ASR：浏览器 webm 需在容器内 ffmpeg 转 wav（宿主机有 ffmpeg 时 Next 进程仍跑在容器内）
+ensure_ffmpeg() {
+    if command -v ffmpeg >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! command -v apt-get >/dev/null 2>&1; then
+        echo "⚠️ 容器内无 ffmpeg 且无法 apt-get：NEXUS_SPEECH_MODE=2 录音转写将失败"
+        return 0
+    fi
+    echo "安装 ffmpeg（智能语音 Mode 2 转码需要，仅首次起容器时执行）..."
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg
+    if command -v ffmpeg >/dev/null 2>&1; then
+        echo "✅ ffmpeg 已就绪: $(command -v ffmpeg)"
+    else
+        echo "⚠️ ffmpeg 安装失败：NEXUS_SPEECH_MODE=2 录音转写将失败"
+    fi
+}
+ensure_ffmpeg
+
 BACKEND_PORT="${BACKEND_PORT:-27003}"
 FRONTEND_PORT="${FRONTEND_PORT:-22301}"
 export BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}"

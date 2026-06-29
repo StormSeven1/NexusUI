@@ -3,11 +3,12 @@
  *
  * **HTTPS 页面**始终将同源 `ws://` 改写为 Nginx `wss://`（避免 Mixed Content；不受构建时 `NEXT_PUBLIC_WS_USE_NGINX_TUNNEL` 影响）。
  * `NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=true` 仅影响 HTTP 开发页是否预置隧道逻辑。
- * 开发环境 **Next HTTPS :22301** 时，重写后的 WSS 会打到 **:22401**（见 `wsTunnelHost.ts`）；无 Nginx 时请关闭隧道或改用 HTTP 前端。
+ * 开发 **Next HTTPS :22301** → WSS 打到 **:22402**（`dev-wss-nginx.sh`，见 `wsTunnelHost.ts`）。
+ * 生产 **:21911** → `prod-start-nginx.sh`（与 dev WSS 网关独立）。
  *
- * prod-start-nginx.sh 将下列端口映射为同源 path（Nginx 终结 TLS 后反代到本机明文 WS）：
- *   /wss-track/      → TRACK_WS_BACKEND_PORT（`prod-start-nginx.sh` 默认 **同 BACKEND_PORT=27004**；dev 单机常为 **27003**，见 `PORT_PREFIX`）
- *   /ws              → BACKEND_PORT
+ * Nginx 将下列端口映射为同源 path（终结 TLS 后反代明文 WS）：
+ *   dev :22402  /wss-track/      → **27003**
+ *   prod :21911 /ws              → **27004**（app-config.prod 的 27004）
  *   /wss-mqtt/       → MQTT_WS_BACKEND_PORT
  *   /wss-detection/  → EO_DETECTION_WS_BACKEND_PORT
  *   /wss-track-eval/ → TRACK_EVAL_WS_BACKEND_PORT（航迹评估 C++ 数据服务）

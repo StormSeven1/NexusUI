@@ -14,7 +14,7 @@ import {
 import { canonicalEntityId } from "@/lib/camera-entity-id";
 import {
   buildImportantTrackTargetFromTrack,
-  numericTrackIdForDroneTask,
+  numericTargetIdForCameraTask,
 } from "@/lib/map-gis-camera-task";
 import { uavFlightTaskTargetSourceId } from "@/lib/map-gis-uav-track-task";
 import { fetchMapGisEoMenuContext, type MapGisEoMenuContext } from "@/lib/map-gis-eo-menu-context";
@@ -41,6 +41,7 @@ import { useEoFocusedUavAirportSnStore } from "@/stores/eo-focused-uav-airport-s
 import { useDroneStore } from "@/stores/drone-store";
 import { useTrackStore } from "@/stores/track-store";
 import { resolveUniqueIdFromTrack, sendAlarmConfirmRequest } from "@/lib/alarm-confirm-api";
+import { dismissAlarmForTrack, resolveAlarmFilterTargetId } from "@/lib/dismiss-alarm-for-track";
 import { useAppConfigStore } from "@/stores/app-config-store";
 
 export type MapGisMenuState = {
@@ -96,18 +97,17 @@ async function uavTrackFollowOnTrack(track: Track, airportSN: string) {
     console.warn("[map-gis-menu] track-follow: airportSN 为空");
     return false;
   }
-  const tid = numericTrackIdForDroneTask(track);
-  if (tid === 0) {
-    console.warn("[map-gis-menu] track-follow: 业务 track_id 解析为 0", {
+  const targetId = numericTargetIdForCameraTask(track);
+  if (targetId === 0) {
+    console.warn("[map-gis-menu] track-follow: target_id 解析为 0", {
       showID: track.showID,
       uniqueID: track.uniqueID,
-      trackId: track.trackId,
     });
     return false;
   }
   const r = await postUavTrackFollowTask({
     airportSN: ap,
-    trackId: tid,
+    targetId,
     latitude: track.lat,
     longitude: track.lng,
     targetSourceId: uavFlightTaskTargetSourceId(track),
@@ -400,9 +400,9 @@ export function MapGisContextMenu({
             onClick={() => {
               const disp = droneMenuLabel(d);
               if (trackForFollow) {
-                const tid = numericTrackIdForDroneTask(trackForFollow);
-                if (tid === 0) {
-                  toast.error("当前航迹无有效业务 track_id，无法下发无人机跟踪");
+                const targetId = numericTargetIdForCameraTask(trackForFollow);
+                if (targetId === 0) {
+                  toast.error("当前航迹无有效 target_id，无法下发无人机跟踪");
                   onClose();
                   return;
                 }
@@ -452,6 +452,14 @@ export function MapGisContextMenu({
                     }
                   });
                 }
+              } else {
+                void dismissAlarmForTrack(tr).then((result) => {
+                  if (result.ok) {
+                    toast.message("已取消告警", { description: `unique_id ${resolveAlarmFilterTargetId(tr) ?? "—"}` });
+                  } else {
+                    toast.error("取消告警失败", { description: result.message ?? "告警服务无响应" });
+                  }
+                });
               }
               onClose();
             }}
@@ -538,9 +546,9 @@ export function MapGisContextMenu({
           type="button"
           className={itemCls}
           onClick={() => {
-            const tid = numericTrackIdForDroneTask(track);
-            if (tid === 0) {
-              toast.error("当前航迹无有效业务 track_id，无法下发无人机跟踪");
+            const targetId = numericTargetIdForCameraTask(track);
+            if (targetId === 0) {
+              toast.error("当前航迹无有效 target_id，无法下发无人机跟踪");
               onClose();
               return;
             }

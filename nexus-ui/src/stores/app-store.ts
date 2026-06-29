@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { ALL_DATA_LAYER_IDS } from "@/lib/map-entity-model";
+import { ALL_DATA_LAYER_IDS, LYR_DB_AREAS, LYR_RADAR_COVERAGE } from "@/lib/map-entity-model";
 import type { VectorLayerPanelItem } from "@/lib/map-2d-basemap-layer-panel";
 import type { RasterLayerPanelItem } from "@/lib/map-2d-raster-layers";
 
@@ -26,8 +26,7 @@ import type { RasterLayerPanelItem } from "@/lib/map-2d-raster-layers";
  *
  * 【地图标注】
  *   - routeLines: 航路/路线标注
- *   - drawnAreas: 绘制区域标注
- *   - clearAnnotations(): 清除所有标注（高亮+路线+区域）
+ *   - clearAnnotations(): 清除高亮与路线标注
  *
  * 【底图】
  *   - Map2D 用 style（如 Carto）；Map3D 用 UrlTemplateImageryProvider
@@ -54,26 +53,6 @@ export interface RouteLine {
   id: string;
   points: Array<{ lat: number; lng: number }>;
   color: string;
-  label?: string;
-}
-
-/**
- * 用户或工具在地图上叠加的闭合多边形（与 zone-store / WS 的「业务限制区」数据源不同，见 Map2D 中注释）。
- *
- * **颜色如何生效**：`Map2D` 在首次把条目同步为 MapLibre 图层时，把本结构里的 `color` / `fillColor` / `fillOpacity`
- * 原样写入 `paint`（线框、填充、标签字色）；之后除非改写 store 或删了重加，地图不会单独再「约束」调色。
- * - 手动画完确认：命名弹窗里可选描边/填充色与填充透明度，再 `commitPolyArea` 写入本结构。
- * - 智能体 `draw_area`：`chat-tool-bridge` 用工具返回值，缺省为琥珀色描边/填充与固定透明度。
- */
-export interface DrawnArea {
-  id: string;
-  points: Array<{ lat: number; lng: number }>;
-  /** 边线、虚线轮廓与标签 `text-color` */
-  color: string;
-  /** `fill-color`；可与 `color` 同系或带 alpha 的 rgba */
-  fillColor: string;
-  /** `fill-opacity`，与 `fillColor` 中的 alpha 相乘为最终填充透明度 */
-  fillOpacity: number;
   label?: string;
 }
 
@@ -125,8 +104,6 @@ interface AppState {
   highlightedTrackIds: string[];
   /** 在地图上叠加绘制的航线列表 */
   routeLines: RouteLine[];
-  /** 用户绘制的闭合区域（多边形）列表 */
-  drawnAreas: DrawnArea[];
 
   /** 待执行的飞行请求；含 `seq`，Map2D/Map3D 消费后按序 `flyTo` */
   flyToRequest: FlyToRequest | null;
@@ -182,9 +159,7 @@ interface AppState {
   setHighlightedTrackIds: (ids: string[]) => void;
   /** 追加一条叠加航线 */
   addRouteLine: (route: RouteLine) => void;
-  /** 追加一块用户绘制区域 */
-  addDrawnArea: (area: DrawnArea) => void;
-  /** 清空高亮、航线与绘制区域 */
+  /** 清空高亮与航线标注 */
   clearAnnotations: () => void;
   /** 请求飞行到指定经纬度；递增 `seq` 并写入 `mapCenter` */
   requestFlyTo: (lat: number, lng: number, zoom?: number) => void;
@@ -227,7 +202,10 @@ let _flyToSeq = 0;
 const MAP_LAYER_PREFS_STORAGE_KEY = "nexus-ui-map-layer-preferences-v1";
 
 function defaultLayerVisibilityRecord(): Record<string, boolean> {
-  return Object.fromEntries(ALL_DATA_LAYER_IDS.map((id) => [id, true]));
+  const record = Object.fromEntries(ALL_DATA_LAYER_IDS.map((id) => [id, true]));
+  record[LYR_DB_AREAS] = false;
+  record[LYR_RADAR_COVERAGE] = false;
+  return record;
 }
 
 export const useAppStore = create<AppState>()(
@@ -248,7 +226,6 @@ export const useAppStore = create<AppState>()(
 
   highlightedTrackIds: [],
   routeLines: [],
-  drawnAreas: [],
   flyToRequest: null,
 
   layerVisibility: defaultLayerVisibilityRecord(),
@@ -285,10 +262,8 @@ export const useAppStore = create<AppState>()(
   setHighlightedTrackIds: (ids) => set({ highlightedTrackIds: ids }),
   addRouteLine: (route) =>
     set((s) => ({ routeLines: [...s.routeLines, route] })),
-  addDrawnArea: (area) =>
-    set((s) => ({ drawnAreas: [...s.drawnAreas, area] })),
   clearAnnotations: () =>
-    set({ highlightedTrackIds: [], routeLines: [], drawnAreas: [] }),
+    set({ highlightedTrackIds: [], routeLines: [] }),
 
   requestFlyTo: (lat, lng, zoom) =>
     set({ flyToRequest: { lat, lng, zoom, seq: ++_flyToSeq }, mapCenter: { lat, lng } }),

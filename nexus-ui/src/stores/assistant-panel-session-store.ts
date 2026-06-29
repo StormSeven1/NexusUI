@@ -89,6 +89,4 @@ export function getAssistantConvUid(): string {
   return useAssistantPanelSessionStore.getState().sessions["knowledge-base"].convUid.trim();
 }
 
-export function getAssistantLangGraphThreadId(): string {
-  return useAssistantPanelSessionStore.getState().sessions.chat.langGraphThreadId.trim();
-}
+export { getAssistantLangGraphThreadId } from "@/stores/assistant-chat-tabs-store";

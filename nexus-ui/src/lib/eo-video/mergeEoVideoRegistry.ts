@@ -107,6 +107,19 @@ export async function fetchDroneDevicesFromApi(): Promise<EoDroneDeviceRow[]> {
   }
 }
 
+/** 资产列表侧边栏：含 `indicators.simulated === true` 的虚兵无人机 */
+export async function fetchDroneDevicesForAssetPanel(): Promise<EoDroneDeviceRow[]> {
+  try {
+    const r = await fetch("/api/nexus-entities/drones?includeSimulated=1", { cache: "no-store" });
+    if (!r.ok) return [];
+    const j = (await r.json()) as { ok?: boolean; devices?: EoDroneDeviceRow[] };
+    if (j.ok !== true || !Array.isArray(j.devices)) return [];
+    return j.devices;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * 光电右键「无人机」：优先 8090 实时列表（排除 `indicators.simulated !== false`），
  * 静态 `eo-video.drone-devices.json` 作回退。

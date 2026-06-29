@@ -1,5 +1,5 @@
 {
-  "syncedAt": "2026-06-11T10:28:23.294Z",
+  "syncedAt": "2026-06-29T09:49:56.688Z",
   "sourceUrl": "http://192.168.18.141:8090/api/v1/entities?page=1&size=100",
   "cameras": [
     {
@@ -68,19 +68,15 @@
     },
     {
       "entityId": "camera_016",
-      "label": "码头广角东北"
+      "label": "蓝贝六楼监控1"
     },
     {
       "entityId": "camera_017",
-      "label": "码头广角东南"
+      "label": "蓝贝六楼监控2"
     },
     {
       "entityId": "camera_018",
-      "label": "码头广角西北"
-    },
-    {
-      "entityId": "camera_019",
-      "label": "码头广角西南"
+      "label": "远遥码头广角"
     }
   ]
 }

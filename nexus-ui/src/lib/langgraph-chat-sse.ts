@@ -7,6 +7,7 @@ import {
   logLangGraphChatSseEvent,
   type LangGraphChatHttpLogKind,
 } from "@/lib/langgraph-chat-http-log";
+import { extractVerifyEntityIdsFromInterrupt } from "@/lib/langgraph-interrupt-verify-entity";
 
 export function extractLangGraphDisplayChunks(obj: Record<string, unknown>): string[] {
   const out: string[] = [];
@@ -84,6 +85,8 @@ export type LangGraphInterruptUiPayload = {
   mainInterruptId: string;
   threadId: string;
   nodeName?: string;
+  /** 弹窗确认后用于查证 SSE 路由（无人机管理软件常不带 taskID） */
+  verifyEntityIds: string[];
 };
 
 export function parseLangGraphInterruptEvent(obj: Record<string, unknown>): LangGraphInterruptUiPayload | null {
@@ -121,7 +124,8 @@ export function parseLangGraphInterruptEvent(obj: Record<string, unknown>): Lang
   const nn = n.node_name;
   const nodeName = typeof nn === "string" && nn.trim() ? nn.trim() : undefined;
   if (!interruptId || !mainInterruptId) return null;
-  return { message, interruptId, mainInterruptId, threadId, nodeName };
+  const verifyEntityIds = extractVerifyEntityIdsFromInterrupt(obj, message);
+  return { message, interruptId, mainInterruptId, threadId, nodeName, verifyEntityIds };
 }
 
 export type LangGraphSseConsumeResult = {

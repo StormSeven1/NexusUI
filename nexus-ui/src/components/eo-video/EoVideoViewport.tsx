@@ -132,6 +132,7 @@ function EoVideoViewportHardware({
       width: 0,
       height: 0,
       canvas: null,
+      lastRenderedRtpTimestamp: 0,
     });
     return () => {
       applyPresentationRef(webCodecsPresentationRef, {
@@ -139,6 +140,7 @@ function EoVideoViewportHardware({
         width: 0,
         height: 0,
         canvas: null,
+        lastRenderedRtpTimestamp: 0,
       });
     };
   }, [webCodecsPresentationRef]);
@@ -205,15 +207,31 @@ function EoVideoViewportWebCodecs({
   const showDebugOverlay = isEoVideoDebugUiEnabled();
   const {
     addEncodedFrame,
+    resetForNewStream,
     canvasRef,
     webCodecsActive,
     videoWidth,
     videoHeight,
     decodePath,
     hasRenderedFrame,
+    lastRenderedRtpTimestampRef,
   } = useWebCodecsCanvas();
   const [videoFallback, setVideoFallback] = useState(false);
   const fallbackRestartedRef = useRef(false);
+
+  /** 舱内/舱外或任意信令切换：清 Canvas 残留帧，避免长时间仍显示机场画面 */
+  useEffect(() => {
+    resetForNewStream();
+    setVideoFallback(false);
+    fallbackRestartedRef.current = false;
+    applyPresentationRef(webCodecsPresentationRef, {
+      active: false,
+      width: 0,
+      height: 0,
+      canvas: null,
+      lastRenderedRtpTimestamp: 0,
+    });
+  }, [signalingUrl, resetForNewStream, webCodecsPresentationRef]);
 
   const { connectionState, iceConnectionState, error, restart } = useWebRtcPlayer({
     signalingUrl,
@@ -262,27 +280,50 @@ function EoVideoViewportWebCodecs({
   }, [videoFallback, restart]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const canvasPresenting =
-      !videoFallback && webCodecsActive && videoWidth > 0 && videoHeight > 0;
-    applyPresentationRef(webCodecsPresentationRef, {
-      active: canvasPresenting,
-      width: videoWidth,
-      height: videoHeight,
-      canvas: canvasPresenting ? canvas : null,
-    });
+    let rafId = 0;
+    let stopped = false;
+
+    const syncPresentation = () => {
+      if (stopped) return;
+      const canvas = canvasRef.current;
+      const canvasPresenting =
+        !videoFallback && hasRenderedFrame && videoWidth > 0 && videoHeight > 0;
+      applyPresentationRef(webCodecsPresentationRef, {
+        active: canvasPresenting,
+        width: videoWidth,
+        height: videoHeight,
+        canvas: canvasPresenting ? canvas : null,
+        lastRenderedRtpTimestamp:
+          lastRenderedRtpTimestampRef.current > 0 ? lastRenderedRtpTimestampRef.current : 0,
+      });
+      rafId = window.requestAnimationFrame(syncPresentation);
+    };
+
+    syncPresentation();
     return () => {
+      stopped = true;
+      window.cancelAnimationFrame(rafId);
       applyPresentationRef(webCodecsPresentationRef, {
         active: false,
         width: 0,
         height: 0,
         canvas: null,
+        lastRenderedRtpTimestamp: 0,
       });
     };
-  }, [videoFallback, webCodecsActive, videoWidth, videoHeight, canvasRef, webCodecsPresentationRef]);
+  }, [
+    videoFallback,
+    webCodecsActive,
+    hasRenderedFrame,
+    videoWidth,
+    videoHeight,
+    canvasRef,
+    webCodecsPresentationRef,
+    lastRenderedRtpTimestampRef,
+  ]);
 
   const canvasPresenting =
-    !videoFallback && webCodecsActive && videoWidth > 0 && videoHeight > 0;
+    !videoFallback && hasRenderedFrame && videoWidth > 0 && videoHeight > 0;
 
   const decodePathLabel =
     decodePath === "hardware"

@@ -1,0 +1,22 @@
+[Unit]
+Description=NexusUI production HTTPS (Docker xk_docker_prod + xk_nginx_prod)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=__SERVICE_USER__
+Group=__SERVICE_GROUP__
+WorkingDirectory=__INSTALL_ROOT__
+ExecStart=__INSTALL_ROOT__/scripts/prod-service.sh start
+ExecStop=__INSTALL_ROOT__/scripts/prod-service.sh stop
+TimeoutStartSec=900
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

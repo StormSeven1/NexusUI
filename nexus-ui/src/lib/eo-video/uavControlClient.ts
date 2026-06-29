@@ -13,6 +13,15 @@ export type UavControlResult = {
   detail?: string;
 };
 
+/** 任一路径成功即视为指令已生效（返航/停止常仅任务通道 DroneFlightBack 成功） */
+export function isUavControlEffectivelyOk(ret: UavControlResult): boolean {
+  if (ret.ok) return true;
+  if (ret.viaTaskCancel?.ok) return true;
+  if (ret.viaHttp?.ok) return true;
+  if (ret.viaMqtt?.ok) return true;
+  return false;
+}
+
 export async function postUavControlAction(args: {
   action: UavControlAction;
   airportSN: string;
@@ -34,6 +43,7 @@ export async function postUavControlAction(args: {
     json = null;
   }
   if (!res.ok) {
+    if (json && isUavControlEffectivelyOk(json)) return json;
     const msg = json?.detail || json?.error || text.slice(0, 300) || `HTTP ${res.status}`;
     throw new Error(msg);
   }

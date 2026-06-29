@@ -1,104 +1,16 @@
 import type maplibregl from "maplibre-gl";
 import { polygonAreaMetersApprox, lineLengthMeters } from "@/components/map/modules/map-geo-math";
-import type { ZoneData } from "@/stores/zone-store";
 
 const P = "polydraw2";
-/** 标绘进行中草稿几何（fill/line/pts/lbl）；`initDraft` 时 `addSource`；与 `POLY_ZONES_SOURCE` 限制区分离 */
+/** 标绘进行中草稿几何（fill/line/pts/lbl）；`initDraft` 时 `addSource` */
 export const POLY_DRAW_SOURCE = `${P}-source`;
 export const POLY_DRAW_FILL = `${P}-fill`;
 export const POLY_DRAW_LINE = `${P}-line`;
 export const POLY_DRAW_POINTS = `${P}-pts`;
 export const POLY_DRAW_LABEL = `${P}-lbl`;
 
-/** WebSocket / store 下发的限制区（与标绘共用「多边形区域」语义） */
-export const POLY_ZONES_SOURCE = `${P}-zones-src`;
-export const POLY_ZONES_FILL = `${P}-zones-fill`;
-export const POLY_ZONES_LINE = `${P}-zones-line`;
-export const POLY_ZONES_LABEL = `${P}-zones-lbl`;
-
 export const POLY_DRAW_LAYER_IDS = [POLY_DRAW_FILL, POLY_DRAW_LINE, POLY_DRAW_POINTS, POLY_DRAW_LABEL] as const;
-export const POLY_ZONES_LAYER_IDS = [POLY_ZONES_FILL, POLY_ZONES_LINE, POLY_ZONES_LABEL] as const;
 
-/**
- * 将区域 `fillColor`（hex / rgb / rgba）与 WS 的 `fillOpacity` 合成为 MapLibre / Cesium 可用的 `rgba(...)`。
- * 供 2D `buildZonesFeatureCollection` 与 3D `Map3D` 共用。
- */
-export function mergeZoneFillColor(fillColor: string | null | undefined, opacity: number): string {
-  const op = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 0.25;
-  const s = (fillColor ?? "").trim();
-  if (!s) return `rgba(128, 128, 128, ${op})`;
-
-  if (/^rgba\s*\(/i.test(s)) {
-    const m = s.match(/rgba\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([0-9.]+)\s*\)/i);
-    if (m) {
-      const a = parseFloat(m[4]) * op;
-      return `rgba(${m[1]},${m[2]},${m[3]},${a})`;
-    }
-  }
-  if (/^rgb\s*\(/i.test(s)) {
-    const m = s.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
-    if (m) return `rgba(${m[1]},${m[2]},${m[3]},${op})`;
-  }
-  if (s.startsWith("#")) {
-    let hex = s.slice(1);
-    if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
-    if (hex.length === 8) {
-      const r = parseInt(hex.slice(0, 2), 16);
-      const g = parseInt(hex.slice(2, 4), 16);
-      const b = parseInt(hex.slice(4, 6), 16);
-      const a = parseInt(hex.slice(6, 8), 16) / 255;
-      return `rgba(${r},${g},${b},${a * op})`;
-    }
-    if (hex.length === 6) {
-      const r = parseInt(hex.slice(0, 2), 16);
-      const g = parseInt(hex.slice(2, 4), 16);
-      const b = parseInt(hex.slice(4, 6), 16);
-      return `rgba(${r},${g},${b},${op})`;
-    }
-  }
-  return s;
-}
-
-const ZONE_COLORS: Record<string, { fill: string; line: string }> = {
-  "no-fly": { fill: "rgba(239,68,68,0.12)", line: "#ef4444" },
-  exercise: { fill: "rgba(59,130,246,0.10)", line: "#3b82f6" },
-  warning: { fill: "rgba(251,191,36,0.10)", line: "#fbbf24" },
-};
-
-/**
- * 将 `ZoneData[]` 转为 GeoJSON（供 WS 全量同步）。
- * 填充：若 WS 提供了 `fill_color`，则与 `fill_opacity` 合并为 `rgba`（hex 无 alpha 时透明度来自 `fill_opacity`）；
- * 未提供填充色时仍用 `ZONE_COLORS[zone_type].fill`（已含透明度，不再乘 `fill_opacity`）。
- */
-export function buildZonesFeatureCollection(zones: ZoneData[]): GeoJSON.FeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: zones.map((z) => {
-      const hasWsFill = z.fill_color != null && String(z.fill_color).trim() !== "";
-      const fillColor = hasWsFill
-        ? mergeZoneFillColor(z.fill_color, z.fill_opacity)
-        : (ZONE_COLORS[z.zone_type]?.fill ?? "rgba(255,255,255,0.05)");
-      return {
-        type: "Feature",
-        geometry: { type: "Polygon", coordinates: [z.coordinates] },
-        properties: {
-          id: z.id,
-          name: z.name,
-          zoneType: z.zone_type,
-          fillColor,
-          lineColor: z.color ?? ZONE_COLORS[z.zone_type]?.line ?? "#a1a1aa",
-        },
-      };
-    }),
-  };
-}
-
-/**
- * 显隐与样式（对齐 V2 PolygonDrawManager.visibility）：
- * - `fillVisible` / `lineVisible` / `pointsVisible` / `labelVisible`：为 false 时对应图层 `layout.visibility = none`。
- *   绘制过程中不在地图上写面积/周长文字（避免与缩放重复）；完成后由业务层用 `drawnAreas` 单独标注一次。
- * - `fillColor` / `lineColor` / `lineWidth` / `pointColor` / `pointStroke`：样式。
- */
 export type PolygonDrawVisibility = {
   fillVisible: boolean;
   lineVisible: boolean;
@@ -129,10 +41,7 @@ export type PolygonDrawCompletePayload = {
   perimeterM: number;
 };
 
-/**
- * 多边形标绘（参考 V2 PolygonDrawManager）：左键加点，双击闭合；右键取消当前。
- * 限制区（Zones）与标绘草稿分源：`POLY_ZONES_*` 为 store/WS 数据，`POLY_DRAW_*` 为当前绘制交互。
- */
+/** 多边形量算标绘：左键加点，双击闭合；右键取消当前。 */
 export class PolygonDrawMaplibre {
   private map: maplibregl.Map;
   private vis: PolygonDrawVisibility = { ...def };
@@ -149,63 +58,6 @@ export class PolygonDrawMaplibre {
     this.onComplete = options?.onComplete;
   }
 
-  /** 限制区图层（靠下叠放），须在航迹等图层之前调用 */
-  initCommittedZones(beforeId?: string) {
-    const m = this.map;
-    if (!m.getSource(POLY_ZONES_SOURCE)) {
-      m.addSource(POLY_ZONES_SOURCE, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-    }
-    if (!m.getLayer(POLY_ZONES_FILL)) {
-      m.addLayer(
-        {
-          id: POLY_ZONES_FILL,
-          type: "fill",
-          source: POLY_ZONES_SOURCE,
-          paint: { "fill-color": ["get", "fillColor"] },
-        },
-        beforeId,
-      );
-    }
-    if (!m.getLayer(POLY_ZONES_LINE)) {
-      m.addLayer(
-        {
-          id: POLY_ZONES_LINE,
-          type: "line",
-          source: POLY_ZONES_SOURCE,
-          paint: {
-            "line-color": ["get", "lineColor"],
-            "line-width": 1.5,
-            "line-dasharray": [4, 3],
-            "line-opacity": 0.7,
-          },
-        },
-        beforeId,
-      );
-    }
-    if (!m.getLayer(POLY_ZONES_LABEL)) {
-      m.addLayer(
-        {
-          id: POLY_ZONES_LABEL,
-          type: "symbol",
-          source: POLY_ZONES_SOURCE,
-          layout: {
-            "text-field": ["get", "name"],
-            "text-font": ["Open Sans Regular"],
-            "text-size": 11,
-          },
-          paint: {
-            "text-color": ["get", "lineColor"],
-            "text-halo-color": "#09090b",
-            "text-halo-width": 1.5,
-            "text-opacity": 0.8,
-          },
-        },
-        beforeId,
-      );
-    }
-  }
-
-  /** 与 `initCommittedZones` 配对：标绘草稿图层（通常叠在较上层） */
   initDraft(beforeId?: string) {
     const m = this.map;
     if (!m.getSource(POLY_DRAW_SOURCE)) {
@@ -280,13 +132,6 @@ export class PolygonDrawMaplibre {
     this.applyLayerLayoutVisibility();
   }
 
-  /** 同步 WebSocket / zustand 的 Zones */
-  setCommittedZones(zones: ZoneData[]) {
-    const src = this.map.getSource(POLY_ZONES_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (src) src.setData(buildZonesFeatureCollection(zones));
-  }
-
-  /** 更新 paint 与各图层 layout.visibility（labelVisible 保留给将来扩展） */
   setVisibility(partial: Partial<PolygonDrawVisibility>) {
     this.vis = { ...this.vis, ...partial };
     const m = this.map;
@@ -326,10 +171,6 @@ export class PolygonDrawMaplibre {
       if (m.getLayer(id)) m.removeLayer(id);
     }
     if (m.getSource(POLY_DRAW_SOURCE)) m.removeSource(POLY_DRAW_SOURCE);
-    for (const id of [POLY_ZONES_LABEL, POLY_ZONES_LINE, POLY_ZONES_FILL]) {
-      if (m.getLayer(id)) m.removeLayer(id);
-    }
-    if (m.getSource(POLY_ZONES_SOURCE)) m.removeSource(POLY_ZONES_SOURCE);
   }
 
   activate() {

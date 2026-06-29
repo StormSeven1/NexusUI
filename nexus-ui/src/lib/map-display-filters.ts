@@ -47,6 +47,9 @@ export function isStandardOptoCameraAllowedOnMap(entityId: string): boolean {
   return !EXCLUDE_CAMERA_IDS.has(id);
 }
 
+/** 与 `isStandardOptoCameraAllowedOnMap` 同义；保留旧名供图层面板/FOV 模块引用 */
+export const isMapFovCameraAllowed = isStandardOptoCameraAllowedOnMap;
+
 // ── 电侦塔：独立黑名单（如需与相机分开过滤可在此配置）──
 export const EXCLUDE_TOWER_IDS = new Set<string>([]);
 
@@ -67,22 +70,6 @@ export const EXCLUDE_DRONE_IDS = new Set<string>(["uav_jo-001"]);
  * 对应 WS/实体里 `name` / `droneName`。
  */
 export const EXCLUDE_DRONE_NAMES = new Set<string>(["远遥码头"]);
-
-/**
- * 区域：**id** 白名单；空数组表示不按 id 过滤。
- * 若与非空 `ZONE_NAME_SUBSTRING_ALLOWLIST` 联用，需**同时**满足。
- */
-export const ZONE_ID_ALLOWLIST: readonly string[] = [];
-
-/**
- * 区域：**名称**需包含以下子串之一才显示（与 App.vue `Zones` 一致）。
- * 空数组表示**不按名称**过滤（仍可按 `ZONE_ID_ALLOWLIST` 过滤）。
- * 若需与 18.141 完全一致，保留默认两项；若需显示全部区域，改为 `[]`。
- */
-export const ZONE_NAME_SUBSTRING_ALLOWLIST: readonly string[] = ["港外航道监控区"];
-
-const zoneIdAllowSet =
-  ZONE_ID_ALLOWLIST.length > 0 ? new Set(ZONE_ID_ALLOWLIST.map((s) => String(s).trim()).filter(Boolean)) : null;
 
 function isExcludedAirportId(id: string): boolean {
   const tid = String(id).trim();
@@ -116,21 +103,6 @@ export function shouldDisplayAssetId(assetType: string, id: string, name?: strin
     const n = String(name ?? "").trim();
     if (n && EXCLUDE_DRONE_NAMES.has(n)) return false;
     return true;
-  }
-  return true;
-}
-
-/**
- * 是否显示该区域（id + name；与 18.141 区域名过滤一致）
- */
-export function shouldDisplayZone(z: { id: string; name?: string | null }): boolean {
-  const zid = String(z.id).trim();
-  if (!zid) return true;
-  if (zoneIdAllowSet && !zoneIdAllowSet.has(zid)) return false;
-  const subs = ZONE_NAME_SUBSTRING_ALLOWLIST;
-  if (subs.length > 0) {
-    const n = String(z.name ?? "");
-    if (!subs.some((s) => s && n.includes(s))) return false;
   }
   return true;
 }

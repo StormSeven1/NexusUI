@@ -1,5 +1,8 @@
 import type maplibregl from "maplibre-gl";
-import { geoSectorCoords } from "@/lib/map-icons";
+import { isCameraMapTaskExecuting } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
+import { geoSectorCoords, geoSectorSideLineCoords } from "@/lib/map-icons";
+import type { EoCameraDdsStatusRow } from "@/stores/eo-camera-dds-status-store";
 import {
   isOptoCameraAllowedOnMap,
   type OptoDeviceVisibilityMap,
@@ -11,7 +14,6 @@ import {
   THIRD_PARTY_PTZ_FOV_RANGE_M,
   type ThirdPartyPtzFovRow,
 } from "@/lib/third-party-ptz-fov";
-import { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
 
 /** v2：与旧版青色图层 id 区分，避免 HMR/缓存后仍显示 #22d3ee */
 export const THIRD_PARTY_PTZ_FOV_SOURCE = "third-party-ptz-fov-src-v2";
@@ -34,7 +36,11 @@ export function purgeLegacyThirdPartyFovLayers(m: maplibregl.Map) {
   if (m.getSource(LEGACY_SOURCE_ID)) m.removeSource(LEGACY_SOURCE_ID);
 }
 
-function buildGeoJSON(rows: ThirdPartyPtzFovRow[], rangeKm: number): GeoJSON.FeatureCollection {
+function buildGeoJSON(
+  rows: ThirdPartyPtzFovRow[],
+  rangeKm: number,
+  cameraDdsById?: Readonly<Record<string, EoCameraDdsStatusRow | undefined>>,
+): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
   for (const r of rows) {
     const ring = geoSectorCoords(r.lng, r.lat, rangeKm, r.panVehicleDeg, THIRD_PARTY_PTZ_FOV_DEG, 24);
@@ -42,9 +48,32 @@ function buildGeoJSON(rows: ThirdPartyPtzFovRow[], rangeKm: number): GeoJSON.Fea
       type: "Feature",
       geometry: { type: "Polygon", coordinates: [ring] },
       properties: {
+        geomKind: "poly",
         id: r.entityId,
       },
     });
+
+    const dds =
+      cameraDdsById?.[r.entityId] ??
+      cameraDdsById?.[normThirdPartyEntityId(r.entityId)];
+    if (!isCameraMapTaskExecuting(dds)) continue;
+
+    for (const line of geoSectorSideLineCoords(
+      r.lng,
+      r.lat,
+      rangeKm,
+      r.panVehicleDeg,
+      THIRD_PARTY_PTZ_FOV_DEG,
+    )) {
+      features.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: line },
+        properties: {
+          geomKind: "side",
+          id: r.entityId,
+        },
+      });
+    }
   }
   return { type: "FeatureCollection", features };
 }
@@ -54,6 +83,7 @@ export class ThirdPartyPtzFovModule {
   private insertBeforeLayerId?: string;
   private rangeKm = THIRD_PARTY_PTZ_FOV_RANGE_M / 1000;
   private lastRows: ThirdPartyPtzFovRow[] = [];
+  private cameraDdsByEntityId: Record<string, EoCameraDdsStatusRow | undefined> = {};
   private deviceVisibility: OptoDeviceVisibilityMap = {};
   private panelIds: ReadonlySet<string> | null = null;
 
@@ -76,6 +106,11 @@ export class ThirdPartyPtzFovModule {
   setPerDeviceVisibility(vis: OptoDeviceVisibilityMap, panelIds: ReadonlySet<string> | null) {
     this.deviceVisibility = vis;
     this.panelIds = panelIds;
+    this.refreshLayers();
+  }
+
+  setCameraDdsStatus(byEntityId: Readonly<Record<string, EoCameraDdsStatusRow | undefined>>) {
+    this.cameraDdsByEntityId = { ...byEntityId };
     this.refreshLayers();
   }
 
@@ -107,6 +142,7 @@ export class ThirdPartyPtzFovModule {
       m.setPaintProperty(THIRD_PARTY_PTZ_FOV_FILL, "fill-opacity", 0.22);
       m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-color", THIRD_PARTY_PTZ_FOV_LINE_COLOR);
       m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-opacity", 0.65);
+      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-dasharray", [4, 3]);
     } catch {
       /* style 过渡 */
     }
@@ -130,6 +166,12 @@ export class ThirdPartyPtzFovModule {
         },
         before,
       );
+    } else {
+      try {
+        m.setFilter(THIRD_PARTY_PTZ_FOV_FILL, null);
+      } catch {
+        /* style 过渡 */
+      }
     }
     if (!m.getLayer(THIRD_PARTY_PTZ_FOV_LINE)) {
       m.addLayer(
@@ -137,14 +179,23 @@ export class ThirdPartyPtzFovModule {
           id: THIRD_PARTY_PTZ_FOV_LINE,
           type: "line",
           source: THIRD_PARTY_PTZ_FOV_SOURCE,
+          filter: ["==", ["get", "geomKind"], "side"],
           paint: {
             "line-color": THIRD_PARTY_PTZ_FOV_LINE_COLOR,
             "line-width": 2,
             "line-opacity": 0.65,
+            "line-dasharray": [4, 3],
           },
         },
         before,
       );
+    } else {
+      try {
+        m.setFilter(THIRD_PARTY_PTZ_FOV_LINE, ["==", ["get", "geomKind"], "side"]);
+        m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-dasharray", [4, 3]);
+      } catch {
+        /* style 过渡 */
+      }
     }
     this.applyPaintStyle();
   }
@@ -156,7 +207,7 @@ export class ThirdPartyPtzFovModule {
     if (!src) return;
 
     const filtered = this.filterRows(this.lastRows);
-    src.setData(buildGeoJSON(filtered, this.rangeKm) as GeoJSON.FeatureCollection);
+    src.setData(buildGeoJSON(filtered, this.rangeKm, this.cameraDdsByEntityId) as GeoJSON.FeatureCollection);
     this.ensureLayers();
   }
 

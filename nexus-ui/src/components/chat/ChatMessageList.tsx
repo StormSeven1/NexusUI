@@ -21,10 +21,13 @@ export function ChatMessageList({
   messages,
   isStreaming,
   onHintClick,
+  assistantLabel,
 }: {
   messages: UIMessage[];
   isStreaming: boolean;
   onHintClick?: (text: string) => void;
+  /** 助手消息展示名，与当前 Tab 标题一致 */
+  assistantLabel?: string;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -38,7 +41,9 @@ export function ChatMessageList({
         <Bot size={20} className="text-sky-400" />
       </div>
       <div>
-        <p className="text-xs font-medium text-nexus-text-secondary">作管智能体 助手</p>
+        <p className="text-xs font-medium text-nexus-text-secondary">
+          {assistantLabel ?? "AI助手"}
+        </p>
         <p className="mt-1 text-[10px] leading-relaxed text-nexus-text-muted">
           输入指令与 AI 交互，支持态势查询、地图导航、目标分析等操作
         </p>
@@ -72,6 +77,7 @@ export function ChatMessageList({
                 key={msg.id}
                 message={msg}
                 isStreaming={isLastAssistant && isStreaming}
+                assistantLabel={assistantLabel}
               />
             );
           })}

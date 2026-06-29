@@ -1,5 +1,6 @@
 import { canonicalEntityId } from "@/lib/camera-entity-id";
-import { extractEntityRecords } from "@/lib/eo-video/mapEntitiesToDroneDevices";
+import { extractEntityRecords, extractDroneSnsFromEntityRaw } from "@/lib/eo-video/mapEntitiesToDroneDevices";
+import { fetchDroneDevicesForAssetPanel } from "@/lib/eo-video/mergeEoVideoRegistry";
 import { mapOneEntityRow } from "@/lib/map-app-config";
 import {
   ASSET_PANEL_TOP_CATEGORIES,
@@ -171,21 +172,30 @@ export function mergeAssetPanelCatalog(
 
 function resolveDockOnline(dockSn: string, liveAirport?: AssetData): DroneFleetOnlineStatus {
   const ds = useDroneStore.getState();
-  const inRel = ds.relationships?.airports.some((a) => a.dockSn === dockSn);
-  if (!inRel) return liveAirport?.status === "online" ? "online" : "offline";
+  const ap = ds.relationships?.airports.find((a) => a.dockSn === dockSn);
+  const inRel = !!ap;
   const dock = ds.docks[dockSn];
   if (dock?.updatedAt) {
     const age = Date.now() - new Date(dock.updatedAt).getTime();
     if (age <= DOCK_STATUS_ONLINE_MS) return "online";
   }
   if (liveAirport?.status === "online") return "online";
+  /* entity_status 已登记且有坐标的机场：8090/relationships 层视为可用（无 dock_status 时不一律标离线） */
+  if (inRel && ap?.latitude != null && ap?.longitude != null) return "online";
+  if (!inRel) return liveAirport?.status === "online" ? "online" : "offline";
   return "offline";
 }
 
-function resolveDroneTelemetryOnline(droneSn: string, liveDrone?: AssetData): DroneFleetOnlineStatus {
+function resolveDroneTelemetryOnline(
+  droneSn: string,
+  liveDrone?: AssetData,
+  catalogEntity?: AssetData,
+): DroneFleetOnlineStatus {
   const d = useDroneStore.getState().drones[droneSn];
   if (d && Date.now() - d.lastPacketAtMs <= DRONE_TELEMETRY_ONLINE_MS) return "online";
   if (liveDrone?.status === "online") return "online";
+  /* 无 DDS 遥测时：8090 实体目录 health=HEALTHY → online（与 mapOneEntityRow 一致） */
+  if (catalogEntity?.status === "online") return "online";
   return "offline";
 }
 
@@ -249,12 +259,15 @@ function buildDroneFleetPanelRows(
         ? (a.properties as Record<string, unknown>)
         : null;
     const entityId = a.id;
+    const fromAliases = props ? extractDroneSnsFromEntityRaw(props) : { deviceSN: "", airportSN: "" };
     const deviceSn =
       ds.entityIdToDeviceSn[entityId]?.trim() ||
       String(props?.device_sn ?? props?.deviceSn ?? "").trim() ||
+      fromAliases.deviceSN.trim() ||
       (ds.drones[entityId] ? entityId : "");
     const dockSn =
       String(props?.dock_sn ?? props?.dockSn ?? "").trim() ||
+      fromAliases.airportSN.trim() ||
       (deviceSn ? ds.droneToAirport[deviceSn] ?? "" : "");
     if (!dockSn && !deviceSn && !entityId) continue;
     put(deviceSn || entityId, dockSn, resolveAssetPanelDisplayLabel(a, eoCtx), entityId);
@@ -264,16 +277,26 @@ function buildDroneFleetPanelRows(
   const rows: AssetPanelTreeRow[] = [];
 
   for (const ent of entries.values()) {
-    const airportStatus = resolveDockOnline(ent.airportSn, assetById.get(ent.airportSn));
+    const catalogEntity =
+      (ent.entityId ? assetById.get(ent.entityId) : undefined) ??
+      assetById.get(canonicalEntityId(ent.entityId ?? ""));
+    const airportStatus = (() => {
+      const base = resolveDockOnline(ent.airportSn, assetById.get(ent.airportSn));
+      if (base === "online") return "online";
+      /* 无 entity_status 关系时：8090 UAV 目录 HEALTHY 且能解析出同一 gateway → 机场在线 */
+      if (catalogEntity?.status === "online" && ent.airportSn.trim()) return "online";
+      return base;
+    })();
     const droneStatus = ent.droneSn
       ? resolveDroneTelemetryOnline(
           ent.droneSn,
-          assetById.get(ent.droneSn) ?? (ent.entityId ? assetById.get(ent.entityId) : undefined),
+          assetById.get(ent.droneSn) ?? catalogEntity,
+          catalogEntity,
         )
       : "offline";
 
     const catalog =
-      (ent.entityId ? assetById.get(ent.entityId) : undefined) ??
+      catalogEntity ??
       assetById.get(ent.droneSn) ??
       assetById.get(canonicalEntityId(ent.entityId ?? ""));
     const liveDrone = ent.droneSn ? ds.drones[ent.droneSn] : undefined;
@@ -384,21 +407,51 @@ export async function refreshAssetPanelSnapshot(): Promise<{
   eoCtx: MapGisEoMenuContext;
   merged: AssetData[];
 }> {
-  const [eoCtx, catalog] = await Promise.all([
+  const [eoCtx, catalog, panelDrones] = await Promise.all([
     fetchMapGisEoMenuContext(),
     fetchAssetPanelEntityCatalog(),
+    fetchDroneDevicesForAssetPanel(),
   ]);
-  const merged = mergeAssetPanelCatalog(catalog, useAssetStore.getState().assets, eoCtx);
-  return { catalog, eoCtx, merged };
+  const panelEoCtx: MapGisEoMenuContext = {
+    ...eoCtx,
+    registryDroneRows: mergeRegistryDroneRows(eoCtx.registryDroneRows, panelDrones),
+    droneLabelByDeviceSn: new Map([
+      ...eoCtx.droneLabelByDeviceSn,
+      ...panelDrones.map((d) => [d.deviceSN, (d.name ?? "").trim() || d.entityId] as const),
+    ]),
+  };
+  const merged = mergeAssetPanelCatalog(catalog, useAssetStore.getState().assets, panelEoCtx);
+  return { catalog, eoCtx: panelEoCtx, merged };
+}
+
+function mergeRegistryDroneRows(
+  base: MapGisEoMenuContext["registryDroneRows"],
+  extra: Awaited<ReturnType<typeof fetchDroneDevicesForAssetPanel>>,
+): MapGisEoMenuContext["registryDroneRows"] {
+  const bySn = new Map(base.map((r) => [r.sn, r]));
+  for (const d of extra) {
+    const sn = d.deviceSN.trim();
+    const ap = d.airportSN.trim();
+    if (!sn || !ap) continue;
+    const label = (d.name ?? "").trim() || d.entityId;
+    const prev = bySn.get(sn);
+    bySn.set(sn, { sn, airportSN: ap, label: label || prev?.label || sn });
+  }
+  return [...bySn.values()].sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
 }
 
 export async function fetchAssetPanelEntityCatalog(): Promise<AssetData[]> {
   try {
-    const res = await fetch("/api/nexus-entities/asset-panel", { cache: "no-store" });
+    /* 浏览器侧 `buildCatalogFromEntitiesPayload`，与 HMR 同步；避免 API Route 服务端 bundle 滞后 */
+    const res = await fetch("/api/nexus-entities/asset-panel?format=upstream", { cache: "no-store" });
     if (!res.ok) return [];
-    const j = (await res.json()) as { ok?: boolean; items?: AssetData[] };
-    if (j.ok !== true || !Array.isArray(j.items)) return [];
-    return j.items;
+    const j = (await res.json()) as { ok?: boolean; payload?: unknown; items?: AssetData[] };
+    if (j.ok !== true) return [];
+    if (j.payload != null) {
+      return buildCatalogFromEntitiesPayload(j.payload);
+    }
+    if (Array.isArray(j.items)) return j.items;
+    return [];
   } catch {
     return [];
   }

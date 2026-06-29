@@ -18,6 +18,7 @@ _TRACK_STRUCTURE_TYPES: Set[str] = {
     "fusion_track",
     "radar_track",
     "ais_track",
+    "suspicious_target",
 }
 # Entity/相机绑定禁止 RTLD_GLOBAL，否则会污染进程内 FastDDS 符号，导致航迹订阅 matched 失败
 _LOCAL_SO_BINDING_MODULES: Set[str] = {
@@ -341,7 +342,16 @@ class DDSReceiverService:
             raise
     
     def _uses_shared_domain141_participant(self) -> bool:
-        return self.domain_id == 141 and self.structure_type in _TRACK_STRUCTURE_TYPES
+        """
+        domain 141 上 NewTrackStruct 航迹共用一个 participant（newtrack_sub_recv.xml / 12355）。
+        TrackDataClass（fusion 模块）转发端常用 12370 组播，须独立 participant，否则 matched 恒为 0。
+        """
+        if self.domain_id != 141 or self.structure_type not in _TRACK_STRUCTURE_TYPES:
+            return False
+        mod = (self.dds_module_path or "").replace("\\", "/")
+        if self.structure_type == "fusion_track" and "/fusion" in mod:
+            return False
+        return True
 
     def _resolve_domain141_shared_xml(self) -> tuple[str, str]:
         candidates = [

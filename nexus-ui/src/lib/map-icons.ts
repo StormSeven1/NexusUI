@@ -1,5 +1,6 @@
 import type { ExpressionSpecification } from "maplibre-gl";
 import { VERIFIED_TRACK_MAP_COLOR } from "./verified-track-constants.ts";
+import { SUSPICIOUS_TRACK_MAP_COLOR } from "./suspicious-track-constants.ts";
 import { FORCE_COLORS, type ForceDisposition } from "./theme-colors.ts";
 import type { Track, PublicMapAssetType, AssetStatus } from "./map-entity-model.ts";
 import { isAirTrackBirdGlyphFromClassification } from "./track-category-id-parse.ts";
@@ -169,8 +170,10 @@ export function isAirTrackBirdGlyph(
  *
  * Get a stable marker image ID for MapLibre/Cesium caches.
  */
-/** 光电查证完成：军标 id 后缀（与态势色独立，统一绿色填充） */
+/** 光电查证完成：军标 id 后缀（与态势色独立，统一黄色填充） */
 export const OPTICALLY_VERIFIED_SYMBOL_SUFFIX = "-ov";
+/** 可疑目标：军标 id 后缀（态势绿色） */
+export const SUSPICIOUS_TARGET_SYMBOL_SUFFIX = "-sp";
 
 export function getMarkerSymbolId(
   type: TrackType,
@@ -182,6 +185,7 @@ export function getMarkerSymbolId(
   airFuse = false,
   opticallyVerified = false,
   seaFuse = false,
+  suspiciousTarget = false,
 ): string {
   const birdSeg = type === "air" && airBird ? "-bird" : "";
   const fuseSeg = type === "air" && airFuse ? "-fuse" : "";
@@ -197,6 +201,7 @@ export function getMarkerSymbolId(
   } else {
     id = base;
   }
+  if (suspiciousTarget) return `${id}${SUSPICIOUS_TARGET_SYMBOL_SUFFIX}`;
   return opticallyVerified ? `${id}${OPTICALLY_VERIFIED_SYMBOL_SUFFIX}` : id;
 }
 
@@ -295,12 +300,15 @@ function resolveTrackMarkerIconAndColor(
   airFuseGlyph: boolean,
   opticallyVerified: boolean,
   seaFuseGlyph: boolean,
+  suspiciousTarget = false,
 ): { icon: TrackIconDef; color: string } {
-  const color = opticallyVerified
-    ? VERIFIED_TRACK_MAP_COLOR
-    : disposition === "neutral" && neutralFusionFill?.trim()
-      ? neutralFusionFill.trim()
-      : resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
+  const color = suspiciousTarget
+    ? SUSPICIOUS_TRACK_MAP_COLOR
+    : opticallyVerified
+      ? VERIFIED_TRACK_MAP_COLOR
+      : disposition === "neutral" && neutralFusionFill?.trim()
+        ? neutralFusionFill.trim()
+        : resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
   const icon =
     type === "air"
       ? airFuseGlyph
@@ -355,6 +363,7 @@ export function buildMarkerSymbolSvg(
   airFuseGlyph = false,
   opticallyVerified = false,
   seaFuseGlyph = false,
+  suspiciousTarget = false,
 ): string {
   const { icon, color } = resolveTrackMarkerIconAndColor(
     type,
@@ -366,6 +375,7 @@ export function buildMarkerSymbolSvg(
     airFuseGlyph,
     opticallyVerified,
     seaFuseGlyph,
+    suspiciousTarget,
   );
   const innerBody = `<path d="${icon.pathD}" fill="${color}"/>`;
   const frame = trackMarkerInnerFrame(seaFuseGlyph);
@@ -404,6 +414,7 @@ export function buildMarkerSymbolDataUrl(
   airFuseGlyph = false,
   opticallyVerified = false,
   seaFuseGlyph = false,
+  suspiciousTarget = false,
 ): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
     buildMarkerSymbolSvg(
@@ -417,6 +428,7 @@ export function buildMarkerSymbolDataUrl(
       airFuseGlyph,
       opticallyVerified,
       seaFuseGlyph,
+      suspiciousTarget,
     ),
   )}`;
 }
@@ -452,7 +464,7 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
   airFuse?: boolean;
   /** 仅 `type === "sea"`：对海融合专用图标（水上目标） */
   seaFuse?: boolean;
-  /** 光电查证完成：军标整体绿色 */
+  /** 光电查证完成：军标整体黄色 */
   opticallyVerified?: boolean;
 }> {
   const types: TrackType[] = ["air", "sea", "underwater"];
@@ -1236,6 +1248,24 @@ export function geoCircleCoords(centerLng: number, centerLat: number, radiusKm: 
     pts.push(offsetPoint(centerLng, centerLat, radiusKm, (i / segments) * 360));
   }
   return pts;
+}
+
+/** 扇区两条径向边（中心 → 左/右弧端点），供态势光电视场任务态虚线侧缘。 */
+export function geoSectorSideLineCoords(
+  centerLng: number,
+  centerLat: number,
+  radiusKm: number,
+  headingDeg: number,
+  fovDeg: number,
+): [[number, number], [number, number]][] {
+  const halfFov = fovDeg / 2;
+  const center: [number, number] = [centerLng, centerLat];
+  const left = offsetPoint(centerLng, centerLat, radiusKm, headingDeg - halfFov);
+  const right = offsetPoint(centerLng, centerLat, radiusKm, headingDeg + halfFov);
+  return [
+    [center, left],
+    [center, right],
+  ];
 }
 
 /**

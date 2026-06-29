@@ -15,4 +15,6 @@ export type EoWebCodecsPresentation = {
   width: number;
   height: number;
   canvas: HTMLCanvasElement | null;
+  /** WebCodecs 已上屏最新 RTP timestamp；检测对齐优先于 hub 固定 lag */
+  lastRenderedRtpTimestamp: number;
 };

@@ -8,8 +8,7 @@ import json
 import os
 from datetime import datetime
 
-# 无人机数据存储开关 - 设置为False即可关闭所有存储
-ENABLE_DRONE_DATA_STORAGE = True
+from config import get_settings
 
 
 
@@ -41,6 +40,9 @@ def parse_dds_data(dds_object, structure_type: str) -> Optional[Dict[str, Any]]:
         if structure_type == 'new_track_struct':
             from parsers.new_track_struct_parser import parse_target_output_set
             return parse_target_output_set(dds_object)
+        if structure_type == 'suspicious_target':
+            from parsers.new_track_struct_parser import parse_suspicious_target_set
+            return parse_suspicious_target_set(dds_object)
         # 根据结构类型选择解析函数
         if structure_type in ['fusion_track', 'track']:
             return _parse_fusion_track(dds_object)
@@ -522,7 +524,7 @@ def _parse_uav_image_track(dds_object) -> Optional[Dict]:
         print("*"*50)
         
         # 存储到文件（如果开关开启）
-        if ENABLE_DRONE_DATA_STORAGE:
+        if get_settings().ENABLE_DRONE_DATA_STORAGE:
             try:
                 result['timestamp'] = datetime.now().isoformat()
                 storage_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'drone_logs')
@@ -620,7 +622,7 @@ def _parse_drone_status(dds_object) -> Optional[Dict]:
         # print("*"*50)
         
         # 存储到文件（如果开关开启）
-        if ENABLE_DRONE_DATA_STORAGE:
+        if get_settings().ENABLE_DRONE_DATA_STORAGE:
             try:
                 result['timestamp'] = datetime.now().isoformat()
                 storage_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'drone_logs')
@@ -694,7 +696,7 @@ def _parse_drone_task(dds_object) -> Optional[Dict]:
             result['drone_task_action'] = result['rev1']
 
         # 存储到文件（如果开关开启）
-        if ENABLE_DRONE_DATA_STORAGE:
+        if get_settings().ENABLE_DRONE_DATA_STORAGE:
             try:
                 result['timestamp'] = datetime.now().isoformat()
                 storage_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'drone_logs')
@@ -739,7 +741,7 @@ def _parse_high_freq(dds_object) -> Optional[Dict]:
         # print("*"*50)
         
         # 存储到文件（如果开关开启）
-        if ENABLE_DRONE_DATA_STORAGE:
+        if get_settings().ENABLE_DRONE_DATA_STORAGE:
             try:
                 result['timestamp'] = datetime.now().isoformat()
                 storage_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'drone_logs')

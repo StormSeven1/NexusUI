@@ -82,6 +82,31 @@ function log(level: "debug" | "info" | "warn" | "error", message: string, data?:
  * 默认面板配置
  * 定义系统中所有可用的面板及其初始状态
  */
+const DEFAULT_LEFT_PARTITIONS: DockPartition[] = [
+  {
+    id: "left-0",
+    side: "left",
+    index: 0,
+    heightRatio: 0.5,
+    currentPanelId: "tracks",
+  },
+  {
+    id: "left-1",
+    side: "left",
+    index: 1,
+    heightRatio: 0.5,
+    currentPanelId: "electro-optical-1",
+  },
+];
+
+function createDefaultEoPanelStates(): PanelWindowState[] {
+  return createEoElectroOpticalDefaultPanelStates().map((p) =>
+    p.id === "electro-optical-1"
+      ? { ...p, location: "left-1", mode: "docked" as const }
+      : p,
+  );
+}
+
 const DEFAULT_PANELS: PanelWindowState[] = [
   // 左侧四工具共用一个分区 left-0，由分区 currentPanelId 切换
   {
@@ -144,7 +169,7 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     lastPopupPosition: null,
     displayOrder: 6,
   },
-  ...createEoElectroOpticalDefaultPanelStates(),
+  ...createDefaultEoPanelStates(),
   {
     id: "target-profile",
     location: "right-0",
@@ -223,18 +248,10 @@ export const DOCK_INITIAL_LAYOUT_SNAPSHOT: DockLayoutSnapshot = {
   activePanelId: null,
   nextZIndex: 100,
   leftUpperPanelTab: "tracks",
-  leftLowerPanelTab: "electro-optical",
+  leftLowerPanelTab: "electro-optical-1",
   rightUpperPanelTab: "target-profile",
   rightLowerPanelTab: "chat",
-  leftPartitions: [
-    {
-      id: "left-0",
-      side: "left",
-      index: 0,
-      heightRatio: 1,
-      currentPanelId: "tracks",
-    },
-  ],
+  leftPartitions: structuredClone(DEFAULT_LEFT_PARTITIONS),
   rightPartitions: [
     {
       id: "right-0",
@@ -285,7 +302,7 @@ export const useDockStore = create<DockStoreWithSidebar>()(
   leftUpperPanelTab: "tracks",
 
   /** 左下区域当前显示的面板 */
-  leftLowerPanelTab: "electro-optical",
+  leftLowerPanelTab: "electro-optical-1",
 
   /** 右上区域当前显示的面板 */
   rightUpperPanelTab: "target-profile",
@@ -295,16 +312,8 @@ export const useDockStore = create<DockStoreWithSidebar>()(
 
   // ============ 动态分区系统状态 ============
 
-  /** 左侧边栏：单分区承载四工具 */
-  leftPartitions: [
-    {
-      id: "left-0",
-      side: "left",
-      index: 0,
-      heightRatio: 1,
-      currentPanelId: "tracks",
-    },
-  ],
+  /** 左侧边栏：上目标列表、下光电窗口 */
+  leftPartitions: structuredClone(DEFAULT_LEFT_PARTITIONS),
 
   /** 右侧边栏：上目标档案、下系统评估 + 智能助手 */
   rightPartitions: [

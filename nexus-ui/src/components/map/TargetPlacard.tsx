@@ -22,6 +22,7 @@ import {
   assetFriendlyColorFromProperties,
   resolveTrackPointFill,
 } from "@/lib/map-icons";
+import { resolveTrackMapHighlightFill } from "@/lib/track-map-highlight-color";
 import { useTrackMarkerSymbolUrl } from "@/components/military/TrackMarkerIcon";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
@@ -185,7 +186,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
     const tr = getTrackRenderingConfig();
     const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
     const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
-    return resolveTrackPointFill(track, eff, null, friendlyFill);
+    const baseFill = resolveTrackPointFill(track, eff, null, friendlyFill);
+    return resolveTrackMapHighlightFill(track, baseFill);
   })();
 
   return (

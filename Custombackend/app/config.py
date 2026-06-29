@@ -1,6 +1,7 @@
 """
 配置模块 - 数据接收和服务配置
 """
+import os
 from typing import List, Dict, Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -35,6 +36,12 @@ class Settings(BaseSettings):
 
     # 系统评估 gRPC 服务（system-evaluation-server），格式 host:port
     SYSTEM_EVAL_GRPC_TARGET: str = "192.168.18.141:50091"
+
+    # DDS 无人机状态/任务/高频等落盘到 app/data/drone_logs（jsonl）
+    ENABLE_DRONE_DATA_STORAGE: bool = False
+
+    # 相机实时状态 DDS 订阅：legacy=domain149 | entity=domain200 | both=双路（见 NEXUS_DDS_CAMERA_STATUS_MODE）
+    NEXUS_DDS_CAMERA_STATUS_MODE: str = "legacy"
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -166,6 +173,26 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "use_default_xml": False
     },
     {
+        "id": "dds_suspicious_target",
+        "name": "DDS可疑目标(NewTrackStructSuspicious)",
+        "enabled": True,
+        "domain_id": 141,
+        "topic_name": "NewTrackStructSuspicious",
+        "profile_name": "track_subscriber_newstruct_suspicious",
+        "discovery_server_ip": "192.168.18.141",
+        "discovery_server_port": 11611,
+        "multicast_ip": "239.255.0.1",
+        "multicast_port": 12355,
+        "dds_module_path": "./DDSReferences/NewTrackStruct/build",
+        "structure_type": "suspicious_target",
+        "dds_module_name": "NewTrackRealTimeStatus",
+        "data_class_name": "TargetOutputSet",
+        "pubsub_type_class_name": "TargetOutputSetPubSubType",
+        "type_name": "TargetFull::TargetOutputSet",
+        "subscriber_xml_file": "newtrack_sub_recv.xml",
+        "use_default_xml": False
+    },
+    {
         "id": "dds_camera_status",
         "name": "DDS相机实时状态(新版 IDL，Topic CameraRealTimeStatusTopic)",
         "enabled": True,
@@ -188,7 +215,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     {
         "id": "dds_camera_status_legacy",
         "name": "DDS相机实时状态(旧版扁平结构，Topic CameraRealTimeStatusTopic1)",
-        "enabled": False,
+        "enabled": True,
         "domain_id": 149,
         "topic_name": "CameraRealTimeStatusTopic1",
         "profile_name": "camera_status_subscriber",
@@ -253,13 +280,14 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "discovery_server_ip": "192.168.18.141",
         "discovery_server_port": 11611,
         "multicast_ip": "239.255.0.1",
-        "multicast_port": 12355,
+        "multicast_port": 12370,
         "dds_module_path": "./DDSReferences/NewTrackStruct/build",
         "structure_type": "new_track_struct",
         "dds_module_name": "NewTrackRealTimeStatus",
         "data_class_name": "TargetOutputSet",
         "pubsub_type_class_name": "TargetOutputSetPubSubType",
         "type_name": "TargetFull::TargetOutputSet",
+        "subscriber_xml_file": "newtrack_sub_recv.xml",
         "use_default_xml": False
     },
     {
@@ -279,6 +307,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "data_class_name": "TargetOutputSet",
         "pubsub_type_class_name": "TargetOutputSetPubSubType",
         "type_name": "TargetFull::TargetOutputSet",
+        "subscriber_xml_file": "newtrack_sub_recv.xml",
         "use_default_xml": False
     },
     {
@@ -381,13 +410,14 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "discovery_server_ip": "192.168.18.141",
         "discovery_server_port": 11611,
         "multicast_ip": "239.255.0.1",
-        "multicast_port": 12355,
+        "multicast_port": 12370,
         "dds_module_path": "./DDSReferences/NewTrackStruct/build",
         "structure_type": "new_track_struct",
         "dds_module_name": "NewTrackRealTimeStatus",
         "data_class_name": "TargetOutputSet",
         "pubsub_type_class_name": "TargetOutputSetPubSubType",
         "type_name": "TargetFull::TargetOutputSet",
+        "subscriber_xml_file": "newtrack_sub_recv.xml",
         "use_default_xml": False
     },
     {
@@ -407,6 +437,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "data_class_name": "TargetOutputSet",
         "pubsub_type_class_name": "TargetOutputSetPubSubType",
         "type_name": "TargetFull::TargetOutputSet",
+        "subscriber_xml_file": "newtrack_sub_recv.xml",
         "use_default_xml": False
     },
     {
@@ -426,6 +457,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "data_class_name": "TargetOutputSet",
         "pubsub_type_class_name": "TargetOutputSetPubSubType",
         "type_name": "TargetFull::TargetOutputSet",
+        "subscriber_xml_file": "newtrack_sub_recv.xml",
         "use_default_xml": False
     },
     {
@@ -545,6 +577,33 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     }
 ]
 
+
+def resolve_dds_camera_status_mode(raw: str | None = None) -> str:
+    """归一化相机 DDS 模式：legacy | entity | both"""
+    mode = (raw if raw is not None else os.environ.get("NEXUS_DDS_CAMERA_STATUS_MODE", "legacy")).strip().lower()
+    if mode in ("entity", "200", "new", "dds_camera_status"):
+        return "entity"
+    if mode in ("both", "all", "dual"):
+        return "both"
+    return "legacy"
+
+
+def apply_dds_camera_status_mode(receivers: List[Dict[str, Any]], mode: str | None = None) -> str:
+    """按 NEXUS_DDS_CAMERA_STATUS_MODE 启用 dds_camera_status / dds_camera_status_legacy 之一或两者。"""
+    resolved = resolve_dds_camera_status_mode(mode)
+    entity_on = resolved in ("entity", "both")
+    legacy_on = resolved in ("legacy", "both")
+    for rec in receivers:
+        rid = rec.get("id")
+        if rid == "dds_camera_status":
+            rec["enabled"] = entity_on
+        elif rid == "dds_camera_status_legacy":
+            rec["enabled"] = legacy_on
+    return resolved
+
+
+DDS_CAMERA_STATUS_MODE = apply_dds_camera_status_mode(DDS_RECEIVERS)
+
 # 系统工作模式 DDS 发布（供前端 TopNav 下拉框调用 /api/system/work-mode）
 # 需先在 DDSReferences/WorkMode 下编译出 libWorkModeStatus.so 与 _WorkModeStatusWrapper.so
 WORK_MODE_DDS_PUBLISHER: Dict[str, Any] = {
@@ -579,6 +638,8 @@ HTTP_POLLERS: List[Dict[str, Any]] = [
         "data_format": "EntityStatus",
         "headers": {},
         "params": {"page": 1, "size": 100},
+        # 8090 实体总数 >100 时分页；合并全部页后再发 entity_status（含 uav-011 等第 2 页无人机）
+        "fetch_all_pages": True,
         "auth": None
     },
 ]

@@ -61,7 +61,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useDbAreaStore } from "@/stores/db-area-store";
 import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
-import { countVisibleDbAreaLeaves, isDbAreaDrawable } from "@/lib/db-area-panel-helpers";
+import { countVisibleDbAreaLeaves, isDbAreaDrawable, isDbAreaLeafVisible } from "@/lib/db-area-panel-helpers";
 import { collectMapGisDroneRowsSync, mapGisDroneSyncSignature } from "@/lib/map-gis-drone-rows";
 import { useDroneStore } from "@/stores/drone-store";
 import {
@@ -330,17 +330,10 @@ export function LayerPanel() {
   useEffect(() => {
     const drawable = dbAreaRows.filter(isDbAreaDrawable);
     if (drawable.length === 0) return;
-    const anyOn = drawable.some(
-      (r) => dbAreaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] !== false,
+    const anyOn = drawable.some((r) =>
+      isDbAreaLeafVisible(r.group_id, r.area_id, dbAreaVisibility),
     );
     syncMasterOffWhenAllLeavesOff(dbAreaMasterOn, anyOn, (on) => setLayerVisibility(LYR_DB_AREAS, on));
-    if (!dbAreaMasterOn && anyOn) {
-      const anyExplicit = drawable.some((r) => {
-        const key = dbAreaVisibilityKey(r.group_id, r.area_id);
-        return key in dbAreaVisibility;
-      });
-      if (anyExplicit) setLayerVisibility(LYR_DB_AREAS, true);
-    }
   }, [dbAreaRows, dbAreaVisibility, dbAreaMasterOn, setLayerVisibility]);
 
   const toggleVectorGroup = useCallback((gk: string) => {
@@ -366,8 +359,8 @@ export function LayerPanel() {
     (groupId: number) => {
       const list = dbAreaRows.filter((r) => r.group_id === groupId && isDbAreaDrawable(r));
       if (list.length === 0) return "all" as const;
-      const flags = list.map(
-        (r) => dbAreaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] !== false,
+      const flags = list.map((r) =>
+        isDbAreaLeafVisible(r.group_id, r.area_id, dbAreaVisibility),
       );
       return aggregatePanelVisibility(flags);
     },
@@ -377,7 +370,7 @@ export function LayerPanel() {
   const dbAreaMasterVisibility = useMemo(() => {
     const flags = dbAreaRows
       .filter(isDbAreaDrawable)
-      .map((r) => dbAreaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] !== false);
+      .map((r) => isDbAreaLeafVisible(r.group_id, r.area_id, dbAreaVisibility));
     return aggregatePanelVisibility(flags);
   }, [dbAreaRows, dbAreaVisibility]);
 
@@ -1083,7 +1076,7 @@ export function LayerPanel() {
                           {gOpen
                             ? list.map((r) => {
                                 const key = dbAreaVisibilityKey(r.group_id, r.area_id);
-                                const v = dbAreaVisibility[key] !== false;
+                                const v = isDbAreaLeafVisible(r.group_id, r.area_id, dbAreaVisibility);
                                 const label =
                                   (r.area_name != null && String(r.area_name).trim()) ||
                                   mapAreaFallbackLabel(r.group_id, r.area_id, r.area_type);

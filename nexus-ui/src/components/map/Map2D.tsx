@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useAppStore } from "@/stores/app-store";
@@ -11,6 +11,7 @@ import { useTrackStore } from "@/stores/track-store";
 import { useAlertStore } from "@/stores/alert-store";
 import { computeTopThreatRankByShowId } from "@/lib/alarm-track-threat-rank";
 import { useVerifiedTrackStore } from "@/stores/verified-track-store";
+import { useSuspiciousTrackStore } from "@/stores/suspicious-track-store";
 import {
   PUBLIC_MAP_ASSET_TYPES,
   LYR_AIRPORT,
@@ -22,15 +23,14 @@ import {
   LYR_TDOA,
   LYR_TOWER,
   LYR_TRACKS,
-  LYR_ZONES,
   LYR_DB_AREAS,
   LYR_DISTANCE_RINGS,
   type Track,
 } from "@/lib/map-entity-model";
 import type { Asset } from "@/lib/map-entity-model";
-import { useZoneStore } from "@/stores/zone-store";
 import { useDbAreaStore } from "@/stores/db-area-store";
 import { useTrackDisplayStore } from "@/stores/track-display-store";
+import { isDbAreaLeafVisible } from "@/lib/db-area-panel-helpers";
 import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
 import { useAssetStore, type AssetData } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
@@ -132,7 +132,7 @@ import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import { TowerMaplibre, TOWER_LAYER_IDS, TOWER_ICON_LAYER } from "@/components/map/modules/tower-maplibre";
 import { DistanceMeasureMaplibre, DIST_MEASURE_LAYER_IDS } from "@/components/map/modules/distance-measure-maplibre";
 import { AngleMeasureMaplibre, ANGLE_LAYER_IDS } from "@/components/map/modules/angle-measure-maplibre";
-import { PolygonDrawMaplibre, POLY_DRAW_LAYER_IDS, POLY_ZONES_LAYER_IDS } from "@/components/map/modules/polygon-draw-maplibre";
+import { PolygonDrawMaplibre, POLY_DRAW_LAYER_IDS } from "@/components/map/modules/polygon-draw-maplibre";
 import {
   installDbAreasLayers,
   removeLegacyDbAreasFillLayer,
@@ -173,7 +173,6 @@ import {
   DRONES_SYMBOL_LAYER,
   DRONES_LABEL_LAYER,
 } from "@/components/map/modules/drones-maplibre";
-import type { PolygonDrawCompletePayload } from "@/components/map/modules/polygon-draw-maplibre";
 import { DbAreaDrawMaplibre, DB_AREA_DRAW_LAYER_IDS } from "@/components/map/modules/db-area-draw-maplibre";
 import { AreaDrawSaveDialog } from "@/components/map/AreaDrawDialogs";
 import { useAreaDrawStore } from "@/stores/area-draw-store";
@@ -187,13 +186,9 @@ import { registerTrackEvalMap } from "@/lib/track-eval-map-bridge";
 import { useTrackEvaluationStore } from "@/stores/track-evaluation-store";
 import { MapGisContextMenu, type MapGisMenuState } from "@/components/map/MapGisContextMenu";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
+import { toast } from "sonner";
 
-/* 2D 地图：航迹 / 资产 / 限制区 + 测量与扇区工具 */
-
-/** 手绘多边形命名弹窗：默认描边/填充（与原先写死在 `commitPolyArea` 中的蓝色一致） */
-const POLY_DIALOG_DEFAULT_STROKE = "#3b82f6";
-const POLY_DIALOG_DEFAULT_FILL = "#3b82f6";
-const POLY_DIALOG_DEFAULT_FILL_OPACITY = 0.28;
+/* 2D 地图：航迹 / 资产 + 测量与扇区工具 */
 
 /**
  * 测量工具相关 layer id（含 lyr-measure）；须与 MapLibre layer.id 一致
@@ -256,21 +251,6 @@ function ensureMap2dRasterLayersInstalled(map: maplibregl.Map): void {
   installMap2dRasterLayers(map, MAP2D_RASTER_LAYER_CONFIGS);
 }
 
-/*
- * ── 限制区 / 多边形在地图上的三套东西（勿混为一谈）──
- *
- * 1) 业务限制区（zone-store / WS 等 → `PolygonDrawMaplibre.setCommittedZones`）
- *    MapLibre：`POLY_ZONES_*`（如 `polydraw2-zones-fill`），由 `LAYER_MAPPING["lyr-zones"]` 控制显隐。
- *
- * 2) 标绘草稿（鼠标正在画、尚未提交）
- *    MapLibre：`POLY_DRAW_*`，与 1) 不同源；提交后草稿结束，不应留在「限制区」数据里。
- *
- * 3) 已提交的手绘/工具多边形（`app-store.drawnAreas` → 本文件下方 subscribe 里动态 `area-source-*` + `area-fill-*` / `area-line-*` / `area-label-*`）
- *    不进 `POLY_ZONES_SOURCE`；图层面板同一开关「限制区域」(`lyr-zones`) 必须在 `applyLayerPanelVisibilityFromStore`
- *    里对 `drawnAreas` 再扫一遍，否则开关只影响 1) 不影响 3)。
- *
- * 新建 3) 时 MapLibre 默认 layer 多为 visible；若当前 `lyr-zones` 为关，需在 `addLayer` 之后补一次 apply，见该 subscribe 末尾。
- */
 const LAYER_MAPPING: Record<string, string[]> = {
   [LYR_TRACKS]: [
     TRACK_TRAIL,
@@ -303,7 +283,6 @@ const LAYER_MAPPING: Record<string, string[]> = {
   [LYR_OPTO_FOV]: [...FOV_LAYER_IDS, ...THIRD_PARTY_PTZ_FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER],
   [LYR_TOWER]: [...TOWER_LAYER_IDS],
   [LYR_MEASURE]: [...MEASURE_TOOL_LAYER_IDS],
-  [LYR_ZONES]: [...POLY_ZONES_LAYER_IDS],
   [LYR_DB_AREAS]: [...DB_AREAS_LAYER_IDS],
   [LYR_DISTANCE_RINGS]: [...DISTANCE_RINGS_LAYER_IDS],
 };
@@ -332,8 +311,6 @@ function layerPanelVisibilitySignature(s: ReturnType<typeof useAppStore.getState
  *
  * 不依赖 `isStyleLoaded()` 全局守卫：逐图层 try-catch，图层未挂上时静默跳过。
  * pending 机制由外层 subscribe effect 在 `idle` 时补调。
- *
- * `lyr-zones`：除 `POLY_ZONES_LAYER_IDS` 外，另对 `drawnAreas` 对应的 `area-*` 图层同步同一开关（见文件顶部大块注释）。
  */
 function applyLayerPanelVisibilityFromStore(
   map: maplibregl.Map,
@@ -359,17 +336,6 @@ function applyLayerPanelVisibilityFromStore(
       try {
         if (!map.getLayer(ml)) continue;
         map.setLayoutProperty(ml, "visibility", v ? "visible" : "none");
-      } catch { /* 图层尚未就绪，跳过 */ }
-    }
-  }
-  /* 与 `LAYER_MAPPING["lyr-zones"]` 同值：业务限制区 + 本 store 手绘区一起显隐 */
-  const zoneVis = s.layerVisibility[LYR_ZONES] ?? true;
-  for (const area of s.drawnAreas) {
-    for (const suffix of ["area-fill-", "area-line-", "area-label-"] as const) {
-      const ml = `${suffix}${area.id}`;
-      try {
-        if (!map.getLayer(ml)) continue;
-        map.setLayoutProperty(ml, "visibility", zoneVis ? "visible" : "none");
       } catch { /* 图层尚未就绪，跳过 */ }
     }
   }
@@ -482,7 +448,6 @@ export function Map2D() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const lastFlySeqRef = useRef<number>(-1);
   const routeIdsRef = useRef<string[]>([]);
-  const areaIdsRef = useRef<string[]>([]);
   const radarCovRef = useRef<RadarCoverageModule | null>(null);
   const distanceRingsRef = useRef<DistanceRingsMaplibre | null>(null);
   const optoFovRef = useRef<OptoelectronicFovModule | null>(null);
@@ -510,7 +475,6 @@ export function Map2D() {
     laser: LaserMaplibre;
     tdoa: TdoaMaplibre;
   } | null>(null);
-  const [polyPending, setPolyPending] = useState<PolygonDrawCompletePayload | null>(null);
   /** 等待 app-config 后再建图；`undefined` 表示加载中 */
   const [mapHomeBoot, setMapHomeBoot] = useState<
     import("@/lib/map-home-config").AppConfigMapHome | null | undefined
@@ -527,11 +491,6 @@ export function Map2D() {
       .catch(() => setMapHomeBoot(null));
   }, []);
 
-  const [polyAreaName, setPolyAreaName] = useState("");
-  /** 对应 `DrawnArea.color` / `fillColor` / `fillOpacity`，弹窗打开时复位为默认 */
-  const [polyStrokeColor, setPolyStrokeColor] = useState(POLY_DIALOG_DEFAULT_STROKE);
-  const [polyFillColor, setPolyFillColor] = useState(POLY_DIALOG_DEFAULT_FILL);
-  const [polyFillOpacity, setPolyFillOpacity] = useState(POLY_DIALOG_DEFAULT_FILL_OPACITY);
   const [placard, setPlacard] = useState<{
     kind: PlacardKind;
     id: string;
@@ -551,27 +510,6 @@ export function Map2D() {
 
   const placardRef = useRef(placard);
   useEffect(() => { placardRef.current = placard; }, [placard]);
-
-  /** 手绘多边形确认入库：`drawnAreas` → 动态 `area-*` 图层；颜色来自弹窗状态（`DrawnArea` 三字段） */
-  const commitPolyArea = useCallback(() => {
-    if (!polyPending) return;
-    const p = polyPending;
-    const name = polyAreaName.trim() || "未命名区域";
-    const areaLabel =
-      p.areaM2 >= 1e6 ? `${(p.areaM2 / 1e6).toFixed(3)} km²` : `${Math.round(p.areaM2)} m²`;
-    const perimLabel =
-      p.perimeterM >= 1000 ? `${(p.perimeterM / 1000).toFixed(2)} km` : `${Math.round(p.perimeterM)} m`;
-    const id = `poly-${Date.now()}`;
-    useAppStore.getState().addDrawnArea({
-      id,
-      points: p.ring.map(([lng, lat]) => ({ lng, lat })),
-      color: polyStrokeColor,
-      fillColor: polyFillColor,
-      fillOpacity: polyFillOpacity,
-      label: `${name}\n面积 ${areaLabel} · 周长 ${perimLabel}`,
-    });
-    setPolyPending(null);
-  }, [polyPending, polyAreaName, polyStrokeColor, polyFillColor, polyFillOpacity]);
 
   /* 初始化 MapLibre（等 app-config 的 mapHome 就绪后再创建，保证 Home 只改配置文件即可） */
   useEffect(() => {
@@ -659,21 +597,21 @@ export function Map2D() {
         const assetIconAccentEarly: AssetDispositionIconAccent = preCfg?.assetDispositionIconAccent ?? {};
         assetDispositionAccentRef.current = assetIconAccentEarly;
 
-        /* 限制区：`POLY_ZONES_SOURCE`（`polydraw2-zones-src`）；数据 `useZoneStore.zones`。标绘草稿为另一套：`POLY_DRAW_SOURCE`（`polydraw2-source`），由 `poly.initDraft()` 挂载，见 `polygon-draw-maplibre.ts` */
         const poly = new PolygonDrawMaplibre(map, {
           onComplete: (p) => {
             poly.deactivate();
             useMapMeasureUi.getState().setActiveDrawTool(null);
-            setPolyAreaName("");
-            setPolyStrokeColor(POLY_DIALOG_DEFAULT_STROKE);
-            setPolyFillColor(POLY_DIALOG_DEFAULT_FILL);
-            setPolyFillOpacity(POLY_DIALOG_DEFAULT_FILL_OPACITY);
-            setPolyPending(p);
+            setMapDrawCursor(map, false);
+            const areaLabel =
+              p.areaM2 >= 1e6 ? `${(p.areaM2 / 1e6).toFixed(3)} km²` : `${Math.round(p.areaM2)} m²`;
+            const perimLabel =
+              p.perimeterM >= 1000 ? `${(p.perimeterM / 1000).toFixed(2)} km` : `${Math.round(p.perimeterM)} m`;
+            toast.message("区域量算完成", {
+              description: `面积约 ${areaLabel}，周长 ${perimLabel}`,
+            });
           },
         });
         polygonDrawRef.current = poly;
-        poly.initCommittedZones();
-        poly.setCommittedZones(useZoneStore.getState().zones);
 
         /* 航迹：source + 高亮环；专题层插在 `HIGHLIGHT_LAYER` 之下；符号层在预载位图之后再装 */
         const tracksMod = new TracksMaplibre(map);
@@ -695,7 +633,7 @@ export function Map2D() {
               rows,
               (row) => {
                 if (!master) return false;
-                return areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] !== false;
+                return isDbAreaLeafVisible(row.group_id, row.area_id, areaVisibility);
               },
               pickSituationAreaLayerStyle(useDistanceRingStore.getState()),
             ),
@@ -1324,96 +1262,6 @@ export function Map2D() {
     return unsub;
   }, []);
 
-  /*
-   * `drawnAreas` → MapLibre：每个区域独立 GeoJSON source + fill/line/(可选)label。
-   * 颜色：`DrawnArea` 字段在 `addLayer` 的 `paint` 中直接使用；不在此做主题或合法性校验。
-   */
-  useEffect(() => {
-    const unsub = useAppStore.subscribe((s) => {
-      const m = mapRef.current;
-      if (!m?.isStyleLoaded()) return;
-      const current = s.drawnAreas;
-      const currentIds = new Set(current.map((a) => a.id));
-
-      for (const oldId of areaIdsRef.current) {
-        if (!currentIds.has(oldId)) {
-          if (m.getLayer("area-fill-" + oldId)) m.removeLayer("area-fill-" + oldId);
-          if (m.getLayer("area-line-" + oldId)) m.removeLayer("area-line-" + oldId);
-          if (m.getLayer("area-label-" + oldId)) m.removeLayer("area-label-" + oldId);
-          if (m.getSource("area-source-" + oldId)) m.removeSource("area-source-" + oldId);
-        }
-      }
-      let didAddAreaLayers = false;
-      for (const area of current) {
-        const sid = "area-source-" + area.id;
-        if (m.getSource(sid)) continue;
-        didAddAreaLayers = true;
-        const ring = [...area.points.map((p) => [p.lng, p.lat]), [area.points[0].lng, area.points[0].lat]];
-        const pts = area.points.map((p) => [p.lng, p.lat] as [number, number]);
-        const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
-        const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
-        const features: GeoJSON.Feature[] = [
-          {
-            type: "Feature",
-            properties: { _kind: "poly" },
-            geometry: { type: "Polygon", coordinates: [ring] },
-          },
-        ];
-        if (area.label) {
-          features.push({
-            type: "Feature",
-            properties: { _kind: "lbl", labelText: area.label },
-            geometry: { type: "Point", coordinates: [cx, cy] },
-          });
-        }
-        m.addSource(sid, { type: "geojson", data: { type: "FeatureCollection", features } });
-        m.addLayer(
-          {
-            id: "area-fill-" + area.id,
-            type: "fill",
-            source: sid,
-            filter: ["==", ["get", "_kind"], "poly"],
-            paint: { "fill-color": area.fillColor, "fill-opacity": area.fillOpacity },
-          },
-          HIGHLIGHT_LAYER
-        );
-        m.addLayer(
-          {
-            id: "area-line-" + area.id,
-            type: "line",
-            source: sid,
-            filter: ["==", ["get", "_kind"], "poly"],
-            paint: { "line-color": area.color, "line-width": 2, "line-opacity": 0.7, "line-dasharray": [4, 3] },
-          },
-          HIGHLIGHT_LAYER
-        );
-        if (area.label) {
-          m.addLayer(
-            {
-              id: "area-label-" + area.id,
-              type: "symbol",
-              source: sid,
-              filter: ["==", ["get", "_kind"], "lbl"],
-              layout: {
-                "text-field": ["get", "labelText"],
-                "text-font": ["Open Sans Regular"],
-                "text-size": 11,
-                "text-allow-overlap": true,
-                "text-ignore-placement": true,
-                "text-optional": false,
-              },
-              paint: { "text-color": area.color, "text-halo-color": "#09090b", "text-halo-width": 1.5, "text-opacity": 0.9 },
-            },
-            HIGHLIGHT_LAYER
-          );
-        }
-      }
-      areaIdsRef.current = [...currentIds];
-      if (didAddAreaLayers) applyLayerPanelVisibilityFromStore(m, useAppStore.getState());
-    });
-    return unsub;
-  }, []);
-
   /**
    * 航迹：store 全量 → `TracksMaplibre.setTracks`（内建指纹可跳过相同数据的 `setData`；本处 rAF 合并同帧多次更新）
    */
@@ -1499,10 +1347,20 @@ export function Map2D() {
     return unsub;
   }, []);
 
-  /** 光电查证完成：unique_id 标绿后刷新航迹 GeoJSON */
+  /** 光电查证完成：unique_id 标黄后刷新航迹 GeoJSON */
   useEffect(() => {
     const unsub = useVerifiedTrackStore.subscribe((s, p) => {
       if (s.mapVerifiedRev === p.mapVerifiedRev) return;
+      if (!tracksRef.current) return;
+      tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : useTrackStore.getState().tracks);
+    });
+    return unsub;
+  }, []);
+
+  /** 可疑目标：unique_id 标绿后刷新航迹 GeoJSON */
+  useEffect(() => {
+    const unsub = useSuspiciousTrackStore.subscribe((s, p) => {
+      if (s.mapSuspiciousRev === p.mapSuspiciousRev) return;
       if (!tracksRef.current) return;
       tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : useTrackStore.getState().tracks);
     });
@@ -1542,7 +1400,7 @@ export function Map2D() {
             rows,
             (row) => {
               if (!master) return false;
-              return areaVisibility[dbAreaVisibilityKey(row.group_id, row.area_id)] !== false;
+              return isDbAreaLeafVisible(row.group_id, row.area_id, areaVisibility);
             },
             pickSituationAreaLayerStyle(useDistanceRingStore.getState()),
           ),
@@ -1608,6 +1466,11 @@ export function Map2D() {
 
   /* 光电装备：按设备视场 / GIS 图标 + 面板白名单 → GeoJSON */
   useEffect(() => {
+    const flushCameraDdsForFov = () => {
+      const dds = useEoCameraDdsStatusStore.getState().byEntityId;
+      optoFovRef.current?.setCameraDdsStatus(dds);
+      thirdPartyPtzFovRef.current?.setCameraDdsStatus(dds);
+    };
     const flushOptoPerDevice = () => {
       const vis = useOptoDeviceLayerStore.getState().deviceVisibility;
       const cam = useMapGisCameraMenuStore.getState();
@@ -1629,6 +1492,8 @@ export function Map2D() {
       const cam = useMapGisCameraMenuStore.getState();
       const panelIds = cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
       const vis = useOptoDeviceLayerStore.getState().deviceVisibility;
+      const dds = useEoCameraDdsStatusStore.getState().byEntityId;
+      thirdPartyPtzFovRef.current?.setCameraDdsStatus(dds);
       thirdPartyPtzFovRef.current?.setPerDeviceVisibility(vis, panelIds);
       const rows = resolveThirdPartyPtzFovRows(
         cam.rows,
@@ -1639,6 +1504,7 @@ export function Map2D() {
       thirdPartyPtzFovRef.current?.setFromRows(rows);
     };
     const unsubVis = useOptoDeviceLayerStore.subscribe(flushOptoPerDevice);
+    const unsubDdsFov = useEoCameraDdsStatusStore.subscribe(flushCameraDdsForFov);
     const unsubCam = useMapGisCameraMenuStore.subscribe(() => {
       flushOptoPerDevice();
       flushThirdPartyPtzFov();
@@ -1647,6 +1513,7 @@ export function Map2D() {
     const unsubUdp = useEoThirdPartyUdpDevStatusStore.subscribe(flushThirdPartyPtzFov);
     const unsubDds = useEoCameraDdsStatusStore.subscribe(flushThirdPartyPtzFov);
     const ttlTimer = setInterval(flushThirdPartyPtzFov, 1000);
+    flushCameraDdsForFov();
     flushOptoPerDevice();
     registerThirdPartyPtzFovFlushListener(flushThirdPartyPtzFov);
     void useMapGisCameraMenuStore.getState().ensureLoaded().then(() => {
@@ -1657,6 +1524,7 @@ export function Map2D() {
     return () => {
       registerThirdPartyPtzFovFlushListener(null);
       unsubVis();
+      unsubDdsFov();
       unsubCam();
       unsubAssets();
       unsubUdp();
@@ -1665,7 +1533,7 @@ export function Map2D() {
     };
   }, []);
 
-  /* zone-store / asset-store → 地图：光电 FOV 扇区朝向/开角来自 `adaptAssetsForMap` 的 `heading`/`fovAngle`（静态+动态已在资产入口统一合并） */
+  /* asset-store → 地图：光电 FOV 扇区朝向/开角来自 `adaptAssetsForMap` 的 `heading`/`fovAngle`（静态+动态已在资产入口统一合并） */
   useEffect(() => {
     let pendingAssetFlush = false;
     let onStyleIdleFlush: (() => void) | null = null;
@@ -1732,6 +1600,7 @@ export function Map2D() {
             panelIds,
           );
         }
+        optoFovRef.current?.setCameraDdsStatus(useEoCameraDdsStatusStore.getState().byEntityId);
         optoFovRef.current?.setFromAssets(adapted);
         towerModRef.current?.setFromAssets(adapted);
         airportStaticRef.current?.setFromAssets(
@@ -1770,9 +1639,6 @@ export function Map2D() {
     assetsPendingRef.current = useAssetStore.getState().assets;
     flushAssets();
 
-    const unsubZ = useZoneStore.subscribe((s) => {
-      polygonDrawRef.current?.setCommittedZones(s.zones);
-    });
     const unsubA = useAssetStore.subscribe((s) => {
       assetsPendingRef.current = s.assets;
       flushAssets();
@@ -1781,7 +1647,6 @@ export function Map2D() {
     return () => {
       flushMapAssetsRef.current = null;
       detachStyleIdle();
-      unsubZ();
       unsubA();
     };
   }, []);
@@ -1796,87 +1661,6 @@ export function Map2D() {
         onClose={() => setAreaDbMenu(null)}
       />
       <AreaDrawSaveDialog />
-      {polyPending && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-labelledby="poly-name-title">
-          <div className="w-full max-w-sm rounded-lg border border-white/10 bg-[#141418] p-4 shadow-xl">
-            <h2 id="poly-name-title" className="text-sm font-semibold text-nexus-text-primary">命名区域</h2>
-            <p className="mt-1 text-xs text-nexus-text-muted">
-              输入名称（可留空为默认）。下方可配置描边色、填充色与填充透明度（写入 `DrawnArea`：`color` / `fillColor` / `fillOpacity`）。
-            </p>
-            <input
-              type="text"
-              value={polyAreaName}
-              onChange={(e) => setPolyAreaName(e.target.value)}
-              className="mt-3 w-full rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm text-nexus-text-primary outline-none focus:border-nexus-border-accent"
-              placeholder="区域名称"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  commitPolyArea();
-                }
-              }}
-            />
-            <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
-              <p className="text-xs font-medium text-nexus-text-primary">区域颜色</p>
-              <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-xs text-nexus-text-muted">
-                <span>描边</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    aria-label="描边颜色"
-                    value={/^#[0-9a-fA-F]{6}$/.test(polyStrokeColor) ? polyStrokeColor : POLY_DIALOG_DEFAULT_STROKE}
-                    onChange={(e) => setPolyStrokeColor(e.target.value.toLowerCase())}
-                    className="h-9 w-12 cursor-pointer rounded border border-white/10 bg-[#0c0c0e] p-0.5"
-                  />
-                  <code className="truncate text-[11px] text-nexus-text-muted">{polyStrokeColor}</code>
-                </div>
-                <span>填充</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    aria-label="填充颜色"
-                    value={/^#[0-9a-fA-F]{6}$/.test(polyFillColor) ? polyFillColor : POLY_DIALOG_DEFAULT_FILL}
-                    onChange={(e) => setPolyFillColor(e.target.value.toLowerCase())}
-                    className="h-9 w-12 cursor-pointer rounded border border-white/10 bg-[#0c0c0e] p-0.5"
-                  />
-                  <code className="truncate text-[11px] text-nexus-text-muted">{polyFillColor}</code>
-                </div>
-                <span className="self-center">填充透明度</span>
-                <div className="flex min-w-0 items-center gap-2">
-                  <input
-                    type="range"
-                    min={0}
-                    max={0.95}
-                    step={0.05}
-                    value={polyFillOpacity}
-                    onChange={(e) => setPolyFillOpacity(Number(e.target.value))}
-                    className="min-w-0 flex-1 accent-nexus-accent-glow"
-                    aria-label="填充透明度"
-                  />
-                  <span className="w-10 shrink-0 tabular-nums text-nexus-text-primary">{polyFillOpacity.toFixed(2)}</span>
-                </div>
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-md px-3 py-1.5 text-xs text-nexus-text-muted hover:bg-white/5"
-                onClick={() => setPolyPending(null)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="rounded-md bg-nexus-accent-glow/30 px-3 py-1.5 text-xs font-medium text-nexus-text-primary hover:bg-nexus-accent-glow/50"
-                onClick={() => commitPolyArea()}
-              >
-                确定
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {placard && (
         <div
           className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-[calc(100%+14px)]"

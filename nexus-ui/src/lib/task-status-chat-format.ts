@@ -57,12 +57,12 @@ function statusLabel(taskStatus: number): string {
   }
 }
 
-/** 航迹 + 实体：优先 `{trackID}_{entityId}`，无 entityId 时回退 `{trackID}_{cameraIndex}` */
+/** 航迹 + 实体：优先 `{target_id}_{entityId}`，无 entityId 时回退 `{target_id}_{cameraIndex}` */
 export function taskStatusVerifySessionKey(
-  trackID: number | undefined | null,
+  targetId: number | undefined | null,
   entityRef: { entityId?: string | null; cameraIndex?: number | null },
 ): string | null {
-  return buildVerifySessionKey(trackID, {
+  return buildVerifySessionKey(targetId, {
     entityId: entityRef.entityId?.trim() || undefined,
     cameraIndex:
       entityRef.cameraIndex != null && Number.isFinite(Number(entityRef.cameraIndex))
@@ -80,7 +80,7 @@ function fmtFixed(n: number, frac: number): string {
  * 航迹细字段由 HTTP 可选传入（longitudeDeg 等）；缺省时仍输出档案行与收尾句。
  */
 export function formatTaskStatusVerificationMarkdown(p: TaskStatusChatPayload): string {
-  const targetId = p.verifyTargetId ?? p.uniqueId ?? p.trackID;
+  const targetId = p.verifyTargetId ?? p.uniqueId;
   const entityLabel = p.entityId?.trim();
   const lines: string[] = [];
   lines.push(`**${entityLabel && /^uav/i.test(entityLabel) ? "无人机" : "相机"}查证**`);
@@ -118,16 +118,17 @@ export function buildTaskStatusVerifyBannerMarkdown(payload: TaskStatusChatPaylo
   return formatTaskStatusVerificationMarkdown(enrichTaskStatusPayloadForVerifyUi(payload));
 }
 
-/** 无 trackID/cameraIndex、或其它状态时仍用单条气泡完整展示 */
+/** 无 target_id/cameraIndex、或其它状态时仍用单条气泡完整展示 */
 export function formatTaskStatusAssistantMarkdown(p: TaskStatusChatPayload): string {
   const lines: string[] = [];
-  lines.push("**相机查证**");
+  lines.push(`**${p.entityId?.trim() && /^uav/i.test(p.entityId.trim()) ? "无人机" : "相机"}查证**`);
   lines.push("");
   lines.push(`- **阶段**：${statusLabel(p.taskStatus)}（码 ${p.taskStatus}）`);
   if (p.taskID) lines.push(`- **任务 ID**：${p.taskID}`);
   if (p.entityId?.trim()) lines.push(`- **实体 ID**：${p.entityId.trim()}`);
   else if (p.cameraIndex != null) lines.push(`- **相机序号**：${p.cameraIndex}`);
-  if (p.trackID != null) lines.push(`- **航迹 ID**：${p.trackID}`);
+  const targetId = p.verifyTargetId ?? p.uniqueId;
+  if (targetId != null) lines.push(`- **目标 ID**：${targetId}`);
   lines.push(`- **时间**：${p.receivedAt}`);
   if (p.description?.trim()) {
     lines.push("");

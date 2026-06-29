@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Camera, ClipboardCheck, Video } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
+import { fetchActiveAlarmSchemeId } from "@/lib/alarm-scheme-api";
 import {
   startDailyVerificationWorkflow,
-  terminateDailyVerificationThreads,
+  stopDailyVerificationCameras,
+  stopDailyVerificationWorkflow,
 } from "@/lib/daily-verification-workflow";
 import { getHttpChatConfig } from "@/lib/map-app-config";
 import {
@@ -16,6 +18,7 @@ import {
   startTopNavScreenRecording,
   stopTopNavScreenRecording,
 } from "@/lib/top-nav-capture";
+import { useAutoDutyDailyVerificationActive } from "@/hooks/use-daily-verification-dds-active";
 
 function quickBtnClass(active?: boolean) {
   return cn(
@@ -32,6 +35,8 @@ export function TopNavQuickActions() {
   const pushDailyVerificationThreadId = useAppStore((s) => s.pushDailyVerificationThreadId);
   const clearDailyVerificationThreads = useAppStore((s) => s.clearDailyVerificationThreads);
   const dailyVerificationThreadIds = useAppStore((s) => s.dailyVerificationThreadIds);
+  const autoDutyWorkflowActive = useAutoDutyDailyVerificationActive();
+  const dailyVerificationButtonActive = dailyVerificationEnabled || autoDutyWorkflowActive;
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
   const toggleRightSidebar = useAppStore((s) => s.toggleRightSidebar);
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
@@ -40,19 +45,48 @@ export function TopNavQuickActions() {
   const [captureBusy, setCaptureBusy] = useState(false);
   const [dailyVerifyBusy, setDailyVerifyBusy] = useState(false);
 
+  /** Qt/其它客户端启动 auto_duty_workflow 时，同步顶栏 checked（不含助手区域航迹查证等工作流） */
+  useEffect(() => {
+    if (autoDutyWorkflowActive && !dailyVerificationEnabled) {
+      setDailyVerificationEnabled(true);
+      return;
+    }
+    if (
+      !autoDutyWorkflowActive &&
+      dailyVerificationEnabled &&
+      dailyVerificationThreadIds.length === 0
+    ) {
+      setDailyVerificationEnabled(false);
+    }
+  }, [
+    autoDutyWorkflowActive,
+    dailyVerificationEnabled,
+    dailyVerificationThreadIds.length,
+    setDailyVerificationEnabled,
+  ]);
+
   /** 与 Qt `sig_dailyHandleToggled` → `ThreatListTable::sendDailyHandleTask` / `stopDailyHandleTask`（工作流模式 1）一致 */
   const onToggleDailyVerification = async () => {
     if (dailyVerifyBusy) return;
-    if (dailyVerificationEnabled) {
+    if (dailyVerificationButtonActive) {
       setDailyVerifyBusy(true);
       try {
         const ids = [...dailyVerificationThreadIds];
-        await terminateDailyVerificationThreads(ids);
+        const stopRet = await stopDailyVerificationWorkflow({ localThreadIds: ids });
+        const cfg = await useAppConfigStore.getState().ensureLoaded();
+        if (cfg.cameraManagement) {
+          await stopDailyVerificationCameras(cfg.cameraManagement);
+        }
         clearDailyVerificationThreads();
         setDailyVerificationEnabled(false);
-        toast.success("日常查证已结束", {
-          description: ids.length ? `已请求终止 ${ids.length} 个工作流线程` : "已关闭",
-        });
+        if (!stopRet.ok && stopRet.error) {
+          toast.error("日常查证停止异常", { description: stopRet.error });
+        } else {
+          const n = stopRet.terminated.length;
+          toast.success("日常查证已结束", {
+            description: n > 0 ? `已终止 ${n} 个工作流线程` : "已请求停止查证任务",
+          });
+        }
       } finally {
         setDailyVerifyBusy(false);
       }
@@ -64,10 +98,14 @@ export function TopNavQuickActions() {
       await useAppConfigStore.getState().ensureLoaded();
       const chat = getHttpChatConfig();
       const wf = chat.dailyVerificationWorkflowId?.trim() || "auto_duty_workflow-quick-1";
-      const schema = chat.dailyVerificationSchemaId?.trim() ?? "";
+      const schemeRet = await fetchActiveAlarmSchemeId();
+      if (!schemeRet.ok) {
+        toast.error("日常查证启动失败", { description: schemeRet.error });
+        return;
+      }
       const ret = await startDailyVerificationWorkflow({
         workflowId: wf,
-        schemaId: schema,
+        schemaId: schemeRet.schemeId,
       });
       if (!ret.ok) {
         toast.error("日常查证启动失败", { description: ret.error });
@@ -78,7 +116,7 @@ export function TopNavQuickActions() {
       if (!rightSidebarOpen) toggleRightSidebar();
       setRightPanelTab("chat");
       toast.success("日常查证已启动", {
-        description: `POST ${chat.quickWorkflowUrl?.slice(0, 48) ?? ""}… · ${ret.threadId}`,
+        description: `scheme_id=${schemeRet.schemeId} · ${ret.threadId}`,
       });
     } catch (e) {
       toast.error("日常查证异常", { description: e instanceof Error ? e.message : String(e) });
@@ -134,9 +172,9 @@ export function TopNavQuickActions() {
     <div className="flex flex-wrap items-center gap-1.5">
       <button
         type="button"
-        className={quickBtnClass(dailyVerificationEnabled)}
+        className={quickBtnClass(dailyVerificationButtonActive)}
         disabled={dailyVerifyBusy}
-        title="与 Qt 一致：开启 POST http.chat.quickWorkflowUrl（自主值班查证工作流），关闭 POST …/workflows/{threadId}/terminate。需配置 dailyVerificationSchemaId。"
+        title="开启：POST quick-workflow 启动自主值班查证。关闭：查工作流 history 终止全部运行中的 auto_duty_workflow，并停止对海/对空光电查证（任意客户端均可停止）。"
         onClick={() => void onToggleDailyVerification()}
       >
         <ClipboardCheck size={13} />

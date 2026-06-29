@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import {
   Bot, User, MapPin, Target, Map, PanelRight, Search,
   CheckCircle2, XCircle, Loader2, Sparkles, Navigation, Route, Ruler, Eraser,
-  BarChart3, CloudSun, Pentagon, Waypoints, ShieldAlert, Plane, Radio,
+  BarChart3, CloudSun, Waypoints, ShieldAlert, Plane, Radio,
   RotateCcw, ListTodo, RefreshCw, ClipboardList, Camera,
 } from "lucide-react";
 import { NxCard, NxBadge } from "@/components/nexus";
@@ -18,6 +18,8 @@ import { AgentPlanCard } from "@/components/chat/AgentPlanCard";
 import type { PlanStep } from "@/components/chat/AgentPlanCard";
 import { ApprovalCard, ApprovalResultCard } from "@/components/chat/ApprovalCard";
 import type { ApprovalCardProps } from "@/components/chat/ApprovalCard";
+import { VerifyReportCard } from "@/components/chat/VerifyReportCard";
+import { isTaskVerifyReportPart } from "@/lib/task-status-verify-report-model";
 import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -37,7 +39,6 @@ const TOOL_META: Record<string, { icon: typeof MapPin; label: string; color: str
   clear_annotations:    { icon: Eraser, label: "清除标绘", color: "text-zinc-400" },
   query_data_chart:     { icon: BarChart3, label: "数据图表", color: "text-indigo-400" },
   get_weather:          { icon: CloudSun, label: "天气查询", color: "text-sky-300" },
-  draw_area:            { icon: Pentagon, label: "区域标绘", color: "text-amber-500" },
   plan_route:           { icon: Waypoints, label: "航路规划", color: "text-cyan-300" },
   assess_threats:       { icon: ShieldAlert, label: "威胁评估", color: "text-red-400" },
   assign_asset:         { icon: Plane, label: "分配资产", color: "text-emerald-400" },
@@ -213,12 +214,22 @@ function ToolCallCard({ part }: { part: ToolPartProps }) {
 
 /* ──── 单条消息 ──── */
 
-export function ChatMessage({ message, isStreaming }: { message: UIMessage; isStreaming?: boolean }) {
+export function ChatMessage({
+  message,
+  isStreaming,
+  assistantLabel,
+}: {
+  message: UIMessage;
+  isStreaming?: boolean;
+  /** 助手消息展示名，与当前 Tab 标题一致 */
+  assistantLabel?: string;
+}) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
 
   const hasAnyContent = message.parts?.some(
     (part) =>
+      isTaskVerifyReportPart(part) ||
       (part.type === "text" && "text" in part && (part.text as string)?.trim().length > 0) ||
       (part.type === "reasoning" && "text" in part && (part.text as string)?.trim().length > 0) ||
       part.type.startsWith("tool-")
@@ -241,8 +252,10 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
 
       {/* 消息体 */}
       <div className={cn("min-w-0 flex-1 space-y-1", isUser && "text-right")}>
-        {!isUser && (
-          <span className="block text-left text-[10px] font-medium text-nexus-text-muted">作管智能体</span>
+        {!isUser && assistantLabel && (
+          <span className="block text-left text-[10px] font-medium text-nexus-text-muted">
+            {assistantLabel}
+          </span>
         )}
 
         {isThinking ? (
@@ -266,6 +279,14 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
                     {rText}
                   </p>
                 </details>
+              );
+            }
+
+            if (isTaskVerifyReportPart(part)) {
+              return (
+                <div key={key} className="mt-1 w-full max-w-full">
+                  <VerifyReportCard report={part.data} />
+                </div>
               );
             }
 

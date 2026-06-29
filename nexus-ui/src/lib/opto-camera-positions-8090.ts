@@ -22,7 +22,7 @@ export async function fetch8090OptoCameraCatalog(): Promise<AssetData[]> {
 }
 
 /**
- * 地图光电经纬度与显示名以 8090 为准；无有效 8090 坐标时回退静态 `app-config` 底数（仍不用 WS）。
+ * 地图光电经纬度与显示名以 8090 为准；PTZ/视场/量程走 camServer→DDS→Camera WS。
  * 8090 有坐标但尚未出现在合并列表中的相机，会补入资产快照。
  */
 export function apply8090CameraPositionsToAssets(
@@ -68,7 +68,9 @@ export function apply8090CameraPositionsToAssets(
       ...(name8090 ? { name: name8090 } : {}),
       properties: props,
     };
-    if (!geo) return { ...next, lat: 0, lng: 0 };
+    if (!geo) {
+      return isValid8090GeoPosition(a.lat, a.lng) ? next : { ...next, lat: 0, lng: 0 };
+    }
     props.geo_source = "8090";
     return { ...next, lat: geo.lat, lng: geo.lng, properties: props };
   };

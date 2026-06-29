@@ -1,6 +1,14 @@
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { areaRowToPolygonRing, dbAreaVisibilityKey, lineFromAreaRoute } from "@/lib/area-table-geometry";
 
+/** Postgres 区域子项是否可见（缺省 false，须用户在图层面板显式开启） */
+export function isDbAreaLeafVisible(
+  groupId: number,
+  areaId: number,
+  areaVisibility: Readonly<Record<string, boolean>>,
+): boolean {
+  return areaVisibility[dbAreaVisibilityKey(groupId, areaId)] === true;
+}
 /** 面状区域（矩形/圆/多边形）是否可上图 */
 export function isDbAreaDrawable(row: AreaTableRow): boolean {
   const ring = areaRowToPolygonRing(row);
@@ -26,7 +34,7 @@ export function countVisibleDbAreaLeaves(
   let n = 0;
   for (const r of rows) {
     if (!isDbAreaDrawable(r)) continue;
-    if (areaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] === false) continue;
+    if (areaVisibility[dbAreaVisibilityKey(r.group_id, r.area_id)] !== true) continue;
     n += 1;
   }
   return n;

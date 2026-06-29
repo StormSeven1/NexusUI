@@ -8,7 +8,7 @@
  * 本模块是前端所有实时数据的唯一入口，负责：
  *   1. 建立 WebSocket 连接（地址、心跳间隔等从 app-config.json 的 websocket 节读取）
  *   2. 接收消息 → JSON.parse → 按 msg.type 分发
- *   3. 解析后的数据写入对应的 Zustand store（track-store / alert-store / asset-store / drone-store / zone-store）
+ *   3. 解析后的数据写入对应的 Zustand store（track-store / alert-store / asset-store / drone-store）
  *
  * ── 各资产类型全链路数据流 ──
  *
@@ -135,11 +135,10 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { useTrackStore } from "@/stores/track-store";
+import { useSuspiciousTrackStore } from "@/stores/suspicious-track-store";
 import { useAlertStore } from "@/stores/alert-store";
 import type { AssetData } from "@/stores/asset-store";
 import { useAssetStore } from "@/stores/asset-store";
-import type { ZoneData } from "@/stores/zone-store";
-import { useZoneStore } from "@/stores/zone-store";
 import { useDroneStore } from "@/stores/drone-store";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 import { useEoDroneDdsStatusStore } from "@/stores/eo-drone-dds-status-store";
@@ -152,13 +151,12 @@ import {
   getWebSocketConfig,
   getHttpConfig,
   shouldDisplayAssetId,
-  shouldDisplayZone,
 } from "@/lib/map-app-config";
 import type { TrackWorkerConfig, TrackWorkerResult } from "@/lib/track-parse-worker";
 import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
 import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
 import { normalizeAssetType, type PublicMapAssetType, type Track } from "@/lib/map-entity-model";
-import { recordTrackReceived, recordAlertReceived, recordZoneReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived, recordHighFreqReceived, recordWsHeartbeat, recordEntityStatusFrame, recordAssetBatchReceived, recordAssetEventReceived } from "@/stores/network-stats-store";
+import { recordTrackReceived, recordAlertReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived, recordHighFreqReceived, recordWsHeartbeat, recordEntityStatusFrame, recordAssetBatchReceived, recordAssetEventReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
 import {
@@ -188,6 +186,15 @@ function peekWsTopLevelTypePrefix(raw: string, maxScan = 4096): string | null {
 
 /** 在禁用航迹摄入（`WS_DISABLE_TRACK_INGEST=true`）时，直接按前缀嗅探丢弃的航迹消息类型集合 */
 const WS_SKIP_PARSE_WHEN_TRACK_INGEST_DISABLED = new Set(["trackbatch", "track_update", "track_snapshot"]);
+
+/**
+ * 前端不消费、后端 entity/岸基检测匹配后高频推送的 WS 类型。
+ * 若仍 JSON.parse，会占满主线程，拖死 track Worker 回调与 MapLibre 航迹刷新（表现为「有 trackbatch 但地图无航迹」）。
+ */
+const WS_SKIP_PARSE_UNHANDLED_HIGH_VOLUME = new Set([
+  "multitrackresult",
+  "singletrackresult",
+]);
 
 /**
  * 航迹批量包在 Worker 内完成 JSON.parse + normalize，完全不阻塞主线程。
@@ -338,6 +345,7 @@ let relationshipAssetsCache: AssetData[] = [];
 let camera8090CatalogCache: AssetData[] = [];
 let cameraDefaultRangeKmCache: number | undefined;
 
+/** 与 Custombackend `entity_status_poller` 对齐；8090 仅补光电经纬度，刷新不必跟 PTZ 同频 */
 const CAMERA8090_REFRESH_MS = 10 * 60 * 1000;
 let camera8090RefreshTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -476,7 +484,7 @@ function applyAssetListFromWs(list: AssetData[], options?: { commit?: boolean })
     .filter((a) => a.asset_type !== "drone")
     .map((a) => {
       if (a.asset_type !== "camera") return a;
-      /* camera：PTZ/FOV/射程仅 camera WS；经纬度仅 8090（勿写入 WS 坐标） */
+      /* 光电 PTZ/视场/量程：camServer→DDS→Camera WS（高频）；entity_status 仅贡献在线态等，不写角与坐标 */
       return { ...a, heading: null, fov_angle: null, range_km: null, lat: 0, lng: 0 };
     });
   lastWsAssetList = mergeWsRowsPreserveNullableNumeric(lastWsAssetList, nonDroneList);
@@ -593,12 +601,14 @@ function unwrapCameraWsMessagePayload(msg: Record<string, unknown>): Record<stri
   return msg;
 }
 
-/** 相机实时射程（千米）：当前协议固定用 `range_km`，不做默认值兜底。 */
+/** 相机实时射程（千米）：`range_km` 或 DDS `visibility`（米） */
 function parseCameraRangeKm(d: Record<string, unknown>): number | undefined {
   if (d.range_km != null) {
     const n = Number(d.range_km);
     if (Number.isFinite(n) && n > 0) return n;
   }
+  const visM = Number(d.visibility);
+  if (Number.isFinite(visM) && visM > 0) return visM / 1000;
   return undefined;
 }
 
@@ -608,109 +618,6 @@ function cameraDefaultRangeKm(entityId: string): number | undefined {
   const n = row?.range_km != null ? Number(row.range_km) : NaN;
   if (Number.isFinite(n) && n > 0) return n;
   return cameraDefaultRangeKmCache;
-}
-
-// ── Zone 解析 ──
-
-function inferZoneType(name: string): "no-fly" | "warning" | "exercise" {
-  const n = name || "";
-  if (n.includes("禁飞") || n.includes("拒止") || /no-fly/i.test(n)) return "no-fly";
-  if (n.includes("警告") || n.includes("驱离") || /warning/i.test(n)) return "warning";
-  return "exercise";
-}
-
-function toLngLatPair(v: unknown): [number, number] | null {
-  if (Array.isArray(v) && typeof v[0] === "number" && typeof v[1] === "number") {
-    return [v[0], v[1]];
-  }
-  if (v && typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    const lng = o.lng ?? o.longitude ?? o.lon;
-    const lat = o.lat ?? o.latitude;
-    const ln = typeof lng === "number" ? lng : Number(lng);
-    const la = typeof lat === "number" ? lat : Number(lat);
-    if (Number.isFinite(ln) && Number.isFinite(la)) return [ln, la];
-  }
-  return null;
-}
-
-function normalizePolygonRing(raw: unknown): Array<[number, number]> | null {
-  if (!Array.isArray(raw) || raw.length < 3) return null;
-  const ring: Array<[number, number]> = [];
-  for (const p of raw) {
-    const c = toLngLatPair(p);
-    if (c) ring.push(c);
-  }
-  if (ring.length < 3) return null;
-  const [fx, fy] = ring[0]!;
-  const [lx, ly] = ring[ring.length - 1]!;
-  if (fx !== lx || fy !== ly) ring.push([fx, fy]);
-  return ring;
-}
-
-function circleToRingMeters(cx: number, cy: number, radiusM: number, segments = 36): Array<[number, number]> {
-  const R = Math.max(1, radiusM);
-  const mPerDegLat = 111_320;
-  const ring: Array<[number, number]> = [];
-  for (let i = 0; i <= segments; i++) {
-    const ang = (i / segments) * Math.PI * 2;
-    const northM = R * Math.cos(ang);
-    const eastM = R * Math.sin(ang);
-    const dLat = northM / mPerDegLat;
-    const dLng = eastM / (mPerDegLat * Math.max(0.2, Math.cos((cy * Math.PI) / 180)));
-    ring.push([cx + dLng, cy + dLat]);
-  }
-  return ring;
-}
-
-function vueZoneItemToZoneData(z: Record<string, unknown>): ZoneData | null {
-  const id = String(z.id ?? z.areaId ?? "");
-  if (!id) return null;
-  const name = String(z.name ?? z.areaName ?? id);
-  const geometryType = String(z.geometryType ?? "Polygon");
-  const now = isoNow();
-
-  let coordinates: Array<[number, number]> | null = null;
-  if (geometryType === "Circle") {
-    const c = z.center;
-    const r = Number(z.radius);
-    const center = Array.isArray(c) ? toLngLatPair(c) : null;
-    if (center && Number.isFinite(r) && r > 0) {
-      coordinates = circleToRingMeters(center[0], center[1], r);
-    }
-  } else {
-    coordinates = normalizePolygonRing(z.coordinates);
-  }
-  if (!coordinates || coordinates.length < 4) return null;
-
-  const zt = inferZoneType(name);
-  const line = (z.strokeColor as string) ?? "#3b82f6";
-  const fill = (z.fillColor as string) ?? line;
-  const rawFo = z.fillOpacity ?? z.fill_opacity;
-  let fill_opacity = 0.25;
-  if (typeof rawFo === "number" && Number.isFinite(rawFo)) fill_opacity = Math.min(1, Math.max(0, rawFo));
-  else if (rawFo != null && String(rawFo).trim() !== "") {
-    const n = Number(rawFo);
-    if (Number.isFinite(n)) fill_opacity = Math.min(1, Math.max(0, n));
-  }
-  return {
-    id, name, zone_type: zt, source: "websocket", coordinates,
-    color: line, fill_color: fill,
-    fill_opacity,
-    properties: { geometryType, areaType: z.areaType, isActive: z.isActive },
-    created_at: now, updated_at: now,
-  };
-}
-
-function mapZonesPayload(payload: unknown): ZoneData[] {
-  if (!Array.isArray(payload)) return [];
-  const out: ZoneData[] = [];
-  for (const item of payload) {
-    if (!item || typeof item !== "object") continue;
-    const zd = vueZoneItemToZoneData(item as Record<string, unknown>);
-    if (zd) out.push(zd);
-  }
-  return out;
 }
 
 // ── 资产事件 ──
@@ -844,7 +751,6 @@ function handleAlarmItem(raw: Record<string, unknown>) {
  * ┌─ type ─────────────┬─ 处理说明 ────────────────────────────────────────────────────────┐
  * │ trackbatch / track │ 航迹数据 → normalizeIncomingTrack → track-store.setTracks       │
  * │ alarm / alert      │ 告警数据 → normalizeWsAlertItem → alert-store.upsertAlarm/Threat │
- * │ zones              │ 区域数据 → normalizePolygonRing → zone-store.setZones            │
  * │ entity_status      │ 【核心】实体状态（雷达/相机/无人机/机场），见下方详细流程           │
  * │ camera / optoelec  │ 光电实时数据（PTZ朝向/视场角/坐标）→ 更新 asset-store 已有光电    │
  * │ dock_status        │ 机场状态 → 更新 drone-store.docks + asset-store 已有机场         │
@@ -926,6 +832,18 @@ function dispatchWsMessageSync(raw: string) {
         }
         break;
       }
+      case "suspicioustarget": {
+        const d = msg.data as Record<string, unknown> | undefined;
+        const rawIds = d?.target_ids ?? d?.targetIds;
+        if (Array.isArray(rawIds)) {
+          useSuspiciousTrackStore.getState().setSuspiciousTargetIds(
+            rawIds.filter((x): x is string | number => x != null && (typeof x === "string" || typeof x === "number")),
+          );
+        } else {
+          useSuspiciousTrackStore.getState().clearSuspicious();
+        }
+        break;
+      }
       case "alert_batch": {
         const list = msg.alerts as unknown[] | undefined;
         if (Array.isArray(list)) {
@@ -957,17 +875,6 @@ function dispatchWsMessageSync(raw: string) {
         const one = normalizeWsAlertItem(payload);
         if (one) useAlertStore.getState().upsertAlarm(one);
         recordAlertReceived();
-        break;
-      }
-
-      // ── 区域 ──
-      case "zones": {
-        const arr = payloadArray(msg);
-        if (arr?.length) {
-          const zones = mapZonesPayload(arr).filter((z) => shouldDisplayZone(z));
-          useZoneStore.getState().setZones(zones);
-          recordZoneReceived();
-        }
         break;
       }
 
@@ -1102,7 +1009,7 @@ function dispatchWsMessageSync(raw: string) {
             break;
           }
           const bearing = parseCameraBearingDeg(d, entityId);
-          const fovDeg = parseCameraHorizontalFovDeg(d);
+          const fovDeg = parseCameraHorizontalFovDeg(d) ?? 90;
 
           const rawRange = d.range_km;
           const hasRange = rawRange != null && Number.isFinite(Number(rawRange)) && Number(rawRange) > 0;
@@ -1135,7 +1042,7 @@ function dispatchWsMessageSync(raw: string) {
             properties: baseProps,
           };
           if (bearing !== undefined) patch.heading = bearing;
-          if (fovDeg !== undefined) patch.fov_angle = fovDeg;
+          patch.fov_angle = fovDeg;
           if (effectiveRangeKm !== undefined) patch.range_km = effectiveRangeKm;
 
           /* 经纬度仅 8090；WS camera 帧不写 lat/lng */
@@ -1310,17 +1217,17 @@ function dispatchWsMessageSync(raw: string) {
 
 function dispatchWsMessage(raw: string) {
   try {
+    const earlyType = peekWsTopLevelTypePrefix(raw);
     if (WS_DISABLE_TRACK_INGEST) {
-      const earlyType = peekWsTopLevelTypePrefix(raw);
       if (earlyType && WS_SKIP_PARSE_WHEN_TRACK_INGEST_DISABLED.has(earlyType)) {
         return;
       }
-    } else {
-      const earlyType = peekWsTopLevelTypePrefix(raw);
-      if (earlyType && WORKER_TRACK_TYPES.has(earlyType)) {
-        postTrackPayloadToWorkerOrAccumulate(raw);
-        return;
-      }
+    } else if (earlyType && WORKER_TRACK_TYPES.has(earlyType)) {
+      postTrackPayloadToWorkerOrAccumulate(raw);
+      return;
+    }
+    if (earlyType && WS_SKIP_PARSE_UNHANDLED_HIGH_VOLUME.has(earlyType)) {
+      return;
     }
     dispatchWsMessageSync(raw);
   } catch (e) {

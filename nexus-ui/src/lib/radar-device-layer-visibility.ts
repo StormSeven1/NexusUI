@@ -66,7 +66,7 @@ export function pruneRadarDeviceVisibility(
     if (valid.has(id)) next[id] = map[id]!;
   }
   for (const id of radarIds) {
-    if (!(id in next)) next[id] = {};
+    if (!(id in next)) next[id] = { coverage: false, icon: false };
   }
   return next;
 }

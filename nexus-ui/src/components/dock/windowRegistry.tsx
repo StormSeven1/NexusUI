@@ -215,7 +215,7 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
     menuLabel: "图层管理",
     icon: Layers,
     component: LayerPanel,
-    defaultLocation: "right-top",
+    defaultLocation: "left-top",
     defaultSize: { width: 440, height: 400 },
     closable: true,
     draggable: true,

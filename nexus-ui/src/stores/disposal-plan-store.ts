@@ -138,6 +138,8 @@ function taskLooksLikeTdoa(task: MappedDisposalTask): boolean {
   const a = String(task.actionName ?? "").toLowerCase();
   if (
     a.includes("tdoa") ||
+    a.includes("jammer") ||
+    a.includes("干扰") ||
     a.includes("电侦") ||
     a.includes("电子侦察") ||
     a.includes("定向压制") ||
@@ -146,9 +148,9 @@ function taskLooksLikeTdoa(task: MappedDisposalTask): boolean {
     return true;
   const red = task.redForceInfo as Record<string, unknown> | undefined;
   const ut = String(red?.unitType ?? "").toLowerCase();
-  if (ut.includes("tdoa") || ut.includes("electronic") || ut.includes("电侦")) return true;
+  if (ut.includes("tdoa") || ut.includes("jammer") || ut.includes("electronic") || ut.includes("电侦")) return true;
   const id = String(task.deviceId ?? "").toLowerCase();
-  if (id.includes("tdoa")) return true;
+  if (id.includes("tdoa") || id.includes("jammer")) return true;
   return false;
 }
 

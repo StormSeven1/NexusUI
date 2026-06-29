@@ -134,6 +134,14 @@ export interface EoVideoPlayStageProps {
   expandedMode?: boolean;
   /** 订阅 DDS `trackAlias` 用的相机实体 id（见 EoVideoPanel `cameraDdsEntityId`） */
   ddsCameraEntityId?: string;
+  /** 无人机：任务服务 `deviceSn`（机场 gateway SN） */
+  uavAirportSn?: string | null;
+  /** 无人机双击：`DroneIMGTracking` */
+  onUavImgTrackingTask?: (payload: { rectId: number; videoDetectType: 0 | 1 }) => Promise<void>;
+  /** 无人机：取消图像跟踪（`SendUavStopTask`） */
+  onUavStopTrackingTask?: () => Promise<void>;
+  /** 是否处于无人机单目标跟踪态（本地 + DDS） */
+  uavTrackingActive?: boolean;
 }
 
 /**
@@ -166,15 +174,23 @@ export function EoVideoPlayStage({
   uavCameraAim = null,
   expandedMode = false,
   ddsCameraEntityId,
+  uavAirportSn = null,
+  onUavImgTrackingTask,
+  onUavStopTrackingTask,
+  uavTrackingActive = false,
 }: EoVideoPlayStageProps) {
   const [taskBusy, setTaskBusy] = useState(false);
   const [taskHint, setTaskHint] = useState("");
   const [ptzDragArrow, setPtzDragArrow] = useState<EoPtzDragArrowBox | null>(null);
   const trimmedEntityId = entityId?.trim() ?? "";
   const showDetection = Boolean(trimmedEntityId && detectionEnabled);
+  const isUavEntity = /^uav-/i.test(trimmedEntityId);
   /** 与 Qt 一致：相机实体即可双击发任务；检测 WS 关闭时仍要有叠层接收双击 */
   const showTrackHitLayer = Boolean(trimmedEntityId && /^camera_[0-9]{3}$/i.test(trimmedEntityId));
   const canSendSingleTrack = /^camera_[0-9]{3}$/i.test(trimmedEntityId);
+  const canSendUavImgTrack = isUavEntity && Boolean(uavAirportSn?.trim() && onUavImgTrackingTask);
+  /** 相机可交互叠层；无人机仅穿透双击，不挡 camera_aim 拖拽 */
+  const detectionInteractive = canSendSingleTrack;
   /** 视频与检测叠层统一 cover 铺满（叠层用 getVideoContentRect 对齐，避免黑边） */
   const videoObjectFit: "contain" | "cover" = "cover";
   const encodedSyncHub = useMemo(() => createEoEncodedSyncHub(), []);
@@ -184,6 +200,7 @@ export function EoVideoPlayStage({
     width: 0,
     height: 0,
     canvas: null,
+    lastRenderedRtpTimestamp: 0,
   });
   const [overlayIntrinsic, setOverlayIntrinsic] = useState<{ w?: number; h?: number }>({});
 
@@ -274,6 +291,14 @@ export function EoVideoPlayStage({
     if (id.startsWith("boat")) return 4; // m_nShipType
     if (id.startsWith("single")) return 4;
     return 4;
+  };
+
+  /** Qt `SendUavFlightTask`：`videoDetectType` 0 海 / 1 空 */
+  const uavVideoDetectTypeFromBox = (box: EoDetectionBox, rawRectType: number): 0 | 1 => {
+    const id = box.id.toLowerCase();
+    if (id.startsWith("plane") || id.startsWith("bird")) return 1;
+    if (rawRectType === 1 || rawRectType === 2) return 1;
+    return 0;
   };
 
   const stopDragPtz = useCallback(async () => {
@@ -660,6 +685,80 @@ export function EoVideoPlayStage({
       logClient(
         `双击命中 norm=(${payload.normalizedX.toFixed(4)},${payload.normalizedY.toFixed(4)}) box=${payload.hitBoxId ?? "无"}`,
       );
+
+      if (canSendUavImgTrack) {
+        if (taskBusy) {
+          logClient("中止：上一无人机跟踪任务仍在发送中");
+          return;
+        }
+        const nearMulti = pickMultiTargetBoxNearPoint(
+          detectionBoxes,
+          payload.normalizedX,
+          payload.normalizedY,
+        );
+        const hitIsMultiTargetBox =
+          (payload.hitBox != null && payload.hitBox.variant !== "singleTrack") || nearMulti != null;
+
+        if (uavTrackingActive && !hitIsMultiTargetBox) {
+          logClient("已在无人机图像跟踪：双击空白/非多目标框 -> 发送停止任务");
+          setTaskBusy(true);
+          setTaskHint("正在取消无人机跟踪…");
+          try {
+            await onUavStopTrackingTask?.();
+            setTaskHint("已发送取消无人机跟踪");
+            logClient("HTTP 流程结束（取消 DroneIMGTracking）");
+          } catch (e) {
+            setTaskHint(`取消失败：${e instanceof Error ? e.message : String(e)}`);
+            logClient(`HTTP 失败（取消）：${e instanceof Error ? e.message : String(e)}`);
+          } finally {
+            setTaskBusy(false);
+          }
+          return;
+        }
+
+        let hit = payload.hitBox ?? nearMulti;
+        if (!hit && selectedBoxId) {
+          hit = detectionBoxes.find((b) => b.id === selectedBoxId) ?? null;
+        }
+        if (!hit) {
+          setTaskHint("当前无检测框，无法发起无人机跟踪");
+          logClient("中止：无检测框（对齐 Qt getCurrentRect 为空）");
+          return;
+        }
+
+        let rectId = -1;
+        if (hit.trackId !== undefined && Number.isFinite(hit.trackId)) {
+          rectId = Math.trunc(hit.trackId);
+        } else {
+          const hm = hit.id.match(/-(\d+)$/);
+          rectId = hm ? Number(hm[1]) : -1;
+        }
+        if (rectId <= 0) {
+          setTaskHint("检测框 id 无法解析为跟踪号");
+          logClient(`中止：rectId 无效 hit.id=${hit.id}`);
+          return;
+        }
+
+        const rawRectType = rectTypeFromBoxId(hit.id);
+        const videoDetectType = uavVideoDetectTypeFromBox(hit, rawRectType);
+        logClient(
+          `准备 DroneIMGTracking rectID=${rectId} videoDetectType=${videoDetectType} airport=${uavAirportSn?.trim() ?? ""}`,
+        );
+        setTaskBusy(true);
+        setTaskHint("正在发送无人机目标跟踪任务…");
+        try {
+          await onUavImgTrackingTask!({ rectId, videoDetectType });
+          setTaskHint("无人机目标跟踪任务已发送");
+          logClient("HTTP 流程结束（DroneIMGTracking）");
+        } catch (e) {
+          setTaskHint(`发送失败：${e instanceof Error ? e.message : String(e)}`);
+          logClient(`HTTP 失败：${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          setTaskBusy(false);
+        }
+        return;
+      }
+
       if (!canSendSingleTrack) {
         setTaskHint("当前非相机实体，未发送目标跟踪任务");
         logClient("中止：非 camera_XXX 实体");
@@ -817,7 +916,7 @@ export function EoVideoPlayStage({
         setTaskBusy(false);
       }
     },
-    [canSendSingleTrack, detectionBoxes, logClient, onSingleTrackTask, overlayIntrinsic.h, overlayIntrinsic.w, selectedBoxId, taskBusy, trimmedEntityId, videoRef],
+    [canSendSingleTrack, canSendUavImgTrack, detectionBoxes, logClient, onSingleTrackTask, onUavImgTrackingTask, onUavStopTrackingTask, overlayIntrinsic.h, overlayIntrinsic.w, rectTypeFromBoxId, selectedBoxId, taskBusy, trimmedEntityId, uavAirportSn, uavTrackingActive, videoRef],
   );
 
   useEffect(() => {
@@ -887,9 +986,10 @@ export function EoVideoPlayStage({
           videoObjectFit={videoObjectFit}
           videoIntrinsicWidth={overlayIntrinsic.w}
           videoIntrinsicHeight={overlayIntrinsic.h}
+          webCodecsPresentationRef={webCodecsPresentationRef}
           expandedMode={expandedMode}
           ddsCameraEntityId={ddsCameraEntityId}
-          interactive={canSendSingleTrack}
+          interactive={detectionInteractive}
         />
       ) : showTrackHitLayer ? (
         <EoDetectionOverlay

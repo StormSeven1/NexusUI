@@ -210,6 +210,11 @@ class ReceiverManager:
                         'type': 'Alarm',
                         'data': parsed_data
                     })
+                elif data_type == 'suspicious_target':
+                    ws_manager.queue_message({
+                        'type': 'SuspiciousTarget',
+                        'data': parsed_data
+                    })
                 elif data_type == 'multi_track_result':
                     # 多目标检测框数据
                     ws_manager.queue_message({
@@ -381,7 +386,7 @@ class ReceiverManager:
         """
         structure_type = config.get("structure_type", "")
         receiver_id = config.get("id", "")
-        if structure_type == "new_track_struct":
+        if structure_type == "new_track_struct" or structure_type == "suspicious_target":
             return (0, receiver_id)
         if structure_type in _TRACK_STRUCTURE_TYPES:
             return (1, receiver_id)

@@ -218,13 +218,17 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });
     }),
 
-  /** 按 trackId 移除告警条目 */
+  /** 按 trackId / uniqueID 移除告警条目（与 AlarmSys unique_id 对齐） */
   removeAlarmItemsByTrackId: (trackId) =>
     set((s) => {
       const needle = String(trackId).trim();
+      if (!needle) return s;
       const next = s.alerts.filter((a) => {
         const tid = getAlarmTrackId(a);
-        return !(tid != null && tid === needle);
+        if (tid != null && tid === needle) return false;
+        const uid = a.uniqueID?.trim();
+        if (uid && uid === needle) return false;
+        return true;
       });
       if (next.length === s.alerts.length) return s;
       return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });

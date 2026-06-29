@@ -16,7 +16,7 @@ interface MilSymbolProps {
   seaFuse?: boolean;
   /** 中立融合航迹填色（见 `getFusionTrackMarkerFill`），仅 disposition=neutral 时传入 */
   neutralFusionFill?: string | null;
-  /** 光电查证完成：军标整体绿色 */
+  /** 光电查证完成：军标整体黄色 */
   opticallyVerified?: boolean;
   size?: "sm" | "md" | "lg";
   className?: string;

@@ -79,14 +79,14 @@ export function verifyEntityRefOk(ref: VerifyEntityRef): boolean {
 
 /**
  * 查证会话 / MinIO 分片累积 key。
- * 优先 `{trackID}_{entityId}`；无 entityId 时回退 `{trackID}_{cameraIndex}`（Qt 兼容）。
+ * 优先 `{target_id}_{entityId}`；无 entityId 时回退 `{target_id}_{cameraIndex}`。
  */
 export function buildVerifySessionKey(
-  trackID: number | undefined | null,
+  targetId: number | undefined | null,
   ref: VerifyEntityRef,
 ): string | null {
-  if (trackID == null) return null;
-  const t = Number(trackID);
+  if (targetId == null) return null;
+  const t = Number(targetId);
   if (!Number.isFinite(t) || t <= 0) return null;
   const id = ref.entityId?.trim();
   if (id) return `${t}_${id}`;

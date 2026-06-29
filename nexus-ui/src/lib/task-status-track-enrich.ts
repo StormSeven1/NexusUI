@@ -61,7 +61,7 @@ function pickShipArchiveFromAlerts(trackID: number | undefined | null, alerts: r
 export function enrichTaskStatusPayloadForVerifyUi(base: TaskStatusChatPayload): TaskStatusChatPayload {
   const tracks = useTrackStore.getState().tracks;
   const alerts = useAlertStore.getState().alerts;
-  const lookupId = base.verifyTargetId ?? base.uniqueId ?? base.trackID;
+  const lookupId = base.verifyTargetId ?? base.uniqueId;
   const track = findTrackForTaskStatusVerify(lookupId, tracks);
   const fromAlert = pickShipArchiveFromAlerts(lookupId, alerts);
 

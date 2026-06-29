@@ -28,7 +28,7 @@ export type AlarmFilterPostResult = {
 
 /**
  * 删除/过滤指定航迹告警：POST JSON 体对齐 AlarmSys `AlarmHttpServer`。
- * specification.id 为 NewTrack DDS target_id。
+ * specification.id 为 AlarmSys `alarmData.unique_id`（与航迹 uniqueID/showID 一致，非业务 trackId）。
  */
 export async function sendAlarmTrackFilterRequest(
   trackId: string,
@@ -84,4 +84,21 @@ export async function sendAlarmTrackFilterRequest(
       message: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+/**
+ * 对同一 unique_id 同时下发对海(0)与对空(1)过滤。
+ * AlarmSys 规则告警按「规则 track_type」匹配过滤键，与航迹 isAirTrack 可能不一致，故成对下发。
+ */
+export async function sendAlarmTrackFilterAllFuseTypes(
+  targetId: string,
+): Promise<AlarmFilterPostResult> {
+  const results = await Promise.all([
+    sendAlarmTrackFilterRequest(targetId, 0),
+    sendAlarmTrackFilterRequest(targetId, 1),
+  ]);
+  const okOne = results.find((r) => r.ok);
+  if (okOne) return { ok: true, message: okOne.message };
+  const fail = results.find((r) => !r.ok);
+  return fail ?? { ok: false, message: "filter failed" };
 }
