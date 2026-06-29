@@ -5,7 +5,8 @@ import { cn } from "@/lib/utils";
 import { ShieldAlert, AlertTriangle, AlertCircle, Shield } from "lucide-react";
 
 interface ThreatItem {
-  trackId: string;
+  targetID: string;
+  external_target_id?: string;
   name: string;
   typeLabel: string;
   dispositionLabel: string;
@@ -70,7 +71,7 @@ export function ThreatCard({ threats, totalAssessed, summary }: ThreatCardProps)
           const Icon = style.Icon;
           return (
             <div
-              key={t.trackId}
+              key={t.targetID}
               className={cn(
                 "flex items-start gap-2 rounded-md border border-white/[0.04] px-2 py-1.5",
                 style.bg,
@@ -80,7 +81,7 @@ export function ThreatCard({ threats, totalAssessed, summary }: ThreatCardProps)
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[11px] font-semibold text-nexus-text-primary">{t.name}</span>
-                  <span className="font-mono text-[10px] text-nexus-text-muted">{t.trackId}</span>
+                  <span className="font-mono text-[10px] text-nexus-text-muted">{t.targetID}</span>
                   <span className={cn("ml-auto rounded px-1 py-0.5 text-[9px] font-bold", style.color, style.bg)}>
                     {t.levelLabel} {t.score}
                   </span>
@@ -102,3 +103,4 @@ export function ThreatCard({ threats, totalAssessed, summary }: ThreatCardProps)
     </NxCard>
   );
 }
+

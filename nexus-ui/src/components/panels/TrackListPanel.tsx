@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * 目标列表面板 消费 track-store 的实时数据 *
@@ -7,7 +7,7 @@
 import { useState, useMemo } from "react";
 import { Search, Star, Plane, Ship } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getTrackIdModeConfig, getTrackRenderingConfig } from "@/lib/map-app-config";
+import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
@@ -28,13 +28,6 @@ const DOMAIN_TABS: { id: DomainTab; label: string; icon: React.ReactNode }[] = [
   { id: "air", label: "对空", icon: <Plane size={11} /> },
   { id: "sea", label: "对海", icon: <Ship size={11} /> },
 ];
-
-/** 根据航迹 ID 模式返回列表显示的标识：18.141 显示 trackId，28.9 对空显示 showID，对海显示 trackId */
-function trackDisplayId(track: { showID: string; trackId?: string; type: string }): string {
-  const mode = getTrackIdModeConfig();
-  if (!mode.distinguishSeaAir) return track.trackId ?? track.showID;
-  return track.type === "air" ? track.showID : (track.trackId ?? track.showID);
-}
 
 /**
  * 航向格式化（保留 2 位小数）
@@ -218,7 +211,7 @@ export function TrackListPanel() {
                     )}
                   </div>
                   <div className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-nexus-text-muted">
-                    <span>{trackDisplayId(track)}</span>
+                    <span>{track.targetID}</span>
                     <span>·</span>
                     <span>
                       {track.lat.toFixed(2)}°N, {Math.abs(track.lng).toFixed(2)}°
@@ -240,3 +233,4 @@ export function TrackListPanel() {
     </div>
   );
 }
+

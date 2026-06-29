@@ -1,13 +1,13 @@
-import { create } from "zustand";
-import { getTrackIdModeConfig } from "@/lib/map-app-config";
+﻿import { create } from "zustand";
+import { findTrackForDisposalTarget } from "@/lib/asset-target-line";
 
 const TARGET_ALIAS_RE = /^目标-?(\d+)$/;
 
 interface TrackAliasState {
   aliases: Record<string, string>;
   _counter: number;
-  getOrCreate: (trackId: string) => string;
-  getAlias: (trackId: string) => string | undefined;
+  getOrCreate: (targetID: string) => string;
+  getAlias: (targetID: string) => string | undefined;
 }
 
 function maxAliasIndex(aliases: Record<string, string>): number {
@@ -27,8 +27,8 @@ export const useTrackAliasStore = create<TrackAliasState>((set, get) => ({
   aliases: {},
   _counter: 0,
 
-  getOrCreate: (trackId) => {
-    const key = String(trackId ?? "").trim();
+  getOrCreate: (targetID) => {
+    const key = String(targetID ?? "").trim();
     if (!key) return "";
     const state = get();
     if (state.aliases[key]) return state.aliases[key];
@@ -42,18 +42,31 @@ export const useTrackAliasStore = create<TrackAliasState>((set, get) => ({
     return alias;
   },
 
-  getAlias: (trackId) => get().aliases[String(trackId ?? "").trim()],
+  getAlias: (targetID) => get().aliases[String(targetID ?? "").trim()],
 }));
 
 export function resolveAliasKey(track: {
-  trackId?: string;
-  uniqueID?: string;
+  external_target_id?: string;
+  targetID?: string;
   isAirTrack?: boolean;
   type?: string;
 }): string | null {
-  if (getTrackIdModeConfig().distinguishSeaAir) {
-    const isAir = track.isAirTrack === true || track.type === "air";
-    return isAir ? (track.trackId ?? null) : (track.uniqueID ?? null);
-  }
-  return track.trackId ?? null;
+  return track.targetID ?? null;
 }
+
+export function resolveAliasByTargetId(targetId: string | null | undefined): string | undefined {
+  const tid = String(targetId ?? "").trim();
+  if (!tid) return undefined;
+
+  const direct = useTrackAliasStore.getState().getAlias(tid);
+  if (direct) return direct;
+
+  const track = findTrackForDisposalTarget(tid);
+  if (!track) return undefined;
+
+  const aliasKey = resolveAliasKey(track);
+  if (!aliasKey) return undefined;
+
+  return useTrackAliasStore.getState().getOrCreate(String(aliasKey));
+}
+

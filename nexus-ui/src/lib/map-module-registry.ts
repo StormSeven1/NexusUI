@@ -1,6 +1,6 @@
 /**
  * 轻量注册表：Map2D 初始化后写入各专题模块实例，
- * 供 laser-activation / tdoa-activation / asset-target-line 等在组件外访问。
+ * 供地图外部逻辑访问当前 MapLibre 专题模块。
  */
 import type { LaserMaplibre } from "@/components/map/modules/laser-maplibre";
 import type { TdoaMaplibre } from "@/components/map/modules/tdoa-maplibre";

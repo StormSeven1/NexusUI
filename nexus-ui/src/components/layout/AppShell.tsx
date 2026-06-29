@@ -9,6 +9,7 @@ import { TopNav } from "./TopNav";
 import { LeftSidebar } from "./LeftSidebar";
 import { RightSidebar } from "./RightSidebar";
 import { EoVideoModal } from "@/components/eo-video/EoVideoModal";
+import { DzwlAlarmPopup } from "@/components/DzwlAlarmPopup";
 import dynamic from "next/dynamic";
 import { MapContainer } from "@/components/map/MapContainer";
 import { useUnifiedWsFeed } from "@/hooks/useUnifiedWsFeed";
@@ -31,6 +32,7 @@ export function AppShell() {
             <MapContainer />
             <AgentMessageFloat />
             <EoVideoModal />
+            <DzwlAlarmPopup />
           </main>
         </div>
         <RightSidebar />

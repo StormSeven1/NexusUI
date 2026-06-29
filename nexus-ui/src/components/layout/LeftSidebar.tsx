@@ -3,13 +3,17 @@
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore } from "@/stores/track-store";
 import { cn } from "@/lib/utils";
+import { getHttpConfig } from "@/lib/map-app-config";
 import {
   Crosshair,
   Radio,
   Layers,
   AlertTriangle,
   PanelLeftClose,
+  Shield,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { TrackListPanel } from "@/components/panels/TrackListPanel";
 import { AssetPanel } from "@/components/panels/AssetPanel";
 import { LayerPanel } from "@/components/panels/LayerPanel";
@@ -25,6 +29,19 @@ const TABS = [
 export function LeftSidebar() {
   const { leftSidebarOpen, toggleLeftSidebar, leftPanelTab, setLeftPanelTab } = useAppStore();
   const alertTotal = useTrackStore((s) => s.tracks.length);
+  const [simMenuOpen, setSimMenuOpen] = useState(false);
+  const [simSending, setSimSending] = useState<"sea" | "air" | null>(null);
+  const simMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!simMenuOpen) return;
+    const close = (event: MouseEvent) => {
+      if (simMenuRef.current?.contains(event.target as Node)) return;
+      setSimMenuOpen(false);
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [simMenuOpen]);
 
   const handleTabClick = (tabId: typeof leftPanelTab) => {
     if (leftPanelTab === tabId && leftSidebarOpen) {
@@ -32,6 +49,37 @@ export function LeftSidebar() {
     } else {
       setLeftPanelTab(tabId);
       if (!leftSidebarOpen) toggleLeftSidebar();
+    }
+  };
+
+  const startTrackSimulation = async (kind: "sea" | "air") => {
+    const backendUrl = getHttpConfig().backendUrl.trim().replace(/\/+$/, "");
+    if (!backendUrl) {
+      toast.error("未配置后端地址");
+      return;
+    }
+
+    setSimSending(kind);
+    try {
+      const response = await fetch(`${backendUrl}/api/track_simulator/start?kind=${kind}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind }),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok || json?.success === false) {
+        throw new Error(String(json?.message ?? `HTTP ${response.status}`));
+      }
+      toast.success(kind === "sea" ? "已发送对海目标模拟" : "已发送对空目标模拟", {
+        description: json?.track_id ? `新目标 ID: ${json.track_id}` : undefined,
+      });
+      setSimMenuOpen(false);
+    } catch (error) {
+      toast.error("目标模拟启动失败", {
+        description: error instanceof Error ? error.message : "网络错误",
+      });
+    } finally {
+      setSimSending(null);
     }
   };
 
@@ -71,6 +119,40 @@ export function LeftSidebar() {
             </button>
           );
         })}
+
+        <div ref={simMenuRef} className="relative mt-1">
+          <button
+            onClick={() => setSimMenuOpen((open) => !open)}
+            className={cn(
+              "group relative flex h-9 w-9 items-center justify-center rounded-md transition-all duration-200",
+              simMenuOpen
+                ? "bg-nexus-accent-glow text-nexus-text-primary"
+                : "text-nexus-text-muted hover:bg-nexus-bg-elevated hover:text-nexus-text-secondary",
+            )}
+            title="目标模拟"
+          >
+            <Shield size={18} />
+          </button>
+
+          {simMenuOpen && (
+            <div className="absolute left-11 top-0 z-40 w-32 rounded-md border border-nexus-border bg-[#19191D] p-1 shadow-xl">
+              <button
+                disabled={simSending != null}
+                onClick={() => startTrackSimulation("sea")}
+                className="flex h-8 w-full items-center justify-center rounded text-xs font-medium text-nexus-text-secondary transition-colors hover:bg-white/[0.08] hover:text-nexus-text-primary disabled:cursor-wait disabled:opacity-60"
+              >
+                {simSending === "sea" ? "发送中..." : "发送对海"}
+              </button>
+              <button
+                disabled={simSending != null}
+                onClick={() => startTrackSimulation("air")}
+                className="mt-1 flex h-8 w-full items-center justify-center rounded text-xs font-medium text-nexus-text-secondary transition-colors hover:bg-white/[0.08] hover:text-nexus-text-primary disabled:cursor-wait disabled:opacity-60"
+              >
+                {simSending === "air" ? "发送中..." : "发送对空"}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {leftSidebarOpen && (

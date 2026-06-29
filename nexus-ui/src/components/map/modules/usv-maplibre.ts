@@ -3,7 +3,7 @@
  */
 
 import type maplibregl from "maplibre-gl";
-import { parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
+import { isVirtualFromProperties, parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
 import type { AssetData } from "@/stores/asset-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
@@ -54,7 +54,7 @@ function mapUsvConfigDeviceRow(
   const bearing = Number(r.bearing);
   const heading = Number.isFinite(bearing) ? bearing : 0;
   const fovAngle = Number.isFinite(Number(r.fovAngle)) ? Number(r.fovAngle) : 90;
-  const virtualTroop = r.virtualTroop === true;
+  const virtualTroop = isVirtualFromProperties(r);
   const now = isoNow();
 
   const centerNameVisible = mergeRootAndDeviceVisible(

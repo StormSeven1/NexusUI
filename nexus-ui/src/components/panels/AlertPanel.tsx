@@ -1,9 +1,13 @@
 "use client";
 
 import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, AlertTriangle, ArrowUpDown, Info, Send, X } from "lucide-react";
+import { toast } from "sonner";
 
 import { useAppStore } from "@/stores/app-store";
-import { type Track } from "@/lib/map-entity-model";
+import { useAssetStore, type AssetData } from "@/stores/asset-store";
+import { type Track, normalizeAssetType } from "@/lib/map-entity-model";
 import { useTrackStore, getRenderCache } from "@/stores/track-store";
 import { useDisposedStore } from "@/stores/disposed-store";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
@@ -11,16 +15,15 @@ import { useTaskProgressStore } from "@/stores/task-progress-store";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 import { cn } from "@/lib/utils";
 import { runAlertDestroyHttp } from "@/lib/disposal/alert-destroy";
-import { AlertTriangle, AlertCircle, Info, X, ArrowUpDown } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toastDroneReturnHomeSummary } from "@/lib/drone/drone-return-home";
+import { postEngagementStartCommand, type EngagementKind } from "@/lib/engagement/engagement-finish";
 
 type PanelAlertItem = {
   id: string;
   severity: SeverityKey;
   timestamp: string;
-  trackId?: string;
-  uniqueID?: string;
+  external_target_id?: string;
+  targetID?: string;
   lat?: number;
   lng?: number;
   type?: string;
@@ -69,45 +72,133 @@ const SORT_OPTIONS: { id: SortMode; label: string }[] = [
   { id: "severity", label: "严重度" },
 ];
 
+type AlertContextMenuState = {
+  alert: PanelAlertItem;
+  x: number;
+  y: number;
+} | null;
+
+type EngagementDeviceItem = {
+  id: string;
+  name: string;
+  kind: EngagementKind;
+  deviceState: number;
+};
+
+const ENGAGEMENT_DEVICE_GROUPS: { kind: EngagementKind; label: string }[] = [
+  { kind: "tdoa", label: "TDOA" },
+  { kind: "laser", label: "激光" },
+  { kind: "munition", label: "巡飞弹" },
+];
+
 function naturalNameCompare(a: string, b: string): number {
   return a.localeCompare(b, "zh-CN", { numeric: true, sensitivity: "base" });
+}
+
+function getAssetProps(asset: AssetData): Record<string, unknown> {
+  return asset.properties && typeof asset.properties === "object"
+    ? (asset.properties as Record<string, unknown>)
+    : {};
+}
+
+function engagementKindFromAsset(asset: AssetData): EngagementKind | null {
+  const type = normalizeAssetType(asset.asset_type);
+  if (type === "tdoa") return "tdoa";
+  if (type === "laser") return "laser";
+  if (type === "missile") return "munition";
+  return null;
+}
+
+function engagementEntityId(asset: AssetData): string {
+  const props = getAssetProps(asset);
+  return String(props.entityId ?? props.entity_id ?? props.deviceSn ?? props.device_sn ?? asset.id).trim();
+}
+
+function engagementDeviceState(asset: AssetData): number {
+  const props = getAssetProps(asset);
+  const n = Number(props.deviceState ?? props.device_state ?? props.devicestate ?? props.DeviceState ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function engagementDeviceName(asset: AssetData, entityId: string): string {
+  const props = getAssetProps(asset);
+  const name = String(props.displayName ?? props.name ?? asset.name ?? "").trim();
+  return name || entityId || asset.id;
+}
+
+function alertAlias(alert: PanelAlertItem, aliases: Record<string, string>): string {
+  const key = resolveAliasKey({
+    external_target_id: alert.external_target_id,
+    targetID: alert.targetID,
+    isAirTrack: undefined,
+  });
+  return key ? (aliases[key] ?? alert.targetID ?? "") : (alert.targetID ?? "");
 }
 
 export function AlertPanel() {
   const { selectTrack, selectedTrackId, requestFlyTo } = useAppStore();
   const tracks = useTrackStore((s) => s.tracks);
+  const assets = useAssetStore((s) => s.assets);
   const addDisposedTrack = useDisposedStore((s) => s.addDisposedTrack);
   const cleanupEffectsForMissingTargets = useDisposalPlanStore((s) => s.cleanupEffectsForMissingTargets);
   const aliases = useTrackAliasStore((s) => s.aliases);
   const [sortMode, setSortMode] = useState<SortMode>("name");
+  const [contextMenu, setContextMenu] = useState<AlertContextMenuState>(null);
+
+  const engagementDevices = useMemo(() => {
+    const out: EngagementDeviceItem[] = [];
+    for (const asset of assets) {
+      const kind = engagementKindFromAsset(asset);
+      if (!kind) continue;
+      const id = engagementEntityId(asset);
+      if (!id) continue;
+      out.push({
+        id,
+        name: engagementDeviceName(asset, id),
+        kind,
+        deviceState: engagementDeviceState(asset),
+      });
+    }
+    out.sort((a, b) => {
+      const g =
+        ENGAGEMENT_DEVICE_GROUPS.findIndex((item) => item.kind === a.kind) -
+        ENGAGEMENT_DEVICE_GROUPS.findIndex((item) => item.kind === b.kind);
+      if (g !== 0) return g;
+      return a.name.localeCompare(b.name, "zh-CN", { numeric: true, sensitivity: "base" });
+    });
+    return out;
+  }, [assets]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
     const aliasStore = useTrackAliasStore.getState();
     for (const track of tracks) {
-      if (!track.trackId) continue;
-      const k = resolveAliasKey({
-        trackId: track.trackId,
-        uniqueID: track.uniqueID ?? track.trackId,
+      const key = resolveAliasKey({
+        external_target_id: track.external_target_id,
+        targetID: track.targetID,
         isAirTrack: track.isAirTrack,
       });
-      if (k) aliasStore.getOrCreate(k);
+      if (key) aliasStore.getOrCreate(key);
     }
   }, [tracks]);
 
-  const resolveShowIdFromAlarmTrackId = useCallback((alarmTrackId: string): string | null => {
-    for (const [, t] of getRenderCache()) {
-      if (t.trackId === alarmTrackId) return t.showID;
-    }
-    return null;
-  }, []);
-
-  /** 告警 trackId 对应的核验图片从 renderCache 里读取。 */
   const alertImageMap = useMemo(() => {
     const map = new Map<string, string>();
-    const cache = getRenderCache();
-    for (const [, t] of cache) {
-      if (t.trackId && t.verificationImage) {
-        map.set(t.trackId, t.verificationImage);
+    for (const track of tracks) {
+      if (track.external_target_id && track.verificationImage) {
+        map.set(track.external_target_id, track.verificationImage);
       }
     }
     return map;
@@ -130,36 +221,24 @@ export function AlertPanel() {
         const detail = typeof alarm.content === "string" ? alarm.content : undefined;
 
         return {
-          id: `${track.showID}:${String(alarm.alarm_id)}`,
+          id: `${track.targetID}:${String(alarm.alarm_id)}`,
           severity,
           timestamp: track.lastUpdate,
-          trackId: track.trackId,
-          uniqueID: track.uniqueID,
+          external_target_id: track.external_target_id,
+          targetID: track.targetID,
           lat: track.lat,
           lng: track.lng,
           type: Array.isArray(alarm.categories) ? String(alarm.categories.join(",")) : undefined,
           alarmLevel,
           areaName: area ? String(area.name ?? area.area_name ?? "") || undefined : undefined,
           detail,
-          imageUrl: track.trackId ? alertImageMap.get(track.trackId) : undefined,
+          imageUrl: track.external_target_id ? alertImageMap.get(track.external_target_id) : undefined,
         } as PanelAlertItem;
       })
       .filter((item): item is PanelAlertItem => item != null);
 
     if (sortMode === "name") {
-      mapped.sort((a, b) => {
-        const aliasA = (() => {
-          if (!a.trackId) return "";
-          const k = resolveAliasKey({ trackId: a.trackId, uniqueID: a.uniqueID ?? a.trackId, isAirTrack: undefined });
-          return k ? (aliases[k] ?? a.trackId) : a.trackId;
-        })();
-        const aliasB = (() => {
-          if (!b.trackId) return "";
-          const k = resolveAliasKey({ trackId: b.trackId, uniqueID: b.uniqueID ?? b.trackId, isAirTrack: undefined });
-          return k ? (aliases[k] ?? b.trackId) : b.trackId;
-        })();
-        return naturalNameCompare(aliasA, aliasB);
-      });
+      mapped.sort((a, b) => naturalNameCompare(alertAlias(a, aliases), alertAlias(b, aliases)));
     } else if (sortMode === "level") {
       mapped.sort((a, b) => (b.alarmLevel ?? 0) - (a.alarmLevel ?? 0));
     } else if (sortMode === "severity") {
@@ -169,33 +248,29 @@ export function AlertPanel() {
     return mapped;
   }, [tracks, alertImageMap, aliases, sortMode]);
 
-  const criticalCount = allAlerts.filter((a) => a.severity === "critical").length;
+  const criticalCount = allAlerts.filter((item) => item.severity === "critical").length;
 
   return (
     <div className="flex h-full flex-col">
       <div className="space-y-1.5 border-b border-white/[0.06] p-3">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">
-            告警中心
-          </span>
-          <span className="text-[10px] font-medium text-red-400">
-            {criticalCount} 条严重
-          </span>
+          <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">告警中心</span>
+          <span className="text-[10px] font-medium text-red-400">{criticalCount} 条严重</span>
         </div>
         <div className="flex items-center gap-1">
           <ArrowUpDown size={10} className="shrink-0 text-nexus-text-muted" />
-          {SORT_OPTIONS.map((opt) => (
+          {SORT_OPTIONS.map((option) => (
             <button
-              key={opt.id}
-              onClick={() => setSortMode(opt.id)}
+              key={option.id}
+              onClick={() => setSortMode(option.id)}
               className={cn(
                 "rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors",
-                sortMode === opt.id
+                sortMode === option.id
                   ? "bg-white/[0.08] text-nexus-text-primary"
                   : "text-nexus-text-muted hover:text-nexus-text-secondary",
               )}
             >
-              {opt.label}
+              {option.label}
             </button>
           ))}
         </div>
@@ -215,13 +290,16 @@ export function AlertPanel() {
                 style.bg,
               )}
               onClick={() => {
-                if (!alert.trackId) return;
-                const showId = resolveShowIdFromAlarmTrackId(alert.trackId);
-                if (!showId) return;
-                selectTrack(showId);
-                // 从渲染缓存获取航迹坐标并飞过去。
-                const t = getRenderCache().get(showId);
-                if (t) requestFlyTo(t.lat, t.lng, 14);
+                const targetID = alert.targetID;
+                if (!targetID) return;
+                selectTrack(targetID);
+                const track = getRenderCache().get(targetID);
+                if (track) requestFlyTo(track.lat, track.lng, 14);
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setContextMenu({ alert, x: event.clientX, y: event.clientY });
               }}
             >
               <div className="flex items-start gap-2">
@@ -231,28 +309,21 @@ export function AlertPanel() {
                     <span className={cn("text-[10px] font-bold", style.labelColor)}>{style.label}</span>
                     <span className="font-mono text-[10px] text-nexus-text-muted">{alert.timestamp}</span>
                   </div>
-                  {alert.trackId && (
+                  {alert.targetID && (
                     <p className="mt-0.5 text-[12px] font-bold text-nexus-text-primary">
-                      {(() => {
-                        const k = resolveAliasKey({
-                          trackId: alert.trackId,
-                          uniqueID: alert.uniqueID ?? alert.trackId,
-                          isAirTrack: undefined,
-                        });
-                        return k && aliases[k] ? aliases[k] : alert.trackId;
-                      })()}
+                      {alertAlias(alert, aliases)}
                     </p>
                   )}
                   <div className="mt-1 space-y-0.5 text-[10px] text-nexus-text-muted">
                     {alert.lat != null && alert.lng != null && Number.isFinite(alert.lat) && Number.isFinite(alert.lng) && (
                       <div>
-                        <span className="text-nexus-text-secondary">坐标：</span>
+                        <span className="text-nexus-text-secondary">坐标: </span>
                         {alert.lng.toFixed(4)}, {alert.lat.toFixed(4)}
                       </div>
                     )}
                     {alert.areaName && (
                       <div>
-                        <span className="text-nexus-text-secondary">区域：</span>
+                        <span className="text-nexus-text-secondary">区域: </span>
                         {alert.areaName}
                       </div>
                     )}
@@ -270,32 +341,30 @@ export function AlertPanel() {
                     </div>
                   )}
                   <div className="mt-1.5 flex items-center gap-2">
-                    {alert.trackId && !alert.suppressDestroy && (
+                    {alert.targetID && !alert.suppressDestroy && (
                       <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const trackId = alert.trackId!;
-                          const uniqueId = alert.uniqueID;
+                        onClick={async (event) => {
+                          event.stopPropagation();
+                          const externalTargetId = alert.external_target_id ?? "";
+                          const targetID = alert.targetID;
+                          if (!targetID) {
+                            toast.error("消灭失败: 告警缺少 targetID");
+                            return;
+                          }
 
                           try {
-                            const http = await runAlertDestroyHttp(trackId, uniqueId);
+                            const http = await runAlertDestroyHttp(externalTargetId, targetID);
                             const publishOk = http.publishOk;
 
-                            // 标记已处置，后续同目标的航迹点和告警都会被过滤。
-                            const showId = alert.uniqueID;
-                            addDisposedTrack(showId ?? undefined, trackId);
-                            useTrackStore.getState().removeDisposedTracks(showId ?? undefined, trackId);
+                            addDisposedTrack(targetID, externalTargetId);
+                            useTrackStore.getState().removeDisposedTracks(targetID, externalTargetId);
 
-                            // 如果当前选中的就是该航迹，则取消选中和高亮。
-                            if (selectedTrackId && selectedTrackId === showId) {
+                            if (selectedTrackId && selectedTrackId === targetID) {
                               selectTrack(null);
                             }
 
-                            // 清理处置方案连线以及相关地图效果。
                             cleanupEffectsForMissingTargets();
-
-                            // 结束该目标的执行中任务进度。
-                            useTaskProgressStore.getState().endByTarget(trackId);
+                            useTaskProgressStore.getState().endByTarget(targetID);
 
                             const devHint =
                               http.deviceEntityIds.length > 0
@@ -304,12 +373,13 @@ export function AlertPanel() {
                             const grpcHint = `gRPC 客户端 ${http.connectedClients} 个`;
                             toast.success(
                               publishOk
-                                ? `已消灭目标 ${trackId}，${devHint}；${grpcHint}`
-                                : `已消灭目标 ${trackId}，但后端发布可能未成功；${devHint}；${grpcHint}`,
+                                ? `已消灭目标 ${targetID}，${devHint}；${grpcHint}`
+                                : `已消灭目标 ${targetID}，但后端发布可能未成功；${devHint}；${grpcHint}`,
                             );
-                          } catch (err) {
-                            console.error("[AlertPanel] 消灭操作失败:", err);
-                            toast.error(`消灭失败: ${err instanceof Error ? err.message : "未知错误"}`);
+                            toastDroneReturnHomeSummary(http.droneReturnHomeResults, "目标消灭后");
+                          } catch (error) {
+                            console.error("[AlertPanel] 消灭操作失败:", error);
+                            toast.error(`消灭失败: ${error instanceof Error ? error.message : "未知错误"}`);
                           }
                         }}
                         className="flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 transition-colors hover:border-emerald-500/60 hover:bg-emerald-500/20"
@@ -325,6 +395,84 @@ export function AlertPanel() {
           );
         })}
       </div>
+
+      {contextMenu && (
+        <div
+          className="fixed z-[1000] min-w-[220px] overflow-hidden rounded border border-white/10 bg-[#17171b] py-1 shadow-2xl shadow-black/50"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="border-b border-white/[0.06] px-2.5 py-1.5 text-[10px] font-medium text-nexus-text-muted">
+            下发处置任务: {contextMenu.alert.targetID ?? "未知目标"}
+          </div>
+          {ENGAGEMENT_DEVICE_GROUPS.map((group) => {
+            const devices = engagementDevices.filter((device) => device.kind === group.kind);
+            return (
+              <div key={group.kind} className="py-1">
+                <div className="px-2.5 py-1 text-[10px] font-semibold text-nexus-text-secondary">{group.label}</div>
+                {devices.length === 0 ? (
+                  <div className="px-2.5 py-1 text-[10px] text-nexus-text-muted">无设备</div>
+                ) : (
+                  devices.map((device) => {
+                    const executing = device.deviceState === 2;
+                    const powered = device.deviceState === 1;
+                    const enabled = powered && !executing;
+                    return (
+                      <button
+                        key={`${device.kind}:${device.id}`}
+                        disabled={!enabled}
+                        onClick={async () => {
+                          const targetId = String(contextMenu.alert.targetID ?? "").trim();
+                          if (!targetId) {
+                            toast.error("目标 ID 为空，无法下发任务");
+                            return;
+                          }
+                          const result = await postEngagementStartCommand(device.kind, targetId, device.id);
+                          if (!result.ok) {
+                            toast.error(group.label + "任务下发失败", {
+                              description: result.status
+                                ? "HTTP " + result.status + (result.text ? ": " + result.text : "")
+                                : result.text || "网络错误",
+                            });
+                            return;
+                          }
+                          useTaskProgressStore.getState().addEntries([
+                            {
+                              targetId,
+                              targetAlias: alertAlias(contextMenu.alert, aliases) || targetId,
+                              deviceId: device.id,
+                              deviceName: device.name,
+                              schemeId: `manual_${device.kind}`,
+                              blockId: `manual_${targetId}`,
+                            },
+                          ]);
+                          toast.success("已下发" + group.label + "任务", {
+                            description: `${device.name} -> ${targetId}`,
+                          });
+                          setContextMenu(null);
+                        }}
+                        className={cn(
+                          "flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-[11px] transition-colors",
+                          enabled
+                            ? "text-nexus-text-primary hover:bg-white/[0.06]"
+                            : "cursor-not-allowed text-nexus-text-muted opacity-45",
+                        )}
+                      >
+                        <span className="min-w-0 truncate">{device.name}</span>
+                        <span className="flex shrink-0 items-center gap-1 text-[10px]">
+                          {enabled && <Send size={10} />}
+                          {device.deviceState === 2 ? "执行" : device.deviceState === 1 ? "上电" : "不可用"}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

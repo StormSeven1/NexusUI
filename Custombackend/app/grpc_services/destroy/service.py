@@ -22,25 +22,47 @@ class DestroyEventBroadcaster:
     """维护所有订阅中的客户端队列，并负责广播 destroy 事件。"""
 
     def __init__(self) -> None:
-        self._subscribers: dict[str, asyncio.Queue] = {}
+        self._subscribers: dict[str, dict[str, object]] = {}
         self._lock = asyncio.Lock()
 
-    async def add_subscriber(self) -> tuple[str, asyncio.Queue]:
+    @staticmethod
+    def _extract_client_ip(peer: str | None) -> str:
+        """从 gRPC peer 字符串中提取客户端地址。"""
+        if not peer:
+            return "unknown"
+        if peer.startswith("ipv4:") or peer.startswith("ipv6:"):
+            return peer.split(":", 1)[1]
+        return peer
+
+    async def add_subscriber(self, peer: str | None = None) -> tuple[str, asyncio.Queue]:
         """注册一个新的订阅客户端，并返回其专属队列。"""
         subscriber_id = uuid.uuid4().hex
         queue: asyncio.Queue = asyncio.Queue()
+        client_ip = self._extract_client_ip(peer)
         async with self._lock:
-            self._subscribers[subscriber_id] = queue
+            self._subscribers[subscriber_id] = {
+                "queue": queue,
+                "client_ip": client_ip,
+            }
             count = len(self._subscribers)
-        logger.info(f"[destroy-grpc] subscriber connected: {subscriber_id}, connected_clients={count}")
+        logger.info(
+            f"[destroy-grpc] subscriber connected: {subscriber_id}, client_ip={client_ip}, connected_clients={count}"
+        )
         return subscriber_id, queue
 
     async def remove_subscriber(self, subscriber_id: str) -> None:
         """客户端断开时从订阅列表中移除，避免在线数虚高。"""
         async with self._lock:
-            self._subscribers.pop(subscriber_id, None)
+            subscriber = self._subscribers.pop(subscriber_id, None)
             count = len(self._subscribers)
-        logger.info(f"[destroy-grpc] subscriber disconnected: {subscriber_id}, connected_clients={count}")
+        client_ip = (
+            str(subscriber.get("client_ip", "unknown"))
+            if isinstance(subscriber, dict)
+            else "unknown"
+        )
+        logger.info(
+            f"[destroy-grpc] subscriber disconnected: {subscriber_id}, client_ip={client_ip}, connected_clients={count}"
+        )
 
     async def connected_clients(self) -> int:
         """返回当前在线的 gRPC 订阅客户端数量。"""
@@ -50,7 +72,11 @@ class DestroyEventBroadcaster:
     async def publish(self, event) -> int:
         """向当前所有在线订阅客户端广播一条 destroy 事件，并返回在线数量。"""
         async with self._lock:
-            queues = list(self._subscribers.values())
+            queues = [
+                subscriber["queue"]
+                for subscriber in self._subscribers.values()
+                if isinstance(subscriber, dict) and "queue" in subscriber
+            ]
             count = len(queues)
         for queue in queues:
             await queue.put(event)
@@ -147,13 +173,17 @@ class DestroyGrpcService:
 
                 这里不做复杂过滤，谁连上来就收到后续所有 destroy 事件。
                 """
-                subscriber_id, queue = await broadcaster.add_subscriber()
+                peer = context.peer() if context else None
+                client_ip = broadcaster._extract_client_ip(peer)
+                subscriber_id, queue = await broadcaster.add_subscriber(peer)
                 try:
                     while True:
                         event = await queue.get()
                         yield event
                 except asyncio.CancelledError:
-                    logger.info(f"[destroy-grpc] stream cancelled: {subscriber_id}")
+                    logger.info(
+                        f"[destroy-grpc] stream cancelled: {subscriber_id}, client_ip={client_ip}"
+                    )
                     raise
                 finally:
                     await broadcaster.remove_subscriber(subscriber_id)

@@ -1,19 +1,17 @@
-/**
- * 告警面板“消灭”：
- * 1. 按 trackId 组装当前 destroy 任务体
- * 2. 只发一次 HTTP 到 Custombackend
- * 3. 后端再负责走 gRPC 广播
- *
- * 说明：
- * - 前端只调用 Custombackend 这一条 HTTP。
- * - destroy 的 gRPC 订阅流与 REST 不共用同一个端口，但监听地址复用后端 HOST。
- */
+﻿"use client";
 
 import {
   collectActiveDisposalForTrack,
   resolveIsAirTrackFromRenderCache,
 } from "@/lib/disposal/disposal-active-devices";
+import {
+  sendDroneReturnHomeSequential,
+  type DroneReturnHomeResult,
+} from "@/lib/drone/drone-return-home";
 import { getHttpChatConfig } from "@/lib/map-app-config";
+import { destroyMunitionOnMap } from "@/lib/munition/munition-runtime";
+import { useAssetStore, type AssetData } from "@/stores/asset-store";
+import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 
 const FILTER_SPEC_SEA_TARGET = 0;
 const FILTER_SPEC_AIR_TARGET = 1;
@@ -95,7 +93,7 @@ async function postDestroyPublish(
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.error("[alert-destroy] destroy publish POST 失败:", url, res.status, text);
+      console.error("[alert-destroy] destroy publish POST failed:", url, res.status, text);
       return { ok: false, connectedClients: 0 };
     }
     const json = (await res.json().catch(() => ({}))) as { ok?: unknown; connectedClients?: unknown };
@@ -103,8 +101,8 @@ async function postDestroyPublish(
       ok: json.ok !== false,
       connectedClients: Number.isFinite(Number(json.connectedClients)) ? Number(json.connectedClients) : 0,
     };
-  } catch (e) {
-    console.error("[alert-destroy] destroy publish POST 异常:", url, e);
+  } catch (error) {
+    console.error("[alert-destroy] destroy publish POST error:", url, error);
     return { ok: false, connectedClients: 0 };
   } finally {
     clearTimeout(timeoutId);
@@ -128,22 +126,102 @@ export interface AlertDestroyHttpResult {
   publishOk: boolean;
   connectedClients: number;
   deviceEntityIds: string[];
+  releasedDeviceIds: string[];
+  destroyedMunitionIds: string[];
+  droneReturnHomeResults: DroneReturnHomeResult[];
 }
 
-/** 告警消灭：只发一次 HTTP，由后端负责继续向 gRPC 客户端广播。 */
-export async function runAlertDestroyHttp(trackId: string, uniqueId?: string): Promise<AlertDestroyHttpResult> {
-  const tid = String(trackId ?? "").trim();
-  const uid = String(uniqueId ?? "").trim();
-  const destroyTargetId = uid || tid;
-  const { deviceEntityIds } = collectActiveDisposalForTrack(tid);
+function propString(asset: AssetData, key: string): string {
+  const props =
+    asset.properties && typeof asset.properties === "object"
+      ? (asset.properties as Record<string, unknown>)
+      : null;
+  const value = props?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function findMunitionAssetByDeviceId(deviceId: string): AssetData | undefined {
+  const raw = String(deviceId ?? "").trim();
+  if (!raw) return undefined;
+  const low = raw.toLowerCase();
+  return useAssetStore.getState().assets.find((asset) => {
+    if (asset.asset_type !== "missile") return false;
+    return (
+      asset.id.toLowerCase() === low ||
+      propString(asset, "entityId").toLowerCase() === low ||
+      propString(asset, "entity_id").toLowerCase() === low ||
+      propString(asset, "deviceSn").toLowerCase() === low ||
+      propString(asset, "device_sn").toLowerCase() === low
+    );
+  });
+}
+
+function destroyActiveMunitions(deviceEntityIds: string[]): string[] {
+  const destroyed: string[] = [];
+  const seen = new Set<string>();
+  for (const deviceId of deviceEntityIds) {
+    const asset = findMunitionAssetByDeviceId(deviceId);
+    if (!asset || seen.has(asset.id)) continue;
+    seen.add(asset.id);
+    destroyMunitionOnMap(asset.id, asset.lat, asset.lng);
+    destroyed.push(asset.id);
+  }
+  return destroyed;
+}
+
+export async function runAlertDestroyHttp(external_target_id: string, targetID?: string): Promise<AlertDestroyHttpResult> {
+  const tid = String(external_target_id ?? "").trim();
+  const uid = String(targetID ?? "").trim();
+  if (!uid) {
+    console.warn("[alert-destroy] skipped: targetID is required", { external_target_id: tid });
+    return {
+      publishOk: false,
+      connectedClients: 0,
+      deviceEntityIds: [],
+      releasedDeviceIds: [],
+      destroyedMunitionIds: [],
+      droneReturnHomeResults: [],
+    };
+  }
+  const destroyTargetId = uid;
+  const disposalTargetId = destroyTargetId;
+  const { deviceEntityIds, droneEntityIds } = collectActiveDisposalForTrack(disposalTargetId);
   const creatorEntityId = deviceEntityIds.join(",");
-  const specType = resolveIsAirTrackFromRenderCache(tid) ? FILTER_SPEC_AIR_TARGET : FILTER_SPEC_SEA_TARGET;
+  const specType = resolveIsAirTrackFromRenderCache(destroyTargetId) ? FILTER_SPEC_AIR_TARGET : FILTER_SPEC_SEA_TARGET;
+
+  console.log("[alert-destroy] matched active disposal", {
+    external_target_id: tid,
+    targetID: uid,
+    disposalTargetId,
+    destroyTargetId,
+    deviceEntityIds,
+    droneEntityIds,
+  });
 
   const publishResult = await postFilterTargetOrForceTask(specType, destroyTargetId, creatorEntityId);
+  const releasedDeviceIds = useDisposalPlanStore.getState().releaseEffectsForTarget(disposalTargetId);
+  const destroyedMunitionIds = destroyActiveMunitions(deviceEntityIds);
+  const droneReturnHomeResults = await sendDroneReturnHomeSequential(droneEntityIds);
+
+  console.log("[alert-destroy] return-home results", {
+    external_target_id: tid,
+    targetID: uid,
+    disposalTargetId,
+    destroyTargetId,
+    publishOk: publishResult.ok,
+    connectedClients: publishResult.connectedClients,
+    destroyedMunitionIds,
+    releasedDeviceIds,
+    droneReturnHomeResults,
+  });
 
   return {
     publishOk: publishResult.ok,
     connectedClients: publishResult.connectedClients,
     deviceEntityIds,
+    releasedDeviceIds,
+    destroyedMunitionIds,
+    droneReturnHomeResults,
   };
 }
+

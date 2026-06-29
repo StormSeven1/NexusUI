@@ -62,6 +62,60 @@ function formatLatLng(lat: number | null | undefined, lng: number | null | undef
   return `${Math.abs(lat).toFixed(4)}°${ns}, ${Math.abs(lng).toFixed(4)}°${ew}`;
 }
 
+function formatSpeedMps(value: unknown): string {
+  const speed = Number(value);
+  return Number.isFinite(speed) ? `${speed.toFixed(1)} m/s` : "-";
+}
+
+function readSpeedMpsFromRecord(record: Record<string, unknown> | null | undefined): number | null {
+  if (!record) return null;
+  const horizontalRaw = record.horizontal_speed ?? record.horizontalSpeed;
+  const verticalRaw = record.vertical_speed ?? record.verticalSpeed;
+  if (horizontalRaw != null || verticalRaw != null) {
+    const horizontal = Number(horizontalRaw);
+    const vertical = Number(verticalRaw);
+    const h = Number.isFinite(horizontal) ? horizontal : 0;
+    const v = Number.isFinite(vertical) ? vertical : 0;
+    return Math.sqrt(h * h + v * v);
+  }
+  const speed = Number(record.speed_mps ?? record.speedMps ?? record.speed_ms ?? record.speed);
+  if (Number.isFinite(speed)) return speed;
+  const northRaw = record.speed_N ?? record.speedN ?? record.north_mps;
+  const eastRaw = record.speed__E ?? record.speed_E ?? record.speedE ?? record.east_mps;
+  const upRaw = record.speed_V ?? record.speedV ?? record.up_mps;
+  if (northRaw == null && eastRaw == null && upRaw == null) return null;
+  const north = Number(northRaw);
+  const east = Number(eastRaw);
+  const up = Number(upRaw);
+  const n = Number.isFinite(north) ? north : 0;
+  const e = Number.isFinite(east) ? east : 0;
+  const u = Number.isFinite(up) ? up : 0;
+  return Math.sqrt(n * n + e * e + u * u);
+}
+
+function readAssetSpeedMps(properties: Record<string, unknown> | null | undefined): number | null {
+  if (!properties) return null;
+  const highFreq = properties.high_freq && typeof properties.high_freq === "object"
+    ? (properties.high_freq as Record<string, unknown>)
+    : null;
+  const status = properties.drone_status && typeof properties.drone_status === "object"
+    ? (properties.drone_status as Record<string, unknown>)
+    : null;
+  return readSpeedMpsFromRecord(highFreq) ?? readSpeedMpsFromRecord(status) ?? readSpeedMpsFromRecord(properties);
+}
+
+function readHeadingDegrees(asset: AssetData | null, properties: Record<string, unknown> | null | undefined): number | null {
+  const heading = Number(
+    asset?.heading ??
+      properties?.heading ??
+      properties?.headingDeg ??
+      properties?.attitude_head ??
+      properties?.course ??
+      properties?.yaw,
+  );
+  return Number.isFinite(heading) ? heading : null;
+}
+
 function DispositionBadge({ d }: { d: ForceDisposition }) {
   const label: Record<ForceDisposition, string> = {
     friendly: "友方",
@@ -180,10 +234,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
       return "";
     }
   }, [assetVideoUrl]);
-  const assetHeading =
-    asset?.heading != null && Number.isFinite(Number(asset.heading))
-      ? Number(asset.heading)
-      : null;
+  const assetHeading = readHeadingDegrees(asset, assetProperties);
+  const assetSpeedMps = readAssetSpeedMps(assetProperties);
   const assetUpdatedAt = asset?.updated_at;
   const assetTypeLabel =
     asset != null
@@ -201,7 +253,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
     if (kind === "track") {
       const key = track ? resolveAliasKey(track) : null;
       const alias = key ? useTrackAliasStore.getState().getOrCreate(key) : "";
-      return alias || track?.name || track?.showID || id;
+      return alias || track?.name || track?.targetID || id;
     }
     return asset?.name || id;
   }, [kind, track, id, asset?.name]);
@@ -228,26 +280,37 @@ export function TargetPlacard(props: TargetPlacardProps) {
   }, [kind, track]);
 
   const [assetIconLoaded, setAssetIconLoaded] = useState<{ id: string; url: string } | null>(null);
+  const assetIconType = asset ? normalizeAssetType(asset.asset_type) : null;
+  const assetIconStatus = (asset?.status ?? "online") as AssetStatus;
+  const assetIconVirtual = isVirtualFromProperties(asset?.properties);
+  const assetIconDisposition = asset ? dispositionFromAssetData(asset) : "friendly";
+  const assetIconFriendlyTint =
+    assetFriendlyColorFromProperties(asset?.properties as Record<string, unknown> | null) ??
+    (assetIconType ? getAssetFriendlyColorForAssetType(assetIconType) : null) ??
+    FORCE_COLORS.friendly;
 
   useEffect(() => {
-    if (kind !== "asset" || !asset) return;
+    if (kind !== "asset" || !assetIconType) {
+      setAssetIconLoaded(null);
+      return;
+    }
     let cancelled = false;
     const aid = id;
-    const t = normalizeAssetType(asset.asset_type);
-    const assetFriendlyTint =
-      assetFriendlyColorFromProperties(asset.properties as Record<string, unknown> | null) ??
-      getAssetFriendlyColorForAssetType(t) ??
-      FORCE_COLORS.friendly;
-    const status = (asset?.status ?? "online") as AssetStatus;
-    const virtual = isVirtualFromProperties(asset.properties);
-    const disposition = dispositionFromAssetData(asset);
-    void buildAssetSymbolDataUrl(t, status, virtual, disposition, undefined, assetFriendlyTint).then((url) => {
-      if (!cancelled) setAssetIconLoaded({ id: aid, url });
+    void buildAssetSymbolDataUrl(
+      assetIconType,
+      assetIconStatus,
+      assetIconVirtual,
+      assetIconDisposition,
+      undefined,
+      assetIconFriendlyTint,
+    ).then((url) => {
+      if (cancelled) return;
+      setAssetIconLoaded((prev) => (prev?.id === aid && prev.url === url ? prev : { id: aid, url }));
     });
     return () => {
       cancelled = true;
     };
-  }, [kind, asset, id]);
+  }, [kind, id, assetIconType, assetIconStatus, assetIconVirtual, assetIconDisposition, assetIconFriendlyTint]);
 
   const symbolUrl =
     kind === "track"
@@ -266,7 +329,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
       if (!normalized?.items?.length) return;
       appendDisposalFromHttp(normalized, "http");
       if (!rightSidebarOpen) toggleRightSidebar();
-      setRightPanelTab("chat");
+      setRightPanelTab("taskPanel");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "网络不通畅，请检查网络后重试";
       toast.error("一键处置失败", { description: msg });
@@ -344,7 +407,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
         <>
           <div className="mt-1 flex flex-col gap-y-1">
             <Row k="坐标" v={formatLatLng(track?.lat, track?.lng)} />
-            <Row k="航速" v={track ? `${track.speed.toFixed(1)} kn` : "-"} />
+            <Row k="航速" v={track ? formatSpeedMps(track.speed) : "-"} />
             <Row k="航向" v={track && typeof track.course === "number" ? `${track.course.toFixed(1)}°` : "-"} />
           </div>
 
@@ -372,8 +435,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
           {expanded && (
             <>
               <div className="mt-1 flex flex-col gap-y-1">
-                {track?.showID && <Row k="uniqueID" v={track.showID} />}
-                {track?.trackId && <Row k="trackID" v={track.trackId} />}
+                {track?.targetID && <Row k="targetID" v={track.targetID} />}
+                {track?.external_target_id && <Row k="external_target_id" v={track.external_target_id} />}
                 <Row k="来源" v={track?.sensor ?? "-"} />
                 <Row k="最后更新" v={track?.lastUpdate ?? "-"} />
                 <Row k="高度" v={track?.altitude != null ? `${track.altitude.toFixed(1)}` : "-"} />
@@ -420,6 +483,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
             <Row k="坐标" v={formatLatLng(assetLat, assetLng)} />
             <Row k="状态" v={formatAssetDeviceStateDisplay(asset)} />
             <Row k="更新时间" v={formatIsoToSecond(assetUpdatedAt)} />
+            {normalizeAssetType(asset?.asset_type) === "drone" ? <Row k="速度" v={formatSpeedMps(assetSpeedMps)} /> : null}
             {assetHeading != null ? <Row k="航向" v={`${assetHeading.toFixed(1)}°`} /> : null}
           </div>
 
@@ -482,3 +546,4 @@ export function TargetPlacard(props: TargetPlacardProps) {
     </div>
   );
 }
+

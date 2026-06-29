@@ -13,7 +13,7 @@ DESTROY_DIR = CURRENT_DIR / "grpc_services" / "destroy"
 if str(DESTROY_DIR) not in sys.path:
     sys.path.insert(0, str(DESTROY_DIR))
 
-from config import get_settings
+from Custombackend.app.config import get_settings
 from grpc_services.destroy import destroy_pb2, destroy_pb2_grpc
 
 

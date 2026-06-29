@@ -155,10 +155,10 @@ class WebSocketManager:
 
     def queue_track_data(self, track_data: Dict[str, Any]):
         """Queue one track message for batched broadcast."""
-        # alarms = track_data.get("alarms")
-        # has_alarm = bool(track_data.get("hasAlarm")) or (isinstance(alarms, list) and len(alarms) > 0)
-        # if not has_alarm:
-        #     return
+        alarms = track_data.get("alarms")
+        has_alarm = bool(track_data.get("hasAlarm")) or (isinstance(alarms, list) and len(alarms) > 0)
+        if not has_alarm:
+            return
 
         if "is_air_track" not in track_data:
             track_data["is_air_track"] = self._determine_air_track(track_data)

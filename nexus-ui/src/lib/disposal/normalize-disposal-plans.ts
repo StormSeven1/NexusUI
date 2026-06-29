@@ -23,6 +23,7 @@
  */
 
 import { useAssetStore } from "@/stores/asset-store";
+import { resolveAliasByTargetId } from "@/stores/track-alias-store";
 import type {
   DisposalInputParams,
   MappedDisposalScheme,
@@ -82,9 +83,9 @@ export function formatTargetIdForUi(targetId: string | number | null | undefined
 
 export function buildDisposalCardUserQuery(targetId: string, inputParams: DisposalInputParams = {} as DisposalInputParams): string {
   const kindPhrase = formatTargetKindPhraseFromTargetInfo(inputParams as unknown as Record<string, unknown>);
-  const kindPart = kindPhrase ? `（${kindPhrase}）` : "";
-  const displayId = formatTargetIdForUi(String(targetId), inputParams?.targetType);
-  return `目标 ${displayId}${kindPart} 处置方案`;
+  const alias = resolveAliasByTargetId(targetId);
+  const displayId = alias || formatTargetIdForUi(String(targetId), inputParams?.targetType);
+  return kindPhrase ? `${displayId} · ${kindPhrase}` : displayId;
 }
 
 /**
@@ -262,13 +263,22 @@ function mapSchemeToCardScheme(
   const maxScore = mappedTasks.reduce((mx, t) => Math.max(mx, t.recommendationScore), 0);
 
   /* schemeName 中可能包含 entityId（如 "方案3: uav-101 → 40504"），替换为友好名称 */
-  const rawSchemeName = String(scheme?.schemeName || `方案${index + 1}`);
+  /* schemeName ????? entityId ? targetId????????????????? */
+  /* schemeName ????? entityId ? targetId????????????????? */
+  const rawSchemeName = String(scheme?.schemeName || `??${index + 1}`);
+  const targetAlias = resolveAliasByTargetId(dtid);
+  const targetDisplayName = targetAlias || (dtid ? formatTargetIdForUi(dtid, undefined) : "未知目标");
   const schemeName = mappedTasks.reduce((name, t) => {
+    let nextName = name;
     if (t.deviceId && t.deviceName && t.deviceName !== t.deviceId) {
-      return name.replaceAll(t.deviceId, t.deviceName);
+      nextName = nextName.replaceAll(t.deviceId, t.deviceName);
     }
-    return name;
-  }, rawSchemeName);
+    if (t.targetId) {
+      nextName = nextName.replaceAll(String(t.targetId), targetDisplayName);
+    }
+    return nextName;
+  }, rawSchemeName).replaceAll(String((blue as { id?: string }).id || "").trim(), targetDisplayName);
+
 
   return {
     schemeId: String(scheme?.schemeId || scheme?.scheme_id || `scheme_${index + 1}`),

@@ -20,7 +20,17 @@ from loguru import logger
 
 TRACK_MANAGER_HOST = "239.192.63.43"
 TRACK_MANAGER_PORT = 6343
+TRACK_SIMULATOR_TARGETS = {
+    "sea": ("239.128.43.96", 4397),
+    "air": ("239.192.63.43", 6343),
+}
 LOCAL_INTERFACE = "192.168.18.141"
+
+# Static simulator behavior:
+# Set to None to keep one ID for the whole run.
+# Set to seconds (for example 20.0) to keep the current movement trend and
+# switch to track_id + 1 after that many seconds from simulator start.
+TRACK_ID_INCREMENT_AFTER_SECONDS: Optional[float] = None
 
 RDR_PACKET_TYPEB_TRACK_EXT = 0x112
 SPX_PACKET_TRACK_EXT_LATLONG = 0x00000004
@@ -74,6 +84,7 @@ class TrackSimulator:
         self.speed_mps = 20.0
         self.interval = 1.0
         self.arrival_threshold_m = 25.0
+        self.id_increment_after_seconds: Optional[float] = None
 
         self.transit_bearing = _bearing_deg(
             self.start_lat, self.start_lon, self.end_lat, self.end_lon
@@ -86,9 +97,29 @@ class TrackSimulator:
         self.current_lat = self.start_lat
         self.current_course = self.transit_bearing
         self._leg_to_end = True
+        self._id_increment_deadline_monotonic: Optional[float] = None
+        self._id_increment_applied = False
 
         self.sock: Optional[socket.socket] = None
         self.mmsi = 413000001
+
+    def configure_target(self, kind: str) -> str:
+        normalized = str(kind or "").strip().lower()
+        if normalized in {"surface", "ship", "sea_target"}:
+            normalized = "sea"
+        elif normalized in {"sky", "flight", "air_target"}:
+            normalized = "air"
+        if normalized not in TRACK_SIMULATOR_TARGETS:
+            raise ValueError(f"unsupported simulator target kind: {kind}")
+
+        self.host, self.port = TRACK_SIMULATOR_TARGETS[normalized]
+        return normalized
+
+    def _current_target_kind(self) -> str:
+        for kind, target in TRACK_SIMULATOR_TARGETS.items():
+            if (self.host, self.port) == target:
+                return kind
+        return "custom"
 
     def _is_multicast_host(self) -> bool:
         try:
@@ -216,6 +247,41 @@ class TrackSimulator:
         )
         return lon + math.degrees(delta_lon), lat + math.degrees(delta_lat)
 
+    def _configure_id_increment(self, after_seconds: Optional[float]):
+        if after_seconds is None:
+            self.id_increment_after_seconds = None
+            self._id_increment_deadline_monotonic = None
+            self._id_increment_applied = False
+            return
+
+        after_seconds = max(0.0, float(after_seconds))
+        self.id_increment_after_seconds = after_seconds
+        self._id_increment_deadline_monotonic = time.monotonic() + after_seconds
+        self._id_increment_applied = False
+
+    def _maybe_increment_track_id(self):
+        if (
+            self._id_increment_applied
+            or self._id_increment_deadline_monotonic is None
+            or time.monotonic() < self._id_increment_deadline_monotonic
+        ):
+            return
+
+        old_track_id = self.current_track_id
+        self.track_id_counter = max(self.track_id_counter, self.current_track_id) + 1
+        self.current_track_id = self.track_id_counter
+        self._id_increment_applied = True
+        logger.info(
+            "[TrackSim] track_id auto incremented {} -> {}; position and trend kept",
+            old_track_id,
+            self.current_track_id,
+        )
+
+    def _get_id_increment_remaining_seconds(self) -> Optional[float]:
+        if self._id_increment_deadline_monotonic is None or self._id_increment_applied:
+            return None
+        return max(0.0, self._id_increment_deadline_monotonic - time.monotonic())
+
     async def _run_simulation(self):
         logger.info(
             "[TrackSim] 开始循环模拟 track_id={} target={}:{} iface={} ({},{}) <-> ({},{})",
@@ -231,6 +297,7 @@ class TrackSimulator:
         try:
             self.sock = self._create_socket()
             while self.running:
+                self._maybe_increment_track_id()
                 now_sec = int(time.time())
                 packet = self._build_packet(
                     self.current_track_id,
@@ -299,16 +366,18 @@ class TrackSimulator:
             self.running = False
             logger.info("[TrackSim] 模拟已停止")
 
-    async def start(self) -> dict:
+    async def start(self, kind: str = "sea") -> dict:
         if self.running:
             await self.stop()
 
+        target_kind = self.configure_target(kind)
         self.track_id_counter += 1
         self.current_track_id = self.track_id_counter
         self.current_lon = self.start_lon
         self.current_lat = self.start_lat
         self.current_course = self.transit_bearing
         self._leg_to_end = True
+        self._configure_id_increment(TRACK_ID_INCREMENT_AFTER_SECONDS)
 
         self.running = True
         self.task = asyncio.create_task(self._run_simulation())
@@ -317,11 +386,13 @@ class TrackSimulator:
             "success": True,
             "message": "模拟已启动",
             "track_id": self.current_track_id,
+            "target_kind": target_kind,
             "target_host": self.host,
             "target_port": self.port,
             "start_position": {"lon": self.start_lon, "lat": self.start_lat},
             "end_position": {"lon": self.end_lon, "lat": self.end_lat},
             "speed": self.speed_mps,
+            "id_increment_after_seconds": self.id_increment_after_seconds,
         }
 
     async def stop(self) -> dict:
@@ -348,12 +419,16 @@ class TrackSimulator:
         return {
             "running": self.running,
             "track_id": self.current_track_id,
+            "target_kind": self._current_target_kind(),
             "target_host": self.host,
             "target_port": self.port,
             "current_position": {"lon": self.current_lon, "lat": self.current_lat},
             "current_course": self.current_course,
             "speed": self.speed_mps,
             "leg": "to_end" if self._leg_to_end else "to_start",
+            "id_increment_after_seconds": self.id_increment_after_seconds,
+            "id_increment_applied": self._id_increment_applied,
+            "id_increment_remaining_seconds": self._get_id_increment_remaining_seconds(),
         }
 
 

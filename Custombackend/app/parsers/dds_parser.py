@@ -9,7 +9,7 @@ import os
 from datetime import datetime
 
 # 无人机数据存储开关 - 设置为False即可关闭所有存储
-ENABLE_DRONE_DATA_STORAGE = True
+ENABLE_DRONE_DATA_STORAGE = False
 
 _DRONE_STATUS_FILTERED_MODES = {0, 1, 2, 4, 14}
 
@@ -80,6 +80,8 @@ def parse_dds_data(
             return _parse_single_track_result(dds_object)
         elif structure_type == 'uav_image_track':
             return _parse_uav_image_track(dds_object)  
+        elif structure_type == 'radar_status':
+            return _parse_radar_status(dds_object)
         elif structure_type == 'dock_status':
             ret =  _parse_dock_status(dds_object)
             # print("dock_status:",ret)
@@ -101,7 +103,7 @@ def parse_dds_data(
             return result
         elif structure_type == 'munition_status':
             ret= _parse_munition_status(dds_object)
-            print("munition_status:",ret)
+            # print("munition_status:",ret)
             return ret
         elif structure_type == 'usv_status':
             return _parse_usv_status(dds_object)
@@ -109,13 +111,13 @@ def parse_dds_data(
             ret = _parse_directed_weapon_status(
                 dds_object, 'laser_status', 'laserState', ('laserState',)
             )
-            print("laser_status:",ret)
+            # print("laser_status:",ret)
             return ret
         elif structure_type == 'tdoa_status':
             ret= _parse_directed_weapon_status(
                 dds_object, 'tdoa_status', 'tdoaState', ('tdoaState', 'laserState')
             )
-            print("tdoa_status:",ret)
+            # print("tdoa_status:",ret)
             return ret
         else:
             logger.warning(f"未知的DDS结构类型: {structure_type}，使用通用解析")
@@ -254,6 +256,43 @@ def _dds_device_state(dds_object) -> Optional[int]:
         except Exception:
             return None
     return None
+
+
+def _parse_radar_status(dds_object) -> Optional[Dict]:
+    """RadarRealTimeStatus, topic=RadarParametersClassTopic."""
+    try:
+        return {
+            'entityId': dds_object.entityId(),
+            'online': dds_object.online(),
+            'deviceState': _dds_device_state(dds_object),
+            'timestamp': dds_object.timestamp(),
+            'radarID': dds_object.radarID(),
+            'radarType': dds_object.radarType(),
+            'radarName': dds_object.radarName(),
+            'longitude': dds_object.longitude(),
+            'latitude': dds_object.latitude(),
+            'transmit': dds_object.transmit(),
+            'range': dds_object.range(),
+            'pluseWidth': dds_object.pluseWidth(),
+            'aziOffset': dds_object.aziOffset(),
+            'rangeOffset': dds_object.rangeOffset(),
+            'sampleRate': dds_object.sampleRate(),
+            'gain': dds_object.gain(),
+            'seaClutter': dds_object.seaClutter(),
+            'rainClutter': dds_object.rainClutter(),
+            'inhibit1': dds_object.inhibit1(),
+            'inhibit1StartAzi': dds_object.inhibit1StartAzi(),
+            'inhibit1EndAzi': dds_object.inhibit1EndAzi(),
+            'inhibit2': dds_object.inhibit2(),
+            'inhibit2StartAzi': dds_object.inhibit2StartAzi(),
+            'inhibit2EndAzi': dds_object.inhibit2EndAzi(),
+            'source': 'DDS',
+            'data_type': 'radar_status',
+            'isVirtualWeapon': bool(dds_object.isVirtualWeapon()) if hasattr(dds_object, 'isVirtualWeapon') else False,
+        }
+    except Exception as e:
+        logger.error(f"Parse radar_status DDS failed: {e}")
+        return None
 
 
 def _parse_dock_status(dds_object) -> Optional[Dict]:
@@ -662,22 +701,40 @@ def _parse_usv_status(dds_object) -> Optional[Dict]:
 
 
 def _parse_munition_status(dds_object) -> Optional[Dict]:
-    """MunitionRealTimeStatus（巡飞弹）；状态用 munitionState，不使用 BaseDeviceStatus.deviceState。"""
+    """MunitionRealTimeStatus（巡飞弹）；deviceState 使用 BaseDeviceStatus，munitionState 只表示弹体自身状态。"""
     try:
         pos = dds_object.position()
+        lat = float(dds_object.latitude()) if hasattr(dds_object, 'latitude') else float(pos.latitude())
+        lng = float(dds_object.longitude()) if hasattr(dds_object, 'longitude') else float(pos.longitude())
+        alt = float(dds_object.height()) if hasattr(dds_object, 'height') else float(pos.altitude())
         result: Dict[str, Any] = {
             'entityId': dds_object.entityId(),
             'online': dds_object.online(),
+            'deviceState': _dds_device_state(dds_object),
             'timestamp': dds_object.timestamp(),
             'munitionState': int(dds_object.munitionState()),
             'hitPoint': float(dds_object.hitPoint()),
             'attitude_head': float(dds_object.attitude_head()),
-            'latitude': float(pos.latitude()),
-            'longitude': float(pos.longitude()),
-            'altitude': float(pos.altitude()),
+            'latitude': lat,
+            'longitude': lng,
+            'height': alt,
+            'altitude': alt,
+            'position': {
+                'longitude': float(pos.longitude()),
+                'latitude': float(pos.latitude()),
+                'altitude': float(pos.altitude()),
+            },
             'source': 'DDS',
             'data_type': 'munition_status',
         }
+        if hasattr(dds_object, 'taskType'):
+            result['taskType'] = dds_object.taskType()
+        if hasattr(dds_object, 'executionState'):
+            result['executionState'] = int(dds_object.executionState())
+        if hasattr(dds_object, 'executionTimeMs'):
+            result['executionTimeMs'] = int(dds_object.executionTimeMs())
+        if hasattr(dds_object, 'elec'):
+            result['elec'] = float(dds_object.elec())
         if hasattr(dds_object, 'isVirtualWeapon'):
             result['isVirtualWeapon'] = bool(dds_object.isVirtualWeapon())
         if hasattr(dds_object, 'dispositionType'):
@@ -688,6 +745,8 @@ def _parse_munition_status(dds_object) -> Optional[Dict]:
             result['targetID'] = dds_object.targetID()
         if hasattr(dds_object, 'targetName'):
             result['targetName'] = dds_object.targetName()
+        if hasattr(dds_object, 'targetType'):
+            result['targetType'] = int(dds_object.targetType())
         lat = result.get('latitude')
         lng = result.get('longitude')
         if lat is None or lng is None or not (-90 <= float(lat) <= 90) or not (-180 <= float(lng) <= 180):

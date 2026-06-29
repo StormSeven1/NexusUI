@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-from config import get_settings
+from Custombackend.app.config import get_settings
 
 
 def area_entity_id(group_id: int, area_id: int) -> str:

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
@@ -412,7 +412,7 @@ export function Map3D() {
           if (Cesium.defined(picked) && picked.id?.properties) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const props = picked.id.properties as any;
-            const trackId = props.trackId?.getValue?.() ?? null;
+            const trackSelectionId = props.id?.getValue?.() ?? null;
             const assetId = props.assetId?.getValue?.() ?? null;
             const droneSn = props.droneSn?.getValue?.() ?? null;
             const isCoverage = !!(props._coverage?.getValue?.() || props._radarSweep?.getValue?.());
@@ -423,11 +423,11 @@ export function Map3D() {
               clearMapSelection();
               return;
             }
-            if (trackId) {
+            if (trackSelectionId) {
               selectAsset(null);
-              selectTrack(trackId);
+              selectTrack(trackSelectionId);
               placardEntityRef.current = picked.id as CesiumEntity;
-              setPlacard((prev) => (prev && prev.kind === "track" && prev.id === trackId ? prev : { kind: "track", id: trackId, x: movement.position.x, y: movement.position.y }));
+              setPlacard((prev) => (prev && prev.kind === "track" && prev.id === trackSelectionId ? prev : { kind: "track", id: trackSelectionId, x: movement.position.x, y: movement.position.y }));
             } else if (assetId) {
               selectTrack(null);
               selectAsset(assetId);
@@ -772,7 +772,7 @@ export function Map3D() {
     const unsub = useAppStore.subscribe((state) => {
       const id = state.selectedTrackId;
       for (const ent of entityGroupsRef.current.tracks) {
-        const tid = ent.properties?.trackId?.getValue();
+        const tid = ent.properties?.id?.getValue();
         if (ent.billboard) {
           ent.billboard.scale = new (cesiumRef.current!.ConstantProperty)(tid === id ? 1.12 : 0.90);
         }
@@ -911,3 +911,4 @@ export function Map3D() {
 function zoomToAltitude(zoom: number): number {
   return Math.max(500, 40_000_000 / Math.pow(2, zoom));
 }
+

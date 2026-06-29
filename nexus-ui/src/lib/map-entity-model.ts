@@ -31,9 +31,8 @@ export function isVirtualFromProperties(properties: Record<string, unknown> | nu
 
 export interface Track {
   id: string;
-  showID: string;
-  uniqueID: string;
-  trackId?: string;
+  targetID: string;
+  external_target_id?: string;
   name: string;
   type: "air" | "underwater" | "sea";
   disposition: ForceDisposition;
@@ -107,6 +106,7 @@ export interface Asset {
   labelFontColor?: string;
   fovFillColor?: string;
   fovFillOpacity?: number;
+  properties?: Record<string, unknown> | null;
 }
 
 export interface Alert {
@@ -114,7 +114,7 @@ export interface Alert {
   severity: "critical" | "warning" | "info";
   message: string;
   timestamp: string;
-  trackId?: string;
+  external_target_id?: string;
 }
 
 export type DataLayerPanelRow = { id: string; name: string };

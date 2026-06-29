@@ -3,24 +3,37 @@
  */
 
 import type maplibregl from "maplibre-gl";
-import { parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
+import { isVirtualFromProperties, parseMapAssetTypeStrict, type Asset } from "@/lib/map-entity-model";
 import type { AssetData } from "@/stores/asset-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent, AssetStatus } from "@/lib/map-icons";
 import {
   assetMapLabelTextColor,
+  buildAssetSymbolDataUrl,
   getAssetSymbolId,
+  getAssetSymbolRasterSize,
   MAP_FRIENDLY_COLOR_PROP,
   MAP_LABEL_FONT_COLOR_PROP,
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
 } from "@/lib/map-icons";
 import type { AppConfigSectorBundle } from "@/lib/map-app-config";
 import { laserLabelStyleFromBundle, sectorBundleAnyMergedVisible } from "@/lib/map-app-config";
+import { weaponBlinkOpacity } from "@/lib/weapon/weapon-power-state";
 
 export const MISSILE_STATIC_SOURCE = "nexus-missile-static";
 export const MISSILE_ICON_LAYER = "nexus-missile-icon";
 export const MISSILE_LABEL_LAYER = "nexus-missile-label";
+
+async function loadSvgImage(src: string, size: number): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image(size, size);
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
@@ -54,7 +67,8 @@ function mapMissileConfigDeviceRow(
   const bearing = Number(r.bearing);
   const heading = Number.isFinite(bearing) ? bearing : 0;
   const fovAngle = Number.isFinite(Number(r.fovAngle)) ? Number(r.fovAngle) : 90;
-  const virtualTroop = r.virtualTroop === true;
+  const rowProperties = asRecord(r.properties as unknown);
+  const virtualTroop = isVirtualFromProperties(r) || isVirtualFromProperties(rowProperties);
   const now = isoNow();
 
   const centerNameVisible = mergeRootAndDeviceVisible(
@@ -90,7 +104,7 @@ function mapMissileConfigDeviceRow(
     heading,
     fov_angle: Number.isFinite(fovAngle) ? fovAngle : 90,
     properties: {
-      ...(asRecord(r.properties as unknown) ?? {}),
+      ...(rowProperties ?? {}),
       config_kind: "missile",
       is_virtual: virtualTroop,
       virtual_troop: virtualTroop,
@@ -143,6 +157,19 @@ function assetStatusFromLabel(s: string | undefined): AssetStatus {
   return "online";
 }
 
+const VIRTUAL_MISSILE_SYMBOL_OPACITY = 0.6;
+
+type MissileIconOpacityPaint = NonNullable<maplibregl.SymbolLayerSpecification["paint"]>["icon-opacity"];
+
+function missileIconOpacityExpression(armingOpacity: number): MissileIconOpacityPaint {
+  return [
+    "case",
+    ["==", ["get", "isArming"], true],
+    ["*", ["coalesce", ["get", "symbolOpacity"], 1], armingOpacity],
+    ["coalesce", ["get", "symbolOpacity"], 1],
+  ] as unknown as MissileIconOpacityPaint;
+}
+
 function buildMissileStaticGeoJSON(
   assetList: Asset[],
   accent: AssetDispositionIconAccent | null,
@@ -151,6 +178,11 @@ function buildMissileStaticGeoJSON(
   for (const a of assetList) {
     if (a.type !== "missile") continue;
     if (a.centerIconVisible === false) continue;
+    const props = a.properties && typeof a.properties === "object" ? (a.properties as Record<string, unknown>) : {};
+    const isArming = props.munition_frontend_arming === true;
+    const isVirtual = a.isVirtual === true || isVirtualFromProperties(props);
+    const rowStatus = assetStatusFromLabel(a.status);
+    const disp = a.disposition ?? "friendly";
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [a.lng, a.lat] },
@@ -161,12 +193,14 @@ function buildMissileStaticGeoJSON(
         heading: a.heading ?? 0,
         symbolId: getAssetSymbolId(
           a.type,
-          a.status,
-          a.isVirtual ?? false,
-          a.disposition ?? "friendly",
-          (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
+          rowStatus,
+          isVirtual,
+          disp,
+          disp === "friendly" ? a.friendlyMapColor : undefined,
         ),
-        symbolOpacity: 1,
+        isVirtual: isVirtual ? 1 : 0,
+        symbolOpacity: isVirtual ? VIRTUAL_MISSILE_SYMBOL_OPACITY : 1,
+        isArming,
       },
     });
   }
@@ -197,6 +231,8 @@ export class MissileStaticMaplibre {
   private assetDispositionAccent: AssetDispositionIconAccent | null = null;
   private lastAssets: Asset[] | null = null;
   private bundle: AppConfigSectorBundle | null = null;
+  private blinkTimer: ReturnType<typeof setInterval> | null = null;
+  private ensuredSymbolIds = new Set<string>();
 
   constructor(map: maplibregl.Map, options?: { insertBeforeLayerId?: string }) {
     this.map = map;
@@ -227,7 +263,9 @@ export class MissileStaticMaplibre {
           source: MISSILE_STATIC_SOURCE,
           filter: ["==", ["get", "kind"], "icon"],
           layout: iconLayout,
-          paint: { "icon-opacity": ["coalesce", ["get", "symbolOpacity"], 1] },
+          paint: {
+            "icon-opacity": missileIconOpacityExpression(weaponBlinkOpacity()),
+          },
         },
         b,
       );
@@ -303,16 +341,88 @@ export class MissileStaticMaplibre {
   setFromAssets(assets: Asset[]) {
     this.lastAssets = assets;
     this.refreshData();
+    this.syncBlinkTimer();
   }
 
   private refreshData() {
     const m = this.map;
     const src = m.getSource(MISSILE_STATIC_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src || !this.lastAssets) return;
+    void this.ensureMissileSymbolImages(this.lastAssets);
     src.setData(buildMissileStaticGeoJSON(this.lastAssets, this.assetDispositionAccent) as GeoJSON.FeatureCollection);
   }
 
+  private async ensureMissileSymbolImages(assets: Asset[]) {
+    const m = this.map;
+    const rasterPx = getAssetSymbolRasterSize("missile");
+    for (const a of assets) {
+      if (a.type !== "missile") continue;
+      if (a.centerIconVisible === false) continue;
+      const props = a.properties && typeof a.properties === "object" ? (a.properties as Record<string, unknown>) : {};
+      const isVirtual = a.isVirtual === true || isVirtualFromProperties(props);
+      const status = assetStatusFromLabel(a.status);
+      const disposition = a.disposition ?? "friendly";
+      const friendlyFill = disposition === "friendly" ? a.friendlyMapColor : undefined;
+      const symbolId = getAssetSymbolId("missile", status, isVirtual, disposition, friendlyFill);
+      if (this.ensuredSymbolIds.has(symbolId)) continue;
+      this.ensuredSymbolIds.add(symbolId);
+      try {
+        const src = await buildAssetSymbolDataUrl(
+          "missile",
+          status,
+          isVirtual,
+          disposition,
+          this.assetDispositionAccent,
+          friendlyFill,
+          { applyVirtualOpacity: false },
+        );
+        const img = await loadSvgImage(src, rasterPx);
+        if (m.hasImage(symbolId)) {
+          m.removeImage(symbolId);
+        }
+        m.addImage(symbolId, img, { pixelRatio: 2 });
+        m.triggerRepaint?.();
+      } catch (error) {
+        this.ensuredSymbolIds.delete(symbolId);
+        console.warn("[missile-maplibre] ensure symbol image failed", symbolId, error);
+      }
+    }
+  }
+
+  private hasArmingMissile(): boolean {
+    for (const a of this.lastAssets ?? []) {
+      if (a.type !== "missile") continue;
+      const props = a.properties && typeof a.properties === "object" ? (a.properties as Record<string, unknown>) : {};
+      if (props.munition_frontend_arming === true) return true;
+    }
+    return false;
+  }
+
+  private stopBlinkTimer() {
+    if (this.blinkTimer) clearInterval(this.blinkTimer);
+    this.blinkTimer = null;
+  }
+
+  private syncBlinkTimer() {
+    if (this.hasArmingMissile()) {
+      this.applyBlinkOpacity();
+      if (!this.blinkTimer) this.blinkTimer = setInterval(() => this.applyBlinkOpacity(), 500);
+    } else {
+      this.applyBlinkOpacity(1);
+      this.stopBlinkTimer();
+    }
+  }
+
+  private applyBlinkOpacity(forceOpacity?: number) {
+    const m = this.map;
+    if (!m.getLayer(MISSILE_ICON_LAYER)) return;
+    const opacity = forceOpacity ?? weaponBlinkOpacity();
+    m.setPaintProperty(MISSILE_ICON_LAYER, "icon-opacity", missileIconOpacityExpression(opacity));
+    m.triggerRepaint?.();
+  }
+
   dispose() {
+    this.stopBlinkTimer();
     const m = this.map;
     for (const id of [MISSILE_LABEL_LAYER, MISSILE_ICON_LAYER]) {
       if (m.getLayer(id)) m.removeLayer(id);

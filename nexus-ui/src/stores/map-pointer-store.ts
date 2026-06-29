@@ -10,5 +10,19 @@ interface MapPointerState {
 
 export const useMapPointerStore = create<MapPointerState>((set) => ({
   mouseCoords: null,
-  setMouseCoords: (coords) => set({ mouseCoords: coords }),
+  setMouseCoords: (coords) =>
+    set((state) => {
+      if (coords == null) {
+        return state.mouseCoords == null ? state : { mouseCoords: null };
+      }
+      const prev = state.mouseCoords;
+      if (
+        prev &&
+        Math.abs(prev.lat - coords.lat) < 0.000001 &&
+        Math.abs(prev.lng - coords.lng) < 0.000001
+      ) {
+        return state;
+      }
+      return { mouseCoords: coords };
+    }),
 }));

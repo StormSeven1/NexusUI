@@ -1,4 +1,4 @@
-/**
+﻿/**
  * disposal-types — 处置方案数据结构定义
  *
  * 【与 V2 autoDisposalMode / disposalHandler 对齐】
@@ -100,7 +100,7 @@ export interface MappedDisposalScheme {
 
 /** 方案输入参数：触发方案时的目标信息 */
 export interface DisposalInputParams {
-  /** 目标业务 trackId（告警匹配用） */
+  /** 目标业务 external_target_id（告警匹配用） */
   targetId: string;
   /** 目标类型：0=对海, 1=对空, 或字符串如 "uav"/"ship" */
   targetType?: string | number;
@@ -153,7 +153,7 @@ export interface NormalizedDisposalPlans {
 /** 一键处置请求载荷（buildOneClickDisposalRequestBody 输出） */
 export interface OneClickDisposalPayload {
   targetInfo: {
-    /** 目标业务 trackId */
+    /** 目标业务 external_target_id */
     targetId: string;
     /** 目标类型：0=对海, 1=对空 */
     targetType: number;
@@ -167,3 +167,4 @@ export interface OneClickDisposalPayload {
     course: number;
   };
 }
+

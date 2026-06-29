@@ -25,7 +25,7 @@
 import type maplibregl from "maplibre-gl";
 import { getMapModules } from "./map-module-registry";
 import { useAssetStore } from "@/stores/asset-store";
-import { useTrackStore } from "@/stores/track-store";
+import { getRenderCache, useTrackStore } from "@/stores/track-store";
 import type { Track } from "@/lib/map-entity-model";
 import { getAssetTargetLineConfig } from "@/lib/map-app-config";
 
@@ -52,6 +52,10 @@ function connKey(c: AssetTargetConnection): string {
 
 /* ── 坐标查找 ── */
 
+function normTargetId(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
 function resolveAssetCoords(entityId: string): { lng: number; lat: number } | null {
   const assetState = useAssetStore.getState();
   const asset = assetState.assets.find((a) => a.id === entityId);
@@ -68,20 +72,18 @@ function resolveAssetCoords(entityId: string): { lng: number; lat: number } | nu
   return null;
 }
 
-/**
- * 从渲染层 tracks 查找处置目标，用 trackId 直接匹配。
- */
+/** 从渲染层 tracks 查找处置目标，兼容 targetID 和 external_target_id。 */
 export function findTrackForDisposalTarget(targetId: string): Track | undefined {
-  const tid = String(targetId ?? "").trim();
+  const tid = normTargetId(targetId);
   if (!tid) return undefined;
   const tracks = useTrackStore.getState().tracks;
-  return tracks.find((t) => {
-    if (t.trackId != null && String(t.trackId) === tid) return true;
-    if (String(t.uniqueID) === tid) return true;
-    if (String(t.showID) === tid) return true;
-    if (String(t.id) === tid) return true;
-    return false;
-  });
+  const matches = (t: Track) => normTargetId(t.targetID) === tid || normTargetId(t.external_target_id) === tid;
+  const fromStore = tracks.find(matches);
+  if (fromStore) return fromStore;
+  for (const t of getRenderCache().values()) {
+    if (matches(t)) return t;
+  }
+  return undefined;
 }
 
 export function resolveTrackLngLatForTargetId(

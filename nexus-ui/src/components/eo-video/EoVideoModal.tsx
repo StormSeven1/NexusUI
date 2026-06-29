@@ -116,6 +116,8 @@ export function EoVideoModal() {
   const [isRecording, setIsRecording] = useState(false);
   const [captureReady, setCaptureReady] = useState(false);
   const [overlayIntrinsic, setOverlayIntrinsic] = useState({ width: 0, height: 0 });
+  const captureReadyRef = useRef(false);
+  const overlayIntrinsicRef = useRef({ width: 0, height: 0 });
   const [contextMenu, setContextMenu] = useState({ open: false, x: 0, y: 0 });
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -217,13 +219,25 @@ export function EoVideoModal() {
           webCodecsPresentationRef.current.height > 0 &&
           webCodecsPresentationRef.current.canvas,
       );
-      setCaptureReady(videoReady || canvasReady);
+      const nextCaptureReady = videoReady || canvasReady;
+      if (captureReadyRef.current !== nextCaptureReady) {
+        captureReadyRef.current = nextCaptureReady;
+        setCaptureReady(nextCaptureReady);
+      }
       if (canvasReady) {
         const { width, height } = webCodecsPresentationRef.current;
-        setOverlayIntrinsic((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+        if (overlayIntrinsicRef.current.width !== width || overlayIntrinsicRef.current.height !== height) {
+          const next = { width, height };
+          overlayIntrinsicRef.current = next;
+          setOverlayIntrinsic(next);
+        }
         return;
       }
-      setOverlayIntrinsic((prev) => (prev.width === 0 && prev.height === 0 ? prev : { width: 0, height: 0 }));
+      if (overlayIntrinsicRef.current.width !== 0 || overlayIntrinsicRef.current.height !== 0) {
+        const next = { width: 0, height: 0 };
+        overlayIntrinsicRef.current = next;
+        setOverlayIntrinsic(next);
+      }
     };
     syncReady();
     const video = videoRef.current;

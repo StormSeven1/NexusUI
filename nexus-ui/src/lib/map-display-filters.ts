@@ -10,7 +10,6 @@ export const EXCLUDE_CAMERA_IDS = new Set<string>([
   "camera_005",
   "camera_006",
   "camera_007",
-  "camera_008",
   "camera_009",
   "camera_010",
   "camera_011",

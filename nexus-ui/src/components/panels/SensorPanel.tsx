@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useTrackStore } from "@/stores/track-store";
 import { useAssetStore } from "@/stores/asset-store";
@@ -15,11 +15,11 @@ import {
 } from "lucide-react";
 
 interface SensorPanelProps {
-  trackId: string;
+  targetID: string;
 }
 
-export function SensorPanel({ trackId }: SensorPanelProps) {
-  const track = useTrackStore((s) => s.tracks.find((t) => t.id === trackId));
+export function SensorPanel({ targetID }: SensorPanelProps) {
+  const track = useTrackStore((s) => s.tracks.find((t) => t.id === targetID));
   if (!track) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-xs text-nexus-text-muted">
@@ -178,3 +178,4 @@ function ParamRow({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+

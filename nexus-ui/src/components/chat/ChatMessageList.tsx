@@ -1,89 +1,16 @@
 "use client";
 
-import { useRef, useEffect, useMemo, useState } from "react";
-import { ChatMessage } from "./ChatMessage";
-import { SchemeRow } from "./DisposalPlanFeed";
-import { useDisposalPlanStore, type DisposalPlanBlock } from "@/stores/disposal-plan-store";
-import { useTrackAliasStore } from "@/stores/track-alias-store";
-import { formatTargetKindPhraseFromTargetInfo, formatTargetIdForUi } from "@/lib/disposal/normalize-disposal-plans";
-import { NxCard } from "@/components/nexus";
+import { useEffect, useRef, useState } from "react";
 import type { UIMessage } from "ai";
-import { Bot, Sparkles, Crosshair } from "lucide-react";
+import { Bot, Sparkles } from "lucide-react";
 
-/* ──── 处置方案：以对话消息样式渲染 ──── */
-
-function DisposalBlockMessage({ block }: { block: DisposalPlanBlock }) {
-  const executeScheme = useDisposalPlanStore((s) => s.executeScheme);
-  const aliases = useTrackAliasStore((s) => s.aliases);
-
-  return (
-    <div className="flex gap-2 px-3 py-2 animate-fade-in">
-      {/* 头像 —— 与 ChatMessage assistant 一致 */}
-      <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-sky-500/15 text-sky-400">
-        <Bot size={13} />
-      </div>
-      <div className="min-w-0 flex-1 max-w-[80%] space-y-1">
-        <span className="text-[10px] font-medium text-nexus-text-muted">作管AI</span>
-        {block.items.map((row) => {
-          const targetId = String(row.inputParams?.targetId ?? "").trim();
-          const alias = targetId ? aliases[targetId] : undefined;
-          const kindPhrase = formatTargetKindPhraseFromTargetInfo(row.inputParams as unknown as Record<string, unknown>);
-          const displayId = formatTargetIdForUi(targetId, row.inputParams?.targetType);
-          return (
-            <NxCard key={row.cardInstanceId} padding="none" className="my-1 p-2">
-              {/* 醒目标题：别名 + 目标类型（大），真实ID（小）；悬停飞到目标 */}
-              <div
-                className="mb-1 flex items-center gap-1.5 rounded px-1 -mx-1"
-              >
-                <Crosshair size={13} className="shrink-0 text-amber-400" />
-                <div>
-                  <div className="text-[12px] font-bold leading-tight text-nexus-text-primary">
-                    {alias ? <span className="text-amber-400">{alias}</span> : `目标 ${displayId}`}
-                    {kindPhrase && <span className="text-nexus-text-secondary"> · {kindPhrase}</span>}
-                  </div>
-                  {alias && displayId && (
-                    <div className="text-[9px] leading-tight text-nexus-text-muted">ID: {displayId}</div>
-                  )}
-                </div>
-              </div>
-              {row.noPlansReason && (
-                <p className="mb-1 text-[10px] text-amber-400/90">{row.noPlansReason}</p>
-              )}
-              {row.mappedSchemes.length === 0 && !row.noPlansReason && (
-                <p className="text-[10px] text-nexus-text-muted">暂无可用方案</p>
-              )}
-              <div className="space-y-1.5">
-                {row.mappedSchemes.map((sch) => {
-                  const executed = row.executedSchemeIds.includes(sch.schemeId);
-                  const busy = row.executingSchemeIds.includes(sch.schemeId);
-                  return (
-                    <SchemeRow
-                      key={sch.schemeId}
-                      scheme={sch}
-                      executed={executed}
-                      disabled={busy}
-                      onExecute={() => void executeScheme(block.blockId, row.cardInstanceId, sch)}
-                    />
-                  );
-                })}
-              </div>
-              {row.lastError && <p className="mt-1 text-[10px] text-red-400/90">{row.lastError}</p>}
-            </NxCard>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/** 方案块首次出现时的消息数量，用于在时间线中定位（模块级，单实例安全） */
-const _blockInsertPos = new Map<string, number>();
+import { ChatMessage } from "./ChatMessage";
 
 const HINTS = [
   "显示所有敌方目标",
   "导航到 TRK-001",
   "切换 3D 视图",
-  "用饼状图展示目标类型分布",
+  "用饼状图层展示目标类型分布",
   "查询伦敦天气",
   "标绘一个搜索区域",
   "规划从 TRK-001 到 TRK-004 的航路",
@@ -101,34 +28,11 @@ export function ChatMessageList({
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [mounted] = useState(true);
-  const disposalBlocks = useDisposalPlanStore((s) => s.blocks);
-  const hasContent = messages.length > 0 || disposalBlocks.length > 0;
-
-  const timeline = useMemo(() => {
-    type TItem =
-      | { kind: "msg"; msg: UIMessage; idx: number; order: number }
-      | { kind: "disposal"; block: DisposalPlanBlock; order: number };
-
-    // 首次看到某方案块时，记住当前消息数量，保证后续新消息排在方案块之后
-    for (const b of disposalBlocks) {
-      if (!_blockInsertPos.has(b.blockId)) _blockInsertPos.set(b.blockId, messages.length);
-    }
-
-    const items: TItem[] = [];
-    messages.forEach((msg, i) => {
-      items.push({ kind: "msg", msg, idx: i, order: i });
-    });
-    disposalBlocks.forEach((b, di) => {
-      const pos = _blockInsertPos.get(b.blockId) ?? messages.length;
-      items.push({ kind: "disposal", block: b, order: pos - 0.5 + di * 0.0001 });
-    });
-    items.sort((a, b) => a.order - b.order);
-    return items;
-  }, [messages, disposalBlocks]);
+  const hasContent = messages.length > 0;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isStreaming, disposalBlocks.length]);
+  }, [messages, isStreaming]);
 
   const emptyState = (
     <div className="flex flex-col items-center justify-center gap-3 px-6 py-8 text-center">
@@ -163,21 +67,18 @@ export function ChatMessageList({
     <div className="flex-1 overflow-y-auto">
       {!hasContent
         ? emptyState
-        : timeline.map((item) =>
-            item.kind === "msg" ? (
-              <ChatMessage
-                key={item.msg.id}
-                message={item.msg}
-                isStreaming={
-                  item.msg.role === "assistant" &&
-                  item.idx === messages.length - 1 &&
-                  isStreaming
-                }
-              />
-            ) : (
-              <DisposalBlockMessage key={item.block.blockId} block={item.block} />
-            ),
-          )}
+        : messages.map((msg, idx) => (
+            <ChatMessage
+              key={msg.id}
+              message={msg}
+              isStreaming={
+                msg.role === "assistant" &&
+                idx === messages.length - 1 &&
+                isStreaming
+              }
+            />
+          ))}
+
       {messages.length > 0 &&
         isStreaming &&
         messages[messages.length - 1]?.role !== "assistant" && (
@@ -187,11 +88,18 @@ export function ChatMessageList({
             </div>
             <div className="flex gap-1">
               <span className="h-1.5 w-1.5 animate-blink rounded-full bg-sky-400" />
-              <span className="h-1.5 w-1.5 animate-blink rounded-full bg-sky-400" style={{ animationDelay: "0.2s" }} />
-              <span className="h-1.5 w-1.5 animate-blink rounded-full bg-sky-400" style={{ animationDelay: "0.4s" }} />
+              <span
+                className="h-1.5 w-1.5 animate-blink rounded-full bg-sky-400"
+                style={{ animationDelay: "0.2s" }}
+              />
+              <span
+                className="h-1.5 w-1.5 animate-blink rounded-full bg-sky-400"
+                style={{ animationDelay: "0.4s" }}
+              />
             </div>
           </div>
         )}
+
       <div ref={bottomRef} />
     </div>
   );

@@ -48,6 +48,7 @@ import {
   getAssetSymbolId,
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
 } from "@/lib/map-icons";
+import { weaponBlinkOpacity } from "@/lib/weapon/weapon-power-state";
 
 const P = "nexus-laser";
 
@@ -89,7 +90,7 @@ const laserLayerVisDefault: LaserMaplibreLayerVisibility = {
 
 /**
  * 扇区扫描亮带动画参数（**bandCount** / **bandWidthMeters** / **cycleMs** / **tickMs**）。
- * 是否绘制扇区由设备上 **`activationEnabled`**（与 app-config 中 devices[].activationEnabled 同源语义）控制。
+ * 是否绘制扇区由设备上 **`activationEnabled`** 控制；当前由 DDS deviceState 映射。
  */
 export type LaserScanParams = {
   cycleMs: number;
@@ -126,6 +127,8 @@ export type LaserDevice = {
   pulseOnMs?: number;
   /** 暗相时长（ms），默认 3000 */
   pulseOffMs?: number;
+  deviceState?: number;
+  frontendArming?: boolean;
 };
 
 /** `laserSectorBorderFromBundle`：`emit === false` 时不画配置边线，用资产类型默认色 */
@@ -155,6 +158,7 @@ export class LaserMaplibre {
   private _sectorFillDefaultColor = "#fb7185";
   private _sectorFillDefaultOpacity = 0.35;
   private scanTimer: ReturnType<typeof setInterval> | null = null;
+  private blinkTimer: ReturnType<typeof setInterval> | null = null;
   private syncingScanTimer = false;
   /** 脉动时各设备 scan 几何是否处于「亮相」帧 */
   private pulseVisibleById = new Map<string, boolean>();
@@ -304,7 +308,7 @@ export class LaserMaplibre {
             "icon-rotation-alignment": "viewport",
             "icon-pitch-alignment": "viewport",
           },
-          paint: { "icon-opacity": 0.95 },
+          paint: { "icon-opacity": ["coalesce", ["get", "iconOpacity"], 0.95] },
         },
         beforeId
       );
@@ -364,6 +368,7 @@ export class LaserMaplibre {
 
   destroy() {
     this.stopScanTimer();
+    this.stopBlinkTimer();
     for (const t of this.laserPulseTimeouts.values()) clearTimeout(t);
     this.laserPulseTimeouts.clear();
     this.pulseVisibleById.clear();
@@ -391,6 +396,7 @@ export class LaserMaplibre {
     if (prev) {
       if (d.color == null && prev.color != null) d = { ...d, color: prev.color };
       if (d.fillOpacity == null && prev.fillOpacity != null) d = { ...d, fillOpacity: prev.fillOpacity };
+      if (d.activationEnabled && d.headingDeg === 0 && prev.headingDeg !== 0) d = { ...d, headingDeg: prev.headingDeg };
     }
 
     this.devices.set(d.id, { ...d });
@@ -405,6 +411,7 @@ export class LaserMaplibre {
 
     this.flush();
     this.syncScanTimer();
+    this.syncBlinkTimer();
   }
 
   /**
@@ -419,6 +426,7 @@ export class LaserMaplibre {
       if (prev) {
         if (d.color == null && prev.color != null) d = { ...d, color: prev.color };
         if (d.fillOpacity == null && prev.fillOpacity != null) d = { ...d, fillOpacity: prev.fillOpacity };
+        if (d.activationEnabled && d.headingDeg === 0 && prev.headingDeg !== 0) d = { ...d, headingDeg: prev.headingDeg };
       }
       this.devices.set(d.id, { ...d });
 
@@ -432,6 +440,7 @@ export class LaserMaplibre {
     }
     this.flush();
     this.syncScanTimer();
+    this.syncBlinkTimer();
   }
 
   remove(id: string) {
@@ -439,6 +448,7 @@ export class LaserMaplibre {
     this.devices.delete(id);
     this.flush();
     this.syncScanTimer();
+    this.syncBlinkTimer();
   }
 
   clear() {
@@ -448,6 +458,7 @@ export class LaserMaplibre {
     this.devices.clear();
     this.flush();
     this.syncScanTimer();
+    this.syncBlinkTimer();
   }
 
   getAll(): LaserDevice[] {
@@ -474,6 +485,26 @@ export class LaserMaplibre {
       if (this.sectorScanGeometryVisible(d)) return true;
     }
     return false;
+  }
+
+  private stopBlinkTimer() {
+    if (this.blinkTimer) clearInterval(this.blinkTimer);
+    this.blinkTimer = null;
+  }
+
+  private hasArmingDevice(): boolean {
+    for (const d of this.devices.values()) {
+      if (d.frontendArming === true) return true;
+    }
+    return false;
+  }
+
+  private syncBlinkTimer() {
+    if (this.hasArmingDevice()) {
+      if (!this.blinkTimer) this.blinkTimer = setInterval(() => this.flush(), 500);
+    } else {
+      this.stopBlinkTimer();
+    }
   }
 
   private stopLaserPulse(id: string) {
@@ -612,6 +643,7 @@ export class LaserMaplibre {
             c,
             disp,
             symbolId: getAssetSymbolId("laser", "online", !!d.virtual, disp, fmc),
+            iconOpacity: d.frontendArming === true ? weaponBlinkOpacity() : 0.95,
           },
         });
       }

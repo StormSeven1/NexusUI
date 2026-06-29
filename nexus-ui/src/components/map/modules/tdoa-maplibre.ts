@@ -13,7 +13,7 @@
  *      ├─ 静态: tdoaBundleToStaticAssets() → configAssetBase（含 scan 参数）
  *      ├─ 动态: applyAssetListFromWs() → mergeDynamicAndStaticAssets() → asset-store
  *      └─ 专题层: adaptAssetToTdoaDevice() → TdoaMaplibre.upsert()
- *          `activationEnabled` 由根/设备 activation 与处置 activate* 写入；WS 只带站址时经 merge 保留专题态
+ *          `activationEnabled` 由 DDS deviceState 映射；前端不再自动激活或保留处置态
  *
  *   3. 渲染: TdoaMaplibre.flush() → 遍历 devices 生成 GeoJSON
  *      ├─ 扇区填充 (t="sec"): 基础扇区多边形
@@ -42,6 +42,7 @@ import {
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
 } from "@/lib/map-icons";
 import type { LaserLabelStyle, LaserSectorBorderStyle } from "@/components/map/modules/laser-maplibre";
+import { weaponBlinkOpacity } from "@/lib/weapon/weapon-power-state";
 
 const P = "nexus-tdoa";
 
@@ -105,6 +106,8 @@ export type TdoaDevice = {
   centerIconVisible?: boolean;
   name?: string;
   scan: TdoaScanParams;
+  deviceState?: number;
+  frontendArming?: boolean;
 };
 
 export class TdoaMaplibre {
@@ -115,6 +118,7 @@ export class TdoaMaplibre {
   private _sectorFillDefaultColor = "#fb923c";
   private _sectorFillDefaultOpacity = 0.30;
   private scanTimer: ReturnType<typeof setInterval> | null = null;
+  private blinkTimer: ReturnType<typeof setInterval> | null = null;
   private _border: LaserSectorBorderStyle = {
     emit: false,
     lineWidth: 0,
@@ -259,7 +263,7 @@ export class TdoaMaplibre {
             "icon-rotation-alignment": "viewport",
             "icon-pitch-alignment": "viewport",
           },
-          paint: { "icon-opacity": 0.95 },
+          paint: { "icon-opacity": ["coalesce", ["get", "iconOpacity"], 0.95] },
         },
         beforeId
       );
@@ -319,6 +323,7 @@ export class TdoaMaplibre {
 
   destroy() {
     this.stopScanTimer();
+    this.stopBlinkTimer();
     const m = this.map;
     for (const id of [TDOA_LABEL, TDOA_CENTER, TDOA_LINE, TDOA_SCAN, TDOA_FILL]) {
       if (m.getLayer(id)) m.removeLayer(id);
@@ -341,10 +346,12 @@ export class TdoaMaplibre {
     if (prev) {
       if (d.color == null && prev.color != null) d = { ...d, color: prev.color };
       if (d.fillOpacity == null && prev.fillOpacity != null) d = { ...d, fillOpacity: prev.fillOpacity };
+      if (d.activationEnabled && d.headingDeg === 0 && prev.headingDeg !== 0) d = { ...d, headingDeg: prev.headingDeg };
     }
     this.devices.set(d.id, d);
     this.flush();
     this.syncScanTimer();
+    this.syncBlinkTimer();
   }
 
   /**
@@ -358,23 +365,27 @@ export class TdoaMaplibre {
       if (prev) {
         if (d.color == null && prev.color != null) d = { ...d, color: prev.color };
         if (d.fillOpacity == null && prev.fillOpacity != null) d = { ...d, fillOpacity: prev.fillOpacity };
+        if (d.activationEnabled && d.headingDeg === 0 && prev.headingDeg !== 0) d = { ...d, headingDeg: prev.headingDeg };
       }
       this.devices.set(d.id, d);
     }
     this.flush();
     this.syncScanTimer();
+    this.syncBlinkTimer();
   }
 
   remove(id: string) {
     this.devices.delete(id);
     this.flush();
     this.syncScanTimer();
+    this.syncBlinkTimer();
   }
 
   clear() {
     this.devices.clear();
     this.flush();
     this.syncScanTimer();
+    this.syncBlinkTimer();
   }
 
   getAll(): TdoaDevice[] {
@@ -395,6 +406,26 @@ export class TdoaMaplibre {
       if (d.activationEnabled && d.openingDeg > 0.1) return true;
     }
     return false;
+  }
+
+  private stopBlinkTimer() {
+    if (this.blinkTimer) clearInterval(this.blinkTimer);
+    this.blinkTimer = null;
+  }
+
+  private hasArmingDevice(): boolean {
+    for (const d of this.devices.values()) {
+      if (d.frontendArming === true) return true;
+    }
+    return false;
+  }
+
+  private syncBlinkTimer() {
+    if (this.hasArmingDevice()) {
+      if (!this.blinkTimer) this.blinkTimer = setInterval(() => this.flush(), 500);
+    } else {
+      this.stopBlinkTimer();
+    }
   }
 
   private syncScanTimer() {
@@ -492,6 +523,7 @@ export class TdoaMaplibre {
             c,
             disp,
             symbolId: getAssetSymbolId("tdoa", "online", !!d.virtual, disp, fmc),
+            iconOpacity: d.frontendArming === true ? weaponBlinkOpacity() : 0.95,
           },
         });
       }

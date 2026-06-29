@@ -1,4 +1,4 @@
-import type maplibregl from "maplibre-gl";
+﻿import type maplibregl from "maplibre-gl";
 import type { FilterSpecification } from "maplibre-gl";
 import type { Track } from "@/lib/map-entity-model";
 import {
@@ -77,7 +77,9 @@ export function buildTrackGeoJSON(
           type: "Feature",
           geometry: { type: "LineString", coordinates: coords },
           properties: {
-            trackId: t.id,
+            id: t.id,
+            targetID: t.targetID,
+            external_target_id: t.external_target_id ?? null,
             isAirTrack: t.isAirTrack ?? false,
             lineColor: resolveTrackMarkerFill(
               t.disposition,
@@ -100,14 +102,13 @@ export function buildTrackGeoJSON(
       geometry: { type: "Point", coordinates: [t.lng, t.lat] as [number, number] },
       properties: {
         id: t.id,
-        showID: t.showID,
-        uniqueID: t.uniqueID,
-        trackId: t.trackId ?? null,
+        targetID: t.targetID,
+        external_target_id: t.external_target_id ?? null,
         isAirTrack: t.isAirTrack ?? false,
         targetType: t.targetType ?? null,
         name: t.name,
         /** 地图标牌：使用别名，没有则自动创建 */
-        mapLabelText: (() => { const k = resolveAliasKey(t); return k ? useTrackAliasStore.getState().getOrCreate(k) : (t.trackId ?? t.showID); })(),
+        mapLabelText: (() => { const k = resolveAliasKey(t); return k ? useTrackAliasStore.getState().getOrCreate(k) : ""; })(),
         type: t.type,
         disposition: t.disposition,
         speed: t.speed,
@@ -386,3 +387,4 @@ export class TracksMaplibre {
     if (m.getSource(TRACK_SOURCE)) m.removeSource(TRACK_SOURCE);
   }
 }
+

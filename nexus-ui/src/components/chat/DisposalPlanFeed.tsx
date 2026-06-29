@@ -15,14 +15,18 @@ export function SchemeRow({
   scheme,
   disabled,
   executed,
+  readOnly = false,
   onExecute,
 }: {
   scheme: MappedDisposalScheme;
   disabled: boolean;
   executed: boolean;
+  readOnly?: boolean;
   onExecute: () => void;
 }) {
-  const taskLines = (scheme.tasks || []).slice(0, 3).map((t) => (
+  const tasks = scheme.tasks || [];
+  const visibleTasks = tasks.slice(0, 3);
+  const taskLines = visibleTasks.map((t) => (
     <div key={`${scheme.schemeId}-${t.deviceId}`} className="text-[10px] text-nexus-text-secondary">
       <span className="text-nexus-text-muted">{t.deviceName}</span>
       <span className="mx-1 text-nexus-text-muted/60">·</span>
@@ -52,16 +56,20 @@ export function SchemeRow({
               P{scheme.priority}
             </span>
           </div>
-          {/* {scheme.description && (
-            <p className="mt-0.5 line-clamp-2 text-[10px] text-nexus-text-muted">{scheme.description}</p>
-          )} */}
           <div className="mt-1 space-y-0.5">{taskLines}</div>
+          {tasks.length > visibleTasks.length && (
+            <p className="mt-0.5 text-[9px] text-nexus-text-muted">还有 {tasks.length - visibleTasks.length} 条任务</p>
+          )}
         </div>
         <div className="shrink-0">
           {executed ? (
             <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-400">
               <CheckCircle2 size={12} />
               已执行
+            </span>
+          ) : readOnly ? (
+            <span className="inline-flex items-center rounded border border-white/[0.06] px-1.5 py-0.5 text-[10px] text-nexus-text-muted">
+              历史
             </span>
           ) : (
             <button
@@ -84,24 +92,30 @@ export function SchemeRow({
  * 方案块卡片：一次方案生成（DisposalPlanBlock）的 UI 容器。
  * 包含来源标签（实时/一键）、taskId、摘要、以及各 DisposalPlanCardRow。
  */
-function DisposalCardBlock({ block, onExecute }: { block: DisposalPlanBlock; onExecute: (row: DisposalPlanCardRow, s: MappedDisposalScheme) => void }) {
+function DisposalCardBlock({
+  block,
+  readOnly = false,
+  onExecute,
+}: {
+  block: DisposalPlanBlock;
+  readOnly?: boolean;
+  onExecute: (row: DisposalPlanCardRow, s: MappedDisposalScheme) => void;
+}) {
   return (
     <NxCard padding="sm" className="mb-2 border-sky-500/10">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        {/* <div className="flex h-5 w-5 items-center justify-center rounded bg-amber-500/10">
-          <Crosshair size={11} className="text-amber-400" />
-        </div>
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-nexus-text-secondary">处置方案</span> */}
-        {/* <NxBadge variant="default" className="text-[9px]">
-          {block.source === "ws" ? "实时" : "一键"}
-        </NxBadge>
-        <span className="ml-auto font-mono text-[9px] text-nexus-text-muted">{block.taskId}</span> */}
-      </div>
-      {/* <p className="mb-2 text-[10px] text-nexus-text-muted">{block.summary}</p> */}
-
-      {block.items.map((row) => (
-        <div key={row.cardInstanceId} className="mb-2 last:mb-0">
-          <div className="mb-1.5 text-[11px] font-medium text-nexus-text-primary">{row.userQuery}</div>
+      {block.items.map((row, rowIndex) => (
+        <div key={`${row.cardInstanceId}:${rowIndex}`} className="mb-2 last:mb-0">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-nexus-text-primary">
+            <span
+              aria-hidden="true"
+              className="h-3 w-3 shrink-0 bg-amber-400 opacity-90"
+              style={{
+                mask: 'url("/icons/任务方案.svg") center / contain no-repeat',
+                WebkitMask: 'url("/icons/任务方案.svg") center / contain no-repeat',
+              }}
+            />
+            <span>{row.userQuery}</span>
+          </div>
           {row.noPlansReason && (
             <p className="mb-1 text-[10px] text-amber-400/90">{row.noPlansReason}</p>
           )}
@@ -109,15 +123,16 @@ function DisposalCardBlock({ block, onExecute }: { block: DisposalPlanBlock; onE
             <p className="text-[10px] text-nexus-text-muted">暂无可用方案</p>
           )}
           <div className="space-y-1.5">
-            {row.mappedSchemes.map((sch) => {
+            {row.mappedSchemes.map((sch, schemeIndex) => {
               const executed = row.executedSchemeIds.includes(sch.schemeId);
               const busy = row.executingSchemeIds.includes(sch.schemeId);
               return (
                 <SchemeRow
-                  key={sch.schemeId}
+                  key={`${sch.schemeId}:${schemeIndex}`}
                   scheme={sch}
                   executed={executed}
                   disabled={busy}
+                  readOnly={readOnly}
                   onExecute={() => onExecute(row, sch)}
                 />
               );
@@ -135,8 +150,15 @@ function DisposalCardBlock({ block, onExecute }: { block: DisposalPlanBlock; onE
  * 数据流：后端 WS/HTTP → normalizeDisposalPlans → store.appendFromNormalized → 本组件
  * 执行流：用户点击「执行」→ store.executeScheme → postDisposalExecute → applySchemeSideEffects
  */
-export function DisposalPlanFeed() {
-  const blocks = useDisposalPlanStore((s) => s.blocks);
+export function DisposalPlanFeed({
+  blocks: overrideBlocks,
+  readOnly = false,
+}: {
+  blocks?: DisposalPlanBlock[];
+  readOnly?: boolean;
+} = {}) {
+  const storeBlocks = useDisposalPlanStore((s) => s.blocks);
+  const blocks = overrideBlocks ?? storeBlocks;
   const wsStatus = useDisposalPlanStore((s) => s.wsStatus);
   const executeScheme = useDisposalPlanStore((s) => s.executeScheme);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -160,11 +182,13 @@ export function DisposalPlanFeed() {
         </span>
       </div>
       <div className="space-y-2">
-        {blocks.map((b) => (
+        {blocks.map((b, index) => (
           <DisposalCardBlock
-            key={b.blockId}
+            key={`${b.blockId}:${index}`}
             block={b}
+            readOnly={readOnly}
             onExecute={(row, sch) => {
+              if (readOnly) return;
               void executeScheme(b.blockId, row.cardInstanceId, sch);
             }}
           />

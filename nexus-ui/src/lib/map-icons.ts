@@ -47,6 +47,39 @@ export const MAP_FRIENDLY_COLOR_PROP = "map_friendly_color";
 /** 写入 `AssetData.properties`，供地图名称标签取色（来自各业务块 `label.fontColor`） */
 export const MAP_LABEL_FONT_COLOR_PROP = "map_label_font_color";
 
+export type AssetIconFrameConfig = {
+  canvasPx: number;
+  plainCanvasPx: number;
+  shadowBlurPx: number;
+  shadowOpacity: number;
+  droneTriangleCanvasPx: number;
+  droneTriangleStrokeWidthPx: number;
+};
+
+export const DEFAULT_ASSET_ICON_FRAME_CONFIG: AssetIconFrameConfig = {
+  canvasPx: 56,
+  plainCanvasPx: 82,
+  shadowBlurPx: 1.5,
+  shadowOpacity: 0.5,
+  droneTriangleCanvasPx: 72,
+  droneTriangleStrokeWidthPx: 2,
+};
+
+let assetIconFrameConfig: AssetIconFrameConfig = { ...DEFAULT_ASSET_ICON_FRAME_CONFIG };
+
+export function setAssetIconFrameConfig(config: Partial<AssetIconFrameConfig> | null | undefined): void {
+  assetIconFrameConfig = { ...DEFAULT_ASSET_ICON_FRAME_CONFIG, ...(config ?? {}) };
+}
+
+export function getAssetIconFrameConfig(): AssetIconFrameConfig {
+  return assetIconFrameConfig;
+}
+
+export function getAssetSymbolRasterSize(type: AssetType): number {
+  const cfg = getAssetIconFrameConfig();
+  return type === "usv" ? cfg.plainCanvasPx : cfg.canvasPx;
+}
+
 export function assetFriendlyColorFromProperties(props: Record<string, unknown> | null | undefined): string | undefined {
   const v = props?.[MAP_FRIENDLY_COLOR_PROP];
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
@@ -67,17 +100,34 @@ export function friendlyTintSuffix(tint: string | null | undefined): string {
 
 /** 资产图标、激光/TDOA 扇区中心图标共用的敌我维度 */
 export const MAP_FORCE_DISPOSITIONS: ForceDisposition[] = ["friendly", "hostile", "neutral"];
+const VIRTUAL_SYMBOL_OPACITY = 0.6;
 
 /* ── 目标航迹图标：运行时从 public/icons/ 加载（改 SVG 后强刷页面即可） ── */
 
 const TRACK_ICON_SVG_FILES: Record<TrackType, string> = {
-  air: "空中目标.svg",
-  sea: "水面目标.svg",
-  underwater: "水下目标.svg",
+  air: "移动实/空中目标.svg",
+  sea: "移动实/水面目标.svg",
+  underwater: "移动实/水下目标.svg",
 };
 
-const trackIconFragmentCache = new Map<TrackType, { viewBox: string; body: string }>();
-const trackIconFragmentInflight = new Map<TrackType, Promise<{ viewBox: string; body: string }>>();
+const TRACK_ICON_VIRTUAL_SVG_FILES: Record<TrackType, string> = {
+  air: "移动虚/空中目标虚.svg",
+  sea: "移动虚/水面目标虚.svg",
+  underwater: "移动虚/水下目标.svg",
+};
+
+type SvgFragment = { viewBox: string; body: string };
+
+const trackIconFragmentCache = new Map<string, SvgFragment>();
+const trackIconFragmentInflight = new Map<string, Promise<SvgFragment>>();
+
+function trackIconCacheKey(type: TrackType, virtual: boolean): string {
+  return `${type}:${virtual ? "v" : "r"}`;
+}
+
+function trackIconFile(type: TrackType, virtual: boolean): string {
+  return virtual ? TRACK_ICON_VIRTUAL_SVG_FILES[type] : TRACK_ICON_SVG_FILES[type];
+}
 
 type TrackIconDef = { viewBox: string; pathD: string };
 
@@ -116,13 +166,6 @@ export function getMarkerSymbolId(
   return suf ? `${base}${suf}` : base;
 }
 
-/** 虚兵横纹：周期越小条纹越密；色块占比越低空白越显眼（目标/飞弹/无人船共用） */
-const VIRTUAL_GLYPH_BAND_DIVISOR = 15;
-const VIRTUAL_GLYPH_DASH_FILL_RATIO = 0.8;
-
-/**
- * 虚兵：原轮廓 clip + 横纹 pattern（密条纹 + 大间隙，栅格化后仍易辨认）。
- */
 function tintTrackIconInner(inner: string, color: string): string {
   let s = inner.replace(/<style[\s\S]*?<\/style>/gi, "");
   s = s
@@ -140,27 +183,10 @@ function tintTrackIconInner(inner: string, color: string): string {
     .replace(/fill='#000000'/gi, `fill="${color}"`)
     .replace(/fill="#000"/gi, `fill="${color}"`)
     .replace(/fill='#000'/gi, `fill="${color}"`);
-  s = s.replace(/\bclass="st0"/gi, `fill="${color}"`);
+  s = s.replace(/\bclass="[^"]*"/gi, `fill="${color}"`);
+  s = s.replace(/<(path|polygon|polyline|circle|ellipse|rect)\b(?![^>]*\bfill=)/gi, `<$1 fill="${color}"`);
+  s = s.replace(/\bstroke="(?!none)[^"]*"/gi, `stroke="${color}"`);
   return s;
-}
-
-function virtualTrackGlyphInnerFromBody(tintedBody: string, viewBox: string, color: string): string {
-  const p = viewBox.trim().split(/[\s,]+/).map(Number);
-  const vx = p.length === 4 ? p[0] : 0;
-  const vy = p.length === 4 ? p[1] : 0;
-  const vw = p.length === 4 ? Math.abs(p[2]) : 1024;
-  const vh = p.length === 4 ? Math.abs(p[3]) : 1024;
-  const band = Math.max(26, Math.round(Math.min(vw, vh) / VIRTUAL_GLYPH_BAND_DIVISOR));
-  const dashH = Math.max(10, Math.round(band * VIRTUAL_GLYPH_DASH_FILL_RATIO));
-  return [
-    `<defs>`,
-    `<clipPath id="vc">${tintedBody}</clipPath>`,
-    `<pattern id="vp" width="${band}" height="${band}" patternUnits="userSpaceOnUse">`,
-    `<rect x="0" y="0" width="${band}" height="${dashH}" fill="${color}"/>`,
-    `</pattern>`,
-    `</defs>`,
-    `<rect x="${vx}" y="${vy}" width="${vw}" height="${vh}" fill="url(#vp)" clip-path="url(#vc)"/>`,
-  ].join("");
 }
 
 function buildTrackGlyphInner(
@@ -168,38 +194,14 @@ function buildTrackGlyphInner(
   color: string,
   virtual: boolean,
 ): { viewBox: string; inner: string } {
-  const cached = trackIconFragmentCache.get(type);
+  const cached = trackIconFragmentCache.get(trackIconCacheKey(type, virtual));
   if (cached) {
     const tinted = tintTrackIconInner(cached.body, color);
-    const inner = virtual
-      ? virtualTrackGlyphInnerFromBody(tinted, cached.viewBox, color)
-      : tinted;
-    return { viewBox: cached.viewBox, inner };
+    return { viewBox: cached.viewBox, inner: tinted };
   }
   const icon = TRACK_SVG_ICONS[type];
-  const inner = virtual
-    ? virtualTrackGlyphInnerSvg(icon.pathD, icon.viewBox, color)
-    : `<path d="${icon.pathD}" fill="${color}"/>`;
+  const inner = `<path d="${icon.pathD}" fill="${color}"/>`;
   return { viewBox: icon.viewBox, inner };
-}
-
-function virtualTrackGlyphInnerSvg(pathD: string, viewBox: string, color: string): string {
-  const p = viewBox.trim().split(/[\s,]+/).map(Number);
-  const vx = p.length === 4 ? p[0] : 0;
-  const vy = p.length === 4 ? p[1] : 0;
-  const vw = p.length === 4 ? Math.abs(p[2]) : 1024;
-  const vh = p.length === 4 ? Math.abs(p[3]) : 1024;
-  const band = Math.max(26, Math.round(Math.min(vw, vh) / VIRTUAL_GLYPH_BAND_DIVISOR));
-  const dashH = Math.max(10, Math.round(band * VIRTUAL_GLYPH_DASH_FILL_RATIO));
-  return [
-    `<defs>`,
-    `<clipPath id="vc"><path d="${pathD}"/></clipPath>`,
-    `<pattern id="vp" width="${band}" height="${band}" patternUnits="userSpaceOnUse">`,
-    `<rect x="0" y="0" width="${band}" height="${dashH}" fill="${color}"/>`,
-    `</pattern>`,
-    `</defs>`,
-    `<rect x="${vx}" y="${vy}" width="${vw}" height="${vh}" fill="url(#vp)" clip-path="url(#vc)"/>`,
-  ].join("");
 }
 
 /** 无人船与航迹「水面目标」同源（`水面目标.svg`） */
@@ -207,22 +209,13 @@ function plainGlyphUsvTrackInner(color: string, virtual: boolean): { viewBox: st
   return buildTrackGlyphInner("sea", color, virtual);
 }
 
-/** 飞弹 SVG 默认朝向上偏 45°；生成地图位图时绕 viewBox 中心 -45°，之后 icon-rotate 直接对 attitude_head */
+/** 飞弹 SVG 整图保留；方向默认偏移由 `missile-maplibre` 的 `icon-rotate` 统一处理。 */
 function plainGlyphMissilePublicInner(
   viewBox: string,
   iconBody: string,
   color: string,
-  virtual: boolean,
 ): { viewBox: string; inner: string } {
-  const pathD = iconBody.match(/\bd\s*=\s*"([^"]+)"/i)?.[1];
-  if (!pathD) return { viewBox, inner: tintPublicAssetIconInner(iconBody, color, "missile") };
-  const p = viewBox.trim().split(/[\s,]+/).map(Number);
-  const cx = p.length === 4 ? p[0] + p[2] / 2 : 180;
-  const cy = p.length === 4 ? p[1] + p[3] / 2 : 451;
-  const glyph = virtual
-    ? virtualTrackGlyphInnerSvg(pathD, viewBox, color)
-    : `<path d="${pathD}" fill="${color}"/>`;
-  return { viewBox, inner: `<g transform="rotate(-45 ${cx} ${cy})">${glyph}</g>` };
+  return { viewBox, inner: tintPublicAssetIconInner(iconBody, color, "missile") };
 }
 
 /** 航迹点/线填色：敌/中读 `factory.assetIcons`；我方读 `trackRendering.trackTypeStyles.*.idColor`（由调用方传入） */
@@ -253,9 +246,8 @@ export function buildMarkerSymbolSvg(
 ): string {
   const color = resolveTrackMarkerFill(disposition, accent ?? null, friendlyFill);
   const { viewBox, inner: glyphInner } = buildTrackGlyphInner(type, color, virtual);
-  const northAttrs = virtual
-    ? `stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 5"`
-    : `stroke="${color}" stroke-width="2.2" stroke-linecap="round"`;
+  const opacity = virtual ? VIRTUAL_SYMBOL_OPACITY : 1;
+  const northAttrs = `stroke="${color}" stroke-width="2.2" stroke-linecap="round"`;
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">`,
@@ -264,10 +256,12 @@ export function buildMarkerSymbolSvg(
     `<feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#000" flood-opacity="0.85"/>`,
     `</filter>`,
     `</defs>`,
+    `<g opacity="${opacity}">`,
     `<svg x="4" y="6" width="56" height="54" viewBox="${viewBox}" filter="url(#sh)">`,
     glyphInner,
     `</svg>`,
     `<path d="M32 2 L32 7" fill="none" ${northAttrs} opacity="0.9"/>`,
+    `</g>`,
     `</svg>`,
   ].join("");
 }
@@ -481,15 +475,27 @@ export function assetPlacardHeaderColor(
  * 其中 **`drone`** 在 `DRONE_MAP_ICON_SOURCE === "generated"` 时不参与网络请求，改由 `buildDroneTriangleDataUrl` 生成。
  */
 export const PUBLIC_MAP_SVG_FILES = {
-  radar: "雷达.svg",
-  camera: "光电.svg",
-  tower: "电侦.svg",
-  laser: "激光.svg",
-  tdoa: "TDOA.svg",
-  airport: "无人机机场.svg",
+  radar: "固定装备实/雷达.svg",
+  camera: "固定装备实/光电.svg",
+  tower: "固定装备实/电侦.svg",
+  laser: "固定装备实/激光.svg",
+  tdoa: "固定装备实/TDOA.svg",
+  airport: "固定装备实/无人机机场.svg",
   drone: "无人机.svg",
-  usv: "水面目标.svg",
-  missile: "飞弹.svg",
+  usv: "移动实/水面目标.svg",
+  missile: "移动实/飞弹.svg",
+} as const;
+
+const PUBLIC_MAP_VIRTUAL_SVG_FILES = {
+  radar: "固定装备虚/雷达.svg",
+  camera: "固定装备虚/光电.svg",
+  tower: "固定装备虚/电侦.svg",
+  laser: "固定装备虚/激光.svg",
+  tdoa: "固定装备虚/TDOA.svg",
+  airport: "固定装备虚/无人机机场.svg",
+  drone: "无人机.svg",
+  usv: "移动虚/水面目标虚.svg",
+  missile: "移动虚/飞弹虚.svg",
 } as const;
 
 export type PublicMapSvgKey = keyof typeof PUBLIC_MAP_SVG_FILES;
@@ -529,8 +535,16 @@ export function getAllSectorCenterSymbolKeys(): Array<{
   );
 }
 
-const publicAssetFragmentCache = new Map<AssetType, { viewBox: string; body: string }>();
-const publicAssetFragmentInflight = new Map<AssetType, Promise<{ viewBox: string; body: string }>>();
+const publicAssetFragmentCache = new Map<string, SvgFragment>();
+const publicAssetFragmentInflight = new Map<string, Promise<SvgFragment>>();
+
+function assetIconCacheKey(type: AssetType, virtual: boolean): string {
+  return `${type}:${virtual ? "v" : "r"}`;
+}
+
+function publicMapAssetIconFile(type: AssetType, virtual: boolean): string {
+  return virtual ? PUBLIC_MAP_VIRTUAL_SVG_FILES[type] : PUBLIC_MAP_SVG_FILES[type];
+}
 
 /** 无人机地图中心图标：`svg` 读 `public/icons/无人机.svg` 装裱；`generated` 为 V2 `DroneRenderer.loadDroneIcon` 同款 Canvas 三角形（PNG） */
 export type DroneMapIconSource = "generated";
@@ -556,11 +570,10 @@ export const DRONE_FLEET_MAP_IMAGE_HOSTILE_DASH = "nexus-drone-fleet-hostile-das
 export const DRONE_FLEET_MAP_IMAGE_NEUTRAL = "nexus-drone-fleet-neutral";
 export const DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH = "nexus-drone-fleet-neutral-dash";
 
-const DRONE_TRIANGLE_CANVAS_PX = 72;
-
 /** V2 `DroneRenderer.loadDroneIcon`：向上三角 + 白描边，虚兵为虚线描边 */
 export function buildDroneTriangleDataUrl(fillColor: string, dashedStroke: boolean): string {
-  const size = DRONE_TRIANGLE_CANVAS_PX;
+  const cfg = getAssetIconFrameConfig();
+  const size = cfg.droneTriangleCanvasPx;
   if (typeof document === "undefined") {
     throw new Error("[map-icons] buildDroneTriangleDataUrl 仅在浏览器环境可用");
   }
@@ -571,7 +584,7 @@ export function buildDroneTriangleDataUrl(fillColor: string, dashedStroke: boole
   if (!ctx) throw new Error("[map-icons] Canvas 2D 不可用");
   ctx.fillStyle = fillColor;
   ctx.strokeStyle = "#FFFFFF";
-  ctx.lineWidth = dashedStroke ? 2.5 : 2;
+  ctx.lineWidth = dashedStroke ? cfg.droneTriangleStrokeWidthPx + 0.5 : cfg.droneTriangleStrokeWidthPx;
   ctx.beginPath();
   ctx.moveTo(size / 2, size * 0.2);
   ctx.lineTo(size * 0.8, size * 0.8);
@@ -646,25 +659,26 @@ export function droneSnIsMapIconAlert(sn: string): boolean {
 /**
  * 从 `public/icons` 读取 SVG 正文并解析为内层片段（按 `type` 缓存，同会话只请求一次）。
  */
-export async function fetchPublicMapAssetFragment(type: AssetType): Promise<{ viewBox: string; body: string }> {
-  const hit = publicAssetFragmentCache.get(type);
+export async function fetchPublicMapAssetFragment(type: AssetType, virtual = false): Promise<{ viewBox: string; body: string }> {
+  const key = assetIconCacheKey(type, virtual);
+  const hit = publicAssetFragmentCache.get(key);
   if (hit) return hit;
-  let inflight = publicAssetFragmentInflight.get(type);
+  let inflight = publicAssetFragmentInflight.get(key);
   if (!inflight) {
     inflight = (async () => {
-      const url = publicIconFileUrl(PUBLIC_MAP_SVG_FILES[type]);
+      const url = publicIconFileUrl(publicMapAssetIconFile(type, virtual));
       const res = await fetch(url);
       if (!res.ok) {
         throw new Error(`[map-icons] 无法加载资产图标：${url}（HTTP ${res.status}）`);
       }
       const text = await res.text();
       const parsed = extractSvgInnerForMapAsset(text);
-      publicAssetFragmentCache.set(type, parsed);
+      publicAssetFragmentCache.set(key, parsed);
       return parsed;
     })();
-    publicAssetFragmentInflight.set(type, inflight);
+    publicAssetFragmentInflight.set(key, inflight);
     void inflight.finally(() => {
-      publicAssetFragmentInflight.delete(type);
+      publicAssetFragmentInflight.delete(key);
     });
   }
   return inflight;
@@ -675,7 +689,7 @@ export async function preloadPublicMapAssetFragments(types?: readonly AssetType[
   const list = (types ?? [...PUBLIC_MAP_ASSET_TYPES]).filter(
     (t) => !(t === "drone" && DRONE_MAP_ICON_SOURCE === "generated"),
   );
-  await Promise.all(list.map((t) => fetchPublicMapAssetFragment(t)));
+  await Promise.all(list.flatMap((t) => [fetchPublicMapAssetFragment(t, false), fetchPublicMapAssetFragment(t, true)]));
 }
 
 export function extractSvgInnerForMapAsset(svgText: string): { viewBox: string; body: string } {
@@ -692,41 +706,42 @@ export function extractSvgInnerForMapAsset(svgText: string): { viewBox: string; 
 }
 
 /** 从 `public/icons` 读取航迹 SVG（按类型缓存） */
-export async function fetchTrackIconFragment(type: TrackType): Promise<{ viewBox: string; body: string }> {
-  const hit = trackIconFragmentCache.get(type);
+export async function fetchTrackIconFragment(type: TrackType, virtual = false): Promise<{ viewBox: string; body: string }> {
+  const key = trackIconCacheKey(type, virtual);
+  const hit = trackIconFragmentCache.get(key);
   if (hit) return hit;
-  let inflight = trackIconFragmentInflight.get(type);
+  let inflight = trackIconFragmentInflight.get(key);
   if (!inflight) {
     inflight = (async () => {
-      const url = publicIconFileUrl(TRACK_ICON_SVG_FILES[type]);
+      const url = publicIconFileUrl(trackIconFile(type, virtual));
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) {
         throw new Error(`[map-icons] 无法加载航迹图标：${url}（HTTP ${res.status}）`);
       }
       const parsed = extractSvgInnerForMapAsset(await res.text());
-      trackIconFragmentCache.set(type, parsed);
+      trackIconFragmentCache.set(key, parsed);
       return parsed;
     })();
-    trackIconFragmentInflight.set(type, inflight);
+    trackIconFragmentInflight.set(key, inflight);
     void inflight.finally(() => {
-      trackIconFragmentInflight.delete(type);
+      trackIconFragmentInflight.delete(key);
     });
   }
   return inflight;
 }
 
-export function getTrackIconFragmentSync(type: TrackType): { viewBox: string; body: string } | null {
-  return trackIconFragmentCache.get(type) ?? null;
+export function getTrackIconFragmentSync(type: TrackType, virtual = false): { viewBox: string; body: string } | null {
+  return trackIconFragmentCache.get(trackIconCacheKey(type, virtual)) ?? null;
 }
 
 /** 地图 `addImage` 前预加载空/海/潜航迹图标 */
 export async function preloadTrackIconFragments(types?: readonly TrackType[]): Promise<void> {
   const list = types ?? (["air", "sea", "underwater"] as TrackType[]);
-  await Promise.all(list.map((t) => fetchTrackIconFragment(t)));
+  await Promise.all(list.flatMap((t) => [fetchTrackIconFragment(t, false), fetchTrackIconFragment(t, true)]));
 }
 
 function tintPublicAssetIconInner(inner: string, color: string, type: AssetType): string {
-  let s = inner
+  let s = inner.replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/fill="#D1D7DD"/gi, `fill="${color}"`)
     .replace(/fill='#D1D7DD'/gi, `fill="${color}"`)
     .replace(/fill="#ffffff"/gi, `fill="${color}"`)
@@ -734,63 +749,57 @@ function tintPublicAssetIconInner(inner: string, color: string, type: AssetType)
     .replace(/fill="#fff"/gi, `fill="${color}"`)
     .replace(/fill='#fff'/gi, `fill="${color}"`);
   if (type === "usv" || type === "missile") {
-    s = s
+    return s
       .replace(/fill="#999"/gi, `fill="${color}"`)
       .replace(/fill='#999'/gi, `fill="${color}"`)
+      .replace(/fill="#828282"/gi, `fill="${color}"`)
+      .replace(/fill='#828282'/gi, `fill="${color}"`)
+      .replace(/fill="#a0a0a0"/gi, `fill="${color}"`)
+      .replace(/fill='#a0a0a0'/gi, `fill="${color}"`)
       .replace(/fill="#000000"/gi, `fill="${color}"`)
       .replace(/fill='#000000'/gi, `fill="${color}"`)
       .replace(/fill="#000"/gi, `fill="${color}"`)
-      .replace(/fill='#000'/gi, `fill="${color}"`);
+      .replace(/fill='#000'/gi, `fill="${color}"`)
+      .replace(/\bclass="[^"]*"/gi, `fill="${color}"`)
+      .replace(/<(path|polygon|polyline|circle|ellipse|rect)\b(?![^>]*\bfill=)/gi, `<$1 fill="${color}"`)
+      .replace(/\bstroke="(?!none)[^"]*"/gi, `stroke="${color}"`);
   }
   if (type === "tower") {
     s = s.replace(/fill:\s*#d1d7dd/gi, `fill: ${color}`);
   }
+  s = s
+    .replace(/fill="#a1f8db"/gi, `fill="${color}"`)
+    .replace(/fill='#a1f8db'/gi, `fill="${color}"`)
+    .replace(/fill="#19191d"/gi, `fill="rgba(9,9,11,0.9)"`)
+    .replace(/fill='#19191d'/gi, `fill="rgba(9,9,11,0.9)"`)
+    .replace(/\bclass="st0"/gi, `fill="rgba(9,9,11,0.9)"`)
+    .replace(/\bclass="st1"/gi, `fill="${color}"`)
+    .replace(/\bclass="[^"]*"/gi, `fill="${color}"`)
+    .replace(/<(path|polygon|polyline|circle|ellipse|rect)\b(?![^>]*\bfill=)/gi, `<$1 fill="${color}"`)
+    .replace(/\bstroke="(?!none)[^"]*"/gi, `stroke="${color}"`);
   return s;
 }
 
-/** 无人船 / 飞弹：无圆角底板，64×64 画布（飞弹 `飞弹.svg`，无人船航迹水面 path） */
-const PLAIN_ASSET_GLYPH_CANVAS_PX = 82;
-
-const ASSET_GLYPH_CANVAS_PX = 56;
-
-function buildPlainAssetGlyphSvgString(viewBox: string, inner: string): string {
-  const s = PLAIN_ASSET_GLYPH_CANVAS_PX;
-  return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">`,
-    `<defs>`,
-    `<filter id="sh" x="-25%" y="-25%" width="150%" height="150%">`,
-    `<feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#000" flood-opacity="0.85"/>`,
-    `</filter>`,
-    `</defs>`,
-    `<svg x="0" y="0" width="${s}" height="${s}" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet" filter="url(#sh)">`,
-    inner,
-    `</svg>`,
-    `</svg>`,
-  ].join("");
-}
-
-/** 与资产图层相同的 56×56 圆角底板 + 投影（内层已着色 SVG 片段） */
-function buildFramedGlyphSvgString(
+function buildPublicGlyphSvgString(
   viewBox: string,
   tintedInnerSvg: string,
-  frameColor: string,
   virtual: boolean,
-  pad: number,
+  size: number,
+  pad = 0,
 ): string {
-  const frameStrokeAttrs = virtual
-    ? `stroke="${frameColor}" stroke-width="2" stroke-dasharray="4 3"`
-    : `stroke="${frameColor}" stroke-width="2"`;
-  const s = ASSET_GLYPH_CANVAS_PX;
-  const inner = s - pad * 2;
+  const cfg = getAssetIconFrameConfig();
+  const inner = size - pad * 2;
+  const opacity = virtual ? VIRTUAL_SYMBOL_OPACITY : 1;
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
     `<defs>`,
-    `<filter id="ag" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="${frameColor}" flood-opacity="0.5"/></filter>`,
+    `<filter id="ag" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="0" stdDeviation="${cfg.shadowBlurPx}" flood-color="#000" flood-opacity="${cfg.shadowOpacity}"/></filter>`,
     `</defs>`,
-    `<rect x="3" y="3" width="50" height="50" rx="7" fill="rgba(9,9,11,0.9)" ${frameStrokeAttrs} filter="url(#ag)"/>`,
-    `<svg x="${pad}" y="${pad}" width="${inner}" height="${inner}" viewBox="${viewBox}">`,
+    `<g opacity="${opacity}" filter="url(#ag)">`,
+    `<svg x="${pad}" y="${pad}" width="${inner}" height="${inner}" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet">`,
     tintedInnerSvg,
     `</svg>`,
+    `</g>`,
     `</svg>`,
   ].join("");
 }
@@ -809,7 +818,7 @@ export function buildFramedPublicGlyphSvgDataUrl(
 ): string {
   const tinted = tintPublicAssetIconInner(iconBody, frameColor, tintAsAssetType);
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-    buildFramedGlyphSvgString(viewBox, tinted, frameColor, virtual, pad),
+    buildPublicGlyphSvgString(viewBox, tinted, virtual, getAssetIconFrameConfig().canvasPx, pad),
   )}`;
 }
 
@@ -822,7 +831,7 @@ export function sectorCenterGlyphColor(
   return resolveAssetIconAccentFill(disposition, "online", accent ?? null, friendlyOverride);
 }
 
-/** 将 `public/icons` 内图标体包进与原先一致的 56×56 资产底板（状态色描边 + 投影） */
+/** 将 `public/icons` 内图标体按当前颜色逻辑着色，虚目标只做 60% 透明。 */
 export function buildAssetWrappedSvgFromPublicBody(
   viewBox: string,
   iconInner: string,
@@ -834,17 +843,18 @@ export function buildAssetWrappedSvgFromPublicBody(
   friendlyOverride?: string | null,
 ): string {
   const color = resolveAssetIconAccentFill(disposition, status, accent, friendlyOverride);
-  const pad = type === "camera" ? 12 : 8;
+  const cfg = getAssetIconFrameConfig();
+  const pad = 0;
   if (type === "usv") {
     const { viewBox: vb, inner } = plainGlyphUsvTrackInner(color, virtual);
-    return buildPlainAssetGlyphSvgString(vb, inner);
+    return buildPublicGlyphSvgString(vb, inner, virtual, cfg.plainCanvasPx);
   }
   if (type === "missile") {
-    const { viewBox: vb, inner } = plainGlyphMissilePublicInner(viewBox, iconInner, color, virtual);
-    return buildPlainAssetGlyphSvgString(vb, inner);
+    const { viewBox: vb, inner } = plainGlyphMissilePublicInner(viewBox, iconInner, color);
+    return buildPublicGlyphSvgString(vb, inner, virtual, cfg.canvasPx);
   }
   const tinted = tintPublicAssetIconInner(iconInner, color, type);
-  return buildFramedGlyphSvgString(viewBox, tinted, color, virtual, pad);
+  return buildPublicGlyphSvgString(viewBox, tinted, virtual, cfg.canvasPx, pad);
 }
 
 export function getAssetSymbolId(
@@ -874,7 +884,7 @@ export async function buildAssetSymbolSvg(
   if (type === "drone" && DRONE_MAP_ICON_SOURCE === "generated") {
     throw new Error("[map-icons] drone 为 generated 模式，请使用 buildAssetSymbolDataUrl");
   }
-  const fr = await fetchPublicMapAssetFragment(type);
+  const fr = await fetchPublicMapAssetFragment(type, virtual);
   return buildAssetWrappedSvgFromPublicBody(fr.viewBox, fr.body, type, status, virtual, disposition, accent, friendlyOverride);
 }
 

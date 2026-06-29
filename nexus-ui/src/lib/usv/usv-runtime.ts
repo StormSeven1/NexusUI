@@ -102,25 +102,23 @@ export function applyUsvWsPayload(d: Record<string, unknown>): void {
   const store = useAssetStore.getState();
   const existing = store.assets.find((a) => a.id === entityId);
 
-  if (existing) {
-    const prevProps =
-      existing.properties && typeof existing.properties === "object"
-        ? ({ ...(existing.properties as Record<string, unknown>) } as Record<string, unknown>)
-        : {};
-    const patch: Partial<AssetData> = {
-      lat: row.lat,
-      lng: row.lng,
-      status: row.status,
-      disposition: row.disposition,
-      assigned_target_id: row.assigned_target_id,
-      properties: {
-        ...prevProps,
-        ...row.properties,
-      },
-    };
-    if (row.heading != null) patch.heading = row.heading;
-    store.mergeAssetFields(entityId, patch);
-  } else {
-    store.upsertAsset(row);
-  }
+  if (!existing) return;
+
+  const prevProps =
+    existing.properties && typeof existing.properties === "object"
+      ? ({ ...(existing.properties as Record<string, unknown>) } as Record<string, unknown>)
+      : {};
+  const patch: Partial<AssetData> = {
+    lat: row.lat,
+    lng: row.lng,
+    status: row.status,
+    disposition: row.disposition,
+    assigned_target_id: row.assigned_target_id,
+    properties: {
+      ...prevProps,
+      ...row.properties,
+    },
+  };
+  if (row.heading != null) patch.heading = row.heading;
+  store.mergeAssetFields(entityId, patch);
 }

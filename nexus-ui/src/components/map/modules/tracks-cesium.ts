@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 三维航迹模型渲染模块。
  *
  * 模型映射：
@@ -45,7 +45,7 @@ function getTrackLabelText(track: Track): string {
     const alias = useTrackAliasStore.getState().getOrCreate(aliasKey);
     if (alias) return alias;
   }
-  return track.name || track.showID || "";
+  return track.name || "";
 }
 
 /* ── 创建 / 更新 / 移除 ── */
@@ -82,7 +82,12 @@ function createTrackEntity(
       scaleByDistance: new C.NearFarScalar(1e4, 1, 5e5, 0.4),
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
-    properties: { trackId: track.id, kind: "track" },
+    properties: {
+      id: track.id,
+      targetID: track.targetID,
+      external_target_id: track.external_target_id ?? null,
+      kind: "track",
+    },
   });
   return { entity };
 }
@@ -173,3 +178,4 @@ export function installTracksCesium(opts: {
   tracks.install();
   return () => tracks.uninstall();
 }
+

@@ -86,6 +86,7 @@ export function adaptAssetsForMap(assets: AssetData[]): Asset[] {
         ...(fovFillOpacity !== undefined ? { fovFillOpacity } : {}),
         ...(friendlyMapColor ? { friendlyMapColor } : {}),
         ...(labelFontColor ? { labelFontColor } : {}),
+        properties: p ?? null,
       };
     });
 }

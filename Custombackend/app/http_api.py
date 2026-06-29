@@ -1,11 +1,10 @@
-"""
-HTTP API服务 - 提供REST接口
-"""
+﻿"""HTTP API service."""
 from pathlib import Path
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from datetime import datetime
 from typing import Optional
+import aiohttp
 from loguru import logger
 from pydantic import BaseModel, Field
 from websocket_manager import ws_manager
@@ -20,28 +19,22 @@ router = APIRouter()
 settings = get_settings()
 latest_entity_records = {}
 
+TEMP_FILTER_TARGET_URL = "http://192.168.18.103:8888/api/v1/publishTask/examples/filterTargetOrForce"
+TEMP_FILTER_TARGET_API_KEY = "toksim_default_key"
 
-# 数据库管理器引用（由main.py注入）
+
+# API handler
 db_manager = None
 
 
 def set_db_manager(manager):
-    """设置数据库管理器"""
+    """API handler."""
     global db_manager
     db_manager = manager
 
 
 async def refresh_db_area_cache_and_broadcast():
-    """注册区域/航线发生变化后，刷新后端缓存并通过 WS 广播。
-
-    这里是数据库区域/航线向前端扩散的唯一正式出口：
-    1. 从 `area_table` 重新读取最新行数据
-    2. 替换后端内存中的当前区域快照
-    3. 向所有已连接客户端广播一份新的 `DbAreas` 全量消息
-
-    前端不会直接读 Postgres，也不会自己轮询数据库。
-    所有浏览器最终都渲染这份后端持有的统一快照。
-    """
+    """API handler."""
     if not db_manager:
         return
     rows = await db_manager.get_area_table_rows()
@@ -50,7 +43,7 @@ async def refresh_db_area_cache_and_broadcast():
 
 
 def set_latest_entity_records(records):
-    """缓存最近一次 HTTP 轮询拿到的实体列表"""
+    """Cache the latest entity records fetched by polling."""
     global latest_entity_records
     next_records = {}
     if isinstance(records, list):
@@ -84,14 +77,7 @@ def _safe_capture_file_name(value: str, fallback_ext: str) -> str:
 
 @router.post('/eo-video/capture/save')
 async def save_eo_video_capture(request: Request):
-    """保存光电视频截图或录像文件。
-
-    EO 弹窗会先在浏览器侧生成截图或录像二进制，再上传到这个接口。
-    这个接口只负责把文件落到本地磁盘：
-    - 不代理实时 WebRTC 视频流
-    - 不参与检测框同步
-    - 不参与视频播放本身
-    """
+    """Save EO video snapshot or recording file."""
     kind = str(request.query_params.get("kind", "")).strip().lower()
     stream_label = str(request.query_params.get("streamLabel", "")).strip()
     file_name_raw = str(request.query_params.get("fileName", "")).strip()
@@ -128,7 +114,7 @@ async def save_eo_video_capture(request: Request):
 
 @router.get('/entity-status/{entity_id}')
 async def get_entity_status_detail(entity_id: str):
-    """返回最近一帧实体状态中的单个实体详情"""
+    """API handler."""
     entity_key = entity_id.strip()
     if not entity_key:
         return JSONResponse(status_code=400, content={"ok": False, "error": "missing_entity_id"})
@@ -145,7 +131,7 @@ async def get_entity_status_detail(entity_id: str):
 
 @router.get('/test')
 async def test():
-    """测试接口"""
+    """API handler."""
     return JSONResponse(
         status_code=200,
         content={
@@ -156,9 +142,27 @@ async def test():
     )
 
 
+@router.get('/alarm/dzwl/on')
+@router.post('/alarm/dzwl/on')
+async def dzwl_alarm_on():
+    """Open the DZWL popup on all connected frontend clients."""
+    await ws_manager.broadcast({"type": "dzwl_alarm", "state": "on"})
+    logger.info("[API] DZWL alarm popup opened")
+    return JSONResponse(status_code=200, content={"ok": True, "state": "on"})
+
+
+@router.get('/alarm/dzwl/off')
+@router.post('/alarm/dzwl/off')
+async def dzwl_alarm_off():
+    """Close the DZWL popup on all connected frontend clients."""
+    await ws_manager.broadcast({"type": "dzwl_alarm", "state": "off"})
+    logger.info("[API] DZWL alarm popup closed")
+    return JSONResponse(status_code=200, content={"ok": True, "state": "off"})
+
+
 @router.get('/health')
 async def health_check():
-    """健康检查接口"""
+    """API handler."""
     return JSONResponse(
         status_code=200,
         content={
@@ -169,9 +173,9 @@ async def health_check():
     )
 
 
-@router.get('/image/{unique_id}')
-async def get_image_by_unique_id(unique_id: str):
-    """根据 uniqueID 返回 base64（查库、拉取、绘制见 database.fetch_hanging_image_for_api）"""
+@router.get('/image/{targetID}')
+async def get_image_by_target_id(targetID: str):
+    """API handler."""
     try:
         if not db_manager:
             raise HTTPException(
@@ -179,7 +183,7 @@ async def get_image_by_unique_id(unique_id: str):
                 detail="数据库服务不可用"
             )
         
-        payload = await db_manager.fetch_hanging_image_for_api(unique_id)
+        payload = await db_manager.fetch_hanging_image_for_api(targetID)
         if not payload.get("ok"):
             reason = payload.get("reason")
             if reason == "not_found":
@@ -187,27 +191,27 @@ async def get_image_by_unique_id(unique_id: str):
                     status_code=404,
                     content={
                         "code": 404,
-                        "message": f"未找到uniqueID为 {unique_id} 的图片",
+                        "message": f"image not found for targetID {targetID}",
                         "timestamp": datetime.now().isoformat(),
                     },
                 )
             if reason == "no_url":
-                logger.warning(f"图片信息中没有imageUrl: {unique_id}")
+                logger.warning(f"图片信息中没有 imageUrl: {targetID}")
                 return JSONResponse(
                     status_code=404,
                     content={
                         "code": 404,
-                        "message": "图片URL不存在",
+                        "message": "image URL not found",
                         "timestamp": datetime.now().isoformat(),
                     },
                 )
             if reason == "bad_http":
-                logger.error(f"从MinIO读取图片失败: HTTP {payload.get('http_status')}")
+                logger.error(f"从 MinIO 读取图片失败: HTTP {payload.get('http_status')}")
                 return JSONResponse(
                     status_code=404,
                     content={
                         "code": 404,
-                        "message": "无法从MinIO读取图片",
+                        "message": "无法从 MinIO 读取图片",
                         "timestamp": datetime.now().isoformat(),
                     },
                 )
@@ -224,7 +228,7 @@ async def get_image_by_unique_id(unique_id: str):
                 status_code=500,
                 content={
                     "code": 500,
-                    "message": "服务器内部错误",
+                    "message": "internal server error",
                     "timestamp": datetime.now().isoformat(),
                 },
             )
@@ -239,8 +243,8 @@ async def get_image_by_unique_id(unique_id: str):
                     "contentType": payload["contentType"],
                     "fileName": payload.get("fileName"),
                     "fileSize": payload.get("fileSize"),
-                    "uniqueId": payload.get("uniqueId"),
-                    "trackId": payload.get("trackId"),
+                    "targetID": payload.get("targetID"),
+                    "external_target_id": payload.get("external_target_id"),
                 },
                 "timestamp": datetime.now().isoformat(),
             },
@@ -254,15 +258,15 @@ async def get_image_by_unique_id(unique_id: str):
             status_code=500,
             content={
                 "code": 500,
-                "message": "服务器内部错误",
+                "message": "internal server error",
                 "timestamp": datetime.now().isoformat()
             }
         )
 
 
-@router.get('/image/track/{track_id}')
-async def get_image_by_track_id(track_id: str):
-    """根据trackID查询图片信息"""
+@router.get('/image/external/{external_target_id}')
+async def get_image_by_external_target_id(external_target_id: str):
+    """API handler."""
     try:
         if not db_manager:
             raise HTTPException(
@@ -270,15 +274,15 @@ async def get_image_by_track_id(track_id: str):
                 detail="数据库服务不可用"
             )
         
-        # 查询图片信息
-        image_info = await db_manager.get_hanging_image("", track_id)
+        # API handler
+        image_info = await db_manager.get_hanging_image("", external_target_id)
         
         if not image_info:
             return JSONResponse(
                 status_code=404,
                 content={
                     "code": 404,
-                    "message": f"未找到trackID为 {track_id} 的图片",
+                    "message": f"image not found for external_target_id {external_target_id}",
                     "timestamp": datetime.now().isoformat()
                 }
             )
@@ -301,7 +305,7 @@ async def get_image_by_track_id(track_id: str):
             status_code=500,
             content={
                 "code": 500,
-                "message": "服务器内部错误",
+                "message": "internal server error",
                 "timestamp": datetime.now().isoformat()
             }
         )
@@ -309,7 +313,7 @@ async def get_image_by_track_id(track_id: str):
 
 @router.get('/areas')
 async def get_areas():
-    """获取区域数据"""
+    """API handler."""
     if not db_manager:
         return JSONResponse(
             status_code=500,
@@ -356,14 +360,14 @@ class CreateAreaRequest(BaseModel):
 
 
 class DestroyVersionRequest(BaseModel):
-    """Destroy HTTP body.version。"""
+    """API handler."""
 
     definitionVersion: int
     statusVersion: int
 
 
 class DestroySpecificationRequest(BaseModel):
-    """Destroy HTTP body.specification。"""
+    """API handler."""
 
     at_type: str = Field(alias="@type")
     type: int
@@ -373,7 +377,7 @@ class DestroySpecificationRequest(BaseModel):
 
 
 class DestroyCreatedBySystemRequest(BaseModel):
-    """Destroy HTTP body.createdBy.system。"""
+    """API handler."""
 
     serviceName: str
     entityId: str
@@ -382,22 +386,21 @@ class DestroyCreatedBySystemRequest(BaseModel):
 
 
 class DestroyCreatedByRequest(BaseModel):
-    """Destroy HTTP body.createdBy。"""
+    """API handler."""
 
     system: DestroyCreatedBySystemRequest
 
 
 class DestroyOwnerRequest(BaseModel):
-    """Destroy HTTP body.owner。"""
+    """API handler."""
 
     entityId: str
 
 
 class DestroyPublishRequest(BaseModel):
-    """
-    前端“消灭”唯一 HTTP 请求体。
+    """前端发送的毁伤任务 HTTP 请求体。
 
-    这里直接按前端现有 body 结构收，不再让前端拆字段，也不再走 JSON blob 转 gRPC。
+    这里直接按前端现有 body 结构接收，不再拆字段，也不再转 JSON blob 到 gRPC。
     """
 
     taskId: str
@@ -412,19 +415,10 @@ class DestroyPublishRequest(BaseModel):
 
 
 @router.post('/destroy/publish')
-async def publish_destroy_event(request: DestroyPublishRequest):
-    """
-    告警面板“消灭”唯一 HTTP 出口。
+async def publish_destroy_event(http_request: Request, request: DestroyPublishRequest):
+    """Publish destroy event."""
+    raw_body = await http_request.json()
 
-    这条接口只做两件事：
-    1. 把前端请求体逐字段映射为 destroy proto 消息。
-    2. 广播给当前所有在线的 gRPC 订阅客户端，并把在线数回给前端。
-
-    注意：
-    - 这里不再转发多个地址。
-    - 这里不再做实体删除。
-    - gRPC 订阅服务监听地址复用后端 HOST，但使用独立端口承载订阅流。
-    """
     connected_clients = await destroy_grpc_service.publish_destroy_event(
         {
             "task_id": request.taskId,
@@ -444,29 +438,50 @@ async def publish_destroy_event(request: DestroyPublishRequest):
             "owner_entity_id": request.owner.entityId,
         }
     )
+
+    temp_http_ok = True
+    temp_http_status = 200
+    temp_http_error = None
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                TEMP_FILTER_TARGET_URL,
+                json=raw_body,
+                headers={"x-api-key": TEMP_FILTER_TARGET_API_KEY},
+            ) as response:
+                temp_http_status = response.status
+                if response.status >= 400:
+                    temp_http_ok = False
+                    temp_http_error = await response.text()
+                    logger.error(
+                        f"临时转发 filterTargetOrForce 失败: status={response.status}, body={temp_http_error}"
+                    )
+    except Exception as exc:
+        temp_http_ok = False
+        temp_http_status = 500
+        temp_http_error = str(exc)
+        logger.error(f"临时转发 filterTargetOrForce 异常: {exc}")
+
     return JSONResponse(
         status_code=200,
         content={
             "ok": True,
             "taskId": request.taskId,
             "connectedClients": connected_clients,
+            "tempHttpForward": {
+                "ok": temp_http_ok,
+                "status": temp_http_status,
+                "error": temp_http_error,
+            },
         },
     )
 
 
 @router.post('/areas')
 async def create_area(request: CreateAreaRequest):
-    """创建区域/航线：后端统一负责存库、实体注册、刷新缓存并广播。
+    """API handler."""
 
-    完整流程：
-    1. 前端绘制界面把归一化后的几何数据提交到这个接口
-    2. 后端先插入 `area_table`
-    3. 后端再向外部实体服务注册对应的区域/航线实体
-    4. 后端刷新当前区域快照缓存
-    5. 后端通过 WebSocket 广播 `DbAreas`，让所有客户端一起刷新显示
-
-    这样数据库访问和实体注册都只发生在后端，不落到浏览器。
-    """
     if not db_manager:
         return JSONResponse(status_code=503, content={"ok": False, "error": "数据库未连接"})
 
@@ -505,7 +520,7 @@ async def create_area(request: CreateAreaRequest):
             },
         )
     except Exception as exc:
-        logger.error(f"区域存库后注册/广播失败: {exc}")
+        logger.error(f"区域入库后广播失败: {exc}")
         return JSONResponse(
             status_code=500,
             content={"ok": False, "error": str(exc), **created},
@@ -514,16 +529,8 @@ async def create_area(request: CreateAreaRequest):
 
 @router.delete('/areas')
 async def delete_area(group_id: int, area_id: int, area_type: int):
-    """删除区域/航线：先删实体，再删数据库，再广播最新快照。
+    """API handler."""
 
-    删除顺序故意设计成这样：
-    1. 先删除已经发布出去的实体
-    2. 再删除 `area_table` 中的数据库行
-    3. 然后重建后端缓存
-    4. 最后广播新的 `DbAreas` 全量快照
-
-    这样可以保证前端看到的区域列表和外部实体服务状态尽量保持一致。
-    """
     if not db_manager:
         return JSONResponse(status_code=503, content={"ok": False, "error": "数据库未连接"})
 
@@ -549,7 +556,7 @@ async def delete_area(group_id: int, area_id: int, area_type: int):
 
 @router.get('/status')
 async def get_status():
-    """获取服务状态"""
+    """API handler."""
     from receiver_manager import receiver_manager
     
     status = {
@@ -565,14 +572,14 @@ async def get_status():
         status_code=200,
         content={
             "code": 200,
-            "message": "获取状态成功",
+            "message": "status loaded",
             "data": status,
             "timestamp": datetime.now().isoformat()
         }
     )
 
 
-# ==================== 地图定位接口（供MCP服务调用） ====================
+# API handler
 
 class PointLocationRequest(BaseModel):
     longitude: float
@@ -594,7 +601,7 @@ class AreaLocationRequest(BaseModel):
 
 @router.post('/map/point_location')
 async def map_point_location(request: PointLocationRequest):
-    """点定位 - 通过WebSocket发送到前端"""
+    """API handler."""
     location_command = {
         "type": "map_command",
         "command": "point_location",
@@ -609,14 +616,14 @@ async def map_point_location(request: PointLocationRequest):
     print("map_point_location:",location_command)
     
     await ws_manager.broadcast_command(location_command)
-    logger.info(f"[API] 点定位: ({request.longitude}, {request.latitude}), zoom={request.zoom}")
+    logger.info(f"[API] 点位定位: ({request.longitude}, {request.latitude}), zoom={request.zoom}")
     
-    return JSONResponse(status_code=200, content={"code": 200, "message": "已发送点定位指令"})
+    return JSONResponse(status_code=200, content={"code": 200, "message": "已发送点位定位指令"})
 
 
 @router.post('/map/area_location')
 async def map_area_location(request: AreaLocationRequest):
-    """区域定位 - 通过WebSocket发送到前端"""
+    """API handler."""
     location_command = {
         "type": "map_command",
         "command": "area_location",
@@ -637,7 +644,7 @@ async def map_area_location(request: AreaLocationRequest):
     return JSONResponse(status_code=200, content={"code": 200, "message": "已发送区域定位指令"})
 
 
-# ==================== 新增地图功能接口 ====================
+# API handler
 
 class ExportMapRequest(BaseModel):
     sw_longitude: float
@@ -706,25 +713,25 @@ class SendAlertRequest(BaseModel):
 
 @router.post('/map/export_map')
 async def export_map(request: ExportMapRequest):
-    """地图导出 - 导出指定区域的地图图片"""
+    """API handler."""
     try:
         import base64
         from io import BytesIO
         from PIL import Image, ImageDraw
         import math
         
-        # 创建一个简单的地图图片（实际应用中应该使用真实的地图渲染）
+        # API handler
         img = Image.new('RGB', (request.width, request.height), color='#1a1a2e')
         draw = ImageDraw.Draw(img)
         
-        # 绘制网格线表示地图
+        # API handler
         grid_size = 50
         for x in range(0, request.width, grid_size):
             draw.line([(x, 0), (x, request.height)], fill='#16213e', width=1)
         for y in range(0, request.height, grid_size):
             draw.line([(0, y), (request.width, y)], fill='#16213e', width=1)
         
-        # 保存为base64
+        # API handler
         buffer = BytesIO()
         img.save(buffer, format=request.format.upper())
         img_base64 = base64.b64encode(buffer.getvalue()).decode()
@@ -749,7 +756,7 @@ async def export_map(request: ExportMapRequest):
 
 @router.post('/map/add_marker')
 async def add_marker(request: AddMarkerRequest):
-    """地图标记 - 添加点、多边形或矩形标记"""
+    """API handler."""
     marker_command = {
         "type": "map_command",
         "command": "add_marker",
@@ -764,16 +771,16 @@ async def add_marker(request: AddMarkerRequest):
     await ws_manager.broadcast_command(marker_command)
     logger.info(f"[API] 添加标记: 类型={request.marker_type}, 坐标={request.coordinates}")
     
-    return JSONResponse(status_code=200, content={"code": 200, "message": f"已添加{request.marker_type}标记"})
+    return JSONResponse(status_code=200, content={"code": 200, "message": f"marker {request.marker_type} added"})
 
 
 @router.post('/map/measure')
 async def measure(request: MeasureRequest):
-    """测量 - 测量距离或面积"""
+    """API handler."""
     from math import radians, sin, cos, sqrt, atan2, pi
     
     def haversine_distance(coord1, coord2):
-        """计算两点之间的距离（米）"""
+        """API handler."""
         R = 6371000  # 地球半径（米）
         lat1, lon1 = radians(coord1[1]), radians(coord1[0])
         lat2, lon2 = radians(coord2[1]), radians(coord2[0])
@@ -784,7 +791,7 @@ async def measure(request: MeasureRequest):
         return R * c
     
     def polygon_area(coords):
-        """计算多边形面积（平方米）"""
+        """API handler."""
         if len(coords) < 3:
             return 0
         R = 6371000
@@ -798,21 +805,21 @@ async def measure(request: MeasureRequest):
         return area
 
     def calculate_angle(p1, vertex, p2):
-        """计算三个点之间的角度（度）"""
+        """API handler."""
         from math import atan2, degrees
 
-        # 将地理坐标转换为向量（相对于顶点）
+        # API handler
         v1 = [p1[0] - vertex[0], p1[1] - vertex[1]]
         v2 = [p2[0] - vertex[0], p2[1] - vertex[1]]
 
-        # 计算两个向量的角度
+        # API handler
         angle1 = atan2(v1[1], v1[0])
         angle2 = atan2(v2[1], v2[0])
 
-        # 计算角度差
+        # API handler
         diff = angle2 - angle1
 
-        # 确保角度在0-180度范围内
+        # API handler
         diff = (diff + 360) % 360
         if diff > 180:
             diff = 360 - diff
@@ -821,33 +828,33 @@ async def measure(request: MeasureRequest):
     
     try:
         if request.measure_type == "distance":
-            # 计算总距离
+            # API handler
             total_distance = 0
             for i in range(len(request.coordinates) - 1):
                 dist = haversine_distance(request.coordinates[i], request.coordinates[i+1])
                 total_distance += dist
             
-            result_message = f"总距离: {total_distance:.2f}米 ({total_distance/1000:.2f}公里)"
+            result_message = f"总距离: {total_distance:.2f}米({total_distance/1000:.2f}公里)"
             result_data = {"distance": total_distance, "unit": "meters"}
             
         elif request.measure_type == "area":
-            # 计算面积
+            # API handler
             area = polygon_area(request.coordinates)
-            result_message = f"面积: {area:.2f}平方米 ({area/1000000:.2f}平方公里)"
+            result_message = f"面积: {area:.2f}平方米({area/1000000:.2f}平方公里)"
             result_data = {"area": area, "unit": "square_meters"}
 
         elif request.measure_type == "angle":
-            # 计算角度
+            # API handler
             if len(request.coordinates) != 3:
-                return JSONResponse(status_code=400, content={"code": 400, "message": "角度测量需要三个点"})
+                return JSONResponse(status_code=400, content={"code": 400, "message": "angle measurement needs three points"})
             angle = calculate_angle(request.coordinates[0], request.coordinates[1], request.coordinates[2])
-            result_message = f"角度: {angle:.1f}度"
+            result_message = f"angle: {angle:.1f} degrees"
             result_data = {"angle": angle, "unit": "degrees"}
 
         else:
-            return JSONResponse(status_code=400, content={"code": 400, "message": "未知的测量类型"})
+            return JSONResponse(status_code=400, content={"code": 400, "message": "unknown measure type"})
         
-        # 发送测量结果到前端显示
+        # API handler
         measure_command = {
             "type": "map_command",
             "command": "measure_result",
@@ -873,35 +880,35 @@ async def measure(request: MeasureRequest):
 
 @router.post('/map/query_features')
 async def query_features(request: QueryFeaturesRequest):
-    """查询要素 - 半径查询、多边形查询或时间线查询"""
+    """API handler."""
     try:
         features = []
         
         if request.query_type == "radius" and request.center and request.radius:
-            # 半径查询（这里应该查询数据库）
-            # 示例：返回模拟数据
+            # API handler
+            # API handler
             features = [
                 {"id": "feature_1", "type": "track", "position": request.center, "distance": 100},
                 {"id": "feature_2", "type": "track", "position": [request.center[0]+0.001, request.center[1]+0.001], "distance": 150}
             ]
             
         elif request.query_type == "polygon" and request.polygon:
-            # 多边形查询
+            # API handler
             features = [
                 {"id": "feature_3", "type": "track", "position": request.polygon[0]},
             ]
             
         elif request.query_type == "timeline" and request.feature_id:
-            # 时间线查询
+            # API handler
             if db_manager:
-                # 这里应该查询数据库获取历史数据
+                # API handler
                 pass
             features = [
                 {"id": request.feature_id, "timestamp": request.start_time, "position": [120.0, 30.0]},
                 {"id": request.feature_id, "timestamp": request.end_time, "position": [120.1, 30.1]}
             ]
         
-        # 发送查询结果到前端
+        # API handler
         query_command = {
             "type": "map_command",
             "command": "query_result",
@@ -913,10 +920,10 @@ async def query_features(request: QueryFeaturesRequest):
         }
         await ws_manager.broadcast_command(query_command)
         
-        logger.info(f"[API] 查询要素: 类型={request.query_type}, 找到{len(features)}个要素")
+        logger.info(f"[API] query features: type={request.query_type}, count={len(features)}")
         return JSONResponse(status_code=200, content={
             "code": 200,
-            "message": f"查询完成，找到{len(features)}个要素",
+            "message": f"query complete, found {len(features)} features",
             "data": {"features": features, "count": len(features)}
         })
     except Exception as e:
@@ -926,19 +933,19 @@ async def query_features(request: QueryFeaturesRequest):
 
 @router.post('/map/traffic_analysis')
 async def traffic_analysis(request: TrafficAnalysisRequest):
-    """流量分析 - 生成热力图"""
+    """API handler."""
     try:
         import base64
         from io import BytesIO
         from PIL import Image, ImageDraw
         import random
         
-        # 创建热力图（实际应用中应该根据真实数据生成）
+        # API handler
         width, height = 800, 600
         img = Image.new('RGBA', (width, height), color=(0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         
-        # 生成随机热力点
+        # API handler
         for _ in range(50):
             x = random.randint(0, width)
             y = random.randint(0, height)
@@ -947,12 +954,12 @@ async def traffic_analysis(request: TrafficAnalysisRequest):
             color = (255, 0, 0, intensity)
             draw.ellipse([x-radius, y-radius, x+radius, y+radius], fill=color)
         
-        # 保存为base64
+        # API handler
         buffer = BytesIO()
         img.save(buffer, format='PNG')
         img_base64 = base64.b64encode(buffer.getvalue()).decode()
         
-        # 发送热力图到前端
+        # API handler
         analysis_command = {
             "type": "map_command",
             "command": "traffic_analysis",
@@ -981,7 +988,7 @@ async def traffic_analysis(request: TrafficAnalysisRequest):
 
 @router.post('/map/compare_analysis')
 async def compare_analysis(request: CompareAnalysisRequest):
-    """对比分析 - 生成多张热力图进行对比"""
+    """API handler."""
     try:
         import base64
         from io import BytesIO
@@ -990,12 +997,12 @@ async def compare_analysis(request: CompareAnalysisRequest):
         
         images = []
         for time_range in request.time_ranges:
-            # 为每个时间段生成热力图
+            # API handler
             width, height = 800, 600
             img = Image.new('RGBA', (width, height), color=(0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
             
-            # 生成随机热力点
+            # API handler
             for _ in range(50):
                 x = random.randint(0, width)
                 y = random.randint(0, height)
@@ -1013,7 +1020,7 @@ async def compare_analysis(request: CompareAnalysisRequest):
                 "time_range": time_range
             })
         
-        # 发送对比图到前端
+        # API handler
         compare_command = {
             "type": "map_command",
             "command": "compare_analysis",
@@ -1032,7 +1039,7 @@ async def compare_analysis(request: CompareAnalysisRequest):
         logger.info(f"[API] 对比分析: 类型={request.analysis_type}, 生成{len(images)}张对比图")
         return JSONResponse(status_code=200, content={
             "code": 200,
-            "message": f"对比分析完成，生成{len(images)}张对比图",
+            "message": f"compare analysis complete, generated {len(images)} images",
             "data": {"image_count": len(images)}
         })
     except Exception as e:
@@ -1042,7 +1049,7 @@ async def compare_analysis(request: CompareAnalysisRequest):
 
 @router.post('/map/render_path')
 async def render_path(request: RenderPathRequest):
-    """路径渲染 - 在地图上显示路径"""
+    """API handler."""
     path_command = {
         "type": "map_command",
         "command": "render_path",
@@ -1065,7 +1072,7 @@ async def render_path(request: RenderPathRequest):
 
 @router.post('/map/send_alert')
 async def send_alert(request: SendAlertRequest):
-    """预警 - 发送预警信息到前端"""
+    """API handler."""
     alert_command = {
         "type": "map_command",
         "command": "alert",
@@ -1085,7 +1092,7 @@ async def send_alert(request: SendAlertRequest):
     return JSONResponse(status_code=200, content={"code": 200, "message": "预警已发送"})
 
 
-# ==================== 地图清除功能 ====================
+# API handler
 
 class ClearMapRequest(BaseModel):
     target: str = "all"  # all, markers, polygons, paths, alerts, heatmaps, measurements, queries
@@ -1093,7 +1100,7 @@ class ClearMapRequest(BaseModel):
 
 @router.post('/map/clear')
 async def clear_map(request: ClearMapRequest):
-    """清除地图渲染元素"""
+    """API handler."""
     clear_command = {
         "type": "map_command",
         "command": "clear",
@@ -1106,10 +1113,10 @@ async def clear_map(request: ClearMapRequest):
     await ws_manager.broadcast_command(clear_command)
     logger.info(f"[API] 清除地图元素: 目标={request.target}, 清除所有图层={request.clear_all_layers}")
 
-    return JSONResponse(status_code=200, content={"code": 200, "message": f"已发送清除指令: {request.target}"})
+    return JSONResponse(status_code=200, content={"code": 200, "message": f"已发送清除指令 {request.target}"})
 
 
-# ==================== Prompt 配置管理接口 ====================
+# API handler
 
 class SavePromptRequest(BaseModel):
     filename: str
@@ -1118,11 +1125,11 @@ class SavePromptRequest(BaseModel):
 
 @router.post('/prompts/save')
 async def save_prompt(request: SavePromptRequest):
-    """保存 prompt 文件"""
+    """API handler."""
     import os
     from pathlib import Path
     
-    # 允许的文件名白名单
+    # API handler
     allowed_files = [
         'multimodalSystemPrompt.txt',
         'multimodalUserPromptSuffix.txt'
@@ -1134,16 +1141,16 @@ async def save_prompt(request: SavePromptRequest):
             status_code=400,
             content={
                 "success": False,
-                "message": "不允许的文件名"
+                "message": "invalid filename"
             }
         )
     
     try:
-        # 获取 prompts 目录路径
+        # API handler
         prompts_dir = Path(__file__).parent / 'prompts'
         prompts_dir.mkdir(exist_ok=True)
         
-        # 保存文件
+        # API handler
         file_path = prompts_dir / request.filename
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(request.content)
@@ -1171,12 +1178,12 @@ async def save_prompt(request: SavePromptRequest):
 
 @router.get('/prompts/{filename}')
 async def get_prompt(filename: str):
-    """读取 prompt 文件"""
+    """API handler."""
     import os
     from pathlib import Path
     from fastapi.responses import PlainTextResponse
     
-    # 允许的文件名白名单
+    # API handler
     allowed_files = [
         'multimodalSystemPrompt.txt',
         'multimodalUserPromptSuffix.txt'
@@ -1184,24 +1191,24 @@ async def get_prompt(filename: str):
     
     if filename not in allowed_files:
         logger.warning(f"[API] 尝试读取不允许的文件: {filename}")
-        raise HTTPException(status_code=400, detail="不允许的文件名")
+        raise HTTPException(status_code=400, detail="invalid filename")
     
     try:
-        # 获取 prompts 目录路径
+        # API handler
         prompts_dir = Path(__file__).parent / 'prompts'
         file_path = prompts_dir / filename
         
         if not file_path.exists():
             logger.warning(f"[API] Prompt 文件不存在: {filename}")
-            raise HTTPException(status_code=404, detail="文件不存在")
+            raise HTTPException(status_code=404, detail="file not found")
         
-        # 读取文件内容
+        # API handler
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         logger.info(f"[API] Prompt 文件读取成功: {filename}")
         
-        # 返回纯文本内容
+        # API handler
         return PlainTextResponse(content=content)
         
     except HTTPException:
@@ -1211,13 +1218,21 @@ async def get_prompt(filename: str):
         raise HTTPException(status_code=500, detail=f"读取失败: {str(e)}")
 
 
-# ==================== 航迹模拟器接口 ====================
+# API handler
 
 @router.post('/track_simulator/start')
-async def start_track_simulator():
-    """启动航迹模拟"""
+async def start_track_simulator(request: Request, kind: Optional[str] = None):
+    """API handler."""
     try:
-        result = await track_simulator.start()
+        target_kind = kind
+        try:
+            body = await request.json()
+            if isinstance(body, dict) and body.get("kind") is not None:
+                target_kind = str(body.get("kind"))
+        except Exception:
+            pass
+
+        result = await track_simulator.start(target_kind or "sea")
         return JSONResponse(
             status_code=200,
             content={
@@ -1227,7 +1242,7 @@ async def start_track_simulator():
             }
         )
     except Exception as e:
-        logger.error(f"[API] 启动航迹模拟失败: {e}")
+        logger.error(f"[API] 启动轨迹模拟失败: {e}")
         return JSONResponse(
             status_code=500,
             content={
@@ -1241,7 +1256,7 @@ async def start_track_simulator():
 
 @router.post('/track_simulator/stop')
 async def stop_track_simulator():
-    """停止航迹模拟"""
+    """API handler."""
     try:
         result = await track_simulator.stop()
         return JSONResponse(
@@ -1253,7 +1268,7 @@ async def stop_track_simulator():
             }
         )
     except Exception as e:
-        logger.error(f"[API] 停止航迹模拟失败: {e}")
+        logger.error(f"[API] 停止轨迹模拟失败: {e}")
         return JSONResponse(
             status_code=500,
             content={
@@ -1267,7 +1282,7 @@ async def stop_track_simulator():
 
 @router.get('/track_simulator/status')
 async def get_track_simulator_status():
-    """获取航迹模拟状态"""
+    """API handler."""
     try:
         status = track_simulator.get_status()
         return JSONResponse(
@@ -1279,7 +1294,7 @@ async def get_track_simulator_status():
             }
         )
     except Exception as e:
-        logger.error(f"[API] 获取航迹模拟状态失败: {e}")
+        logger.error(f"[API] 获取轨迹模拟状态失败: {e}")
         return JSONResponse(
             status_code=500,
             content={
@@ -1290,68 +1305,77 @@ async def get_track_simulator_status():
         )
 
 
-# ==================== 会话管理接口 ====================
 
 from conversation_store import conversation_store
 
 
 @router.get('/conversations')
-async def list_conversations(limit: int = 50, offset: int = 0):
-    """获取会话列表"""
-    return JSONResponse(content=conversation_store.list(limit, offset))
+async def list_conversations(limit: int = 50, offset: int = 0, category: Optional[str] = None):
+    """List conversations, optionally filtered by category."""
+    return JSONResponse(content=conversation_store.list(limit, offset, category=category))
 
 
 @router.post('/conversations')
 async def create_conversation(request: Request):
-    """创建新会话"""
+    """Create a conversation."""
     body = await request.json()
     title = body.get("title", "新对话")
-    conv = conversation_store.create(title=title)
+    category = body.get("category", "chat")
+    conv = conversation_store.create(title=title, category=category)
     return JSONResponse(content=conv)
 
 
 @router.get('/conversations/{conv_id}')
 async def get_conversation(conv_id: str):
-    """获取会话详情（含消息列表）"""
+    """Get conversation detail."""
     detail = conversation_store.get(conv_id)
     if not detail:
-        raise HTTPException(status_code=404, detail="会话不存在")
+        raise HTTPException(status_code=404, detail="conversation not found")
     return JSONResponse(content=detail)
 
 
 @router.patch('/conversations/{conv_id}')
 async def update_conversation(conv_id: str, request: Request):
-    """更新会话（如修改标题）"""
+    """Update conversation metadata."""
     body = await request.json()
     result = conversation_store.update(conv_id, title=body.get("title"))
     if not result:
-        raise HTTPException(status_code=404, detail="会话不存在")
+        raise HTTPException(status_code=404, detail="conversation not found")
     return JSONResponse(content=result)
 
 
 @router.delete('/conversations/{conv_id}')
 async def delete_conversation(conv_id: str):
-    """删除会话"""
+    """Delete a conversation."""
     if not conversation_store.delete(conv_id):
-        raise HTTPException(status_code=404, detail="会话不存在")
+        raise HTTPException(status_code=404, detail="conversation not found")
     return JSONResponse(content={"ok": True})
 
 
 @router.post('/conversations/{conv_id}/messages')
 async def add_conversation_message(conv_id: str, request: Request):
-    """向会话追加一条消息"""
+    """Append a message to a conversation."""
     body = await request.json()
     role = body.get("role", "user")
     content = body.get("content", "")
     msg = conversation_store.add_message(conv_id, role, content)
     if not msg:
-        raise HTTPException(status_code=404, detail="会话不存在")
+        raise HTTPException(status_code=404, detail="conversation not found")
     return JSONResponse(content=msg)
 
 
 @router.delete('/conversations/{conv_id}/messages')
 async def clear_conversation_messages(conv_id: str):
-    """清空会话消息"""
+    """Clear conversation messages."""
     if not conversation_store.clear_messages(conv_id):
-        raise HTTPException(status_code=404, detail="会话不存在")
+        raise HTTPException(status_code=404, detail="conversation not found")
     return JSONResponse(content={"ok": True})
+
+
+
+
+
+
+
+
+

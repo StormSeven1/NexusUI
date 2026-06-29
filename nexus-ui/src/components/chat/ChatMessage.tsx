@@ -120,7 +120,7 @@ function ToolCallCard({ part }: { part: ToolPartProps }) {
     return (
       <ThreatCard
         threats={output.threats as Array<{
-          trackId: string; name: string; typeLabel: string; dispositionLabel: string;
+          targetID: string; external_target_id?: string; name: string; typeLabel: string; dispositionLabel: string;
           score: number; level: string; levelLabel: string; reasons: string[];
           speed: number; nearestZone?: string; nearestZoneDist?: number | null;
         }>}
@@ -323,3 +323,4 @@ export function ChatMessage({ message, isStreaming }: { message: UIMessage; isSt
     </div>
   );
 }
+

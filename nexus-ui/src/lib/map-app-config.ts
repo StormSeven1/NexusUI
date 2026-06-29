@@ -21,14 +21,13 @@ import type { AssetData } from "@/stores/asset-store";
  import {
    normalizeAssetType,
    parseMapAssetTypeStrict,
-   PUBLIC_MAP_ASSET_TYPES,
    type PublicMapAssetType,
    type Track,
 } from "@/lib/map-entity-model";
  import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
  import { mergeRootAndDeviceVisible } from "@/lib/utils";
- import type { AssetDispositionIconAccent } from "@/lib/map-icons";
- import { MAP_FRIENDLY_COLOR_PROP, MAP_LABEL_FONT_COLOR_PROP } from "@/lib/map-icons";
+ import type { AssetDispositionIconAccent, AssetIconFrameConfig } from "@/lib/map-icons";
+ import { DEFAULT_ASSET_ICON_FRAME_CONFIG, MAP_FRIENDLY_COLOR_PROP, MAP_LABEL_FONT_COLOR_PROP } from "@/lib/map-icons";
  import {
    mapRadarPayload,
    type RadarMapGlobals,
@@ -46,7 +45,7 @@ import type { AssetData } from "@/stores/asset-store";
  function isoNow() {
    return new Date().toISOString();
  }
- 
+
  /** IDL DeviceState：0待机 1上电 2执行 3未知 */
  const DEVICE_STATE_CN: Record<number, string> = {
    0: "待机",
@@ -54,14 +53,13 @@ import type { AssetData } from "@/stores/asset-store";
    2: "执行",
    3: "未知",
  };
- 
+
  export function deviceStateLabel(deviceState: unknown): string | undefined {
    if (deviceState === null || deviceState === undefined) return undefined;
    const n = Number(deviceState);
    if (Number.isNaN(n)) return undefined;
    return DEVICE_STATE_CN[n];
  }
- 
  /** 巡飞弹 munitionState：0良好 1未准备好/繁忙 2故障 3损毁（不使用 BaseDeviceStatus.deviceState） */
  export const MUNITION_STATE_CN: Record<number, string> = {
    0: "良好",
@@ -69,7 +67,7 @@ import type { AssetData } from "@/stores/asset-store";
    2: "故障",
    3: "损毁",
  };
- 
+
  export function assetStatusFromMunitionState(munitionState: unknown): string {
    const n = Number(munitionState);
    if (Number.isNaN(n)) return "offline";
@@ -78,7 +76,7 @@ import type { AssetData } from "@/stores/asset-store";
    if (n === 3) return "offline";
    return "degraded";
  }
- 
+
 export function resolveMunitionStateValue(props: Record<string, unknown> | null | undefined): number {
   const ms = props?.munitionState ?? props?.munition_state;
   const n = Number(ms);
@@ -92,13 +90,7 @@ export function formatMunitionStateDisplay(asset?: AssetData | null): string {
   return "未知";
 }
 
-function munitionStateTagColor(munitionState: number): string {
-  if (munitionState === 0) return "bg-emerald-500/20 text-emerald-400";
-  if (munitionState === 3 || munitionState === 2) return "bg-red-500/20 text-red-400";
-  return "bg-amber-500/20 text-amber-400";
-}
- 
- /** DDS 巡飞弹（即飞弹）：用 properties.ws_munition / munitionState 识别，asset_type 仍为 missile */
+/** DDS 巡飞弹（即飞弹）：用 properties.ws_munition / munitionState 识别，asset_type 仍为 missile */
  export function isMunitionAsset(asset?: AssetData | null): boolean {
    if (!asset) return false;
    const p = asset.properties as Record<string, unknown> | null;
@@ -106,7 +98,7 @@ function munitionStateTagColor(munitionState: number): string {
    const ms = p?.munitionState ?? p?.munition_state;
    return ms != null && Number.isFinite(Number(ms));
  }
- 
+
  /** 资产 status 只认 deviceState（0待机 1上电 2执行 3未知）；无字段视为待机 */
  export function assetStatusFromDeviceState(deviceState: unknown): string {
    if (deviceState === null || deviceState === undefined) return "offline";
@@ -118,7 +110,36 @@ function munitionStateTagColor(munitionState: number): string {
    if (ds === 3) return "degraded";
    return "offline";
  }
- 
+
+export function assetStatusFromFreshness(isFresh: boolean): string {
+  return isFresh ? "online" : "offline";
+}
+
+export function readRuntimeTimestampMs(props: Record<string, unknown> | null | undefined): number | null {
+  const runtimeValues = [
+    props?.last_packet_at_ms,
+    props?.status_received_at_ms,
+    props?.radar_status_received_at_ms,
+    props?.high_freq_received_at_ms,
+    props?.dock_status_received_at_ms,
+    props?.entity_status_received_at_ms,
+  ]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (runtimeValues.length > 0) return Math.max(...runtimeValues);
+  return null;
+}
+
+export function isAssetStatusFresh(
+  asset: AssetData | null | undefined,
+  nowMs: number = Date.now(),
+  staleMs: number = 30_000,
+): boolean {
+  const props = asset?.properties as Record<string, unknown> | null;
+  const ts = readRuntimeTimestampMs(props);
+  return ts != null && nowMs - ts <= staleMs;
+}
+
  export function resolveDeviceStateValue(...sources: unknown[]): number {
    for (const s of sources) {
      if (s !== undefined && s !== null && !Number.isNaN(Number(s))) {
@@ -127,18 +148,63 @@ function munitionStateTagColor(munitionState: number): string {
    }
    return 0;
  }
- 
- export function deviceStatePropsFromPayload(d: Record<string, unknown>): Record<string, unknown> {
-   const ds = resolveDeviceStateValue(d.deviceState);
+
+export function deviceStatePropsFromPayload(d: Record<string, unknown>): Record<string, unknown> {
+   const ds = resolveDeviceStateValue(
+     d.deviceState,
+     d.device_state,
+     d.devicestate,
+     d.DeviceState,
+   );
    const label = deviceStateLabel(ds) ?? "待机";
    return { deviceState: ds, deviceStateLabel: label };
  }
- 
- const DEVICE_STATE_CN_VALUES = new Set(Object.values(DEVICE_STATE_CN));
- 
-/** 标牌/列表用：只显示设备状态中文；无有效字段时默认「待机」，不显示「-」 */
+
+export function readBatteryPercentFromPayload(d: Record<string, unknown> | null | undefined): number | null {
+  if (!d) return null;
+  const battery = d.battery && typeof d.battery === "object"
+    ? (d.battery as Record<string, unknown>)
+    : null;
+  const batteryInfo = d.batteryInfo && typeof d.batteryInfo === "object"
+    ? (d.batteryInfo as Record<string, unknown>)
+    : null;
+  const batteryStatus = d.batteryStatus && typeof d.batteryStatus === "object"
+    ? (d.batteryStatus as Record<string, unknown>)
+    : null;
+  const droneChargeState = d.droneChargeState && typeof d.droneChargeState === "object"
+    ? (d.droneChargeState as Record<string, unknown>)
+    : null;
+  const n = Number(
+    d.battery_percent ??
+      d.batteryPercent ??
+      d.battery_capacity_percent ??
+      d.batteryCapacityPercent ??
+      d.capacity_percent ??
+      d.capacityPercent ??
+      d.elec ??
+      d.electricQuantity ??
+      d.electric_quantity ??
+      battery?.capacity_percent ??
+      battery?.capacityPercent ??
+      battery?.percent ??
+      batteryInfo?.capacity_percent ??
+      batteryInfo?.capacityPercent ??
+      batteryStatus?.capacity_percent ??
+      batteryStatus?.capacityPercent ??
+      droneChargeState?.capacity_percent ??
+      droneChargeState?.capacityPercent,
+  );
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+}
+
+/** 标牌/列表用：未超时时显示设备自己的 deviceState；超时才显示离线。 */
 export function formatAssetDeviceStateDisplay(asset?: AssetData | null): string {
-  if (isMunitionAsset(asset)) return formatMunitionStateDisplay(asset);
+  const fresh = isAssetStatusFresh(asset);
+  if (!fresh) return "离线";
+  if (isMunitionAsset(asset)) {
+    const props = asset?.properties as Record<string, unknown> | null;
+    return deviceStateLabel(resolveDeviceStateValue(props?.deviceState)) ?? "待机";
+  }
   const props = asset?.properties as Record<string, unknown> | null;
   if (props?.ws_usv === true) {
     const lbl = props?.strikeStateLabel;
@@ -151,13 +217,13 @@ export function formatAssetDeviceStateDisplay(asset?: AssetData | null): string 
     if (strike === 4) return "错误";
   }
   const ds = resolveDeviceStateValue(props?.deviceState);
-   const cached = props?.deviceStateLabel;
-   if (typeof cached === "string" && DEVICE_STATE_CN_VALUES.has(cached)) {
-     return cached;
-   }
-   return deviceStateLabel(ds) ?? "待机";
+  const cached = props?.deviceStateLabel;
+  if (typeof cached === "string" && Object.values(DEVICE_STATE_CN).includes(cached)) {
+    return cached;
+  }
+  return deviceStateLabel(ds) ?? "待机";
  }
- 
+
  /** 与资产列表同源：按 store 主键查找，兼容 entityId → deviceSn */
 export function findAssetInStore(
   assets: AssetData[],
@@ -182,15 +248,21 @@ export function findAssetInStore(
     );
   });
 }
- 
+
  export type AssetDeviceStateTag = { label: string; color: string };
- 
+
 /** 资产面板标签与属性标牌「状态」共用 */
 export function getAssetDeviceStateTags(asset: AssetData | null | undefined): AssetDeviceStateTag[] {
   if (isMunitionAsset(asset)) {
     const props = asset?.properties as Record<string, unknown> | null;
-    const n = resolveMunitionStateValue(props);
-    return [{ label: formatMunitionStateDisplay(asset), color: munitionStateTagColor(n) }];
+    const n = resolveDeviceStateValue(props?.deviceState);
+    const color =
+      n === 0
+        ? "bg-red-500/20 text-red-400"
+        : n === 3
+          ? "bg-amber-500/20 text-amber-400"
+          : "bg-emerald-500/20 text-emerald-400";
+    return [{ label: deviceStateLabel(n) ?? "待机", color }];
   }
   const propsUsv = asset?.properties as Record<string, unknown> | null;
   if (propsUsv?.ws_usv === true) {
@@ -204,18 +276,20 @@ export function getAssetDeviceStateTags(asset: AssetData | null | undefined): As
           : "bg-emerald-500/20 text-emerald-400";
     return [{ label, color }];
   }
+  const fresh = isAssetStatusFresh(asset);
   const label = formatAssetDeviceStateDisplay(asset);
   const props = asset?.properties as Record<string, unknown> | null;
   const n = Number(props?.deviceState ?? 0);
-  const color =
-    n === 0
+  const color = !fresh
+    ? "bg-red-500/20 text-red-400"
+    : n === 0
       ? "bg-red-500/20 text-red-400"
       : n === 3
         ? "bg-amber-500/20 text-amber-400"
         : "bg-emerald-500/20 text-emerald-400";
   return [{ label, color }];
 }
- 
+
  /**
   * entity_status / relationships 合并时保留已有设备状态（camera/dock_status/drone_status 写入）。
   * 若 `row` 已带 `properties.deviceState`（实时消息），以 `row` 为准，不拿 `prev` 覆盖。
@@ -227,13 +301,11 @@ export function preserveDeviceStateFromPrev(prev: AssetData, row: AssetData): As
        : null;
   const rowName = String(row.name ?? "").trim();
   const keepPrevName = (!rowName || rowName === row.id) && !!prev.name && prev.name !== prev.id;
-   if (rowProps?.deviceState !== undefined && rowProps?.deviceState !== null) {
-     return keepPrevName ? { ...row, name: prev.name } : row;
-   }
   const prevProps =
     prev.properties && typeof prev.properties === "object"
       ? (prev.properties as Record<string, unknown>)
       : null;
+  const rowHasDeviceState = rowProps?.deviceState !== undefined && rowProps?.deviceState !== null;
   const hasDeviceState = prevProps?.deviceState !== undefined && prevProps?.deviceState !== null;
   const hasDroneRuntime =
     prevProps?.drone_status != null ||
@@ -246,11 +318,14 @@ export function preserveDeviceStateFromPrev(prev: AssetData, row: AssetData): As
     prevProps?.dock != null ||
     prevProps?.dock_battery_percent != null ||
     prevProps?.dock_mode_code != null;
+  if (rowHasDeviceState && !hasDroneRuntime && !hasDockRuntime) {
+    return keepPrevName ? { ...row, name: prev.name } : row;
+  }
   if (!hasDeviceState && !hasDroneRuntime && !hasDockRuntime) {
     return keepPrevName ? { ...row, name: prev.name } : row;
   }
   const mergedProps: Record<string, unknown> = { ...(rowProps ?? {}) };
-  if (hasDeviceState) {
+  if (hasDeviceState && !rowHasDeviceState) {
     mergedProps.deviceState = prevProps?.deviceState;
     if (prevProps?.deviceStateLabel != null) mergedProps.deviceStateLabel = prevProps.deviceStateLabel;
   }
@@ -264,6 +339,16 @@ export function preserveDeviceStateFromPrev(prev: AssetData, row: AssetData): As
       "high_freq_received_at_ms",
       "history_trail",
       "munition_quantity",
+      "speed_mps",
+      "speed",
+      "speed_N",
+      "speed__E",
+      "speed_V",
+      "horizontal_speed",
+      "vertical_speed",
+      "drone_battery_percent",
+      "battery_percent",
+      "batteryPercent",
     ] as const) {
       if (prevProps?.[key] != null) mergedProps[key] = prevProps[key];
     }
@@ -288,19 +373,19 @@ export function preserveDeviceStateFromPrev(prev: AssetData, row: AssetData): As
   ] as const) {
     if (mergedProps[key] == null && prevProps?.[key] != null) mergedProps[key] = prevProps[key];
   }
-  if (hasDroneRuntime && typeof window !== "undefined") {
-    console.log("[drone-debug]", {
-      phase: "entity_status_rebuild_preserve",
-      entityId: row.id,
-      rowLat: row.lat,
-      rowLng: row.lng,
-      rowHeading: row.heading,
-      prevLat: prev.lat,
-      prevLng: prev.lng,
-      prevHeading: prev.heading,
-      historyTrailLength: Array.isArray(prevProps?.history_trail) ? prevProps.history_trail.length : 0,
-    });
-  }
+  // if (hasDroneRuntime && typeof window !== "undefined") {
+  //   console.log("[drone-debug]", {
+  //     phase: "entity_status_rebuild_preserve",
+  //     entityId: row.id,
+  //     rowLat: row.lat,
+  //     rowLng: row.lng,
+  //     rowHeading: row.heading,
+  //     prevLat: prev.lat,
+  //     prevLng: prev.lng,
+  //     prevHeading: prev.heading,
+  //     historyTrailLength: Array.isArray(prevProps?.history_trail) ? prevProps.history_trail.length : 0,
+  //   });
+  // }
   return {
     ...row,
     ...(keepPrevName ? { name: prev.name } : {}),
@@ -347,15 +432,46 @@ export function preserveDdsDynamicFieldsOnRebuild(
    */
   const at = normalizeAssetType(row.asset_type);
   const lp = assetPropertiesRecord(live);
+  const hasLiveDeviceState = lp.deviceState !== undefined && lp.deviceState !== null;
+  const rowProps = assetPropertiesRecord(row);
+  const rowHasDeviceState = rowProps.deviceState !== undefined && rowProps.deviceState !== null;
 
-  if ((at === "laser" || at === "tdoa") && lp.ws_weapon_device === true) {
+  if ((at === "laser" || at === "tdoa") && (lp.ws_weapon_device === true || hasLiveDeviceState)) {
     return mergeDdsOverlayOntoEntityRow(live, row, {
       includeHeading: false,
       displayName: row.name,
     });
   }
 
-  if (at === "missile" && lp.ws_munition === true) {
+  if (at === "radar" && (lp.radar_status != null || lp.radar_status_received_at_ms != null || hasLiveDeviceState)) {
+    const merged = mergeDdsOverlayOntoEntityRow(live, row, {
+      includeHeading: false,
+      displayName: row.name || live.name,
+    });
+    const mergedProps = assetPropertiesRecord(merged);
+    if (rowHasDeviceState) {
+      return {
+        ...merged,
+        status: row.status,
+        properties: {
+          ...mergedProps,
+          ...rowProps,
+        },
+      };
+    }
+    return {
+      ...merged,
+      properties: {
+        ...mergedProps,
+        entity_status_received_at_ms:
+          rowProps.entity_status_received_at_ms ?? mergedProps.entity_status_received_at_ms,
+        entity_status_payload:
+          rowProps.entity_status_payload ?? mergedProps.entity_status_payload,
+      },
+    };
+  }
+
+  if (at === "missile" && (lp.ws_munition === true || (hasLiveDeviceState && !rowHasDeviceState))) {
     return mergeDdsOverlayOntoEntityRow(live, row, {
       includeHeading: true,
       displayName: row.name || live.name,
@@ -370,11 +486,16 @@ export function preserveDdsDynamicFieldsOnRebuild(
   }
 
   if (at === "camera") {
-    const hasLiveDeviceState = lp.deviceState !== undefined && lp.deviceState !== null;
+    const hasRowPose =
+      row.heading != null && Number.isFinite(Number(row.heading));
     const hasLivePose =
       live.heading != null && Number.isFinite(Number(live.heading));
+    const hasRowFov =
+      row.fov_angle != null && Number.isFinite(Number(row.fov_angle));
     const hasLiveFov =
       live.fov_angle != null && Number.isFinite(Number(live.fov_angle));
+    const hasRowRange =
+      row.range_km != null && Number.isFinite(Number(row.range_km));
     const hasLiveRange =
       live.range_km != null && Number.isFinite(Number(live.range_km));
     const hasLiveMedia =
@@ -392,9 +513,9 @@ export function preserveDdsDynamicFieldsOnRebuild(
       ...row,
       name: row.name || live.name,
       status: hasLiveDeviceState ? live.status : row.status,
-      heading: hasLivePose ? live.heading : row.heading,
-      fov_angle: hasLiveFov ? live.fov_angle : row.fov_angle,
-      range_km: hasLiveRange ? live.range_km : row.range_km,
+      heading: hasRowPose ? row.heading : hasLivePose ? live.heading : row.heading,
+      fov_angle: hasRowFov ? row.fov_angle : hasLiveFov ? live.fov_angle : row.fov_angle,
+      range_km: hasRowRange ? row.range_km : hasLiveRange ? live.range_km : row.range_km,
       properties: {
         ...rp,
         ...lp,
@@ -427,23 +548,29 @@ function mergeDdsOverlayOntoEntityRow(
 /** 合并进 asset-store 前补齐状态标签；巡飞弹用 munitionState，其它资产用 deviceState */
 export function stampDeviceStateOnAsset(a: AssetData): AssetData {
   const props = (a.properties ?? {}) as Record<string, unknown>;
+  const fresh = isAssetStatusFresh(a);
   if (isMunitionAsset(a)) {
-    const ms = resolveMunitionStateValue(props);
+    const ds = resolveDeviceStateValue(props.deviceState);
+    const dsProps = deviceStatePropsFromPayload({ deviceState: ds });
     return {
       ...a,
-      status: assetStatusFromMunitionState(ms),
-      properties: { ...props, munitionStateLabel: formatMunitionStateDisplay(a) },
+      status: assetStatusFromFreshness(fresh),
+      properties: {
+        ...props,
+        ...dsProps,
+        munitionStateLabel: formatMunitionStateDisplay(a),
+      },
     };
   }
   const ds = resolveDeviceStateValue(props.deviceState);
   const dsProps = deviceStatePropsFromPayload({ deviceState: ds });
   return {
     ...a,
-    status: assetStatusFromDeviceState(ds),
+    status: fresh ? assetStatusFromDeviceState(ds) : "offline",
     properties: { ...props, ...dsProps },
   };
 }
- 
+
  export function formatIsoToSecond(iso: string | null | undefined): string {
    if (!iso) return "-";
    const d = new Date(iso);
@@ -454,11 +581,11 @@ export function stampDeviceStateOnAsset(a: AssetData): AssetData {
    const p = (n: number) => String(n).padStart(2, "0");
    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
  }
- 
+
  function asRecord(v: unknown): Record<string, unknown> | null {
    return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
  }
- 
+
 function finiteNumberOrNull(v: unknown): number | null {
   if (v == null) return null;
   const n = Number(v);
@@ -569,8 +696,8 @@ function resolveEntityVideoUrl(
   *   - "TOWER" / "ESM" / "电侦" / "电子侦察" / "RECON" / "EW" → "tower"
   *   - "DOCK" / "AIRPORT" / "GATEWAY"                         → "airport"
   *   - "DRONE" / "UAV"                                         → "drone"
-  *   - "USV" / "无人船" / "UNMANNED_SHIP"                       → "usv"
-  *   - "MISSILE" / "飞弹" / "导弹"                               → "missile"
+   *   - "USV" / "无人船" / "UNMANNED_SHIP"                       → "usv"
+   *   - "MISSILE" / "MUNITION" / "LOITERING_MUNITION" / "飞弹" / "导弹" / "巡飞弹" → "missile"
  *   - "LASER" / "激光" / "激光武器"                           → "laser"
  *   - "TDOA"                                                   → "tdoa"
  *   - entityId 含 TDOA / LASER（如 system-TDOA-001）           → 仅 laser、tdoa 补判
@@ -590,12 +717,12 @@ function resolveEntityVideoUrl(
      "";                                         // 兜底空串
    const st = String(rawSpecificType).trim();
    const stu = st.toUpperCase();
- 
+
    const eid = String(r.entityId ?? r.entity_id ?? "?");
    const hasRadarParams = r.radarParameters != null || r.max_range_m != null || r.range_km != null;
- 
+
    /* ── 第2步：根据 specificType 大写值匹配前端资产类型 ── */
- 
+
    // 机场 / 网关
    if (stu === "DOCK" || stu === "AIRPORT" || stu === "GATEWAY") return "airport";
    // 无人机
@@ -603,7 +730,7 @@ function resolveEntityVideoUrl(
    // 无人船
    if (stu === "USV" || stu === "无人船" || stu === "UNMANNED_SHIP" || stu === "UNMANNED-SHIP") return "usv";
    // 飞弹
-   if (stu === "MISSILE" || stu === "飞弹" || stu === "导弹") return "missile";
+   if (stu === "MISSILE" || stu === "MUNITION" || stu === "LOITERING_MUNITION" || stu === "飞弹" || stu === "导弹" || stu === "巡飞弹") return "missile";
    // 雷达：specificType 以 "Radar-" 开头（如 "Radar-Surveillance"、"Radar-Tracking"）或精确等于 "RADAR"
    if (stu === "RADAR" || stu === "雷达" || stu.startsWith("RADAR-") || stu.includes("RADAR") || stu.includes("雷达")) return "radar";
    // 相机（光电）：specificType 精确等于 "CAMERA"（注意：不含 TOWER，电侦是独立类型）
@@ -616,40 +743,47 @@ function resolveEntityVideoUrl(
      stu === "TOWER" || stu === "电侦" || stu === "电子侦察" || stu === "ESM" ||
      stu === "RECON" || stu === "EW"
    ) return "tower";
-   // 激光武器
-   if (stu === "LASER" || stu === "激光" || stu === "激光武器") return "laser";
-   // TDOA
-   if (stu === "TDOA") return "tdoa";
-   // 无人船/平台携带雷达：navigationParameters.with_radar=1 或 radarParameters 存在
-   const navParams = asRecord(r.navigationParameters);
-   if (navParams?.with_radar === 1 || navParams?.with_radar === true || hasRadarParams) {
-     return "radar";
-   }
-   // 区域/监视区等非地图资产类型，直接跳过不报错
-   if (
-     stu === "SURVEILLANCE_AREA" || stu === "RESTRICTED_AREA" || stu === "AREA" ||
-     stu.startsWith("AREA_TYPE_") || stu.startsWith("SURVEILLANCE") || stu === "FIXED_WING" ||
-     stu === "FRAME"
-   ) {
-     return "unknown";
-   }
- 
-  /* ── 第3步：specificType 无法识别 —— 激光/TDOA 从 entityId 补判，再试 asset_type / type ── */
+  // 激光武器
+  if (stu === "LASER" || stu === "激光" || stu === "激光武器") return "laser";
+  // TDOA
+  if (stu === "TDOA") return "tdoa";
+
+  // 区域/监视区等非地图资产类型，直接跳过不报错
+  if (
+    stu === "SURVEILLANCE_AREA" || stu === "RESTRICTED_AREA" || stu === "AREA" ||
+    stu.startsWith("AREA_TYPE_") || stu.startsWith("SURVEILLANCE") || stu === "FIXED_WING" ||
+    stu === "FRAME"
+  ) {
+    return "unknown";
+  }
+
+  // 无人船/平台携带雷达：navigationParameters.with_radar=1 或 radarParameters 存在
+  const navParams = asRecord(r.navigationParameters);
+  if (navParams?.with_radar === 1 || navParams?.with_radar === true || hasRadarParams) {
+    return "radar";
+  }
+
+  /* ── 第3步：specificType 无法识别 —— 激光/TDOA/飞弹 从 entityId 补判，再试 asset_type / type ── */
   const eidUpper = eid.toUpperCase();
   if (eidUpper.includes("TDOA")) return "tdoa";
   if (eidUpper.includes("LASER") || eid.includes("激光")) return "laser";
-  if (eidUpper.includes("MUNITION") ) return "missile";
+  if (eidUpper.includes("MUNITION") || eidUpper.includes("MISSILE") || eid.includes("飞弹") || eid.includes("导弹") || eid.includes("巡飞")) return "missile";
 
-  const fallbackType = String(r.asset_type ?? r.type ?? "").toLowerCase().trim();
-   if (fallbackType && (PUBLIC_MAP_ASSET_TYPES as readonly string[]).includes(fallbackType)) {
-     return fallbackType;
-   }
-   console.error(
-     `[wsEntityTypeRaw] ✘ 无法识别实体类型: specificType="${st}", asset_type="${r.asset_type ?? ""}", type="${r.type ?? ""}", entityId=${eid}`
-   );
-   return "unknown";
- }
- 
+  const fallbackType = r.assetType ?? r.asset_type ?? r.type;
+  if (fallbackType != null && String(fallbackType).trim()) {
+    try {
+      return normalizeAssetType(String(fallbackType).trim());
+    } catch {
+      // Continue to the diagnostic below.
+    }
+  }
+
+  console.error(
+    `[wsEntityTypeRaw] ✘ 无法识别实体类型: specificType="${st}", asset_type="${r.asset_type ?? ""}", type="${r.type ?? ""}", entityId=${eid}`
+  );
+  return "unknown";
+}
+
  /**
   * 【WS 实体 → AssetData 转换】
   *
@@ -679,7 +813,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
      console.error("[mapOneEntityRow] ✘ 实体缺少 entityId，丢弃:", JSON.stringify(r).slice(0, 300));
      return null;
    }
- 
+
    /* ── 2. 提取 WGS84 坐标 ── */
    /* 优先级：顶层 r.lat/r.latitude → 嵌套 r.location.position.latitudeDegrees */
    let lat = Number(r.lat ?? r.latitude);
@@ -696,9 +830,9 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
    }
    /* 无坐标的实体无法在地图上渲染，直接丢弃 */
    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
- 
+
    const now = isoNow();
- 
+
    /* ── 3. 提取名称 ── */
    /* 优先级：r.name → r.entityName → aliases.name → 回退为 ID */
    const aliases = asRecord(r.aliases);
@@ -715,12 +849,12 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
      aliases?.name ??
      id,
    );
- 
+
    /* ── 4. 提取朝向（度）与视场角（度）── */
    /* entity_status 仅做通用实体字段解析；相机 PTZ 专用解析在 useUnifiedWsFeed 的 camera/optoelectronic 分支 */
    const headingDeg = finiteNumberOrNull(r.headingDeg ?? r.heading ?? r.bearing ?? r.azimuth);
    const fovDeg = finiteNumberOrNull(r.fov_angle ?? r.fovAngle ?? r.openingDeg ?? r.angle);
- 
+
    /* ── 5. 雷达专用参数提取 ── */
    /* 后端 radarParameters.range 单位为海里，需转换为公里写入 range_km；
     * 同时将 max_range_m（米）、ring_interval_m、ring_count 写入 properties，
@@ -755,7 +889,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
        }
      }
    }
- 
+
    /* ── 6. 提取敌我属性（disposition）── */
    /* 优先级：顶层 r.disposition → milView.disposition → forceDisposition → properties.disposition */
    const milView = asRecord(r.milView);
@@ -768,16 +902,16 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
          : undefined),
      "friendly",
    );
- 
+
    /* 设备状态不由 entity_status 写入，由 camera / dock_status / drone_status 等实时消息维护 */
- 
+
    /* ── 8. 【关键】识别资产类型 ── */
-   /* 调用 wsEntityTypeRaw()，基于 specificType 字段识别：
+   /* 调用 wsEntityTypeRaw()，基于 specificType / ontology 字段识别：
     *   - specificType 以 "Radar-" 开头 → "radar"（如 "Radar-Surveillance"）
     *   - specificType == "CAMERA"      → "camera"
     *   - 其他类型见 wsEntityTypeRaw 注释
-    * 再经 normalizeAssetType() 确保落入 PUBLIC_MAP_ASSET_TYPES 集合 */
-  const rawType = String(r.assetType ?? "").trim() || wsEntityTypeRaw(r);
+    *   - assetType 仅在实体类型字段无法识别时作为回退，避免错误 assetType 覆盖后端 ontology */
+  const rawType = wsEntityTypeRaw(r);
   if (rawType === "unknown") {
     return null;
   }
@@ -803,9 +937,28 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
     : resolveEntityVideoUrl(assetType, r);
   /* 雷达为全向扫描，fov_angle 强制 360° */
   const effectiveFovDeg = assetType === "radar" ? 360 : fovDeg;
- 
+
    /* ── 9. 组装 AssetData ── */
    const virtualTroop = readVirtualTroopLikeRow(r);
+   const entityStatusReceivedAt = Date.now();
+   const entityBatteryPercent = readBatteryPercentFromPayload(r);
+   const entityDeviceStateProps = deviceStatePropsFromPayload(r);
+  //  if (assetType === "drone" || assetType === "airport") {
+  //    console.log("[entity_status][asset]", {
+  //      entityId: id,
+  //      assetType,
+  //      deviceState: r.deviceState ?? r.device_state,
+  //      parsedDeviceState: entityDeviceStateProps.deviceState,
+  //      battery_percent: entityBatteryPercent,
+  //      rawBatteryFields: {
+  //        battery_percent: r.battery_percent,
+  //        batteryPercent: r.batteryPercent,
+  //        battery_capacity_percent: r.battery_capacity_percent,
+  //        batteryCapacityPercent: r.batteryCapacityPercent,
+  //        elec: r.elec,
+  //      },
+  //    });
+  //  }
 
    const result: AssetData = {
      id,
@@ -838,6 +991,17 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
       virtualTroop,
       virtual_troop: virtualTroop,
       is_virtual: virtualTroop,
+      entity_status_received_at_ms: entityStatusReceivedAt,
+      entity_status_payload: r,
+      ...entityDeviceStateProps,
+      ...(entityBatteryPercent != null
+        ? {
+            battery_percent: entityBatteryPercent,
+            batteryPercent: entityBatteryPercent,
+            battery_capacity_percent: entityBatteryPercent,
+            batteryCapacityPercent: entityBatteryPercent,
+          }
+        : {}),
     },
      mission_status: String(r.mission_status ?? "monitoring"),
      assigned_target_id: r.assigned_target_id != null ? String(r.assigned_target_id) : null,
@@ -846,10 +1010,10 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
      created_at: String(r.created_at ?? now),
      updated_at: now,
    };
- 
+
    return result;
  }
- 
+
  /**
   * 【批量解析】将 WS 推来的实体数组统一转换为 AssetData[]。
   *
@@ -873,7 +1037,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
    }
    return out;
  }
- 
+
  /** 从 `AssetData` 行解析敌我：优先顶栏 `disposition`，否则 `properties.disposition` / `forceDisposition`。 */
  export function dispositionFromAssetData(a: AssetData): ForceDisposition {
    if (a.disposition != null && String(a.disposition).trim() !== "") {
@@ -886,7 +1050,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
    }
    return "friendly";
  }
- 
+
  function mergeConfigAssetBase(
    camerasAssets: AssetData[],
    radarAssets: AssetData[],
@@ -924,7 +1088,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
    }
    return [...byId.values()];
  }
- 
+
  /** 与 V2 `LaserManager`/`TdoaManager` 扫描参数对齐（径向亮带） */
  export type AppConfigSectorScan = {
    /** 扫描开关（光电/机场/无人机用）；激光/TDOA 由 activationEnabled 控制 */
@@ -938,7 +1102,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
    /** 每条亮带径向厚度（米；激光 V2=1，TDOA V2=2） */
    bandWidthMeters?: number;
  };
- 
+
  export type AppConfigSectorDevice = {
    deviceId?: string;
    name?: string;
@@ -967,7 +1131,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
    /** 覆盖根级默认；间歇阶段时长 ms */
    pulseOffMs?: number;
  };
- 
+
  /** 与 V2 `label` 块一致（激光 / TDOA / 光电名称） */
  export type AppConfigLabelBlock = {
    fontSize?: number;
@@ -977,7 +1141,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
    textOffset?: [number, number];
    textFont?: string[];
  };
- 
+
 export type AppConfigSectorBundle = {
    /** 我方资产中心图标主色（所有资产图标统一读取此字段） */
    assetFriendlyColor?: string;
@@ -1004,7 +1168,7 @@ export type AppConfigSectorBundle = {
    /** 激光脉冲：间歇阶段默认 ms（V2 = 3000） */
    laserPulseOffMs?: number;
    devices?: AppConfigSectorDevice[];
- 
+
    /* ── FOV 扇区颜色（光电/电侦/机场/无人机/激光/TDOA 通用） ── */
    /** 扇区填充色（如 "rgba(147,51,234,0.10)" 或 "#9333ea"） */
    sectorFill?: string;
@@ -1020,15 +1184,15 @@ export type AppConfigSectorBundle = {
    sectorLineDashVirtual?: number[];
    /** 扇区实兵虚线样式 */
    sectorLineDashReal?: number[];
- 
+
    /* ── 激光 / TDOA：专题层扇区填充默认值（设备未写 color/opacity 时使用） ── */
    sectorFillDefaultColor?: string;
    sectorFillDefaultOpacity?: number;
- 
+
    /** 激活开关：false 时扇区/扫描/脉冲均不显示，true 时按各子配置渲染 */
    activationEnabled?: boolean;
  };
- 
+
  /* =============================================================================
   * 航迹 / 无人机 / 机场 —— 与 `public/app-config.json` 对应（仅保留**代码里真会读**的字段）
   *
@@ -1042,13 +1206,13 @@ export type AppConfigSectorBundle = {
  function asCfgObject(v: unknown): Record<string, unknown> | null {
    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
  }
- 
+
  /** JSON 原始值 → 有限数字，否则用默认值 `d`（用于 `app-config.json` 解析） */
  function num(v: unknown, d: number): number {
    const n = Number(v);
    return Number.isFinite(n) ? n : d;
  }
- 
+
  /** 布尔或 0/1 / "0"/"1"，否则用默认值 */
  function bool(v: unknown, d: boolean): boolean {
    if (typeof v === "boolean") return v;
@@ -1056,38 +1220,38 @@ export type AppConfigSectorBundle = {
    if (v === 0 || v === "0") return false;
    return d;
  }
- 
+
  function parseStringUrlArray(raw: unknown, fallback: string[]): string[] {
    if (!Array.isArray(raw)) return [...fallback];
    const out = raw.map((x) => String(x ?? "").trim()).filter(Boolean);
    return out.length ? out : [...fallback];
  }
- 
+
  function str(v: unknown, d: string): string {
    return typeof v === "string" && v.trim() ? v : d;
  }
- 
+
  /** Dock / 机场：仅**中心图标 / 名称**两类默认显隐（根键 `airports`）；虚兵由报文决定 */
  export type AppConfigAirportMap = {
    centerIconVisible: boolean;
    centerNameVisible: boolean;
  };
- 
+
  export const DEFAULT_AIRPORT_MAP: AppConfigAirportMap = {
    centerIconVisible: true,
    centerNameVisible: true,
  };
- 
+
  let resolvedAirportMapConfig: AppConfigAirportMap = { ...DEFAULT_AIRPORT_MAP };
- 
+
  function applyResolvedAirportConfig(a: AppConfigAirportMap) {
    resolvedAirportMapConfig = a;
  }
- 
+
  export function getAirportMapDefaults(): AppConfigAirportMap {
    return resolvedAirportMapConfig;
  }
- 
+
  function parseAirportMapConfig(root: Record<string, unknown>): AppConfigAirportMap {
    const o = asCfgObject(root.airports);
    const b = DEFAULT_AIRPORT_MAP;
@@ -1097,14 +1261,14 @@ export type AppConfigSectorBundle = {
      centerNameVisible: o.centerNameVisible !== false,
    };
  }
- 
+
  /** 按 `sea` / `air` / `underwater` 控制 `tracks-maplibre` 里符号缩放与名称标签颜色/字号（友方符号填充参考 `idColor`；敌/中见 `factory.assetIcons`） */
  export type AppConfigTrackTypeStyle = {
    idColor: string;
    pointSize: number;
    idSize: number;
  };
- 
+
  export type AppConfigTrackRendering = {
    trackTypeStyles: {
      sea: AppConfigTrackTypeStyle;
@@ -1134,7 +1298,7 @@ export type AppConfigSectorBundle = {
    /** 空中无报文航向时的默认原始航向（度）；`track-ws-normalize` */
    airDefaultCourseDeg: number;
  };
- 
+
  /** `drones-maplibre` + `drone-store` 实际读取的子集（根键 **`drones`**） */
 /** `drones-maplibre` + `asset-store` 实际读取的配置子集（根键 **`drones`**）。 */
 export type AppConfigDroneMapRendering = {
@@ -1164,13 +1328,13 @@ export type AppConfigDroneMapRendering = {
    /** 来自 `drones.label.fontColor`：仅用于无人机**名称**标签字色，不参与符号/三角填色 */
    labelFontColor?: string;
  };
- 
+
  const DEFAULT_TYPE_STYLE: AppConfigTrackTypeStyle = {
    idColor: "#FFFFFF",
    pointSize: 5,
    idSize: 11,
  };
- 
+
  export const DEFAULT_TRACK_RENDERING: AppConfigTrackRendering = {
    trackTypeStyles: {
      sea: { ...DEFAULT_TYPE_STYLE },
@@ -1195,7 +1359,7 @@ export type AppConfigDroneMapRendering = {
    airIconHeadingOffsetDeg: 45,
    airDefaultCourseDeg: 45,
  };
- 
+
  export const DEFAULT_DRONE_MAP_RENDERING: AppConfigDroneMapRendering = {
    maxFovRange: 3000,
    horizontalFov: 30,
@@ -1217,7 +1381,7 @@ export type AppConfigDroneMapRendering = {
    fovFillOpacity: 0.12,
    fovLineColor: "#7dd3fc",
  };
- 
+
  function parseTypeStyle(o: unknown, base: AppConfigTrackTypeStyle): AppConfigTrackTypeStyle {
    const r = asCfgObject(o);
    if (!r) return { ...base };
@@ -1227,7 +1391,7 @@ export type AppConfigDroneMapRendering = {
      idSize: num(r.idSize, base.idSize),
    };
  }
- 
+
  /** 解析根对象上的 `trackRendering`，或 V2 根级 `trackTypeStyles` / `trackDisplay` / `trackTimeout` / 航向角键 */
  export function parseTrackRenderingConfig(root: Record<string, unknown>): AppConfigTrackRendering {
    let tr = asCfgObject(root.trackRendering);
@@ -1249,11 +1413,11 @@ export type AppConfigDroneMapRendering = {
      }
    }
    if (!tr) return { ...DEFAULT_TRACK_RENDERING };
- 
+
    const tts = asCfgObject(tr.trackTypeStyles);
    const td = asCfgObject(tr.trackDisplay);
    const tt = asCfgObject(tr.trackTimeout);
- 
+
    const base = DEFAULT_TRACK_RENDERING;
    return {
      trackTypeStyles: {
@@ -1276,7 +1440,7 @@ export type AppConfigDroneMapRendering = {
      airDefaultCourseDeg: num(tr.airDefaultCourseDeg, base.airDefaultCourseDeg),
    };
  }
- 
+
  const DRONE_BUNDLE_NESTED_KEYS = new Set([
    "devices",
    "visibility",
@@ -1288,7 +1452,7 @@ export type AppConfigDroneMapRendering = {
    "laserPulseOnMs",
    "laserPulseOffMs",
  ]);
- 
+
  /** 从根键 `drones` 抽出与 `AppConfigDroneMapRendering` 同形的渲染字段（排除 devices/label/visibility 等扇区块） */
  function droneRenderingPickFromDronesRoot(dronesRoot: Record<string, unknown>): Record<string, unknown> | null {
    const out: Record<string, unknown> = {};
@@ -1299,22 +1463,22 @@ export type AppConfigDroneMapRendering = {
    }
    return Object.keys(out).length ? out : null;
  }
- 
+
  /** 解析 `drones` 内嵌渲染块 */
  export function parseDroneMapRenderingConfig(root: Record<string, unknown>): AppConfigDroneMapRendering {
    const dBundle = asCfgObject(root.drones);
    const dm = dBundle ? droneRenderingPickFromDronesRoot(dBundle) : null;
    const base = DEFAULT_DRONE_MAP_RENDERING;
- 
+
    const maxFov = num(dm?.maxFovRange, base.maxFovRange);
    const hFov = num(dm?.horizontalFov, base.horizontalFov);
- 
+
    const lbl = dBundle?.label !== undefined && dBundle.label !== null && typeof dBundle.label === "object"
      ? (dBundle.label as AppConfigLabelBlock)
      : undefined;
    const labelFc = typeof lbl?.fontColor === "string" && lbl.fontColor.trim() ? lbl.fontColor.trim() : undefined;
    const assetFc = typeof dBundle?.assetFriendlyColor === "string" && (dBundle?.assetFriendlyColor as string).trim() ? (dBundle?.assetFriendlyColor as string).trim() : undefined;
- 
+
    if (!dBundle) {
      return {
        ...base,
@@ -1322,15 +1486,15 @@ export type AppConfigDroneMapRendering = {
        ...(labelFc ? { labelFontColor: labelFc } : {}),
      };
    }
- 
+
    const plannedRouteLineColor = str(dm?.plannedRouteLineColor, base.plannedRouteLineColor);
    const plannedRouteLineWidth = num(dm?.plannedRouteLineWidth, base.plannedRouteLineWidth);
    const plannedRouteLineOpacity = num(dm?.plannedRouteLineOpacity, base.plannedRouteLineOpacity);
- 
+
    const historyTrailLineColor = str(dm?.historyTrailLineColor, base.historyTrailLineColor);
    const historyTrailLineWidth = num(dm?.historyTrailLineWidth, base.historyTrailLineWidth);
    const historyTrailLineOpacity = num(dm?.historyTrailLineOpacity, base.historyTrailLineOpacity);
- 
+
    return {
      maxFovRange: maxFov,
      horizontalFov: hFov,
@@ -1355,26 +1519,26 @@ export type AppConfigDroneMapRendering = {
      ...(labelFc ? { labelFontColor: labelFc } : {}),
    };
  }
- 
+
  /** `loadResolvedAppConfig` 写入的 `trackRendering` / `drones` 内嵌渲染块解析结果（静态配置，非航迹 store） */
  let resolvedTrackRenderingConfig: AppConfigTrackRendering = { ...DEFAULT_TRACK_RENDERING };
  let resolvedDroneMapRenderingConfig: AppConfigDroneMapRendering = { ...DEFAULT_DRONE_MAP_RENDERING };
  /** radar 根级默认配置（WS 实体兜底用） */
  let resolvedRadarDefaults: Record<string, unknown> = {};
- 
+
  function applyResolvedRenderingConfigs(track: AppConfigTrackRendering, drone: AppConfigDroneMapRendering) {
    resolvedTrackRenderingConfig = track;
    resolvedDroneMapRenderingConfig = drone;
  }
- 
+
  export function getTrackRenderingConfig(): AppConfigTrackRendering {
    return resolvedTrackRenderingConfig;
  }
- 
+
  export function getDroneMapRenderingConfig(): AppConfigDroneMapRendering {
    return resolvedDroneMapRenderingConfig;
  }
- 
+
  /**
   * 从 JSON 根提取 radar 默认配置，存入模块级变量。
   *
@@ -1395,12 +1559,12 @@ export type AppConfigDroneMapRendering = {
    }
    resolvedRadarDefaults = out;
  }
- 
+
  /** 返回 radar 根级默认配置（供 WS 雷达实体兜底用） */
  export function getRadarConfigDefaults(): Record<string, unknown> {
    return resolvedRadarDefaults;
  }
- 
+
  /** 瓦片图层配置（app-config.json → `tileLayers[]`） */
  export interface TileLayerConfig {
    id: string;
@@ -1413,9 +1577,9 @@ export type AppConfigDroneMapRendering = {
    /** 瓦片类型，默认 xyz */
    type: "xyz";
  }
- 
+
  let resolvedTileLayers: TileLayerConfig[] = [];
- 
+
  function parseTileLayers(root: Record<string, unknown>): TileLayerConfig[] {
    const raw = root.tileLayers;
    if (!Array.isArray(raw)) return [];
@@ -1439,13 +1603,13 @@ export type AppConfigDroneMapRendering = {
    }
    return out;
  }
- 
+
  export function getTileLayerConfigs(): TileLayerConfig[] {
    return resolvedTileLayers;
  }
- 
+
  // ── 新增配置类型与 getter ──
- 
+
  export interface AppConfigWebSocket {
    url: string;
    reconnectInterval: number;
@@ -1454,19 +1618,32 @@ export type AppConfigDroneMapRendering = {
    initialReconnectMs: number;
    maxReconnectMs: number;
  }
- 
+
  export interface AppConfigCoordinateTransform {
    enabled: boolean;
  }
- 
- export interface AppConfigHttp {
-   backendUrl: string;
-   imagePollIntervalMs: number;
-   imageFetchTimeoutMs: number;
- }
- 
+
+export interface AppConfigHttp {
+  backendUrl: string;
+  imagePollingEnabled: boolean;
+  imagePollIntervalMs: number;
+  imageFetchTimeoutMs: number;
+}
+
+export interface AppConfigDzwlAlarm {
+  pageUrl: string;
+}
+
+export interface AppConfigStandaloneEngagement {
+  /** standalone_engagement 的 HTTP 基础地址，只从 public/app-config.json 的 standaloneEngagement.baseUrl 读取 */
+  baseUrl: string;
+  ltStrikePath: string;
+  laserStrikePath: string;
+  munitionStrikePath: string;
+}
+
  /** 指挥处置：`http.chat` 子块（V2 对齐），由 `getHttpChatConfig()` 读取 */
- export interface AppConfigHttpChat {
+export interface AppConfigHttpChat {
    /** 自动推送处置方案 WebSocket */
    disposalPlanWsUrl: string;
    /** 手动产生处置方案完整 URL */
@@ -1486,34 +1663,57 @@ export type AppConfigDroneMapRendering = {
   destroyPublishUrl: string;
   /** 告警“消灭”唯一 HTTP 发布超时 */
   destroyPublishTimeoutMs: number;
- }
- 
- export interface AppConfigTrackIdMode {
-   distinguishSeaAir: boolean;
- }
- 
- /** 根键 `assetTargetLine`：处置方案资产→目标连接线在地图上的样式与流动速度 */
- export type AppConfigAssetTargetLine = {
-   color: string;
-   lineWidth: number;
+  /** 无人机返航任务下发地址 */
+  droneReturnHomeUrl: string;
+  /** 无人机返航任务下发超时 */
+  droneReturnHomeTimeoutMs: number;
+}
+
+/** 根键 `assetTargetLine`：处置方案资产→目标连接线在地图上的样式与流动速度 */
+export type AppConfigAssetTargetLine = {
+  color: string;
+  lineWidth: number;
    /** 虚线流动一整周的大致毫秒数（越大越慢） */
    flowCycleMs: number;
    /** 流动点半径（像素） */
-   flowPointRadius: number;
- };
- 
- const DEFAULT_ASSET_TARGET_LINE: AppConfigAssetTargetLine = {
-   color: "#22d3ee",
-   lineWidth: 2.5,
-   flowCycleMs: 1200,
-   flowPointRadius: 3.6,
- };
- 
- let resolvedAssetTargetLineConfig: AppConfigAssetTargetLine = { ...DEFAULT_ASSET_TARGET_LINE };
- 
- function parseAssetTargetLineConfig(root: Record<string, unknown>): void {
-   const o = asRecord(root.assetTargetLine);
-   if (!o) {
+  flowPointRadius: number;
+};
+
+export type AppConfigMunitionDestroyEffects = {
+  munitionFrontendArmingMs: number;
+  munitionAutoExplodeDistanceMeters: number;
+  munitionDestroyedHideMs: number;
+  munitionDeleteEntityOnDestroy: boolean;
+  munitionRemoveAssetOnDestroy: boolean;
+  munitionDeleteEntityUrlTemplate: string;
+  munitionDeleteEntityTimeoutMs: number;
+};
+
+const DEFAULT_ASSET_TARGET_LINE: AppConfigAssetTargetLine = {
+  color: "#22d3ee",
+  lineWidth: 2.5,
+  flowCycleMs: 1200,
+  flowPointRadius: 3.6,
+};
+
+const DEFAULT_MUNITION_DESTROY_EFFECTS: AppConfigMunitionDestroyEffects = {
+  munitionFrontendArmingMs: 7000,
+  munitionAutoExplodeDistanceMeters: 50,
+  munitionDestroyedHideMs: 30000,
+  munitionDeleteEntityOnDestroy: false,
+  munitionRemoveAssetOnDestroy: false,
+  munitionDeleteEntityUrlTemplate: "http://192.168.28.9:8090/api/v1/entities/{id}",
+  munitionDeleteEntityTimeoutMs: 5000,
+};
+
+let resolvedAssetTargetLineConfig: AppConfigAssetTargetLine = { ...DEFAULT_ASSET_TARGET_LINE };
+let resolvedMunitionDestroyEffectsConfig: AppConfigMunitionDestroyEffects = {
+  ...DEFAULT_MUNITION_DESTROY_EFFECTS,
+};
+
+function parseAssetTargetLineConfig(root: Record<string, unknown>): void {
+  const o = asRecord(root.assetTargetLine);
+  if (!o) {
      resolvedAssetTargetLineConfig = { ...DEFAULT_ASSET_TARGET_LINE };
      return;
    }
@@ -1521,10 +1721,48 @@ export type AppConfigDroneMapRendering = {
      color: str(o.color, DEFAULT_ASSET_TARGET_LINE.color),
      lineWidth: num(o.lineWidth, DEFAULT_ASSET_TARGET_LINE.lineWidth),
      flowCycleMs: Math.max(200, num(o.flowCycleMs, DEFAULT_ASSET_TARGET_LINE.flowCycleMs)),
-     flowPointRadius: Math.max(1, num(o.flowPointRadius, DEFAULT_ASSET_TARGET_LINE.flowPointRadius)),
-   };
- }
- 
+    flowPointRadius: Math.max(1, num(o.flowPointRadius, DEFAULT_ASSET_TARGET_LINE.flowPointRadius)),
+  };
+}
+
+function parseMunitionDestroyEffectsConfig(root: Record<string, unknown>): void {
+  const o = asRecord(root.munitionDestroyEffects);
+  if (!o) {
+    resolvedMunitionDestroyEffectsConfig = { ...DEFAULT_MUNITION_DESTROY_EFFECTS };
+    return;
+  }
+  resolvedMunitionDestroyEffectsConfig = {
+    munitionFrontendArmingMs: Math.max(
+      0,
+      num(o.munitionFrontendArmingMs, DEFAULT_MUNITION_DESTROY_EFFECTS.munitionFrontendArmingMs),
+    ),
+    munitionAutoExplodeDistanceMeters: Math.max(
+      0.1,
+      num(o.munitionAutoExplodeDistanceMeters, DEFAULT_MUNITION_DESTROY_EFFECTS.munitionAutoExplodeDistanceMeters),
+    ),
+    munitionDestroyedHideMs: Math.max(
+      0,
+      num(o.munitionDestroyedHideMs, DEFAULT_MUNITION_DESTROY_EFFECTS.munitionDestroyedHideMs),
+    ),
+    munitionDeleteEntityOnDestroy: bool(
+      o.munitionDeleteEntityOnDestroy,
+      DEFAULT_MUNITION_DESTROY_EFFECTS.munitionDeleteEntityOnDestroy,
+    ),
+    munitionRemoveAssetOnDestroy: bool(
+      o.munitionRemoveAssetOnDestroy,
+      DEFAULT_MUNITION_DESTROY_EFFECTS.munitionRemoveAssetOnDestroy,
+    ),
+    munitionDeleteEntityUrlTemplate: str(
+      o.munitionDeleteEntityUrlTemplate,
+      DEFAULT_MUNITION_DESTROY_EFFECTS.munitionDeleteEntityUrlTemplate,
+    ),
+    munitionDeleteEntityTimeoutMs: Math.max(
+      0,
+      num(o.munitionDeleteEntityTimeoutMs, DEFAULT_MUNITION_DESTROY_EFFECTS.munitionDeleteEntityTimeoutMs),
+    ),
+  };
+}
+
  const DEFAULT_WS: AppConfigWebSocket = {
    url: "ws://localhost:8001/ws",
    reconnectInterval: 3000,
@@ -1533,15 +1771,27 @@ export type AppConfigDroneMapRendering = {
    initialReconnectMs: 2000,
    maxReconnectMs: 30000,
  };
- 
+
  const DEFAULT_COORD_TRANSFORM: AppConfigCoordinateTransform = { enabled: true };
- 
- const DEFAULT_HTTP: AppConfigHttp = {
-   backendUrl: "http://localhost:8001",
-   imagePollIntervalMs: 3000,
-   imageFetchTimeoutMs: 1000,
- };
- 
+
+const DEFAULT_HTTP: AppConfigHttp = {
+  backendUrl: "http://localhost:8001",
+  imagePollingEnabled: false,
+  imagePollIntervalMs: 3000,
+  imageFetchTimeoutMs: 1000,
+};
+
+const DEFAULT_DZWL_ALARM: AppConfigDzwlAlarm = {
+  pageUrl: "http://192.168.28.129:3000/index.html",
+};
+
+const DEFAULT_STANDALONE_ENGAGEMENT: AppConfigStandaloneEngagement = {
+  baseUrl: "",
+  ltStrikePath: "",
+  laserStrikePath: "",
+  munitionStrikePath: "",
+};
+
  const DEFAULT_HTTP_CHAT: AppConfigHttpChat = {
    disposalPlanWsUrl: "ws://192.168.18.103:9000/api/v1/ws/workflow-stream",
    disposalManualGeneratePlanUrl: "http://192.168.18.103:9000/api/v1/tasks/target-engagement/manual-generate-plan",
@@ -1549,21 +1799,22 @@ export type AppConfigDroneMapRendering = {
    disposalHttpTimeoutMs: 5000,
    disposalExecuteTimeoutMs: 5000,
    autoDisposalWsConnectTimeoutMs: 5000,
-   quickWorkflowUrl: "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
-   quickWorkflowTimeoutMs: 5000,
-   quickWorkflowStatusWsUrl: "ws://192.168.18.103:8000/api/v1/ws/workflow-status",
+  quickWorkflowUrl: "http://192.168.18.103:8000/api/v1/chat/quick-workflow",
+  quickWorkflowTimeoutMs: 5000,
+  quickWorkflowStatusWsUrl: "ws://192.168.18.103:8000/api/v1/ws/workflow-status",
   destroyPublishUrl: "http://192.168.18.141:26003/api/destroy/publish",
   destroyPublishTimeoutMs: 8000,
- };
- 
- const DEFAULT_TRACK_ID_MODE: AppConfigTrackIdMode = { distinguishSeaAir: false };
- 
- let resolvedWebSocketConfig: AppConfigWebSocket = { ...DEFAULT_WS };
- let resolvedCoordinateTransformConfig: AppConfigCoordinateTransform = { ...DEFAULT_COORD_TRANSFORM };
- let resolvedHttpConfig: AppConfigHttp = { ...DEFAULT_HTTP };
- let resolvedHttpChatConfig: AppConfigHttpChat = { ...DEFAULT_HTTP_CHAT };
- let resolvedTrackIdModeConfig: AppConfigTrackIdMode = { ...DEFAULT_TRACK_ID_MODE };
- 
+  droneReturnHomeUrl: "http://192.168.18.115:8400",
+  droneReturnHomeTimeoutMs: 10000,
+};
+
+let resolvedWebSocketConfig: AppConfigWebSocket = { ...DEFAULT_WS };
+let resolvedCoordinateTransformConfig: AppConfigCoordinateTransform = { ...DEFAULT_COORD_TRANSFORM };
+let resolvedHttpConfig: AppConfigHttp = { ...DEFAULT_HTTP };
+let resolvedDzwlAlarmConfig: AppConfigDzwlAlarm = { ...DEFAULT_DZWL_ALARM };
+let resolvedStandaloneEngagementConfig: AppConfigStandaloneEngagement = { ...DEFAULT_STANDALONE_ENGAGEMENT };
+let resolvedHttpChatConfig: AppConfigHttpChat = { ...DEFAULT_HTTP_CHAT };
+
  function applyResolvedNewConfigs(root: Record<string, unknown>) {
    const ws = asRecord(root.websocket);
    if (ws) {
@@ -1576,19 +1827,20 @@ export type AppConfigDroneMapRendering = {
        maxReconnectMs: num(ws.maxReconnectMs, DEFAULT_WS.maxReconnectMs),
      };
    }
- 
+
    const ct = asRecord(root.coordinateTransform);
    if (ct) {
      resolvedCoordinateTransformConfig = { enabled: bool(ct.enabled, DEFAULT_COORD_TRANSFORM.enabled) };
    }
- 
-   const http = asRecord(root.http);
-   if (http) {
+
+  const http = asRecord(root.http);
+  if (http) {
      resolvedHttpConfig = {
-       backendUrl: str(http.backendUrl, DEFAULT_HTTP.backendUrl),
-       imagePollIntervalMs: num(http.imagePollIntervalMs, DEFAULT_HTTP.imagePollIntervalMs),
-       imageFetchTimeoutMs: num(http.imageFetchTimeoutMs, DEFAULT_HTTP.imageFetchTimeoutMs),
-     };
+        backendUrl: str(http.backendUrl, DEFAULT_HTTP.backendUrl),
+        imagePollingEnabled: bool(http.imagePollingEnabled, DEFAULT_HTTP.imagePollingEnabled),
+        imagePollIntervalMs: num(http.imagePollIntervalMs, DEFAULT_HTTP.imagePollIntervalMs),
+        imageFetchTimeoutMs: num(http.imageFetchTimeoutMs, DEFAULT_HTTP.imageFetchTimeoutMs),
+      };
      const ch = asRecord(http.chat);
      if (ch) {
        resolvedHttpChatConfig = {
@@ -1601,47 +1853,77 @@ export type AppConfigDroneMapRendering = {
            ch.autoDisposalWsConnectTimeoutMs,
            DEFAULT_HTTP_CHAT.autoDisposalWsConnectTimeoutMs,
          ),
-         quickWorkflowUrl: str(ch.quickWorkflowUrl, DEFAULT_HTTP_CHAT.quickWorkflowUrl),
-         quickWorkflowTimeoutMs: num(ch.quickWorkflowTimeoutMs, DEFAULT_HTTP_CHAT.quickWorkflowTimeoutMs),
-         quickWorkflowStatusWsUrl: str(ch.quickWorkflowStatusWsUrl, DEFAULT_HTTP_CHAT.quickWorkflowStatusWsUrl),
+        quickWorkflowUrl: str(ch.quickWorkflowUrl, DEFAULT_HTTP_CHAT.quickWorkflowUrl),
+        quickWorkflowTimeoutMs: num(ch.quickWorkflowTimeoutMs, DEFAULT_HTTP_CHAT.quickWorkflowTimeoutMs),
+        quickWorkflowStatusWsUrl: str(ch.quickWorkflowStatusWsUrl, DEFAULT_HTTP_CHAT.quickWorkflowStatusWsUrl),
         destroyPublishUrl: str(ch.destroyPublishUrl, DEFAULT_HTTP_CHAT.destroyPublishUrl),
         destroyPublishTimeoutMs: num(ch.destroyPublishTimeoutMs, DEFAULT_HTTP_CHAT.destroyPublishTimeoutMs),
+        droneReturnHomeUrl: str(ch.droneReturnHomeUrl, DEFAULT_HTTP_CHAT.droneReturnHomeUrl),
+        droneReturnHomeTimeoutMs: num(ch.droneReturnHomeTimeoutMs, DEFAULT_HTTP_CHAT.droneReturnHomeTimeoutMs),
       };
-     }
-   }
- 
-   const tm = asRecord(root.trackIdMode);
-   if (tm) {
-     resolvedTrackIdModeConfig = { distinguishSeaAir: bool(tm.distinguishSeaAir, DEFAULT_TRACK_ID_MODE.distinguishSeaAir) };
-   }
- 
+    }
+  }
+
+  const dzwlAlarm = asRecord(root.dzwlAlarm);
+  if (dzwlAlarm) {
+    resolvedDzwlAlarmConfig = {
+      pageUrl: str(dzwlAlarm.pageUrl, DEFAULT_DZWL_ALARM.pageUrl),
+    };
+  } else {
+    resolvedDzwlAlarmConfig = { ...DEFAULT_DZWL_ALARM };
+  }
+
+  const standaloneEngagement = asRecord(root.standaloneEngagement);
+  if (standaloneEngagement) {
+    resolvedStandaloneEngagementConfig = {
+      baseUrl: str(standaloneEngagement.baseUrl, DEFAULT_STANDALONE_ENGAGEMENT.baseUrl),
+      ltStrikePath: str(standaloneEngagement.ltStrikePath, DEFAULT_STANDALONE_ENGAGEMENT.ltStrikePath),
+      laserStrikePath: str(standaloneEngagement.laserStrikePath, DEFAULT_STANDALONE_ENGAGEMENT.laserStrikePath),
+      munitionStrikePath: str(
+        standaloneEngagement.munitionStrikePath,
+        DEFAULT_STANDALONE_ENGAGEMENT.munitionStrikePath,
+      ),
+    };
+  } else {
+    resolvedStandaloneEngagementConfig = { ...DEFAULT_STANDALONE_ENGAGEMENT };
+  }
+
    parseAssetTargetLineConfig(root);
+   parseMunitionDestroyEffectsConfig(root);
  }
- 
+
  export function getWebSocketConfig(): AppConfigWebSocket {
    return resolvedWebSocketConfig;
  }
- 
+
  export function getCoordinateTransformConfig(): AppConfigCoordinateTransform {
    return resolvedCoordinateTransformConfig;
  }
- 
- export function getHttpConfig(): AppConfigHttp {
-   return resolvedHttpConfig;
- }
- 
+
+export function getHttpConfig(): AppConfigHttp {
+  return resolvedHttpConfig;
+}
+
+export function getDzwlAlarmConfig(): AppConfigDzwlAlarm {
+  return resolvedDzwlAlarmConfig;
+}
+
+export function getStandaloneEngagementConfig(): AppConfigStandaloneEngagement {
+  return resolvedStandaloneEngagementConfig;
+}
+
  export function getHttpChatConfig(): AppConfigHttpChat {
    return resolvedHttpChatConfig;
  }
- 
- export function getTrackIdModeConfig(): AppConfigTrackIdMode {
-   return resolvedTrackIdModeConfig;
- }
- 
- export function getAssetTargetLineConfig(): AppConfigAssetTargetLine {
-   return resolvedAssetTargetLineConfig;
- }
- 
+
+  export function getAssetTargetLineConfig(): AppConfigAssetTargetLine {
+    return resolvedAssetTargetLineConfig;
+  }
+
+  export function getMunitionDestroyEffectsConfig(): AppConfigMunitionDestroyEffects {
+    return resolvedMunitionDestroyEffectsConfig;
+  }
+
  /**
   * 仅用于 **`useUnifiedWsFeed` 定时剔除**：按 `Track.lastUpdate`（ISO）与当前时间比较；
   * `isUav===true` 用 `trackTimeout.uavSeconds`，否则 `seconds`。**勿在 WS 入站写 store 时调用**。
@@ -1658,7 +1940,7 @@ export type AppConfigDroneMapRendering = {
      return now - lu <= ms;
    });
  }
- 
+
  export type ResolvedAppConfig = {
    /** 与 WS 合并前的配置静态实体：见 `mergeConfigAssetBase`（含 `airports` / `drones`） */
    configAssetBase: AssetData[];
@@ -1681,13 +1963,15 @@ export type AppConfigDroneMapRendering = {
    /** 根键 `trackRendering`（或 V2 根级 `trackTypeStyles` / `trackDisplay` / `trackTimeout`）：见文件头表格 */
    trackRendering: AppConfigTrackRendering;
    /** 根键 `factory.iconSize`：zoom→size 的 [[zoom, size], ...] 数组，用于资产中心图标 */
-   iconSizeStops: [number, number][] | null;
+    iconSizeStops: [number, number][] | null;
+    /** 根键 `factory.assetIconFrame`：资产中心图标的栅格画布、内边距与阴影配置 */
+    assetIconFrame: AssetIconFrameConfig;
    /** 激光 bundle `activationEnabled`：false 时扇区/扫描/脉冲均不显示 */
    laserActivationEnabled: boolean;
    /** TDOA bundle `activationEnabled`：false 时扇区/扫描均不显示 */
    tdoaActivationEnabled: boolean;
  };
- 
+
  function mergeProperties(
    a: Record<string, unknown> | null | undefined,
    b: Record<string, unknown> | null | undefined,
@@ -1695,7 +1979,7 @@ export type AppConfigDroneMapRendering = {
    const out = { ...(a ?? {}), ...(b ?? {}) };
    return Object.keys(out).length ? out : null;
  }
- 
+
  function parseAssetDispositionIconAccent(root: Record<string, unknown>): AssetDispositionIconAccent {
    const factory = asRecord(root.factory);
    const ai = factory ? asRecord(factory.assetIcons) : null;
@@ -1704,40 +1988,40 @@ export type AppConfigDroneMapRendering = {
      neutralIcon: typeof ai?.neutral === "string" ? ai.neutral : undefined,
    };
  }
- 
+
  /** 我方各资产类型默认着色（非敌/中时优先于主题默认红）；来自各根键 `assetFriendlyColor`，见 `applyFriendlyColorsFromAssetSections` */
  let resolvedAssetFriendlyColorsByAssetType: Partial<Record<PublicMapAssetType, string>> = {};
  /** 各资产名称默认字色：来自根键 `*.label.fontColor` */
  let resolvedAssetLabelColorsByAssetType: Partial<Record<PublicMapAssetType, string>> = {};
- 
+
  function applyFriendlyColorsFromAssetSections(root: Record<string, unknown>) {
    resolvedAssetFriendlyColorsByAssetType = {};
    const setColor = (k: PublicMapAssetType, v: unknown) => {
      if (typeof v === "string" && v.trim()) resolvedAssetFriendlyColorsByAssetType[k] = v.trim();
    };
- 
+
    const radar = asRecord(root.radar);
    if (radar) setColor("radar", radar.assetFriendlyColor);
- 
+
    const cameras = asRecord(root.cameras);
    if (cameras) {
      setColor("camera", cameras.assetFriendlyColor);
    }
- 
+
    const tower = asRecord(root.tower);
    if (tower) {
      setColor("tower", tower.assetFriendlyColor);
    }
- 
+
    const laserWeapons = asRecord(root.laserWeapons);
    if (laserWeapons) setColor("laser", laserWeapons.assetFriendlyColor);
- 
+
    const tdoa = asRecord(root.tdoa);
    if (tdoa) setColor("tdoa", tdoa.assetFriendlyColor);
- 
+
    const airports = asRecord(root.airports);
    if (airports) setColor("airport", airports.assetFriendlyColor);
- 
+
    const drones = asRecord(root.drones);
    if (drones) setColor("drone", drones.assetFriendlyColor);
    const unmannedShips = asRecord(root.unmannedShips);
@@ -1745,7 +2029,7 @@ export type AppConfigDroneMapRendering = {
    const missiles = asRecord(root.missiles);
    if (missiles) setColor("missile", missiles.assetFriendlyColor);
  }
- 
+
  function applyLabelColorsFromAssetSections(root: Record<string, unknown>) {
    resolvedAssetLabelColorsByAssetType = {};
    const setColor = (k: PublicMapAssetType, v: unknown) => {
@@ -1755,7 +2039,7 @@ export type AppConfigDroneMapRendering = {
      const lbl = asRecord(section?.label);
      return lbl?.fontColor;
    };
- 
+
    const radar = asRecord(root.radar);
    if (radar) setColor("radar", pickLabelColor(radar));
    const cameras = asRecord(root.cameras);
@@ -1775,13 +2059,13 @@ export type AppConfigDroneMapRendering = {
    const missiles = asRecord(root.missiles);
    if (missiles) setColor("missile", pickLabelColor(missiles));
  }
- 
+
  /** 我方资产图标/标注：读各根键根级 `assetFriendlyColor`；未配置则 undefined（由上层回退到主题 `FORCE_COLORS.friendly`） */
  export function getAssetFriendlyColorForAssetType(t: PublicMapAssetType): string | undefined {
    const c = resolvedAssetFriendlyColorsByAssetType[t];
    return typeof c === "string" && c.trim() ? c.trim() : undefined;
  }
- 
+
  /** 我方资产名称字色：读各根键 `label.fontColor`；未配置则 undefined（上层回退） */
 export function getAssetLabelFontColorForAssetType(t: PublicMapAssetType): string | undefined {
   const c = resolvedAssetLabelColorsByAssetType[t];
@@ -1795,7 +2079,7 @@ export function assetUiDisplayName(a: Pick<AssetData, "id" | "name">): string {
    const n = String(a.name ?? "").trim();
    return n || a.id;
  }
- 
+
  /**
   * 合并静态与 WS 时：`heading` / `fov_angle` / `range_km` 若动态侧为 `null`（载荷缺字段），保留静态值，避免光电扇区朝向被覆盖丢失。
   */
@@ -1825,7 +2109,7 @@ function shouldPreservePrevCoords(
     nextLng === 0
   );
 }
- 
+
  /** 先铺 `configAssetBase`（静态配置解析结果），再按 id 合并动态侧列表（如 `useAssetStore.assets`，来源可为 WS 等）；同 id 以动态侧字段覆盖；`heading`/`fov_angle`/`range_km` 仅在有有限数值时覆盖静态 */
  export function mergeDynamicAndStaticAssets(configAssetBase: AssetData[], fromWs: AssetData[]): AssetData[] {
    const byId = new Map<string, AssetData>();
@@ -1873,7 +2157,7 @@ function shouldPreservePrevCoords(
    }
    return [...byId.values()].map(stampDeviceStateOnAsset);
  }
- 
+
  /** `radar.visibility` 或与 cameras 同形的 visibility 对象 → 全局默认 */
  function visibilityRecordToRadarGlobals(vis: Record<string, unknown> | null | undefined): RadarVisibilityGlobal | undefined {
    if (!vis) return undefined;
@@ -1882,7 +2166,7 @@ function shouldPreservePrevCoords(
    if ("centerIconVisible" in vis) o.centerIconVisible = vis.centerIconVisible !== false;
    return Object.keys(o).length ? o : undefined;
  }
- 
+
  /** 读取 `radar.visibility`（与 cameras 阵型一致） */
  function parseRadarVisibilityGlobal(root: Record<string, unknown>): RadarVisibilityGlobal | undefined {
    const radar = root.radar;
@@ -1892,7 +2176,7 @@ function shouldPreservePrevCoords(
    }
    return undefined;
  }
- 
+
  /**
   * 静态 `radar.devices` 解析时合并用：与 `getRadarConfigDefaults()` 中根级
   * `defaultDistanceLabelsVisible` / `defaultAngleLabelsVisible` / `defaultCrosshairVisible` 语义一致。
@@ -1910,7 +2194,7 @@ function shouldPreservePrevCoords(
        "defaultCrosshairVisible" in radar ? (radar.defaultCrosshairVisible as boolean) !== false : true,
    };
  }
- 
+
  function parseSectorBundle(raw: unknown): AppConfigSectorBundle | null {
    const o = asRecord(raw);
    if (!o) return null;
@@ -1958,12 +2242,12 @@ function shouldPreservePrevCoords(
        : undefined,
    };
  }
- 
+
  /** 解析 `factory.iconSize`：[[zoom, size], ...] 数组 → `[number, number][] | null` */
- function parseIconSizeStops(root: Record<string, unknown>): [number, number][] | null {
-   const factory = asRecord(root.factory);
-   if (!factory) return null;
-   const raw = factory.iconSize;
+function parseIconSizeStops(root: Record<string, unknown>): [number, number][] | null {
+  const factory = asRecord(root.factory);
+  if (!factory) return null;
+  const raw = factory.iconSize;
    if (!Array.isArray(raw) || raw.length < 2) return null;
    const stops: [number, number][] = [];
    for (const item of raw) {
@@ -1974,10 +2258,40 @@ function shouldPreservePrevCoords(
        stops.push([z, s]);
      }
    }
-   return stops.length >= 2 ? stops : null;
- }
- 
- function parseFullAppConfig(json: unknown): ResolvedAppConfig {
+  return stops.length >= 2 ? stops : null;
+}
+
+function finitePositive(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function finiteNonNegative(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function finiteUnit(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback;
+}
+
+function parseAssetIconFrame(root: Record<string, unknown>): AssetIconFrameConfig {
+  const factory = asRecord(root.factory);
+  const raw = factory ? asRecord(factory.assetIconFrame) : null;
+  const d = DEFAULT_ASSET_ICON_FRAME_CONFIG;
+  if (!raw) return { ...d };
+  return {
+    canvasPx: finitePositive(raw.canvasPx, d.canvasPx),
+    plainCanvasPx: finitePositive(raw.plainCanvasPx, d.plainCanvasPx),
+    shadowBlurPx: finiteNonNegative(raw.shadowBlurPx, d.shadowBlurPx),
+    shadowOpacity: finiteUnit(raw.shadowOpacity, d.shadowOpacity),
+    droneTriangleCanvasPx: finitePositive(raw.droneTriangleCanvasPx, d.droneTriangleCanvasPx),
+    droneTriangleStrokeWidthPx: finiteNonNegative(raw.droneTriangleStrokeWidthPx, d.droneTriangleStrokeWidthPx),
+  };
+}
+
+function parseFullAppConfig(json: unknown): ResolvedAppConfig {
    const root = asRecord(json) ?? {};
    const camerasBundle = parseSectorBundle(root.cameras);
    const towerBundle = parseSectorBundle(root.tower);
@@ -2003,7 +2317,7 @@ function shouldPreservePrevCoords(
      fromUsvs,
      fromMissiles,
    );
- 
+
    const airportMap = parseAirportMapConfig(root);
    applyResolvedAirportConfig(airportMap);
    const trackRendering = parseTrackRenderingConfig(root);
@@ -2015,11 +2329,9 @@ function shouldPreservePrevCoords(
    // 提取 radar 根级默认配置（WS 雷达实体兜底用）
    applyRadarDefaults(root);
    resolvedTileLayers = parseTileLayers(root);
- 
-   const laserActivationEnabled = laserWeapons?.activationEnabled === true;
-   const tdoaActivationEnabled = tdoaBundle?.activationEnabled === true;
-   applyLaserActivation(laserActivationEnabled);
-   applyTdoaActivation(tdoaActivationEnabled);
+
+   const laserActivationEnabled = false;
+   const tdoaActivationEnabled = false;
    resolvedCamerasSectorBundle = camerasBundle;
    resolvedLaserSectorBundle = laserWeapons;
    resolvedTdoaSectorBundle = tdoaBundle;
@@ -2035,18 +2347,19 @@ function shouldPreservePrevCoords(
      missiles: missilesBundle,
      assetDispositionIconAccent: parseAssetDispositionIconAccent(root),
      trackRendering,
-     iconSizeStops: parseIconSizeStops(root),
-     laserActivationEnabled,
+      iconSizeStops: parseIconSizeStops(root),
+      assetIconFrame: parseAssetIconFrame(root),
+      laserActivationEnabled,
      tdoaActivationEnabled,
    };
  }
- 
+
  /** 扇区描边：`lineWidth` 经 `Number` 后 ≤0 或 NaN 视为关闭 */
  export function resolveSectorBorderEmit(b: AppConfigSectorBundle | null): boolean {
    const w = Number(b?.sectorBorder?.lineWidth);
    return Number.isFinite(w) && w > 0;
  }
- 
+
  /** 供 `LaserMaplibre.setSectorBorder`：与 V2 `sectorBorder` 一致；`lineColorFixed == null` 时与扇区设备色一致 */
  export function laserSectorBorderFromBundle(b: AppConfigSectorBundle | null): {
    emit: boolean;
@@ -2069,7 +2382,7 @@ function shouldPreservePrevCoords(
    const lw = emit ? Math.max(0.25, Number(sb?.lineWidth) || 1) : 0;
    return { emit, lineWidth: lw, lineColorFixed, lineDash };
  }
- 
+
  /** 供 `LaserMaplibre.setLabelStyle`：与 V2 `label` 块一致 */
  export function laserLabelStyleFromBundle(b: AppConfigSectorBundle | null): {
    textColor: string;
@@ -2093,16 +2406,16 @@ function shouldPreservePrevCoords(
      textFont: Array.isArray(lbl.textFont) && lbl.textFont.length ? lbl.textFont.map(String) : ["Open Sans Semibold", "Arial Unicode MS Bold"],
    };
  }
- 
+
  /** TDOA 扇区边线与激光相同规则 */
  export function tdoaSectorBorderFromBundle(b: AppConfigSectorBundle | null) {
    return laserSectorBorderFromBundle(b);
  }
- 
+
  export function tdoaLabelStyleFromBundle(b: AppConfigSectorBundle | null) {
    return laserLabelStyleFromBundle(b);
  }
- 
+
  /**
   * 是否存在任一设备在合并后仍为 true（用于图层总开关；`b == null` 视为不限制，默认 true）。
   */
@@ -2116,35 +2429,33 @@ function shouldPreservePrevCoords(
    if (!devs.length) return root !== false;
    return devs.some((d) => mergeRootAndDeviceVisible(root, d[key]));
  }
- 
- export function sectorBundleToLaserLayerVis(b: AppConfigSectorBundle | null): Partial<LaserMaplibreLayerVisibility> {
+
+export function sectorBundleToLaserLayerVis(b: AppConfigSectorBundle | null): Partial<LaserMaplibreLayerVisibility> {
    if (!b) return {};
-   const active = resolvedLaserActivation;
    const borderEmit = resolveSectorBorderEmit(b);
    return {
-     fillVisible: active,
-     scanFillVisible: active,
-     lineVisible: active && borderEmit,
+     fillVisible: true,
+     scanFillVisible: true,
+     lineVisible: borderEmit,
      centerVisible: sectorBundleAnyMergedVisible(b, "centerIconVisible"),
      labelVisible: sectorBundleAnyMergedVisible(b, "centerNameVisible"),
    };
  }
- 
- export function sectorBundleToTdoaLayerVis(b: AppConfigSectorBundle | null): Partial<TdoaMaplibreLayerVisibility> {
+
+export function sectorBundleToTdoaLayerVis(b: AppConfigSectorBundle | null): Partial<TdoaMaplibreLayerVisibility> {
    if (!b) return {};
-   const active = resolvedTdoaActivation;
    const borderEmit = resolveSectorBorderEmit(b);
    return {
-     fillVisible: active,
-     scanFillVisible: active,
-     lineVisible: active && borderEmit,
+     fillVisible: true,
+     scanFillVisible: true,
+     lineVisible: borderEmit,
      centerVisible: sectorBundleAnyMergedVisible(b, "centerIconVisible"),
      labelVisible: sectorBundleAnyMergedVisible(b, "centerNameVisible"),
    };
  }
- 
+
  /* ── FOV 扇区样式解析（光电 / 电侦 / 激光 / TDOA）── */
- 
+
  /** 光电 FOV 扇区样式：从 cameras bundle 读取填充色/线色/线宽/透明度 */
  export function resolveOptoFovStyle(b: AppConfigSectorBundle | null) {
    return {
@@ -2157,7 +2468,7 @@ function shouldPreservePrevCoords(
      lineDashReal: b?.sectorLineDashReal ?? [3, 3],
    };
  }
- 
+
  /** 电侦 FOV 扇区样式：从独立的 tower bundle 读取 */
  export function resolveTowerFovStyle(b: AppConfigSectorBundle | null) {
    return {
@@ -2170,7 +2481,7 @@ function shouldPreservePrevCoords(
      lineDashReal: b?.sectorLineDashReal ?? [3, 3],
    };
  }
- 
+
  /** 激光专题层：扇区填充默认色与透明度（设备未指定 color/opacity 时） */
  export function resolveLaserDefaults(b: AppConfigSectorBundle | null) {
    return {
@@ -2178,7 +2489,7 @@ function shouldPreservePrevCoords(
      sectorFillDefaultOpacity: b?.sectorFillDefaultOpacity ?? 0.35,
    };
  }
- 
+
  /** TDOA 专题层：扇区填充默认色与透明度 */
  export function resolveTdoaDefaults(b: AppConfigSectorBundle | null) {
    return {
@@ -2186,7 +2497,7 @@ function shouldPreservePrevCoords(
      sectorFillDefaultOpacity: b?.sectorFillDefaultOpacity ?? 0.30,
    };
  }
- 
+
  function sectorDeviceToSectorGeometry(
    d: AppConfigSectorDevice,
    defaultRangeM: number,
@@ -2223,13 +2534,13 @@ function shouldPreservePrevCoords(
      centerIconVisible: mergeRootAndDeviceVisible(bundle?.visibility?.centerIconVisible, d.centerIconVisible),
    };
  }
- 
+
  function resolveCycleMs(bs: AppConfigSectorScan | undefined, ds: Record<string, unknown>): number {
    const v = ds.cycleMs ?? bs?.cycleMs;
    const n = Number(v);
    return Math.max(400, Number.isFinite(n) ? n : 2000);
  }
- 
+
  function buildLaserScanParams(
    bundle: AppConfigSectorBundle | null,
    row: AppConfigSectorDevice,
@@ -2246,7 +2557,7 @@ function shouldPreservePrevCoords(
        bandWidthMeters: defaults.bandWidthMeters,
      };
    }
- 
+
    const cycleMs = resolveCycleMs(bs, ds);
    const tickMs = Math.max(
      16,
@@ -2260,22 +2571,14 @@ function shouldPreservePrevCoords(
      0.2,
      Number(ds.bandWidthMeters ?? bs?.bandWidthMeters ?? defaults.bandWidthMeters) || defaults.bandWidthMeters,
    );
- 
+
    return { cycleMs, tickMs, bandCount, bandWidthMeters };
  }
- 
- let resolvedLaserActivation = false;
- let resolvedTdoaActivation = false;
+
  /** 供三维渲染器同步读取扇区颜色配置 */
  let resolvedCamerasSectorBundle: AppConfigSectorBundle | null = null;
  let resolvedLaserSectorBundle: AppConfigSectorBundle | null = null;
  let resolvedTdoaSectorBundle: AppConfigSectorBundle | null = null;
- function applyLaserActivation(v: boolean) {
-   resolvedLaserActivation = v;
- }
- function applyTdoaActivation(v: boolean) {
-   resolvedTdoaActivation = v;
- }
  /**
   * 三维 FOV 填充色（直接复用二维同名解析函数，与二维色调完全一致）。
   * 返回 { color: CSS 色值, opacity: 不透明度 }
@@ -2342,26 +2645,13 @@ export function getDirectedWeaponScanDefaults(type: "laser" | "tdoa"): LaserScan
 }
 
 /** 激光激活开关：`activationEnabled` 为 true 时才显示扇区+扫描+脉冲 */
-export function getLaserActivationEnabled(): boolean {
-   return resolvedLaserActivation;
- }
  /** 运行时设置激光激活开关（供 chat 方案激活调用） */
- export function setLaserActivationEnabled(v: boolean): void {
-   resolvedLaserActivation = v;
- }
  /** TDOA 激活开关：`activationEnabled` 为 true 时才显示扇区+扫描 */
- export function getTdoaActivationEnabled(): boolean {
-   return resolvedTdoaActivation;
- }
  /** 运行时设置 TDOA 激活开关（供 chat 方案激活调用） */
- export function setTdoaActivationEnabled(v: boolean): void {
-   resolvedTdoaActivation = v;
- }
- 
+
  export function laserDevicesFromSectorBundle(bundle: AppConfigSectorBundle | null): LaserDevice[] {
    if (!bundle?.devices?.length) return [];
    const defM = Number.isFinite(Number(bundle.defaultRange)) ? Number(bundle.defaultRange) : 0;
-   const rootActive = resolvedLaserActivation;
    const out: LaserDevice[] = [];
    for (const raw of bundle.devices) {
      const sid = String(raw.deviceId ?? "");
@@ -2371,7 +2661,7 @@ export function getLaserActivationEnabled(): boolean {
        throw new Error(`laserWeapons.devices[${sid}].assetType 必须为 laser`);
      }
      /* 设备级 activationEnabled 覆盖根级；不写则继承根级 */
-     const devActive = raw.activationEnabled !== undefined ? raw.activationEnabled === true : rootActive;
+     const devActive = false;
      const base = sectorDeviceToSectorGeometry(raw, defM, bundle);
      if (!base) continue;
      const scan = buildLaserScanParams(bundle, raw, devActive, {
@@ -2401,7 +2691,7 @@ export function getLaserActivationEnabled(): boolean {
    }
    return out;
  }
- 
+
  function buildTdoaScanParams(
    bundle: AppConfigSectorBundle | null,
    row: AppConfigSectorDevice,
@@ -2413,7 +2703,7 @@ export function getLaserActivationEnabled(): boolean {
      bandWidthMeters: 2,
    }) as TdoaScanParams;
  }
- 
+
  export function tdoaDevicesFromSectorBundle(bundle: AppConfigSectorBundle | null): TdoaDevice[] {
    if (!bundle?.devices?.length) return [];
    const defM = Number.isFinite(Number(bundle.defaultRange))
@@ -2421,7 +2711,6 @@ export function getLaserActivationEnabled(): boolean {
      : Number.isFinite(Number(bundle.defaultSectorRange))
        ? Number(bundle.defaultSectorRange)
        : 0;
-   const rootActive = resolvedTdoaActivation;
    const out: TdoaDevice[] = [];
    for (const raw of bundle.devices) {
      const sid = String(raw.deviceId ?? "");
@@ -2431,7 +2720,7 @@ export function getLaserActivationEnabled(): boolean {
        throw new Error(`tdoa.devices[${sid}].assetType 必须为 tdoa`);
      }
      /* 设备级 activationEnabled 覆盖根级；不写则继承根级 */
-     const devActive = raw.activationEnabled !== undefined ? raw.activationEnabled === true : rootActive;
+     const devActive = false;
      const base = sectorDeviceToSectorGeometry(raw, defM, bundle);
      if (!base) continue;
      const scan = buildTdoaScanParams(bundle, raw, devActive);
@@ -2439,18 +2728,18 @@ export function getLaserActivationEnabled(): boolean {
    }
    return out;
  }
- 
+
  /** `laserWeapons` → `asset-store` 静态行；中心点仅专题层绘制，仅用于列表/统一实体模型 */
  function sectorBundleFriendlyTint(bundle: AppConfigSectorBundle | null | undefined): string | undefined {
    const c = bundle?.assetFriendlyColor;
    return typeof c === "string" && c.trim() ? c.trim() : undefined;
  }
- 
+
  function sectorBundleLabelFontColor(bundle: AppConfigSectorBundle | null | undefined): string | undefined {
    const c = bundle?.label?.fontColor;
    return typeof c === "string" && c.trim() ? c.trim() : undefined;
  }
- 
+
  function laserBundleToStaticAssets(bundle: AppConfigSectorBundle | null): AssetData[] {
    const devices = laserDevicesFromSectorBundle(bundle);
    const now = isoNow();
@@ -2483,7 +2772,7 @@ export function getLaserActivationEnabled(): boolean {
      updated_at: now,
    }));
  }
- 
+
  function tdoaBundleToStaticAssets(bundle: AppConfigSectorBundle | null): AssetData[] {
    const devices = tdoaDevicesFromSectorBundle(bundle);
    const now = isoNow();
@@ -2516,11 +2805,11 @@ export function getLaserActivationEnabled(): boolean {
      updated_at: now,
    }));
  }
- 
+
  const DEFAULT_RELATIVE_URL = "/app-config.json";
- 
+
  let resolvedConfigPromise: Promise<ResolvedAppConfig> | null = null;
- 
+
  function configUrl(customUrl?: string): string {
    return (
      customUrl ||
@@ -2528,7 +2817,7 @@ export function getLaserActivationEnabled(): boolean {
      DEFAULT_RELATIVE_URL
    );
  }
- 
+
  /** Fetch + 解析 `app-config.json`（模块内单例 Promise）；返回 `configAssetBase` / `cameras` / `laserWeapons` / `tdoa` 等，不与 `useAssetStore` 合并 */
  export async function loadResolvedAppConfig(customUrl?: string): Promise<ResolvedAppConfig> {
    const empty: ResolvedAppConfig = {
@@ -2543,8 +2832,9 @@ export function getLaserActivationEnabled(): boolean {
      missiles: null,
      assetDispositionIconAccent: {},
      trackRendering: { ...DEFAULT_TRACK_RENDERING },
-     iconSizeStops: null,
-     laserActivationEnabled: false,
+      iconSizeStops: null,
+      assetIconFrame: { ...DEFAULT_ASSET_ICON_FRAME_CONFIG },
+      laserActivationEnabled: false,
      tdoaActivationEnabled: false,
    };
    if (typeof window === "undefined") return empty;
@@ -2564,10 +2854,9 @@ export function getLaserActivationEnabled(): boolean {
    }
    return resolvedConfigPromise;
  }
- 
+
  /** 仅静态配置解析出的实体底数（`radar` + `cameras` / `laserWeapons` / `tdoa` 等转成的 `AssetData[]`）；与动态侧合并需另调 `mergeDynamicAndStaticAssets` */
  export async function fetchConfigAssetBase(customUrl?: string): Promise<AssetData[]> {
    const r = await loadResolvedAppConfig(customUrl);
    return r.configAssetBase;
  }
- 

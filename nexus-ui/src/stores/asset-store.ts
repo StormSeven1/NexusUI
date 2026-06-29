@@ -93,19 +93,24 @@ interface AssetState {
   clearDisplayOverride: (id: string) => void;
 }
 
-function shallowEqualRecord(
-  left: Record<string, unknown> | null | undefined,
-  right: Record<string, unknown> | null | undefined,
-): boolean {
-  if (left === right) return true;
-  if (!left || !right) return !left && !right;
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  if (leftKeys.length !== rightKeys.length) return false;
-  for (const key of leftKeys) {
-    if (left[key] !== right[key]) return false;
+function sameValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (left == null || right == null) return left === right;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false;
+    if (left.length !== right.length) return false;
+    return left.every((item, index) => sameValue(item, right[index]));
   }
-  return true;
+  if (typeof left === "object" || typeof right === "object") {
+    if (typeof left !== "object" || typeof right !== "object") return false;
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    if (leftKeys.length !== rightKeys.length) return false;
+    return leftKeys.every((key) => sameValue(leftRecord[key], rightRecord[key]));
+  }
+  return false;
 }
 
 function sameAsset(left: AssetData, right: AssetData): boolean {
@@ -125,8 +130,7 @@ function sameAsset(left: AssetData, right: AssetData): boolean {
     left.target_lat === right.target_lat &&
     left.target_lng === right.target_lng &&
     left.created_at === right.created_at &&
-    left.updated_at === right.updated_at &&
-    shallowEqualRecord(left.properties, right.properties)
+    sameValue(left.properties, right.properties)
   );
 }
 
@@ -169,19 +173,34 @@ export const useAssetStore = create<AssetState>((set) => ({
     }),
 
   mergeAssetFields: (id, patch) =>
-    set((s) => ({
-      assets: s.assets.map((a) =>
-        a.id === id ? { ...a, ...patch, updated_at: new Date().toISOString() } : a
-      ),
-    })),
+    set((s) => {
+      const index = s.assets.findIndex((a) => a.id === id);
+      if (index < 0) return s;
+
+      const current = s.assets[index];
+      const hasChanges = Object.entries(patch).some(
+        ([key, value]) => !sameValue(current[key as keyof AssetData], value),
+      );
+      if (!hasChanges) return s;
+
+      const merged = { ...current, ...patch };
+      const candidate = { ...merged, updated_at: current.updated_at };
+      if (sameValue(current, candidate)) return s;
+
+      const next = [...s.assets];
+      next[index] = candidate;
+      return { assets: next };
+    }),
 
   upsertAsset: (asset) =>
     set((s) => {
       const ts = new Date().toISOString();
       const i = s.assets.findIndex((a) => a.id === asset.id);
       if (i >= 0) {
+        const merged = { ...s.assets[i], ...asset };
+        if (sameAsset(s.assets[i], merged)) return s;
         const next = [...s.assets];
-        next[i] = { ...next[i], ...asset, updated_at: ts };
+        next[i] = { ...merged, updated_at: ts };
         return { assets: next };
       }
       return {

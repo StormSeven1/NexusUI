@@ -13,7 +13,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from config import DDS_RECEIVERS, HTTP_POLLERS, MQTT_RECEIVERS, TCP_CLIENTS, UDP_RECEIVERS, get_settings
+from Custombackend.app.config import DDS_RECEIVERS, HTTP_POLLERS, MQTT_RECEIVERS, TCP_CLIENTS, UDP_RECEIVERS, get_settings
 from database import DatabaseManager
 from grpc_services.destroy.proto_codegen import ensure_destroy_proto_generated
 from grpc_services.destroy.service import destroy_grpc_service

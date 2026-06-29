@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useTrackStore } from "@/stores/track-store";
 import { cn } from "@/lib/utils";
@@ -15,11 +15,11 @@ import {
 } from "lucide-react";
 
 interface ActionPanelProps {
-  trackId: string;
+  targetID: string;
 }
 
-export function ActionPanel({ trackId }: ActionPanelProps) {
-  const track = useTrackStore((s) => s.tracks.find((t) => t.id === trackId));
+export function ActionPanel({ targetID }: ActionPanelProps) {
+  const track = useTrackStore((s) => s.tracks.find((t) => t.id === targetID));
   if (!track) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-xs text-nexus-text-muted">
@@ -132,3 +132,4 @@ function LogEntry({ time, text }: { time: string; text: string }) {
     </div>
   );
 }
+

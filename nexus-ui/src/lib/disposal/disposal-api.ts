@@ -135,6 +135,7 @@ export interface ExecuteDisposalResult {
   success?: boolean;
   message?: string;
   businessWorkflowId?: string;
+  pageUrl?: string;
 }
 
 /**
@@ -174,6 +175,14 @@ export async function postDisposalExecute(
       success: result.success !== false,
       message: typeof result.message === "string" ? result.message : undefined,
       businessWorkflowId: typeof result.businessWorkflowId === "string" ? result.businessWorkflowId : undefined,
+      pageUrl:
+        typeof result.pageUrl === "string"
+          ? result.pageUrl
+          : typeof result.page_url === "string"
+            ? result.page_url
+            : typeof result.url === "string"
+              ? result.url
+              : undefined,
     };
   } catch (error) {
     return { ok: false, success: false, message: getNetworkFriendlyMessage(error) };

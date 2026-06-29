@@ -1,14 +1,10 @@
-/**
- * 会话管理 API 客户端
- * 通过 Next.js rewrites 代理到 FastAPI /api/conversations/*
- */
-
 const BASE = "/api/backend/conversations";
 
 export interface ConversationSummary {
   id: string;
   title: string;
   model: string;
+  category?: string;
   created_at: string;
   updated_at: string;
 }
@@ -25,17 +21,19 @@ export interface ConversationDetail extends ConversationSummary {
   system_prompt: string;
 }
 
-export async function listConversations(limit = 50, offset = 0): Promise<ConversationSummary[]> {
-  const res = await fetch(`${BASE}?limit=${limit}&offset=${offset}`);
+export async function listConversations(limit = 50, offset = 0, category?: string): Promise<ConversationSummary[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (category) params.set("category", category);
+  const res = await fetch(`${BASE}?${params.toString()}`);
   if (!res.ok) throw new Error("获取会话列表失败");
   return res.json();
 }
 
-export async function createConversation(title = "新对话"): Promise<ConversationSummary> {
+export async function createConversation(title = "新对话", category = "chat"): Promise<ConversationSummary> {
   const res = await fetch(BASE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, category }),
   });
   if (!res.ok) throw new Error("创建会话失败");
   return res.json();

@@ -38,18 +38,16 @@ import {
   buildSelectionRingDataUrl,
   TRACK_SELECT_RING_ID,
   buildAssetSymbolDataUrl,
+  getAssetSymbolRasterSize,
   getAllAssetSymbolKeysForPrereg,
   buildIconSizeExpr,
+  setAssetIconFrameConfig,
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
 import { getMaplibreBaseMapOptions } from "@/lib/map-2d-basemap";
 import { parseVectorLayersForPanel } from "@/lib/map-2d-basemap-layer-panel";
 import { getTileLayerConfigs } from "@/lib/map-app-config";
-import {
-  mergeLaserDeviceWithAssetWsWhileDisposalFollow,
-  mergeTdoaDeviceWithAssetWsWhileDisposalFollow,
-} from "@/lib/disposal/disposal-weapon-follow";
 import {
   sectorBundleToLaserLayerVis,
   sectorBundleToTdoaLayerVis,
@@ -134,9 +132,11 @@ import {
 } from "@/components/map/modules/db-area-draw-maplibre";
 import { AreaDrawSaveDialog } from "@/components/map/AreaDrawDialogs";
 import { AreaDbContextMenu, type AreaDbMenuState } from "@/components/map/AreaDbContextMenu";
+import { DroneContextMenu, type DroneMenuState } from "@/components/map/DroneContextMenu";
 /** 底图天花板：不可见标记图层，所有底图（矢量+瓦片）在其下方，所有数据/资产图层在其上方 */
 const BASEMAP_CEILING = "basemap-ceiling";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
+import { sendDroneReturnHome, toastDroneReturnHomeSummary } from "@/lib/drone/drone-return-home";
 
 /* 2D 地图：航迹 / 资产 / 限制区 + 测量与扇区工具 */
 
@@ -309,17 +309,20 @@ function applyLayerPanelVisibilityFromStore(
  *   与专题层合并见 `mergeLaserDeviceWithAssetWsWhileDisposalFollow`（非跟随时保留专题层 scan/脉动）。
  * - range/heading/fovAngle 等从 Asset 对应字段直接映射。
  */
-function adaptAssetToLaserDevice(a: Asset): LaserDevice {
+function adaptAssetToLaserDevice(a: Asset, previous?: LaserDevice): LaserDevice {
   const geometryDefaults = getDirectedWeaponGeometryDefaults("laser");
   const scanDefaults = getDirectedWeaponScanDefaults("laser");
+  const props = a.properties && typeof a.properties === "object" ? (a.properties as Record<string, unknown>) : {};
+  const deviceState = Number(props.deviceState ?? props.device_state);
+  const frontendArming = props.weapon_frontend_arming === true;
   return {
     id: a.id,
     lng: a.lng,
     lat: a.lat,
-    activationEnabled: false,
+    activationEnabled: deviceState === 2 && !frontendArming,
     /* Asset.range 单位 km；LaserDevice.rangeKm 也是 km，直接传递 */
     rangeKm: a.range ?? geometryDefaults.rangeKm ?? 0,
-    headingDeg: a.heading ?? 0,
+    headingDeg: a.heading ?? previous?.headingDeg ?? 0,
     openingDeg: a.fovAngle ?? geometryDefaults.openingDeg ?? 0,
     virtual: a.isVirtual,
     disposition: a.disposition,
@@ -332,6 +335,8 @@ function adaptAssetToLaserDevice(a: Asset): LaserDevice {
      * LaserMaplibre.flush() 中 centerIconVisible !== false → true，保留专题层图标。 */
     centerIconVisible: undefined,
     name: a.name,
+    deviceState: Number.isFinite(deviceState) ? deviceState : undefined,
+    frontendArming,
     /* 默认动画参数；是否绘制扇区由 activationEnabled（bundle / activate）决定 */
     scan: scanDefaults,
   };
@@ -342,16 +347,19 @@ function adaptAssetToLaserDevice(a: Asset): LaserDevice {
  *
  * 与激光同理，动态实体不含 TDOA 扫描参数；与专题层合并时保留由 bundle/激活写入的 scan。
  */
-function adaptAssetToTdoaDevice(a: Asset): TdoaDevice {
+function adaptAssetToTdoaDevice(a: Asset, previous?: TdoaDevice): TdoaDevice {
   const geometryDefaults = getDirectedWeaponGeometryDefaults("tdoa");
   const scanDefaults = getDirectedWeaponScanDefaults("tdoa");
+  const props = a.properties && typeof a.properties === "object" ? (a.properties as Record<string, unknown>) : {};
+  const deviceState = Number(props.deviceState ?? props.device_state);
+  const frontendArming = props.weapon_frontend_arming === true;
   return {
     id: a.id,
     lng: a.lng,
     lat: a.lat,
-    activationEnabled: false,
+    activationEnabled: deviceState === 2 && !frontendArming,
     rangeKm: a.range ?? geometryDefaults.rangeKm ?? 0,
-    headingDeg: a.heading ?? 0,
+    headingDeg: a.heading ?? previous?.headingDeg ?? 0,
     openingDeg: a.fovAngle ?? geometryDefaults.openingDeg ?? 0,
     virtual: a.isVirtual,
     disposition: a.disposition,
@@ -361,6 +369,8 @@ function adaptAssetToTdoaDevice(a: Asset): TdoaDevice {
     /* TDOA 中心图标由 TdoaMaplibre 专题层独立管理，同激光 */
     centerIconVisible: undefined,
     name: a.name,
+    deviceState: Number.isFinite(deviceState) ? deviceState : undefined,
+    frontendArming,
     scan: scanDefaults,
   };
 }
@@ -439,6 +449,7 @@ export function Map2D() {
     y: number;
   } | null>(null);
   const [areaMenu, setAreaMenu] = useState<AreaDbMenuState | null>(null);
+  const [droneMenu, setDroneMenu] = useState<DroneMenuState | null>(null);
   const { setZoomLevel, selectTrack, selectAsset } = useAppStore();
 
   const selectTrackRef = useRef(selectTrack);
@@ -532,6 +543,7 @@ export function Map2D() {
       const init = async () => {
         /* 配置通过 app-config-store 统一加载，Map2D 只消费资产 store 的当前快照 */
         const appCfg = await useAppConfigStore.getState().ensureLoaded();
+        setAssetIconFrameConfig(appCfg.assetIconFrame);
         const currentAssetData = useAssetStore.getState().assets;
         const _assets = adaptAssetsForMap(currentAssetData);
 
@@ -564,7 +576,7 @@ export function Map2D() {
           ...getAllAssetSymbolKeysForPrereg(currentAssetData, assetIconPreregRootFriendlyTints).map(async ({ id, type, status, virtual, disposition, friendlyFill }) => {
             if (!map.hasImage(id)) {
               const src = await buildAssetSymbolDataUrl(type, status, virtual, disposition, assetIconAccent, friendlyFill);
-              const rasterPx = type === "usv" || type === "missile" ? 82 : 56;
+              const rasterPx = getAssetSymbolRasterSize(type);
               map.addImage(id, await loadSvgImage(src, rasterPx), { pixelRatio: 2 });
             }
           }),
@@ -694,7 +706,7 @@ export function Map2D() {
         tdoa.upsertMany(tdoaDevicesFromSectorBundle(appCfg.tdoa));
         measureToolRefs.current = { dist, angle, poly, laser, tdoa };
 
-        /* 注册专题模块到全局注册表，供 laser-activation / tdoa-activation / asset-target-line 使用 */
+        /* 注册专题模块到全局注册表，供地图外部逻辑读取当前专题层状态 */
         registerMapModules({ laser, tdoa, drones: dronesRef.current!, map });
 
         /* 从 factory.iconSize 配置覆盖所有资产中心图标的 zoom→size 插值 */
@@ -841,19 +853,50 @@ export function Map2D() {
             const areaId = Number(f.properties?.areaId);
             return Number.isFinite(groupId) && Number.isFinite(areaId);
           });
-          if (!areaHit || !(e.originalEvent instanceof MouseEvent)) {
+          if (!(e.originalEvent instanceof MouseEvent)) {
             setAreaMenu(null);
+            setDroneMenu(null);
             return;
           }
-          e.preventDefault();
-          setAreaMenu({
-            clientX: e.originalEvent.clientX,
-            clientY: e.originalEvent.clientY,
-            groupId: Number(areaHit.properties?.groupId),
-            areaId: Number(areaHit.properties?.areaId),
-            areaType: Number(areaHit.properties?.areaType),
-            areaName: String(areaHit.properties?.name ?? "未命名区域"),
-          });
+          if (areaHit) {
+            e.preventDefault();
+            setDroneMenu(null);
+            setAreaMenu({
+              clientX: e.originalEvent.clientX,
+              clientY: e.originalEvent.clientY,
+              groupId: Number(areaHit.properties?.groupId),
+              areaId: Number(areaHit.properties?.areaId),
+              areaType: Number(areaHit.properties?.areaType),
+              areaName: String(areaHit.properties?.name ?? "未命名区域"),
+            });
+            return;
+          }
+          const droneHit = map
+            .queryRenderedFeatures(e.point, { layers: [DRONES_SYMBOL_LAYER, DRONES_STATIC_SYMBOL_LAYER] })
+            .find((feature) => {
+              const id = assetIdFromPickFeature(feature);
+              if (!id) return false;
+              return useAssetStore.getState().assets.some((asset) => asset.id === id && asset.asset_type === "drone");
+            });
+          if (droneHit) {
+            e.preventDefault();
+            setAreaMenu(null);
+            const entityId = assetIdFromPickFeature(droneHit);
+            if (!entityId) {
+              setDroneMenu(null);
+              return;
+            }
+            const asset = useAssetStore.getState().assets.find((item) => item.id === entityId);
+            setDroneMenu({
+              clientX: e.originalEvent.clientX,
+              clientY: e.originalEvent.clientY,
+              entityId,
+              displayName: String(asset?.name ?? entityId),
+            });
+            return;
+          }
+          setAreaMenu(null);
+          setDroneMenu(null);
         });
 
         /* 同步当前缩放级别到 app-store */
@@ -1158,13 +1201,11 @@ export function Map2D() {
         const tdoaBatch: TdoaDevice[] = [];
         for (const a of adapted) {
           if (a.type === "laser") {
-            const incoming = adaptAssetToLaserDevice(a);
-            const merged = mergeLaserDeviceWithAssetWsWhileDisposalFollow(a, incoming, tools.laser);
-            laserBatch.push(merged);
+            const incoming = adaptAssetToLaserDevice(a, tools.laser.getDevice(a.id));
+            laserBatch.push(incoming);
           } else if (a.type === "tdoa") {
-            const incoming = adaptAssetToTdoaDevice(a);
-            const merged = mergeTdoaDeviceWithAssetWsWhileDisposalFollow(a, incoming, tools.tdoa);
-            tdoaBatch.push(merged);
+            const incoming = adaptAssetToTdoaDevice(a, tools.tdoa.getDevice(a.id));
+            tdoaBatch.push(incoming);
           }
         }
         if (laserBatch.length) tools.laser.upsertMany(laserBatch);
@@ -1195,6 +1236,15 @@ export function Map2D() {
       <div ref={mapContainer} className="h-full w-full" />
       <AreaDrawSaveDialog />
       <AreaDbContextMenu open={areaMenu != null} state={areaMenu} onClose={() => setAreaMenu(null)} />
+      <DroneContextMenu
+        open={droneMenu != null}
+        state={droneMenu}
+        onClose={() => setDroneMenu(null)}
+        onReturnHome={async (entityId) => {
+          const result = await sendDroneReturnHome(entityId);
+          toastDroneReturnHomeSummary([result], "右键菜单");
+        }}
+      />
       {placard && (
         <div
           className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-[calc(100%+14px)]"

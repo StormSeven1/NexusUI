@@ -583,8 +583,8 @@ class DatabaseManager:
             "fileSize": result["size_bytes"],
             "contentType": result["mime_type"],
             "uploadedAt": uploaded.isoformat() if uploaded else None,
-            "uniqueId": result.get("unique_id"),
-            "trackId": result.get("trackid"),
+            "targetID": result.get("unique_id"),
+            "external_target_id": result.get("trackid"),
             "downloadUrl": result["download_url"],
             "imageUrl": result["download_url"],
             # 检测框与标注
@@ -606,30 +606,30 @@ class DatabaseManager:
         }
         return image_info
 
-    async def get_hanging_image(self, unique_id: str, track_id: str) -> Optional[Dict[str, Any]]:
-        """根据 uniqueID 或 trackID 查询 minio_multi_metadata（含检测框、相机等字段）。"""
+    async def get_hanging_image(self, target_id: str, external_target_id: str) -> Optional[Dict[str, Any]]:
+        """根据 targetID 或 external_target_id 查询 minio_multi_metadata（含检测框、相机等字段）。"""
         if not self.pool:
             logger.error("数据库连接未建立")
             return None
 
-        unique_id_int = None
-        track_id_int = None
+        target_id_int = None
+        external_target_id_int = None
         try:
-            if unique_id and str(unique_id).strip():
-                unique_id_int = int(unique_id)
+            if target_id and str(target_id).strip():
+                target_id_int = int(target_id)
         except (ValueError, TypeError):
-            unique_id_int = None
+            target_id_int = None
         try:
-            if track_id and str(track_id).strip():
-                track_id_int = int(track_id)
+            if external_target_id and str(external_target_id).strip():
+                external_target_id_int = int(external_target_id)
         except (ValueError, TypeError):
-            track_id_int = None
+            external_target_id_int = None
 
-        if unique_id_int is None and track_id_int is None:
-            logger.info("get_hanging_image: unique_id 与 track_id 均无效")
+        if target_id_int is None and external_target_id_int is None:
+            logger.info("get_hanging_image: targetID 与 external_target_id 均无效")
             return None
 
-        # 注意：unique_id 为 int8，trackid 为 int2/int4（以库表为准）
+        # DB columns: unique_id maps to targetID, trackid maps to external_target_id.
         base_select = """
                 SELECT id, file_name, mime_type, minio_bucket, minio_object_key,
                        size_bytes, download_url, uploaded_at, unique_id, trackid,
@@ -642,7 +642,7 @@ class DatabaseManager:
 
         try:
             result = None
-            if unique_id_int is not None:
+            if target_id_int is not None:
                 query = (
                     base_select
                     + """
@@ -654,8 +654,8 @@ class DatabaseManager:
                 LIMIT 1
                 """
                 )
-                result = await self.pool.fetchrow(query, unique_id_int)
-            elif track_id_int is not None:
+                result = await self.pool.fetchrow(query, target_id_int)
+            elif external_target_id_int is not None:
                 query = (
                     base_select
                     + """
@@ -667,19 +667,19 @@ class DatabaseManager:
                 LIMIT 1
                 """
                 )
-                result = await self.pool.fetchrow(query, track_id_int)
+                result = await self.pool.fetchrow(query, external_target_id_int)
 
             if not result:
-                logger.info(f"未找到图片: uniqueId={unique_id}, trackId={track_id}")
+                logger.info(f"未找到图片: targetID={target_id}, external_target_id={external_target_id}")
                 return None
 
             image_info = self._row_to_hanging_image_info(result)
             if not image_info:
-                logger.info(f"未找到图片或缺少 download_url: uniqueId={unique_id}, trackId={track_id}")
+                logger.info(f"未找到图片或缺少 download_url: targetID={target_id}, external_target_id={external_target_id}")
                 return None
 
             logger.info(
-                f"获取图片成功: uniqueId={unique_id}, trackId={track_id}, fileName={result['file_name']}"
+                f"获取图片成功: targetID={target_id}, external_target_id={external_target_id}, fileName={result['file_name']}"
             )
             return image_info
 
@@ -687,14 +687,14 @@ class DatabaseManager:
             logger.error(f"获取hanging图片失败: {e}")
             return None
 
-    async def fetch_hanging_image_for_api(self, unique_id: str) -> Dict[str, Any]:
+    async def fetch_hanging_image_for_api(self, target_id: str) -> Dict[str, Any]:
         """
-        供 HTTP /image/{unique_id} 使用：查库 → 拉取 imageUrl → 绘制 → 返回最终字段。
+        供 HTTP /image/{targetID} 使用：查库 → 拉取 imageUrl → 绘制 → 返回最终字段。
         返回 dict：
-          成功: {"ok": True, "imageBase64": str, "contentType": str, "fileName", "fileSize", "uniqueId", "trackId"}
+          成功: {"ok": True, "imageBase64": str, "contentType": str, "fileName", "fileSize", "targetID", "external_target_id"}
           失败: {"ok": False, "reason": "not_found"|"no_url"|"bad_http"|"network", ...}
         """
-        image_info = await self.get_hanging_image(unique_id, "")
+        image_info = await self.get_hanging_image(target_id, "")
         if not image_info:
             return {"ok": False, "reason": "not_found"}
         url = image_info.get("imageUrl")
@@ -735,6 +735,6 @@ class DatabaseManager:
             "contentType": mime_type,
             "fileName": image_info.get("fileName"),
             "fileSize": image_info.get("fileSize"),
-            "uniqueId": image_info.get("uniqueId"),
-            "trackId": image_info.get("trackId"),
+            "targetID": image_info.get("targetID"),
+            "external_target_id": image_info.get("external_target_id"),
         }

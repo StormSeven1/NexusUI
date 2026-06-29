@@ -38,6 +38,111 @@ def _first_present(*values: Any) -> Any:
     return None
 
 
+def _nested_get(source: Dict[str, Any], *path: str) -> Any:
+    current: Any = source
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _read_power_capacity(entity: Dict[str, Any]) -> Optional[float]:
+    source_map = _nested_get(entity, "power", "sourceIdToState")
+    if not isinstance(source_map, dict):
+        return None
+
+    preferred_keys = ("main_battery", "battery", "backup_battery")
+    for key in preferred_keys:
+        value = _nested_get(source_map, key, "powerLevel", "capacity")
+        num = _safe_number(value)
+        if num is not None:
+            return num
+
+    for state in source_map.values():
+        if not isinstance(state, dict):
+            continue
+        value = _nested_get(state, "powerLevel", "capacity")
+        num = _safe_number(value)
+        if num is not None:
+            return num
+    return None
+
+
+def _read_battery_percent(entity: Dict[str, Any], status_obj: Dict[str, Any]) -> Optional[float]:
+    candidates = [
+        status_obj.get("battery_percent"),
+        status_obj.get("batteryPercent"),
+        status_obj.get("battery_capacity_percent"),
+        status_obj.get("batteryCapacityPercent"),
+        status_obj.get("capacity_percent"),
+        status_obj.get("capacityPercent"),
+        status_obj.get("elec"),
+        status_obj.get("electricQuantity"),
+        status_obj.get("electric_quantity"),
+        status_obj.get("power"),
+        _nested_get(status_obj, "battery", "capacity_percent"),
+        _nested_get(status_obj, "battery", "capacityPercent"),
+        _nested_get(status_obj, "battery", "percent"),
+        _nested_get(status_obj, "batteryInfo", "capacity_percent"),
+        _nested_get(status_obj, "batteryInfo", "capacityPercent"),
+        _nested_get(status_obj, "battery_status", "capacity_percent"),
+        _nested_get(status_obj, "batteryStatus", "capacityPercent"),
+        _nested_get(status_obj, "drone_charge_state", "capacity_percent"),
+        _nested_get(status_obj, "droneChargeState", "capacityPercent"),
+        entity.get("battery_percent"),
+        entity.get("batteryPercent"),
+        entity.get("battery_capacity_percent"),
+        entity.get("batteryCapacityPercent"),
+        entity.get("elec"),
+        entity.get("electricQuantity"),
+        entity.get("electric_quantity"),
+        _read_power_capacity(entity),
+    ]
+    for value in candidates:
+        num = _safe_number(value)
+        if num is not None:
+            return max(0.0, min(100.0, num))
+    return None
+
+
+def _battery_debug_values(entity: Dict[str, Any], status_obj: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "entity.battery_percent": entity.get("battery_percent"),
+        "entity.batteryPercent": entity.get("batteryPercent"),
+        "entity.battery_capacity_percent": entity.get("battery_capacity_percent"),
+        "entity.batteryCapacityPercent": entity.get("batteryCapacityPercent"),
+        "entity.elec": entity.get("elec"),
+        "entity.electricQuantity": entity.get("electricQuantity"),
+        "entity.electric_quantity": entity.get("electric_quantity"),
+        "entity.power.sourceIdToState.main_battery.powerLevel.capacity": _nested_get(
+            entity, "power", "sourceIdToState", "main_battery", "powerLevel", "capacity"
+        ),
+        "entity.power.sourceIdToState.backup_battery.powerLevel.capacity": _nested_get(
+            entity, "power", "sourceIdToState", "backup_battery", "powerLevel", "capacity"
+        ),
+        "status.battery_percent": status_obj.get("battery_percent"),
+        "status.batteryPercent": status_obj.get("batteryPercent"),
+        "status.battery_capacity_percent": status_obj.get("battery_capacity_percent"),
+        "status.batteryCapacityPercent": status_obj.get("batteryCapacityPercent"),
+        "status.capacity_percent": status_obj.get("capacity_percent"),
+        "status.capacityPercent": status_obj.get("capacityPercent"),
+        "status.elec": status_obj.get("elec"),
+        "status.electricQuantity": status_obj.get("electricQuantity"),
+        "status.electric_quantity": status_obj.get("electric_quantity"),
+        "status.power": status_obj.get("power"),
+        "status.battery.capacity_percent": _nested_get(status_obj, "battery", "capacity_percent"),
+        "status.battery.capacityPercent": _nested_get(status_obj, "battery", "capacityPercent"),
+        "status.battery.percent": _nested_get(status_obj, "battery", "percent"),
+        "status.batteryInfo.capacity_percent": _nested_get(status_obj, "batteryInfo", "capacity_percent"),
+        "status.batteryInfo.capacityPercent": _nested_get(status_obj, "batteryInfo", "capacityPercent"),
+        "status.battery_status.capacity_percent": _nested_get(status_obj, "battery_status", "capacity_percent"),
+        "status.batteryStatus.capacityPercent": _nested_get(status_obj, "batteryStatus", "capacityPercent"),
+        "status.drone_charge_state.capacity_percent": _nested_get(status_obj, "drone_charge_state", "capacity_percent"),
+        "status.droneChargeState.capacityPercent": _nested_get(status_obj, "droneChargeState", "capacityPercent"),
+    }
+
+
 def _get_alt_id(entity: Dict[str, Any], id_type: str) -> str:
     aliases = _as_dict(entity.get("aliases"))
     alt_ids = _as_list(aliases.get("alternateIds"))
@@ -148,6 +253,7 @@ def _normalize_entity_record(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]
     disposition = _safe_str(mil_view.get("disposition"))
     video_address = _read_video_address(entity, asset_type)
     device_state = _safe_number(status_obj.get("deviceState"))
+    battery_percent = _read_battery_percent(entity, status_obj)
 
     row: Dict[str, Any] = {
         "entityId": entity_id,
@@ -166,6 +272,10 @@ def _normalize_entity_record(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "platformActivity": _safe_str(status_obj.get("platformActivity")),
         "role": _safe_str(status_obj.get("role")),
         "deviceState": int(device_state) if device_state is not None else None,
+        "battery_percent": battery_percent,
+        "batteryPercent": battery_percent,
+        "battery_capacity_percent": battery_percent,
+        "batteryCapacityPercent": battery_percent,
         "ontology": {
             "specificType": _safe_str(ontology.get("specificType")),
             "platformType": _safe_str(ontology.get("platformType")),
@@ -178,6 +288,18 @@ def _normalize_entity_record(entity: Dict[str, Any]) -> Optional[Dict[str, Any]]
             "simulated": virtual_troop,
         },
     }
+
+    # if asset_type in {"drone", "airport"}:
+    #     logger.info(
+    #         "entity_status battery asset_type={} entityId={} name={} deviceState={} parsed_battery_percent={} raw_battery_fields={} status_keys={}",
+    #         asset_type,
+    #         entity_id,
+    #         row.get("name"),
+    #         row.get("deviceState"),
+    #         battery_percent,
+    #         _battery_debug_values(entity, status_obj),
+    #         list(status_obj.keys()),
+    #     )
 
     radar_params = _as_dict(entity.get("radarParameters"))
     if radar_params:
@@ -246,6 +368,18 @@ def _relationship_record_list(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
+def _relationship_nodes_and_edges(
+    data: Dict[str, Any],
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    data_section = _as_dict(data.get("data"))
+    nodes = _as_list(data_section.get("nodes"))
+    edges = _as_list(data_section.get("edges"))
+    return (
+        [item for item in nodes if isinstance(item, dict)],
+        [item for item in edges if isinstance(item, dict)],
+    )
+
+
 def _edge_parent_id(record: Dict[str, Any]) -> str:
     return _safe_str(
         record.get("parent")
@@ -283,13 +417,50 @@ def parse_relationships_response(
         entity_lookup = entities_by_id or {}
         node_map: Dict[str, Dict[str, Any]] = {}
         edges: List[Dict[str, Any]] = []
+        raw_nodes, raw_edges = _relationship_nodes_and_edges(data)
 
-        for record in _relationship_record_list(data):
+        def upsert_node(node_id: str, seed: Optional[Dict[str, Any]] = None) -> None:
+            if not node_id:
+                return
+            source = seed or {}
+            entity = entity_lookup.get(node_id, {})
+            merged = {
+                **source,
+                **entity,
+            }
+            node_map[node_id] = {
+                "id": node_id,
+                "name": _safe_str(
+                    merged.get("name")
+                    or merged.get("entityName")
+                    or merged.get("displayName")
+                    or node_id
+                ),
+                "assetType": _safe_str(merged.get("assetType") or merged.get("asset_type")),
+                "deviceSn": _safe_str(merged.get("deviceSn") or merged.get("device_sn")),
+                "gatewaySn": _safe_str(merged.get("gatewaySn") or merged.get("gateway_sn")),
+                "virtualTroop": bool(merged.get("virtualTroop") is True),
+                "disposition": _safe_str(merged.get("disposition")),
+                "lat": merged.get("lat"),
+                "lng": merged.get("lng"),
+            }
+
+        for record in raw_nodes:
+            node_id = _safe_str(record.get("id") or record.get("entityId"))
+            if not node_id:
+                continue
+            upsert_node(node_id, record)
+
+        for record in raw_edges:
             parent_id = _edge_parent_id(record)
             child_id = _edge_child_id(record)
             if not parent_id or not child_id:
                 continue
-            relationship_id = _safe_str(record.get("relationshipId") or record.get("id"))
+            relationship_id = _safe_str(
+                record.get("relationshipId")
+                or record.get("relationship_id")
+                or record.get("id")
+            )
             edges.append(
                 {
                     "parent": parent_id,
@@ -297,20 +468,28 @@ def parse_relationships_response(
                     "relationshipId": relationship_id or f"parent-{parent_id}-and-child-{child_id}",
                 }
             )
-            for node_id in (parent_id, child_id):
-                if node_id in node_map:
-                    continue
-                entity = entity_lookup.get(node_id, {})
-                node_map[node_id] = {
-                    "id": node_id,
-                    "name": _safe_str(entity.get("name") or node_id),
-                    "assetType": _safe_str(entity.get("assetType")),
-                    "deviceSn": _safe_str(entity.get("deviceSn")),
-                    "virtualTroop": bool(entity.get("virtualTroop") is True),
-                    "disposition": _safe_str(entity.get("disposition")),
-                    "lat": entity.get("lat"),
-                    "lng": entity.get("lng"),
+            upsert_node(parent_id)
+            upsert_node(child_id)
+
+        for record in _relationship_record_list(data):
+            parent_id = _edge_parent_id(record)
+            child_id = _edge_child_id(record)
+            if not parent_id or not child_id:
+                continue
+            relationship_id = _safe_str(
+                record.get("relationshipId")
+                or record.get("relationship_id")
+                or record.get("id")
+            )
+            edges.append(
+                {
+                    "parent": parent_id,
+                    "child": child_id,
+                    "relationshipId": relationship_id or f"parent-{parent_id}-and-child-{child_id}",
                 }
+            )
+            upsert_node(parent_id)
+            upsert_node(child_id)
 
         return {"nodes": list(node_map.values()), "edges": edges}
     except Exception as exc:

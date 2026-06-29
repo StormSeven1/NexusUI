@@ -198,7 +198,7 @@ def _extract_fusion_sources(obj) -> List[Dict[str, Any]]:
         out.append({
             'sourceName': name,
             'dataSourceId': ds_id,
-            'trackId': int(tid_raw) if _safe_str(tid_raw).isdigit() else tid_raw,
+            'external_target_id': int(tid_raw) if _safe_str(tid_raw).isdigit() else tid_raw,
             'sourceType': source_type,
         })
     return out
@@ -367,8 +367,8 @@ def target_object_to_track(obj) -> Dict[str, Any]:
         ts = float(obj.created_time())
 
     result: Dict[str, Any] = {
-        'trackId': int(obj.external_target_id()) if _safe_str(obj.external_target_id()).isdigit() else obj.external_target_id(),
-        'uniqueId': int(obj.target_id()) if _safe_str(obj.target_id()).isdigit() else obj.target_id(),
+        'external_target_id': int(obj.external_target_id()) if _safe_str(obj.external_target_id()).isdigit() else obj.external_target_id(),
+        'targetID': int(obj.target_id()) if _safe_str(obj.target_id()).isdigit() else obj.target_id(),
         'longitude': float(pos.longitude()),
         'latitude': float(pos.latitude()),
         'height': float(pos.altitude()),
@@ -391,8 +391,8 @@ def target_object_to_track(obj) -> Dict[str, Any]:
         'structure_type': 'new_track_struct',
     }
 
-    if(_read_reality_type(obj) == 2):
-        print("result:",result)
+    # if(_read_reality_type(obj) == 2):
+        # print("result:",result)
 
     fusion_sources = _extract_fusion_sources(obj)
     if fusion_sources:
@@ -400,7 +400,7 @@ def target_object_to_track(obj) -> Dict[str, Any]:
         result['reserved6'] = json.dumps(fusion_sources, ensure_ascii=False)
         for fs in fusion_sources:
             if _safe_str(fs.get('dataSourceId')).lower() == 'ais':
-                result['mmsi'] = fs.get('trackId')
+                result['mmsi'] = fs.get('external_target_id')
                 break
 
     alarms = _extract_alarms(obj)
@@ -413,8 +413,8 @@ def target_object_to_track(obj) -> Dict[str, Any]:
             "alarms:",
             json.dumps(
                 {
-                    'trackId': result.get('trackId'),
-                    'uniqueId': result.get('uniqueId'),
+                    'external_target_id': result.get('external_target_id'),
+                    'targetID': result.get('targetID'),
                     'alarmCount': len(alarms),
                     'alarmIds': [alarm.get('alarm_id') for alarm in alarms],
                 },

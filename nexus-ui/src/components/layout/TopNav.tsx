@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   Map,
   BarChart3,
@@ -30,7 +30,8 @@ export function TopNav() {
   const runMode = useDisposalPlanStore((s) => s.runMode);
   const setRunMode = useDisposalPlanStore((s) => s.setRunMode);
 
-  const [nowLabel, setNowLabel] = useState<string>("");
+  const nowLabelRef = useRef("");
+  const nowLabelElementRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -45,13 +46,16 @@ export function TopNav() {
     // Avoid hydration mismatch by rendering a placeholder on first paint, then updating async after mount.
     const update = () => {
       const nextLabel = formatNowLabel(new Date(), timeFormatter);
-      setNowLabel((prev) => (prev === nextLabel ? prev : nextLabel));
+      if (nowLabelRef.current === nextLabel) return;
+      nowLabelRef.current = nextLabel;
+      if (nowLabelElementRef.current) {
+        nowLabelElementRef.current.textContent = nextLabel;
+      }
     };
 
-    const t0 = window.setTimeout(update, 0);
+    update();
     const timer = window.setInterval(update, 1000);
     return () => {
-      window.clearTimeout(t0);
       window.clearInterval(timer);
     };
   }, []);
@@ -98,10 +102,11 @@ export function TopNav() {
 
         {/* 时间显示 */}
         <div
+          ref={nowLabelElementRef}
           className="font-mono text-xs text-nexus-text-secondary"
           aria-label="local-time"
         >
-          {nowLabel || "--:--:--"}
+          --:--:--
         </div>
 
         {/* 通知和用户 */}

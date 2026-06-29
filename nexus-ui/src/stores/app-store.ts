@@ -12,7 +12,7 @@ import type { VectorLayerPanelItem } from "@/lib/map-2d-basemap-layer-panel";
  *   - mapViewMode: 地图模式（2d/3d）
  *
  * 【航迹选中与高亮】
- *   - selectedTrackId: 当前选中的航迹 showID（属性框展示用）
+ *   - selectedTrackId: 当前选中的航迹 targetID（属性框展示用）
  *   - highlightedTrackIds: 高亮航迹 ID 列表（地图上特殊渲染）
  *   - selectTrack(id): 设置选中+高亮，传 null 清除
  *   - 消灭操作后：若当前选中的是被消灭航迹 → selectTrack(null)
@@ -33,7 +33,7 @@ import type { VectorLayerPanelItem } from "@/lib/map-2d-basemap-layer-panel";
 
 export type MapViewMode = "2d" | "3d";
 export type LeftPanelTab = "tracks" | "assets" | "layers" | "alerts";
-export type RightPanelTab = "overview" | "dashboard" | "comm" | "environment" | "eventlog" | "datatable" | "chat";
+export type RightPanelTab = "overview" | "dashboard" | "comm" | "environment" | "eventlog" | "datatable" | "chat" | "taskPanel";
 export type TopTab = "situation" | "assets" | "tasks" | "layers" | "analytics" | "search" | "settings";
 export type AgentType = "core" | "data" | "tactical" | "analysis";
 
@@ -112,6 +112,8 @@ interface AppState {
   agentMessages: AgentMessage[];
   /** 当前选中的单条智能体消息（详情展示） */
   selectedAgentMessage: AgentMessage | null;
+  /** 任务面板当前方案有新内容，右侧任务按钮闪烁提示 */
+  taskPanelHasNewPlan: boolean;
 
   /** 切换左侧边栏展开/收起 */
   toggleLeftSidebar: () => void;
@@ -163,6 +165,7 @@ interface AppState {
   clearAgentMessages: () => void;
   /** 选中某条消息以展示详情 */
   setSelectedAgentMessage: (message: AgentMessage | null) => void;
+  setTaskPanelHasNewPlan: (hasNew: boolean) => void;
 }
 
 let _flyToSeq = 0;
@@ -194,6 +197,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   agentMessages: [],
   selectedAgentMessage: null,
+  taskPanelHasNewPlan: false,
 
   toggleLeftSidebar: () =>
     set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
@@ -271,4 +275,5 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   clearAgentMessages: () => set({ agentMessages: [] }),
   setSelectedAgentMessage: (message) => set({ selectedAgentMessage: message }),
+  setTaskPanelHasNewPlan: (hasNew) => set({ taskPanelHasNewPlan: hasNew }),
 }));

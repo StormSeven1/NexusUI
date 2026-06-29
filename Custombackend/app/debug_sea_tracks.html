@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>对海目标排查</title>
+  <style>
+    :root {
+      --bg: #eef3f7;
+      --panel: #ffffff;
+      --line: #d8e0e8;
+      --text: #15202b;
+      --muted: #5b6b79;
+      --sea: #0f766e;
+      --warn: #c2410c;
+      --danger: #b91c1c;
+      --grid: rgba(15, 118, 110, 0.08);
+      --mono: "Consolas", "SFMono-Regular", "Courier New", monospace;
+      --sans: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #f7fafc 0%, #edf4f8 100%);
+      color: var(--text);
+      font-family: var(--sans);
+      user-select: none;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(420px, 1.3fr) minmax(440px, 1fr);
+      gap: 12px;
+      height: 100vh;
+      padding: 12px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+      min-height: 0;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfdff;
+    }
+
+    .panel-title {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .panel-sub {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .map-wrap {
+      position: relative;
+      height: calc(100% - 58px);
+      min-height: 420px;
+      background:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+        radial-gradient(circle at top, rgba(14, 165, 233, 0.08), transparent 40%),
+        linear-gradient(180deg, #f8fcff 0%, #f1f7fb 100%);
+      background-size: 36px 36px, 36px 36px, auto, auto;
+    }
+
+    #mapCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    #mapCanvas.dragging {
+      cursor: grabbing;
+    }
+
+    .map-overlay {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      z-index: 1;
+    }
+
+    .badge {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.92);
+      font-size: 12px;
+      color: var(--muted);
+      backdrop-filter: blur(6px);
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfdff;
+    }
+
+    input, button {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 10px;
+      background: #fff;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    input {
+      min-width: 180px;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #f5f9fc;
+    }
+
+    .table-wrap {
+      height: calc(100% - 107px);
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th, td {
+      padding: 8px 10px;
+      border-top: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 13px;
+      word-break: break-all;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f8fbfd;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    td.mono {
+      font-family: var(--mono);
+    }
+
+    tr.active {
+      background: #fff7ed;
+    }
+
+    tr.changed {
+      background: #fef2f2;
+    }
+
+    .foot {
+      padding: 8px 14px 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 1100px) {
+      .layout {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+
+      .panel {
+        min-height: 480px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">对海目标分布</div>
+          <div class="panel-sub">固定连接 `ws://192.168.18.141:26003/ws`</div>
+        </div>
+      </div>
+      <div class="map-wrap">
+        <div class="map-overlay">
+          <span class="badge">连接状态：<strong id="connState">未连接</strong></span>
+          <span class="badge">对海目标数：<strong id="seaCount">0</strong></span>
+          <span class="badge">uniqueID 变化 trackID 数：<strong id="changedCount">0</strong></span>
+          <span class="badge">最后消息：<strong id="lastMessageAt">-</strong></span>
+        </div>
+        <canvas id="mapCanvas"></canvas>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">目标列表</div>
+          <div class="panel-sub">输入 trackID 可快速定位</div>
+        </div>
+      </div>
+      <div class="controls">
+        <input id="trackFilter" placeholder="输入 trackID" />
+        <button id="focusBtn">定位</button>
+        <button id="dragBtn">拖动：开</button>
+        <button id="clearBtn">清空记录</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 150px;">trackID</th>
+              <th style="width: 200px;">当前 uniqueID</th>
+              <th style="width: 200px;">上一 uniqueID</th>
+              <th style="width: 80px;">变化</th>
+              <th style="width: 110px;">经纬度</th>
+              <th>最后更新时间</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="foot">
+        只按当前 ws 推送画对海目标，前端内存里会持续记录同一个 trackID 的 uniqueID 是否发生过变化。
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const WS_URL = "ws://192.168.18.141:26003/ws";
+    const TRACK_TIMEOUT_MS = 20 * 1000;
+
+    const connStateEl = document.getElementById("connState");
+    const seaCountEl = document.getElementById("seaCount");
+    const changedCountEl = document.getElementById("changedCount");
+    const lastMessageAtEl = document.getElementById("lastMessageAt");
+    const trackFilterInput = document.getElementById("trackFilter");
+    const focusBtn = document.getElementById("focusBtn");
+    const dragBtn = document.getElementById("dragBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const tbody = document.getElementById("tbody");
+    const canvas = document.getElementById("mapCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let socket = null;
+    let focusedTrackId = "";
+    let viewScale = 1;
+    let viewOffsetX = 0;
+    let viewOffsetY = 0;
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let dragEnabled = true;
+    const seaTracks = new Map();
+
+    function setConnState(text, ok) {
+      connStateEl.textContent = text;
+      connStateEl.style.color = ok ? "#0f766e" : "#b91c1c";
+    }
+
+    function resolveUniqueId(rec) {
+      const value = rec?.uniqueID ?? rec?.uniqueId ?? rec?.unique_id;
+      return value == null ? "" : String(value).trim();
+    }
+
+    function resolveTrackId(rec) {
+      const value = rec?.trackId ?? rec?.track_id ?? rec?.tracnID;
+      return value == null ? "" : String(value).trim();
+    }
+
+    function resolveLat(rec) {
+      const value = rec?.lat ?? rec?.latitude;
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    }
+
+    function resolveLng(rec) {
+      const value = rec?.lng ?? rec?.longitude;
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    }
+
+    function inferTrackType(rec) {
+      const isAir = rec?.isAirTrack ?? rec?.is_air_track;
+      if (isAir === true || isAir === 1 || String(isAir).toLowerCase() === "true") return "air";
+      if (isAir === false || isAir === 0 || String(isAir).toLowerCase() === "false") return "sea";
+      const type = rec?.type;
+      if (typeof type === "string") {
+        const t = type.trim().toLowerCase();
+        if (t === "air" || t === "sea" || t === "underwater") return t;
+      }
+      return "sea";
+    }
+
+    function readPayloadTracks(message) {
+      if (!message || typeof message !== "object") return [];
+      if (message.type === "trackBatch" && Array.isArray(message.data)) {
+        return message.data
+          .map((item) => item && typeof item === "object" ? item.data : null)
+          .filter(Boolean);
+      }
+      if (message.type === "Track" && message.data && typeof message.data === "object") {
+        return [message.data];
+      }
+      return [];
+    }
+
+    function upsertTrack(rec) {
+      if (inferTrackType(rec) !== "sea") return;
+
+      const trackId = resolveTrackId(rec);
+      const uniqueID = resolveUniqueId(rec);
+      const lat = resolveLat(rec);
+      const lng = resolveLng(rec);
+      if (!trackId || !uniqueID || lat == null || lng == null) return;
+
+      const existing = seaTracks.get(trackId);
+      const now = new Date().toLocaleString();
+      const updatedAt = String(rec.lastUpdate ?? rec.last_update ?? rec.updated_at ?? now);
+      const lastSeenMs = Date.now();
+
+      if (!existing) {
+        seaTracks.set(trackId, {
+          trackId,
+          uniqueID,
+          previousUniqueID: "",
+          changedTimes: 0,
+          lat,
+          lng,
+          updatedAt,
+          lastSeenMs
+        });
+        return;
+      }
+
+      let changedTimes = existing.changedTimes;
+      let previousUniqueID = existing.previousUniqueID;
+      if (existing.uniqueID !== uniqueID) {
+        changedTimes += 1;
+        previousUniqueID = existing.uniqueID;
+        console.warn("[uniqueID changed]", { trackId, from: existing.uniqueID, to: uniqueID, rec });
+      }
+
+      seaTracks.set(trackId, {
+        trackId,
+        uniqueID,
+        previousUniqueID,
+        changedTimes,
+        lat,
+        lng,
+        updatedAt,
+        lastSeenMs
+      });
+    }
+
+    function pruneExpiredTracks() {
+      const now = Date.now();
+      let removed = false;
+      for (const [trackId, item] of seaTracks.entries()) {
+        if (now - (item.lastSeenMs || 0) > TRACK_TIMEOUT_MS) {
+          seaTracks.delete(trackId);
+          removed = true;
+        }
+      }
+      if (removed) renderAll();
+    }
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(rect.width * ratio));
+      canvas.height = Math.max(1, Math.floor(rect.height * ratio));
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      drawMap();
+    }
+
+    function getVisibleTracks() {
+      const filter = focusedTrackId.trim();
+      const all = Array.from(seaTracks.values());
+      return filter ? all.filter((item) => item.trackId.includes(filter)) : all;
+    }
+
+    function calcBounds(items) {
+      if (!items.length) return null;
+      let minLat = items[0].lat;
+      let maxLat = items[0].lat;
+      let minLng = items[0].lng;
+      let maxLng = items[0].lng;
+      for (const item of items) {
+        if (item.lat < minLat) minLat = item.lat;
+        if (item.lat > maxLat) maxLat = item.lat;
+        if (item.lng < minLng) minLng = item.lng;
+        if (item.lng > maxLng) maxLng = item.lng;
+      }
+      const latPad = Math.max((maxLat - minLat) * 0.08, 0.02);
+      const lngPad = Math.max((maxLng - minLng) * 0.08, 0.02);
+      return {
+        minLat: minLat - latPad,
+        maxLat: maxLat + latPad,
+        minLng: minLng - lngPad,
+        maxLng: maxLng + lngPad
+      };
+    }
+
+    function project(lat, lng, bounds, width, height) {
+      const pad = 26;
+      const usableWidth = Math.max(1, width - pad * 2);
+      const usableHeight = Math.max(1, height - pad * 2);
+      const xRatio = (lng - bounds.minLng) / Math.max(0.000001, bounds.maxLng - bounds.minLng);
+      const yRatio = (lat - bounds.minLat) / Math.max(0.000001, bounds.maxLat - bounds.minLat);
+      const baseX = pad + xRatio * usableWidth;
+      const baseY = height - pad - yRatio * usableHeight;
+      const centerX = width / 2;
+      const centerY = height / 2;
+      return {
+        x: centerX + (baseX - centerX) * viewScale + viewOffsetX,
+        y: centerY + (baseY - centerY) * viewScale + viewOffsetY
+      };
+    }
+
+    function drawMap() {
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      ctx.clearRect(0, 0, width, height);
+
+      const items = getVisibleTracks();
+      if (!items.length) {
+        ctx.fillStyle = "#6b7280";
+        ctx.font = "14px Microsoft YaHei";
+        ctx.fillText("暂无对海目标", 20, 30);
+        return;
+      }
+
+      const bounds = calcBounds(items);
+      if (!bounds) return;
+
+      ctx.fillStyle = "#6b7280";
+      ctx.font = "12px Consolas";
+      ctx.fillText(`Lng ${bounds.minLng.toFixed(4)} ~ ${bounds.maxLng.toFixed(4)}`, 18, 22);
+      ctx.fillText(`Lat ${bounds.minLat.toFixed(4)} ~ ${bounds.maxLat.toFixed(4)}`, 18, 40);
+      ctx.fillText(`Zoom ${viewScale.toFixed(2)}x`, 18, 58);
+
+      for (const item of items) {
+        const { x, y } = project(item.lat, item.lng, bounds, width, height);
+        const highlighted = focusedTrackId && item.trackId.includes(focusedTrackId);
+        const changed = item.changedTimes > 0;
+
+        ctx.beginPath();
+        ctx.fillStyle = highlighted ? "#ea580c" : (changed ? "#dc2626" : "#0f766e");
+        ctx.arc(x, y, highlighted ? 7 : 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255,255,255,0.95)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = "#1f2937";
+        ctx.font = "12px Consolas";
+        ctx.fillText(item.trackId, x + 9, y - 8);
+        ctx.fillStyle = "#5b6b79";
+        ctx.font = "11px Consolas";
+        ctx.fillText(item.uniqueID, x + 9, y + 7);
+      }
+    }
+
+    function renderTable() {
+      const filter = focusedTrackId.trim();
+      const rows = Array.from(seaTracks.values())
+        .filter((item) => !filter || item.trackId.includes(filter))
+        .sort((a, b) => {
+          if (b.changedTimes !== a.changedTimes) return b.changedTimes - a.changedTimes;
+          return a.trackId.localeCompare(b.trackId, "zh-CN", { numeric: true });
+        });
+
+      seaCountEl.textContent = String(seaTracks.size);
+      changedCountEl.textContent = String(Array.from(seaTracks.values()).filter((x) => x.changedTimes > 0).length);
+
+      tbody.innerHTML = rows.map((row) => {
+        const classes = [
+          filter && row.trackId.includes(filter) ? "active" : "",
+          row.changedTimes > 0 ? "changed" : ""
+        ].filter(Boolean).join(" ");
+
+        return `
+          <tr class="${classes}">
+            <td class="mono">${escapeHtml(row.trackId)}</td>
+            <td class="mono">${escapeHtml(row.uniqueID)}</td>
+            <td class="mono">${escapeHtml(row.previousUniqueID || "-")}</td>
+            <td class="mono">${row.changedTimes}</td>
+            <td class="mono">${row.lat.toFixed(6)}, ${row.lng.toFixed(6)}</td>
+            <td>${escapeHtml(row.updatedAt)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderAll() {
+      renderTable();
+      drawMap();
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function connect() {
+      if (socket) {
+        socket.close();
+        socket = null;
+      }
+
+      setConnState("连接中", false);
+      socket = new WebSocket(WS_URL);
+
+      socket.onopen = () => setConnState("已连接", true);
+      socket.onclose = () => setConnState("已断开", false);
+      socket.onerror = () => setConnState("连接失败", false);
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          const tracks = readPayloadTracks(message);
+          for (const rec of tracks) upsertTrack(rec);
+          if (tracks.length > 0) {
+            lastMessageAtEl.textContent = new Date().toLocaleString();
+            renderAll();
+          }
+        } catch (error) {
+          console.error("parse ws message failed", error, event.data);
+        }
+      };
+    }
+
+    focusBtn.addEventListener("click", () => {
+      focusedTrackId = trackFilterInput.value.trim();
+      renderAll();
+    });
+
+    trackFilterInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        focusedTrackId = trackFilterInput.value.trim();
+        renderAll();
+      }
+    });
+
+    clearBtn.addEventListener("click", () => {
+      focusedTrackId = "";
+      trackFilterInput.value = "";
+      viewScale = 1;
+      viewOffsetX = 0;
+      viewOffsetY = 0;
+      seaTracks.clear();
+      renderAll();
+    });
+
+    canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+      viewScale = Math.min(20, Math.max(0.5, viewScale * factor));
+      drawMap();
+    }, { passive: false });
+
+    canvas.addEventListener("mousedown", (event) => {
+      if (!dragEnabled) return;
+      event.preventDefault();
+      isDragging = true;
+      dragStartX = event.clientX;
+      dragStartY = event.clientY;
+      canvas.classList.add("dragging");
+    });
+
+    window.addEventListener("mousemove", (event) => {
+      if (!isDragging) return;
+      viewOffsetX += event.clientX - dragStartX;
+      viewOffsetY += event.clientY - dragStartY;
+      dragStartX = event.clientX;
+      dragStartY = event.clientY;
+      drawMap();
+    });
+
+    function stopDragging() {
+      isDragging = false;
+      canvas.classList.remove("dragging");
+    }
+
+    window.addEventListener("mouseup", stopDragging);
+
+    window.addEventListener("blur", () => {
+      stopDragging();
+    });
+
+    dragBtn.addEventListener("click", () => {
+      dragEnabled = !dragEnabled;
+      dragBtn.textContent = `拖动：${dragEnabled ? "开" : "关"}`;
+      if (!dragEnabled) stopDragging();
+    });
+
+    canvas.addEventListener("dblclick", () => {
+      viewScale = 1;
+      viewOffsetX = 0;
+      viewOffsetY = 0;
+      drawMap();
+    });
+
+    window.addEventListener("resize", resizeCanvas);
+
+    resizeCanvas();
+    renderAll();
+    connect();
+    window.setInterval(pruneExpiredTracks, 1000);
+  </script>
+</body>
+</html>

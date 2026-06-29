@@ -39,7 +39,7 @@
  */
 import type maplibregl from "maplibre-gl";
 import type { AssetData } from "@/stores/asset-store";
-import { parseMapAssetTypeStrict } from "@/lib/map-entity-model";
+import { isVirtualFromProperties, parseMapAssetTypeStrict } from "@/lib/map-entity-model";
 import { FORCE_COLORS, parseForceDisposition } from "@/lib/theme-colors";
 import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent, AssetStatus } from "@/lib/map-icons";
@@ -283,7 +283,7 @@ export function mapRadarRowToAssetData(
     ? (dashRaw as unknown[]).map((x) => Number(x)).filter((n) => Number.isFinite(n))
     : [];
 
-  const virtualTroop = r.virtualTroop === true;
+  const virtualTroop = isVirtualFromProperties(r);
 
   const label = parseTextBlock(r.label, {
     fontSize: 13,

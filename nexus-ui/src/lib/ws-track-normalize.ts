@@ -1,4 +1,4 @@
-/**
+﻿/**
  * WebSocket 航迹载荷 → 与 `Track` / 地图渲染一致的字段。
  *
  * 【数据流】
@@ -8,19 +8,17 @@
  *   → 地图渲染层（Map2D/Map3D）+ TargetPlacard + TrackListPanel
  *
  * 【核心字段说明】
- *   - `showID` = `uniqueID`（缓存主键，整个工程统一用此做 key）
- *   - `uniqueID` — 后端唯一标识（报文 uniqueID / uniqueId）
- *   - `trackId` — 业务 trackId
+ *   - `targetID` — NewTrackStruct TargetObject.target_id
+ *   - `external_target_id` — NewTrackStruct TargetObject.external_target_id
  *   - `isAirTrack` — 对空标记（影响航迹图标旋转角度、ID 显示截断逻辑）
  *   - `targetType` — 目标类型（如 "对空融合航迹"、"drone"）
- *   - `sensor` — 传感器/来源信息（有 fusionSources 时组装为 "源名(trackId)" 格式）
+ *   - `sensor` — 传感器/来源信息（有 fusionSources 时组装为 "源名(external_target_id)" 格式）
  *   - `course` — 原始航向（对海=正北顺时针；对空=服务端航向）
  *   - `heading` — 图标渲染航向（对空=course + airIconHeadingOffsetDeg）
  *
  * 【ID 体系】
- *   - uniqueID/showID: 渲染缓存 key，全局唯一
- *   - trackId: 业务 ID，与告警匹配、处置方案关联
- *   - distinguishSeaAir 模式下：对海用 uniqueID，对空用 trackId 做告警匹配
+ *   - targetID: 渲染缓存 key，全局唯一
+ *   - external_target_id: 外部目标 ID，与告警匹配、处置方案关联
  */
 
 import { isVirtualFromProperties, type Track } from "@/lib/map-entity-model";
@@ -110,12 +108,11 @@ function readDisposition(rec: Record<string, unknown>): ForceDisposition {
 }
 
 /**
- * 解析航迹 uniqueID：必须来自报文 uniqueID / uniqueId，禁止前端拼接。
- * 对齐 V2 `resolveTrackUniqueID`。
- * 数据传递：后端报文 uniqueID → 此函数 → Track.showID → 全局缓存 key
+ * 解析 NewTrackStruct 目标 ID：必须来自报文 targetID，禁止前端拼接。
+ * 数据传递：后端报文 targetID → 此函数 → Track.targetID → 全局缓存 key
  */
-function resolveUniqueID(rec: Record<string, unknown>): string {
-  const u = rec.uniqueID ?? rec.uniqueId ?? rec.unique_id;
+function resolveTargetID(rec: Record<string, unknown>): string {
+  const u = rec.targetID;
   if (u != null && String(u).trim() !== "") return String(u).trim();
   return "";
 }
@@ -126,21 +123,19 @@ function resolveUniqueID(rec: Record<string, unknown>): string {
  * 数据传递：WS 报文 → 此函数 → Track → track-store → 地图渲染 + UI 组件
  *
  * 关键变量说明：
- *   - uniqueID: 后端唯一标识（报文 uniqueID），作为 showID 的来源
- *   - showID: 渲染缓存主键（= uniqueID），全局唯一
- *   - trackIdStr: 业务 trackId，用于告警匹配和处置方案关联
+ *   - targetID: 后端目标唯一标识（报文 targetID），渲染缓存主键
+ *   - externalTargetIdStr: 外部目标 ID，用于告警匹配和处置方案关联
  *   - kind: 航迹类型（air/sea/underwater），影响图标旋转和 ID 截断
  *   - course: 原始航向角度
  *   - heading: 图标渲染航向（对空=course+offset）
- *   - sensorValue: 传感器信息（有 fusionSources 时为 "源名(trackId)" 格式）
+ *   - sensorValue: 传感器信息（有 fusionSources 时为 "源名(external_target_id)" 格式）
  */
 export function normalizeIncomingTrack(raw: unknown): Track | null {
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as Record<string, unknown>;
 
-  const uniqueID = resolveUniqueID(rec);
-  if (!uniqueID) return null;
-  const showID = uniqueID;
+  const targetID = resolveTargetID(rec);
+  if (!targetID) return null;
 
   const rawLat = Number(rec.lat ?? rec.latitude);
   const rawLng = Number(rec.lng ?? rec.longitude);
@@ -172,8 +167,9 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
 
   const isAirTrack = kind === "air";
 
-  const trackId = rec.trackId ?? rec.track_id ?? rec.tracnID;
-  const trackIdStr = trackId != null && String(trackId).trim() !== "" ? String(trackId).trim() : undefined;
+  const externalTargetId = rec.external_target_id;
+  const externalTargetIdStr =
+    externalTargetId != null && String(externalTargetId).trim() !== "" ? String(externalTargetId).trim() : undefined;
 
   const targetType = rec.target_type ?? rec.targetType ?? rec.name ?? rec.label;
   const targetTypeStr = targetType != null ? String(targetType) : undefined;
@@ -184,18 +180,18 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const distanceRaw = rec.range ?? rec.distance;
   const distance = distanceRaw != null && Number.isFinite(Number(distanceRaw)) ? Number(distanceRaw) : undefined;
 
-  // 解析 fusionSources：融合航迹的多源信息，组装为 "源名(trackId)" 格式
-  // 例：[{ sourceName: "探鸟雷达", trackId: 5744 }] → sensor = "探鸟雷达(5744)"
+  // 解析 fusionSources：融合航迹的多源信息，组装为 "源名(external_target_id)" 格式
+  // 例：[{ sourceName: "探鸟雷达", external_target_id: 5744 }] → sensor = "探鸟雷达(5744)"
   // 如果有 fusionSources，优先用它组装 sensor；否则回退到 rec.sensor / rec.source
   const fusionSources = Array.isArray(rec.fusionSources) ? rec.fusionSources : null;
   let sensorValue: string;
   if (fusionSources && fusionSources.length > 0) {
-    // 从每个融合源提取 sourceName + trackId，组装成 "源名(trackId)" 格式，逗号分隔
+    // 从每个融合源提取 sourceName + external_target_id，组装成 "源名(external_target_id)" 格式，逗号分隔
     sensorValue = fusionSources
       .map((src: unknown) => {
         const s = src as Record<string, unknown>;
         const sn = String(s.sourceName ?? s.source_name ?? "").trim();
-        const tid = s.trackId ?? s.track_id;
+        const tid = s.external_target_id;
         const tidStr = tid != null ? String(tid) : "";
         return sn && tidStr ? `${sn}(${tidStr})` : sn || tidStr;
       })
@@ -218,11 +214,10 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const hasAlarm = rec.hasAlarm === true;
 
   return {
-    id: showID,
-    showID,
-    uniqueID,
-    ...(trackIdStr ? { trackId: trackIdStr } : {}),
-    name: String(rec.name ?? rec.label ?? showID),
+    id: targetID,
+    targetID,
+    ...(externalTargetIdStr ? { external_target_id: externalTargetIdStr } : {}),
+    name: String(rec.name ?? rec.label ?? targetID),
     type: kind,
     disposition,
     lat,
@@ -264,3 +259,4 @@ export function maxStoredTrailPointsPerTrack(): number {
   if (!Number.isFinite(max) || max < 2) return 2;
   return Math.max(2, Math.min(4000, Math.floor(max)));
 }
+

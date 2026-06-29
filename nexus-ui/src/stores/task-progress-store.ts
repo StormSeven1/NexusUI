@@ -16,6 +16,7 @@ export type TaskProgressStatus = "executing" | "ended" | "terminated";
 export interface TaskProgressEntry {
   id: string;
   targetId: string;
+  targetAlias?: string;
   deviceId: string;
   deviceName: string;
   schemeId: string;
@@ -31,6 +32,8 @@ interface TaskProgressState {
   addEntries: (items: Omit<TaskProgressEntry, "id" | "startedAt" | "status">[]) => void;
   /** 消灭目标：该 targetId 下所有 executing 条目 → ended */
   endByTarget: (targetId: string) => void;
+  /** 指定 targetId + deviceId 结束，用于单个巡飞弹自行命中后的任务完成 */
+  endByTargetDevices: (targetId: string, deviceIds: string[]) => void;
   /** 方案更新淘汰：指定 blockId + schemeId 组合 → terminated */
   terminateEntries: (pairs: { blockId: string; schemeId: string }[]) => void;
   /** 方案更新淘汰：指定 targetId 下若干 deviceId → terminated */
@@ -74,6 +77,21 @@ export const useTaskProgressStore = create<TaskProgressState>((set, get) => ({
     set((s) => ({
       entries: s.entries.map((e) =>
         String(e.targetId ?? "").trim() === tid && e.status === "executing"
+          ? { ...e, status: "ended", endedAt: Date.now() }
+          : e,
+      ),
+    }));
+  },
+
+  endByTargetDevices: (targetId, deviceIds) => {
+    const tid = String(targetId ?? "").trim();
+    const ids = new Set(deviceIds.map((id) => String(id).trim().toLowerCase()).filter(Boolean));
+    if (!tid || ids.size === 0) return;
+    set((s) => ({
+      entries: s.entries.map((e) =>
+        e.status === "executing" &&
+        e.targetId === tid &&
+        ids.has(e.deviceId.toLowerCase())
           ? { ...e, status: "ended", endedAt: Date.now() }
           : e,
       ),

@@ -1,4 +1,4 @@
-import { useAppStore } from "@/stores/app-store";
+﻿import { useAppStore } from "@/stores/app-store";
 import type { LeftPanelTab, RightPanelTab } from "@/stores/app-store";
 
 /**
@@ -90,9 +90,10 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
 
   select_track: (output) => {
     if (!output.success) return;
-    const { trackId, track } = output as { trackId: string; track?: { lat: number; lng: number } };
+    const { targetID, track } = output as { targetID: string; track?: { lat: number; lng: number } };
+    if (!targetID) return;
     const store = useAppStore.getState();
-    store.selectTrack(trackId);
+    store.selectTrack(targetID);
     if (track) store.requestFlyTo(track.lat, track.lng);
   },
 
@@ -116,15 +117,16 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
   },
 
   highlight_tracks: (output) => {
-    const { trackIds } = output as { trackIds: string[] };
-    useAppStore.getState().setHighlightedTrackIds(trackIds ?? []);
+    const { targetIDs } = output as { targetIDs: string[] };
+    useAppStore.getState().setHighlightedTrackIds((targetIDs ?? []).filter(Boolean));
   },
 
   fly_to_track: (output) => {
     if (!output.success) return;
-    const { trackId, lat, lng, zoom } = output as { trackId: string; lat: number; lng: number; zoom?: number };
+    const { targetID, lat, lng, zoom } = output as { targetID: string; lat: number; lng: number; zoom?: number };
+    if (!targetID) return;
     const store = useAppStore.getState();
-    store.selectTrack(trackId);
+    store.selectTrack(targetID);
     store.requestFlyTo(lat, lng, zoom);
   },
 
@@ -169,9 +171,9 @@ const sideEffects: Record<string, (output: ToolOutput) => void> = {
 
   show_threats: (output) => {
     if (!output.success) return;
-    const threats = output.threats as Array<{ trackId: string; level: string }> | undefined;
+    const threats = output.threats as Array<{ targetID: string; level: string }> | undefined;
     if (!threats?.length) return;
-    const criticalIds = threats.filter((t) => t.level === "critical" || t.level === "high").map((t) => t.trackId);
+    const criticalIds = threats.filter((t) => t.level === "critical" || t.level === "high").map((t) => t.targetID).filter(Boolean);
     if (criticalIds.length > 0) {
       useAppStore.getState().setHighlightedTrackIds(criticalIds);
     }
@@ -233,3 +235,4 @@ export function applyToolSideEffect(action: string, output: ToolOutput) {
   const handler = sideEffects[action];
   if (handler) handler(output);
 }
+

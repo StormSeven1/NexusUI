@@ -247,7 +247,7 @@ function mapDroneConfigDeviceRow(
   const bearing = Number(r.bearing);
   const heading = Number.isFinite(bearing) ? bearing : 0;
   const fovAngle = Number.isFinite(Number(r.fovAngle)) ? Number(r.fovAngle) : 90;
-  const virtualTroop = r.virtualTroop === true;
+  const virtualTroop = isVirtualFromProperties(r);
   const now = isoNow();
 
   const centerNameVisible = mergeRootAndDeviceVisible(
@@ -579,13 +579,13 @@ function waypointsLineString(
     }
     if (Number.isFinite(lng) && Number.isFinite(lat)) coords.push([lng, lat]);
   }
-  console.log("[flight_path:render]", {
-    entityId: task.entityId ?? task.entity_id ?? null,
-    deviceSn: task.deviceSn ?? task.device_sn ?? task.drone_sn ?? null,
-    waypointCount: Array.isArray(wps) ? wps.length : 0,
-    coords,
-    raw: task,
-  });
+  // console.log("[flight_path:render]", {
+  //   entityId: task.entityId ?? task.entity_id ?? null,
+  //   deviceSn: task.deviceSn ?? task.device_sn ?? task.drone_sn ?? null,
+  //   waypointCount: Array.isArray(wps) ? wps.length : 0,
+  //   coords,
+  //   raw: task,
+  // });
   if (coords.length < 2) return null;
   return {
     type: "Feature",
@@ -721,7 +721,7 @@ function generateAmmoBadgeImage(count: number): { width: number; height: number;
 
 function ensureAmmoBadgeImage(map: maplibregl.Map, count: number) {
   const id = ammoBadgeImageId(count);
-  if (map.hasImage(id)) map.removeImage(id);
+  if (map.hasImage(id)) return;
   map.addImage(id, generateAmmoBadgeImage(count), { pixelRatio: AMMO_BADGE_PIXEL_RATIO });
 }
 
@@ -856,6 +856,7 @@ export class DronesMaplibre {
   private unsub: (() => void) | null = null;
   private timeoutTimer: ReturnType<typeof setInterval> | null = null;
   private pulseAnimId: number | null = null;
+  private lastDroneGeoJsonText: string | null = null;
   /** 渲染节流：与 V2 DroneRenderer.scheduleRender 一致，避免高频更新导致标签闪烁 */
   private renderScheduled = false;
   private renderRafId: number | null = null;
@@ -1300,8 +1301,15 @@ export class DronesMaplibre {
       const drones = collectDroneRenderablesFromAssets(assetState.assets, assetState.relationships);
       syncAmmoBadgeImages(m, drones);
       const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource;
-      src.setData(buildDroneGeoJSON(drones));
+      this.setDroneSourceData(src, buildDroneGeoJSON(drones));
     });
+  }
+
+  private setDroneSourceData(src: maplibregl.GeoJSONSource, data: GeoJSON.FeatureCollection) {
+    const text = JSON.stringify(data);
+    if (text === this.lastDroneGeoJsonText) return;
+    this.lastDroneGeoJsonText = text;
+    src.setData(data);
   }
 
   /** 配置热读：刷新线/FOV 颜色（不改变图层 id） */
@@ -1349,7 +1357,7 @@ export class DronesMaplibre {
     syncAmmoBadgeImages(m, drones);
     const src = m.getSource(DRONES_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
-    src.setData(buildDroneGeoJSON(drones));
+    this.setDroneSourceData(src, buildDroneGeoJSON(drones));
   }
 
   dispose() {
@@ -1366,6 +1374,7 @@ export class DronesMaplibre {
       this.renderRafId = null;
       this.renderScheduled = false;
     }
+    this.lastDroneGeoJsonText = null;
     this.unsub?.();
     this.unsub = null;
     const m = this.map;

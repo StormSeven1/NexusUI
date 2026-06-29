@@ -297,6 +297,11 @@ class ReceiverManager:
                         'type': 'DockStatus',
                         'data': parsed_data
                     })
+                elif data_type == 'radar_status':
+                    ws_manager.queue_message({
+                        'type': 'RadarStatus',
+                        'data': parsed_data
+                    })
                 elif data_type == 'drone_status':
                     # 无人机实时状态数据
                     ws_manager.queue_message({
