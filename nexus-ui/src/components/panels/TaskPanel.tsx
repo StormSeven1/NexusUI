@@ -8,7 +8,7 @@ import { ConversationList } from "@/components/chat/ConversationList";
 import { DisposalPlanFeed } from "@/components/chat/DisposalPlanFeed";
 import { NxIconButton, NxPanelHeader } from "@/components/nexus";
 import type { ConversationSummary } from "@/lib/chat-api";
-import { DISPOSAL_PLAN_HISTORY_TYPE } from "@/lib/conversation-history-client";
+import { DISPOSAL_PLAN_HISTORY_TYPE, resetDisposalPlanHistorySession } from "@/lib/conversation-history-client";
 import { DisposalPlanWsClient } from "@/lib/disposal/disposal-ws-client";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import { useAppStore } from "@/stores/app-store";
@@ -17,18 +17,25 @@ import { useDisposalPlanStore, type DisposalPlanBlock } from "@/stores/disposal-
 type TaskPanelMode = "current" | "history";
 
 function extractHistoryBlocks(messages: Array<{ content: string }>): DisposalPlanBlock[] {
-  const blocks: DisposalPlanBlock[] = [];
+  const blocksById = new Map<string, DisposalPlanBlock>();
+  const anonymousBlocks: DisposalPlanBlock[] = [];
   for (const msg of messages) {
     try {
       const parsed = JSON.parse(msg.content);
       if (parsed?.type === DISPOSAL_PLAN_HISTORY_TYPE && parsed.block) {
-        blocks.push(parsed.block as DisposalPlanBlock);
+        const block = parsed.block as DisposalPlanBlock;
+        const blockId = String(block.blockId ?? "").trim();
+        if (blockId) {
+          blocksById.set(blockId, block);
+        } else {
+          anonymousBlocks.push(block);
+        }
       }
     } catch {
       /* ignore non-plan messages */
     }
   }
-  return blocks;
+  return [...blocksById.values(), ...anonymousBlocks];
 }
 
 export function TaskPanel() {
@@ -102,6 +109,7 @@ export function TaskPanel() {
   }, [mode, setTaskPanelHasNewPlan, showCurrent]);
 
   const handleNewTask = useCallback(() => {
+    resetDisposalPlanHistorySession();
     showCurrent();
     clearBlocks();
   }, [clearBlocks, showCurrent]);

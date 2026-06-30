@@ -105,7 +105,11 @@ export function attachEncodedVideoFrameSync(
       if (onEncodedFrame) {
         const raw = encodedFrame.data;
         if (raw) {
-          const buffer = raw instanceof ArrayBuffer ? raw.slice(0) : raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+          const view = raw as ArrayBuffer | ArrayBufferView;
+          const buffer =
+            view instanceof ArrayBuffer
+              ? view.slice(0)
+              : view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
           onEncodedFrame({
             data: buffer as ArrayBuffer,
             timestamp: encodedFrame.timestamp ?? 0,

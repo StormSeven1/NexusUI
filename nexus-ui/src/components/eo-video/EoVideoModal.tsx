@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, CameraIcon, Loader2, Video } from "lucide-react";
+import { Camera, CameraIcon, ChevronRight, Loader2, Video } from "lucide-react";
 import { EoDetectionOverlay } from "@/components/eo-video/EoDetectionOverlay";
 import { EoVideoViewport } from "@/components/eo-video/EoVideoViewport";
 import { DraggableModal } from "@/components/ui/DraggableModal";
@@ -25,6 +25,15 @@ import type { EoRuntimeStream, EoVideoIceServer } from "@/lib/eo-video/types";
 import { signalingUrlFromWebrtcUrl } from "@/lib/eo-video/buildSignalingUrl";
 
 const DEFAULT_ICE_SERVERS: EoVideoIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+const STREAM_GROUPS = [
+  { id: "camera", label: "\u76f8\u673a" },
+  { id: "drone", label: "\u65e0\u4eba\u673a" },
+] as const;
+const STREAM_MENU_WIDTH = 384;
+const STREAM_MENU_HEIGHT = 360;
+
+type StreamGroupId = (typeof STREAM_GROUPS)[number]["id"];
+type GroupedRuntimeStream = EoRuntimeStream & { groupId: StreamGroupId };
 
 function readStringProperty(properties: Record<string, unknown> | null | undefined, key: string): string {
   if (!properties) return "";
@@ -32,7 +41,30 @@ function readStringProperty(properties: Record<string, unknown> | null | undefin
   return typeof value === "string" ? value.trim() : "";
 }
 
-function toRuntimeStream(asset: AssetData): EoRuntimeStream | null {
+function streamGroupForAsset(asset: AssetData, properties: Record<string, unknown> | null): StreamGroupId {
+  const assetType = String(asset.asset_type ?? "").trim().toLowerCase();
+  if (assetType === "drone" || assetType === "uav") return "drone";
+  const hint = [
+    asset.id,
+    asset.name,
+    asset.asset_type,
+    properties?.assetType,
+    properties?.asset_type,
+    properties?.specificType,
+    properties?.specific_type,
+    properties?.type,
+    properties?.config_kind,
+    properties?.deviceSn,
+    properties?.device_sn,
+  ]
+    .map((item) => String(item ?? "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+  if (hint.includes("drone") || hint.includes("uav") || hint.includes("\u65e0\u4eba\u673a")) return "drone";
+  return "camera";
+}
+
+function toRuntimeStream(asset: AssetData): GroupedRuntimeStream | null {
   const properties =
     asset.properties && typeof asset.properties === "object"
       ? (asset.properties as Record<string, unknown>)
@@ -44,6 +76,7 @@ function toRuntimeStream(asset: AssetData): EoRuntimeStream | null {
     label: asset.name || asset.id,
     entityId: asset.id,
     sensorVideoUrl,
+    groupId: streamGroupForAsset(asset, properties),
   };
 }
 
@@ -94,10 +127,10 @@ function readTargetDomainLabel(asset: AssetData | null): string {
   for (const candidate of candidates) {
     const text = String(candidate ?? "").trim().toLowerCase();
     if (!text) continue;
-    if (text === "1" || text.includes("air") || text.includes("对空") || text.includes("uav")) return "对空";
-    if (text === "0" || text.includes("sea") || text.includes("对海") || text.includes("ship")) return "对海";
+    if (text === "1" || text.includes("air") || text.includes("\u5bf9\u7a7a") || text.includes("uav")) return "\u5bf9\u7a7a";
+    if (text === "0" || text.includes("sea") || text.includes("\u5bf9\u6d77") || text.includes("ship")) return "\u5bf9\u6d77";
   }
-  return "空闲中";
+  return "\u7a7a\u95f2\u4e2d";
 }
 
 export function EoVideoModal() {
@@ -107,10 +140,19 @@ export function EoVideoModal() {
   const open = useAppStore((s) => s.eoVideoModalOpen);
   const setOpen = useAppStore((s) => s.setEoVideoModalOpen);
   const runtimeStreams = useMemo(
-    () => assets.map(toRuntimeStream).filter((item): item is EoRuntimeStream => Boolean(item)),
+    () => assets.map(toRuntimeStream).filter((item): item is GroupedRuntimeStream => Boolean(item)),
     [assets],
   );
+  const streamGroups = useMemo(
+    () =>
+      STREAM_GROUPS.map((group) => ({
+        ...group,
+        streams: runtimeStreams.filter((stream) => stream.groupId === group.id),
+      })),
+    [runtimeStreams],
+  );
   const [activeStreamId, setActiveStreamId] = useState("");
+  const [activeMenuGroupId, setActiveMenuGroupId] = useState<StreamGroupId>("camera");
   const [, setCaptureHint] = useState<string | null>(null);
   const [busy, setBusy] = useState<"snapshot" | "record" | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -168,6 +210,16 @@ export function EoVideoModal() {
     [activeStream, assets],
   );
   const targetDomainLabel = useMemo(() => readTargetDomainLabel(activeAsset), [activeAsset]);
+  const activeMenuGroup = useMemo(
+    () => streamGroups.find((group) => group.id === activeMenuGroupId) ?? streamGroups[0],
+    [activeMenuGroupId, streamGroups],
+  );
+  const activeStreamGroupId = activeStream?.groupId;
+
+  useEffect(() => {
+    if (!activeStreamGroupId || contextMenu.open) return;
+    setActiveMenuGroupId(activeStreamGroupId);
+  }, [activeStreamGroupId, contextMenu.open]);
 
   const playbackState = useMemo(() => {
     if (!activeStream) {
@@ -275,19 +327,19 @@ export function EoVideoModal() {
     };
   }, [contextMenu.open]);
 
-  const contextMenuMaxHeight = Math.max(160, (containerRef.current?.clientHeight ?? 0) - contextMenu.y - 12);
+  const contextMenuMaxHeight = Math.max(180, (containerRef.current?.clientHeight ?? 0) - contextMenu.y - 8);
 
   const onSnapshot = async () => {
     if (!activeStream) {
-      setCaptureHint("当前没有可用相机实体。");
+      setCaptureHint("\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u76f8\u673a\u5b9e\u4f53\u3002");
       return;
     }
     if (!captureReady) {
-      setCaptureHint("视频还没准备好，暂时无法截图。");
+      setCaptureHint("\u89c6\u9891\u8fd8\u6ca1\u51c6\u5907\u597d\uff0c\u6682\u65f6\u65e0\u6cd5\u622a\u56fe\u3002");
       return;
     }
     if (!backendState.captureSaveUrl) {
-      setCaptureHint("后端截图保存地址不可用。");
+      setCaptureHint("\u540e\u7aef\u622a\u56fe\u4fdd\u5b58\u5730\u5740\u4e0d\u53ef\u7528\u3002");
       return;
     }
     setBusy("snapshot");
@@ -309,16 +361,16 @@ export function EoVideoModal() {
 
   const onToggleRecord = async () => {
     if (!activeStream) {
-      setCaptureHint("当前没有可用相机实体。");
+      setCaptureHint("\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u76f8\u673a\u5b9e\u4f53\u3002");
       return;
     }
     if (!isRecording) {
       if (!videoRef.current) {
-        setCaptureHint("视频元素尚未就绪，暂时无法录像。");
+        setCaptureHint("\u89c6\u9891\u5143\u7d20\u5c1a\u672a\u5c31\u7eea\uff0c\u6682\u65f6\u65e0\u6cd5\u5f55\u50cf\u3002");
         return;
       }
       if (!backendState.captureSaveUrl) {
-        setCaptureHint("后端录像保存地址不可用。");
+        setCaptureHint("\u540e\u7aef\u5f55\u50cf\u4fdd\u5b58\u5730\u5740\u4e0d\u53ef\u7528\u3002");
         return;
       }
       const picked = pickRecordMimeAndExtension();
@@ -345,7 +397,7 @@ export function EoVideoModal() {
         onError: (message) => setCaptureHint(message),
         onStarted: () => {
           setIsRecording(true);
-          setCaptureHint("开始录像。");
+          setCaptureHint("\u5f00\u59cb\u5f55\u50cf\u3002");
         },
         onStopped: () => {
           setIsRecording(false);
@@ -358,11 +410,82 @@ export function EoVideoModal() {
     recordControllerRef.current?.stop();
   };
 
+  const renderContextMenu = contextMenu.open ? (
+    <div
+      ref={contextMenuRef}
+      className="absolute z-[12] flex max-w-[calc(100%-16px)] overflow-visible text-sm text-white shadow-2xl"
+      style={{
+        left: `${contextMenu.x}px`,
+        top: `${contextMenu.y}px`,
+        width: `${STREAM_MENU_WIDTH}px`,
+        maxHeight: `${contextMenuMaxHeight}px`,
+      }}
+    >
+      <div className="w-44 overflow-hidden rounded-md border border-white/10 bg-[#30313a]/95 py-1 backdrop-blur-md">
+        <div className="px-3 py-2 text-xs font-semibold text-cyan-300">视频源</div>
+        {streamGroups.map((group) => {
+          const selected = group.id === activeMenuGroup?.id;
+          return (
+            <button
+              key={group.id}
+              type="button"
+              className={`flex h-9 w-full items-center justify-between px-3 text-left transition-colors ${
+                selected ? "bg-white/10 text-white" : "text-white/85 hover:bg-white/8 hover:text-white"
+              }`}
+              onFocus={() => setActiveMenuGroupId(group.id)}
+              onMouseEnter={() => setActiveMenuGroupId(group.id)}
+              onClick={() => setActiveMenuGroupId(group.id)}
+            >
+              <span className="min-w-0 truncate">{group.label}</span>
+              <span className="ml-2 flex items-center gap-1 text-white/45">
+                <span className="text-[10px]">{group.streams.length}</span>
+                <ChevronRight size={14} />
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div
+        className="ml-1 min-w-52 flex-1 overflow-hidden rounded-md border border-white/10 bg-[#292b34]/95 py-1 backdrop-blur-md"
+        style={{ maxHeight: `${contextMenuMaxHeight}px` }}
+      >
+        <div className="max-h-full overflow-y-auto overscroll-contain">
+          {activeMenuGroup && activeMenuGroup.streams.length ? (
+            activeMenuGroup.streams.map((stream) => {
+              const active = stream.id === activeStream?.id;
+              return (
+                <button
+                  key={stream.id}
+                  type="button"
+                  className={`flex h-9 w-full items-center px-3 text-left transition-colors ${
+                    active
+                      ? "bg-white/10 font-medium text-white"
+                      : "text-white/85 hover:bg-white/8 hover:text-white"
+                  }`}
+                  onClick={() => {
+                    setActiveStreamId(stream.id);
+                    setActiveMenuGroupId(stream.groupId);
+                    setContextMenu((prev) => ({ ...prev, open: false }));
+                  }}
+                >
+                  <span className="min-w-0 truncate">{stream.label}</span>
+                </button>
+              );
+            })
+          ) : (
+            <div className="px-3 py-2 text-sm text-white/55">暂无视频源</div>
+          )}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <DraggableModal
       open={open}
       onClose={() => setOpen(false)}
-      title="光电视频"
+      title="鍏夌數瑙嗛"
       icon={Camera}
       size="auto"
       minWidth={520}
@@ -371,21 +494,22 @@ export function EoVideoModal() {
       initialY={120}
       className="overflow-hidden"
       headerClassName="px-3 py-2"
-      contentClassName="flex min-h-0 flex-1 px-3 py-2"
+      contentClassName="flex min-h-0 flex-1 px-1.5 pb-1.5 pt-1"
     >
       <div className="flex min-h-0 h-full min-w-0 w-full flex-1 flex-col">
         <div
           ref={containerRef}
-          className="relative min-h-0 flex-1 rounded-md border border-nexus-border bg-black"
+          className="relative min-h-0 flex-1 overflow-hidden rounded-[3px] bg-black ring-1 ring-white/10"
           onContextMenu={(event) => {
             event.preventDefault();
             const container = containerRef.current;
             if (!container) return;
             const rect = container.getBoundingClientRect();
+            setActiveMenuGroupId(activeStream?.groupId ?? "camera");
             setContextMenu({
               open: true,
-              x: Math.max(12, Math.min(event.clientX - rect.left, rect.width - 252)),
-              y: Math.max(12, Math.min(event.clientY - rect.top, rect.height - 360)),
+              x: Math.max(8, Math.min(event.clientX - rect.left, rect.width - STREAM_MENU_WIDTH - 8)),
+              y: Math.max(8, Math.min(event.clientY - rect.top, rect.height - STREAM_MENU_HEIGHT - 8)),
             });
           }}
         >
@@ -401,11 +525,11 @@ export function EoVideoModal() {
           />
 
           <div className="pointer-events-none absolute left-3 top-3 z-[6] rounded-md bg-black/55 px-2.5 py-1 text-xs font-medium text-white/95 backdrop-blur-sm">
-            当前目标: {targetDomainLabel}
+            褰撳墠鐩爣: {targetDomainLabel}
           </div>
 
           <div className="pointer-events-none absolute left-3 top-12 z-[6] max-w-[calc(100%-104px)] rounded-md bg-black/45 px-2.5 py-1 text-[11px] font-medium text-cyan-100/95 backdrop-blur-sm">
-            检测ID: {detectionEntityIdFromAsset(activeAsset) || "-"} | {detection.diag || "等待检测数据..."}
+            妫€娴婭D: {detectionEntityIdFromAsset(activeAsset) || "-"} | {detection.diag || "绛夊緟妫€娴嬫暟鎹?.."}
           </div>
 
           <div className="absolute right-3 top-1/2 z-[6] flex -translate-y-1/2 flex-col gap-2">
@@ -416,8 +540,8 @@ export function EoVideoModal() {
               className="border-white/20 bg-black/35 text-white hover:bg-white/15"
               onClick={() => void onSnapshot()}
               disabled={busy === "snapshot" || !activeStream}
-              title="截图"
-              aria-label="截图"
+              title="鎴浘"
+              aria-label="鎴浘"
             >
               {busy === "snapshot" ? <Loader2 className="size-4 animate-spin" /> : <CameraIcon className="size-4" />}
             </Button>
@@ -428,58 +552,19 @@ export function EoVideoModal() {
               className={!isRecording ? "border-white/20 bg-black/35 text-white hover:bg-white/15" : undefined}
               onClick={() => void onToggleRecord()}
               disabled={busy === "record" || !activeStream}
-              title={isRecording ? "停止录像" : "开始录像"}
-              aria-label={isRecording ? "停止录像" : "开始录像"}
+              title={isRecording ? "\u505c\u6b62\u5f55\u50cf" : "\u5f00\u59cb\u5f55\u50cf"}
+              aria-label={isRecording ? "\u505c\u6b62\u5f55\u50cf" : "\u5f00\u59cb\u5f55\u50cf"}
             >
               {busy === "record" ? <Loader2 className="size-4 animate-spin" /> : <Video className="size-4" />}
             </Button>
           </div>
 
           <div className="pointer-events-none absolute bottom-3 left-3 z-[6] rounded-md bg-black/45 px-2.5 py-1 text-sm font-medium text-white/95 backdrop-blur-sm">
-            {activeStream?.label ?? "等待相机实体..."}
+            {activeStream?.label ?? "绛夊緟鐩告満瀹炰綋..."}
           </div>
 
-          {contextMenu.open ? (
-            <div
-              ref={contextMenuRef}
-              className="absolute z-[12] flex min-w-60 max-w-[calc(100%-24px)] flex-col overflow-hidden rounded-lg border border-white/10 bg-[#2b2d36]/95 shadow-2xl backdrop-blur-md"
-              style={{
-                left: `${contextMenu.x}px`,
-                top: `${contextMenu.y}px`,
-                maxHeight: `${contextMenuMaxHeight}px`,
-              }}
-            >
-              <div className="border-b border-white/10 px-3 py-2 text-xs font-semibold text-cyan-300">
-                视频源
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
-                {runtimeStreams.length ? (
-                  runtimeStreams.map((stream) => {
-                    const active = stream.id === activeStream?.id;
-                    return (
-                      <button
-                        key={stream.id}
-                        type="button"
-                        className={`flex w-full items-center px-3 py-2 text-left text-sm transition-colors ${
-                          active
-                            ? "bg-white/10 font-medium text-white"
-                            : "text-white/85 hover:bg-white/8 hover:text-white"
-                        }`}
-                        onClick={() => {
-                          setActiveStreamId(stream.id);
-                          setContextMenu((prev) => ({ ...prev, open: false }));
-                        }}
-                      >
-                        {stream.label}
-                      </button>
-                    );
-                  })
-                ) : (
-                  <div className="px-3 py-2 text-sm text-white/55">等待相机实体...</div>
-                )}
-              </div>
-            </div>
-          ) : null}
+          {renderContextMenu}
+
 
           <EoDetectionOverlay
             containerRef={containerRef}

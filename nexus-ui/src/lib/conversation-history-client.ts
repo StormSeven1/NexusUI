@@ -1,13 +1,23 @@
 const BASE = "/api/backend/conversations";
 export const DISPOSAL_PLAN_HISTORY_TYPE = "disposal_plan_block_v1";
+const DISPOSAL_PLAN_HISTORY_TITLE = "\u5904\u7f6e\u65b9\u6848\u8bb0\u5f55";
 
 const activeConversationIds = new Map<string, string>();
 const pendingConversationIds = new Map<string, Promise<string | null>>();
+let disposalPlanHistorySession = 0;
+
+function getDisposalPlanHistoryReuseKey(): string {
+  return `plans:current:${disposalPlanHistorySession}`;
+}
+
+export function resetDisposalPlanHistorySession(): void {
+  disposalPlanHistorySession += 1;
+}
 
 async function ensureConversation(
   title: string,
   category: "chat" | "plans" = "chat",
-  reuseKey = category,
+  reuseKey: string = category,
 ): Promise<string | null> {
   const existing = activeConversationIds.get(reuseKey);
   if (existing) return existing;
@@ -50,7 +60,8 @@ export async function saveConversationHistoryMessage(
 ): Promise<void> {
   const text = String(content ?? "").trim();
   if (!text) return;
-  const convId = await ensureConversation(title, category, reuseKey ?? category);
+  const key = reuseKey ?? category;
+  const convId = await ensureConversation(title, category, key);
   if (!convId) return;
   try {
     const res = await fetch(`${BASE}/${convId}/messages`, {
@@ -59,6 +70,7 @@ export async function saveConversationHistoryMessage(
       body: JSON.stringify({ role, content: text }),
     });
     if (!res.ok) {
+      activeConversationIds.delete(key);
       console.error("[conversation-history] save failed", { status: res.status, convId, role, text });
       return;
     }
@@ -79,17 +91,15 @@ export async function saveDisposalPlanHistoryBlock(block: unknown): Promise<void
           return rest;
         })()
       : block;
-  const record = cleanBlock && typeof cleanBlock === "object" ? (cleanBlock as Record<string, unknown>) : {};
-  const title = String(record.summary ?? record.taskId ?? "处置方案历史").trim() || "处置方案历史";
-  const blockId = String(record.blockId ?? record.taskId ?? Date.now()).trim();
+
   await saveConversationHistoryMessage(
     "assistant",
     JSON.stringify({
       type: DISPOSAL_PLAN_HISTORY_TYPE,
       block: cleanBlock,
     }),
-    title,
+    DISPOSAL_PLAN_HISTORY_TITLE,
     "plans",
-    `plans:${blockId}`,
+    getDisposalPlanHistoryReuseKey(),
   );
 }

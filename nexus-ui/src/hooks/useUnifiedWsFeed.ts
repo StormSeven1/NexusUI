@@ -170,6 +170,7 @@ import {
   assetStatusFromDeviceState,
   deviceStatePropsFromPayload,
   readBatteryPercentFromPayload,
+  readRuntimeTimestampMs,
   preserveDeviceStateFromPrev,
   preserveDdsDynamicFieldsOnRebuild,
   stampDeviceStateOnAsset,
@@ -2137,16 +2138,11 @@ function startDroneRuntimePrune() {
         asset.properties && typeof asset.properties === "object"
           ? ({ ...(asset.properties as Record<string, unknown>) } as Record<string, unknown>)
           : {};
+      const runtimeAt = readRuntimeTimestampMs(props);
       const highFreqAt = Number(props.high_freq_received_at_ms);
-      const statusAt = Number(props.status_received_at_ms);
-      const dockStatusAt = Number(props.dock_status_received_at_ms);
-      const entityStatusAt = Number(props.entity_status_received_at_ms);
       const highFreqFresh = Number.isFinite(highFreqAt) && now - highFreqAt <= cfg.highFreqPositionMaxAgeMs;
-      const statusFresh = Number.isFinite(statusAt) && now - statusAt <= staleMs;
-      const dockStatusFresh = Number.isFinite(dockStatusAt) && now - dockStatusAt <= staleMs;
-      const entityStatusFresh = Number.isFinite(entityStatusAt) && now - entityStatusAt <= staleMs;
-      const ddsFresh = highFreqFresh || statusFresh || dockStatusFresh;
-      const isFresh = ddsFresh || entityStatusFresh;
+      const runtimeFresh = runtimeAt != null && now - runtimeAt <= staleMs;
+      const isFresh = highFreqFresh || runtimeFresh;
       const nextStatus = isFresh ? assetStatusFromDeviceState(props.deviceState) : "offline";
       if (asset.status !== nextStatus) {
         useAssetStore.getState().mergeAssetFields(asset.id, { status: nextStatus });

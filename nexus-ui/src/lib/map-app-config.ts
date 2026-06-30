@@ -115,19 +115,52 @@ export function assetStatusFromFreshness(isFresh: boolean): string {
   return isFresh ? "online" : "offline";
 }
 
+function normalizeRuntimeTimestampKey(key: string): string {
+  return key.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+}
+
+function isRuntimeTimestampKey(key: string): boolean {
+  const normalized = normalizeRuntimeTimestampKey(key);
+  return (
+    normalized === "lastpacketatms" ||
+    normalized.endsWith("receivedatms") ||
+    normalized.endsWith("updatedatms") ||
+    normalized.endsWith("seenatms")
+  );
+}
+
+function runtimeTimestampMs(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function latestRuntimeTimestampMs(...values: unknown[]): number | null {
+  const runtimeValues = values
+    .map(runtimeTimestampMs)
+    .filter((value): value is number => value != null);
+  return runtimeValues.length > 0 ? Math.max(...runtimeValues) : null;
+}
+
+function mergeRuntimeTimestampProps(
+  base: Record<string, unknown>,
+  overlay: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...base, ...overlay };
+  for (const key of new Set([...Object.keys(base), ...Object.keys(overlay)])) {
+    if (!isRuntimeTimestampKey(key)) continue;
+    const latest = latestRuntimeTimestampMs(base[key], overlay[key]);
+    if (latest != null) merged[key] = latest;
+  }
+  return merged;
+}
+
 export function readRuntimeTimestampMs(props: Record<string, unknown> | null | undefined): number | null {
-  const runtimeValues = [
-    props?.last_packet_at_ms,
-    props?.status_received_at_ms,
-    props?.radar_status_received_at_ms,
-    props?.high_freq_received_at_ms,
-    props?.dock_status_received_at_ms,
-    props?.entity_status_received_at_ms,
-  ]
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value));
-  if (runtimeValues.length > 0) return Math.max(...runtimeValues);
-  return null;
+  if (!props) return null;
+  return latestRuntimeTimestampMs(
+    ...Object.entries(props)
+      .filter(([key]) => isRuntimeTimestampKey(key))
+      .map(([, value]) => value),
+  );
 }
 
 export function isAssetStatusFresh(
@@ -453,22 +486,10 @@ export function preserveDdsDynamicFieldsOnRebuild(
       return {
         ...merged,
         status: row.status,
-        properties: {
-          ...mergedProps,
-          ...rowProps,
-        },
+        properties: mergeRuntimeTimestampProps(mergedProps, rowProps),
       };
     }
-    return {
-      ...merged,
-      properties: {
-        ...mergedProps,
-        entity_status_received_at_ms:
-          rowProps.entity_status_received_at_ms ?? mergedProps.entity_status_received_at_ms,
-        entity_status_payload:
-          rowProps.entity_status_payload ?? mergedProps.entity_status_payload,
-      },
-    };
+    return merged;
   }
 
   if (at === "missile" && (lp.ws_munition === true || (hasLiveDeviceState && !rowHasDeviceState))) {
@@ -516,10 +537,7 @@ export function preserveDdsDynamicFieldsOnRebuild(
       heading: hasRowPose ? row.heading : hasLivePose ? live.heading : row.heading,
       fov_angle: hasRowFov ? row.fov_angle : hasLiveFov ? live.fov_angle : row.fov_angle,
       range_km: hasRowRange ? row.range_km : hasLiveRange ? live.range_km : row.range_km,
-      properties: {
-        ...rp,
-        ...lp,
-      },
+      properties: mergeRuntimeTimestampProps(rp, lp),
     };
   }
 
@@ -541,7 +559,7 @@ function mergeDdsOverlayOntoEntityRow(
     name: opts.displayName,
     ...(opts.includeHeading ? { heading: live.heading ?? row.heading } : {}),
     assigned_target_id: live.assigned_target_id ?? row.assigned_target_id,
-    properties: { ...rp, ...lp },
+    properties: mergeRuntimeTimestampProps(rp, lp),
   };
 }
 
@@ -1976,7 +1994,7 @@ export function getStandaloneEngagementConfig(): AppConfigStandaloneEngagement {
    a: Record<string, unknown> | null | undefined,
    b: Record<string, unknown> | null | undefined,
  ): Record<string, unknown> | null {
-   const out = { ...(a ?? {}), ...(b ?? {}) };
+   const out = mergeRuntimeTimestampProps(a ?? {}, b ?? {});
    return Object.keys(out).length ? out : null;
  }
 
