@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package ontologyPkg;
+
+message Ontology {
+  string str_template = 1;
+  string platform_type = 2;
+  string specific_type = 3;
+}

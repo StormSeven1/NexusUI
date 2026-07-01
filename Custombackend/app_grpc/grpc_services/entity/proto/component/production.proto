@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package productionPkg;
+
+message DatasetInfo {
+  string name = 1;
+  string version = 2;
+  int32 size = 3;
+  repeated string classes = 4;
+  string description = 5;
+}
+
+message Production {
+  string author = 1;
+  string create_time = 2;
+  string update_time = 3;
+  DatasetInfo dataset = 4;
+  string license = 5;
+}

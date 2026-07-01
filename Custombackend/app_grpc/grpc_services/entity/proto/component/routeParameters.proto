@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package routeParametersPkg;
+
+// 航点朝向参数
+message WaypointHeadingParam {
+  string waypoint_heading_mode = 1;     // 航点朝向模式（如 followWayline）
+  int32 waypoint_heading_angle = 2;     // 航点朝向角度
+  string waypoint_poi_point = 3;        // POI 点坐标
+}
+
+// 航点转向参数
+message WaypointTurnParam {
+  string waypoint_turn_mode = 1;         // 转向模式（如 coordinateTurn）
+  double waypoint_turn_damping_dist = 2; // 转向阻尼距离（米）
+  int32 use_straight_line = 3;           // 是否使用直线（0/1）
+}
+
+// 航点动作
+message WaypointAction {
+  int32 action_index = 1;                // 动作索引
+  int32 use_global_image_format = 2;     // 是否使用全局图像格式（0/1）
+  string image_format = 3;               // 图像格式（如 "visable,ir"）
+  int32 hover_time = 4;                  // 悬停时间（秒）
+  double aircraft_heading = 5;			// 飞行器目标偏航角
+  double gimbal_yaw_rotate_angle = 6;	// 云台偏航角
+  double gimbal_pitch_rotate_angle = 7;	//云台俯仰角
+  double zoom = 8;						//变焦焦距  
+}
+
+// 动作触发参数
+message ActionTriggerParam {
+  string action_trigger_type = 1;        // 触发类型（如 reachPoint, multipleDistance）
+  double action_trigger_param = 2;       // 触发参数（距离等）
+}
+
+// 航点
+message Waypoint {
+  int32 index = 1;                       // 航点索引
+  double latitude = 2;                   // 纬度
+  double longitude = 3;                  // 经度
+  double height = 4;                     // 高度（米）
+  double speed = 5;                     // 飞行速度
+  WaypointHeadingParam heading_param = 6;	//航点偏航角参数
+  double gimbal_pitch_angle = 7;         // 云台俯仰角（度）
+  WaypointTurnParam turn_param = 8;      // 转向参数（可选，覆盖全局）
+  repeated WaypointAction actions = 9;   // 航点动作列表
+  ActionTriggerParam action_trigger_param = 10; // 动作触发参数
+}
+
+// 航线详情
+message RouteDetails {
+  string destination_name = 1;           // 目的地名称
+  string estimated_arrival_time = 2;     // 预计到达时间（ISO8601）
+}
+
+// 航线参数（主消息）
+message RouteParameters {
+  string route_type = 1;                 // 航线类型（如 waypoint）
+  string route_attribute = 2;            // 航线属性（如 mission_route）
+  int32 drone_type = 3;                  // 无人机类型
+  int32 sub_drone_type = 4;              // 无人机子类型
+  string payload_type = 5;               // 载荷类型（如 "81"）
+  int32 payload_position = 6;            // 载荷位置
+  string image_format = 7;               // 图像格式（如 visable）
+  string finish_action = 8;              // 完成动作（如 goHome）
+  string execute_rc_lost_action = 9;     // 遥控器失联动作（如 goBack）
+  double global_height = 10;              // 全局高度（米）
+  double auto_flight_speed = 11;         // 自动飞行速度（米/秒）
+  WaypointHeadingParam global_waypoint_heading_param = 12; // 全局航点朝向参数
+  WaypointTurnParam global_waypoint_turn_param = 13;       // 全局航点转向参数
+  string gimbal_pitch_mode = 14;         // 云台俯仰模式（如 usePointSetting）
+  string take_off_ref_point = 15;        // 起飞参考点（"经度,纬度,高度"）
+  repeated Waypoint way_point_list = 16; // 航点列表
+  RouteDetails route_details = 17;       // 航线详情
+}

@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package taskCatalogPkg;
+
+message TaskCatalog {
+  repeated string task_types = 1;
+}

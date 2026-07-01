@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package tasksPkg;
+
+message Tasks {
+  string active_task_id = 1;
+  repeated TaskStatus task_status = 2;
+}
+
+message TaskStatus {
+  string task_id = 1;       // 任务ID
+  string status = 2;        // 任务状态
+  uint64 progress = 3;       // 进度（0-100）
+  string message = 4;       // 状态消息
+  string start_time = 5;    // 开始时间
+  string update_time = 6;   // 最后更新时间
+  uint64 priority = 7;       // 优先级
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package gimbalPkg;
+
+message Gimbal {
+  uint64 gimbal_pitch = 1;
+  uint64 gimbal_roll = 2;
+  uint64 gimbal_yaw = 3;
+  string payload_index = 4;
+  uint64 zoom_factor = 5;
+}

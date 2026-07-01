@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package sensorParametersPkg;
+
+message SensorParameters {
+  string type = 1;
+  string status = 2;
+  Resolution resolution = 3;
+  uint64 fps = 4;
+  Capabilities capabilities = 5;
+  EnvironmentalSpecs environmental_specs = 6;
+  FieldOfView field_of_view = 7;
+  Focus focus = 8;
+}
+
+message Resolution {
+  uint64 width = 1;   // 水平分辨率
+  uint64 height = 2;  // 垂直分辨率
+}
+
+message Capabilities {
+  uint64 has_auto_focus = 1;     // 自动对焦
+  uint64 has_auto_exposure = 2;  // 自动曝光
+  uint64 has_stabilization = 3;  // 图像稳定
+  uint64 has_ptz = 4;           // 云台控制
+  uint64 has_zoom = 5;          // 变焦
+  uint64 has_focus = 6;         // 手动对焦
+  double visibility = 7;       // 能见度
+  repeated VisiblePRange visible_p = 8; // p显能见范围
+}
+
+message VisiblePRange {
+  double start = 1;
+  double end = 2;
+  double distance = 3;
+}
+
+message OperatingTempRange {
+  double min_temperature = 1; // 最低温度（摄氏度）
+  double max_temperature = 2; // 最高温度（摄氏度）
+}
+
+message LightingConditions {
+  double min_lux = 1; // 最低照度
+  double max_lux = 2; // 最高照度
+}
+
+message EnvironmentalSpecs {
+  OperatingTempRange operating_temp_range_c = 1;
+  LightingConditions lighting_conditions = 2;
+}
+
+message HorizontalView {
+  double min_horizontal_view = 1; // 最小角度（度）
+  double max_horizontal_view = 2; // 最大角度（度）
+  double current_horizontal_view = 3; // 当前角度（度）
+}
+
+message VerticalView {
+  double min_vertical_view = 1; // 最小角度（度）
+  double max_vertical_view = 2; // 最大角度（度）
+  double current_vertical_view = 3; // 当前角度（度）
+}
+
+message FieldOfView {
+  HorizontalView horizontal_view = 1;
+  VerticalView vertical_view = 2;
+}
+
+message FocusRange {
+  double min_focus_value = 1; // 最小焦距（mm）
+  double max_focus_value = 2; // 最大焦距（mm）
+}
+
+message Focus {
+  double value = 1;    // 聚焦值（0-100）
+  string mode = 2;     // 聚焦模式
+  FocusRange range = 3;
+}

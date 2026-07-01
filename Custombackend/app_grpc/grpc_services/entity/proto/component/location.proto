@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package locationPkg;
+
+// 位置信息（主消息）
+message Location {
+  Position position = 1;
+  Orientation orientation = 2;
+  VelocityEnu velocity_enu = 3;
+  double speed_mps = 4;
+  Acceleration acceleration = 5;
+  AttitudeEnu attitude_enu = 6;
+  Covariance3D position_enu_cov = 7;
+  Covariance3D velocity_enu_cov = 8;
+  PositionErrorEllipse position_error_ellipse = 9;
+}
+
+// 位置详细信息
+message Position {
+  double latitude_degrees = 1;        // 纬度（度）
+  double longitude_degrees = 2;       // 经度（度）
+  double altitude_hae_meters = 3;     // 海拔高度（米）
+  double altitude_agl_meters = 4;     // 相对地面高度（米）
+  double altitude_asf_meters = 5;     // ASF高度（米）
+  double pressure_depth_meters = 6;   // 压力深度（米）
+}
+
+// 姿态角（欧拉角）
+message Orientation {
+  double yaw = 1;     // 偏航角（度）
+  double pitch = 2;   // 俯仰角（度）
+  double roll = 3;    // 横滚角（度）
+}
+
+// ENU坐标系速度（东北天）
+message VelocityEnu {
+  double e = 1;  // 东向速度（米/秒）
+  double n = 2;  // 北向速度（米/秒）
+  double u = 3;  // 天向速度（米/秒）
+}
+
+// 加速度（ENU坐标系）
+message Acceleration {
+  double e = 1;  // 东向加速度（米/秒²）
+  double n = 2;  // 北向加速度（米/秒²）
+  double u = 3;  // 天向加速度（米/秒²）
+}
+
+// 四元数姿态（ENU坐标系）
+message AttitudeEnu {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double w = 4;
+}
+
+// 三维协方差矩阵（对称矩阵，存储上三角元素）
+message Covariance3D {
+  double mxx = 1;  // X-X协方差
+  double mxy = 2;  // X-Y协方差
+  double mxz = 3;  // X-Z协方差
+  double myx = 4;  // Y-X协方差
+  double myy = 5;  // Y-Y协方差
+  double mzz = 6;  // Z-Z协方差
+}
+
+// 位置误差椭圆
+message PositionErrorEllipse {
+  double probability = 1;          // 概率值（0-1之间）
+  double semi_major_axis_m = 2;    // 半长轴（米）
+  double semi_minor_axis_m = 3;    // 半短轴（米）
+  double orientation_deg = 4;      // 方向角（度）
+}

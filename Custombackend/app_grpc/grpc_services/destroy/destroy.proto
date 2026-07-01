@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package destroy;
+
+// 订阅请求当前不需要任何过滤条件。
+message SubscribeDestroyEventsRequest {}
+
+// 对应 HTTP body.version。
+message DestroyVersion {
+  int32 definition_version = 1;
+  int32 status_version = 2;
+}
+
+// 对应 HTTP body.specification。
+// 由于 proto 字段名不能直接使用 "@type"，这里用 at_type 承接。
+message DestroySpecification {
+  string at_type = 1;
+  int32 type = 2;
+  string id = 3;
+}
+
+// 对应 HTTP body.createdBy.system。
+message DestroyCreatedBySystem {
+  string service_name = 1;
+  string entity_id = 2;
+  bool manages_own_scheduling = 3;
+  int32 priority = 4;
+}
+
+// 对应 HTTP body.createdBy。
+message DestroyCreatedBy {
+  DestroyCreatedBySystem system = 1;
+}
+
+// 对应 HTTP body.owner。
+message DestroyOwner {
+  string entity_id = 1;
+}
+
+// 对应前端当前 destroy HTTP body 的完整结构。
+message DestroyEvent {
+  string task_id = 1;
+  string parent_task_id = 2;
+  DestroyVersion version = 3;
+  string display_name = 4;
+  string task_type = 5;
+  int64 max_execution_time_ms = 6;
+  DestroySpecification specification = 7;
+  DestroyCreatedBy created_by = 8;
+  DestroyOwner owner = 9;
+}
+
+service DestroyEventService {
+  // 外部客户端连上来后保持订阅，后端每次收到 destroy HTTP 发布就广播一条事件。
+  rpc SubscribeDestroyEvents(SubscribeDestroyEventsRequest) returns (stream DestroyEvent);
+}

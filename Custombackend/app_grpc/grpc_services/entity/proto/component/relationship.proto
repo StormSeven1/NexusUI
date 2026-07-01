@@ -1,0 +1,232 @@
+syntax = "proto3";
+
+package relationshipPkg;
+
+message Position {
+  double latitude_degrees = 1;        // 纬度（度）
+  double longitude_degrees = 2;       // 经度（度）
+  double altitude_hae_meters = 3;     // 海拔高度（米）
+  double altitude_agl_meters = 4;     // 相对地面高度（米）
+  double altitude_asf_meters = 5;     // ASF高度（米）
+  double pressure_depth_meters = 6;   // 压力深度（米）
+}
+
+// ==================== RF 配置相关 ====================
+
+// 频率值（带误差）
+message FrequencyHz {
+  double value = 1;
+  double sigma = 2;
+}
+
+// 最小频率
+message MinimumFrequencyHz {
+  FrequencyHz frequency_hz = 1;
+}
+
+// 最大频率
+message MaximumFrequencyHz {
+  FrequencyHz frequency_hz = 1;
+}
+
+// 频率范围
+message FrequencyRangeHz {
+  MinimumFrequencyHz minimum_frequency_hz = 1;
+  MaximumFrequencyHz maximum_frequency_hz = 2;
+}
+
+// 最小带宽
+message MinimumBandwidth {
+  double bandwidth_hz = 1;
+}
+
+// 最大带宽
+message MaximumBandwidth {
+  double bandwidth_hz = 1;
+}
+
+// 带宽范围
+message BandwidthRangeHz {
+  MinimumBandwidth minimum_bandwidth = 1;
+  MaximumBandwidth maximum_bandwidth = 2;
+}
+
+// RF 配置
+message RFConfiguration {
+  repeated FrequencyRangeHz frequency_range_hz = 1;
+  repeated BandwidthRangeHz bandwidth_range_hz = 2;
+}
+
+// ==================== 视场相关 ====================
+
+// 投影视锥体（四边形的四个角）
+message ProjectedFrustum {
+  Position upper_left = 1;
+  Position upper_right = 2;
+  Position bottom_right = 3;
+  Position bottom_left = 4;
+}
+
+// 四元数姿态
+message OrientationQuat {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double w = 4;
+}
+
+// 中心射线姿态
+message CenterRayPose {
+  Position pos = 1;
+  OrientationQuat orientation = 2;
+}
+
+// 视场
+message FieldOfView {
+  uint64 fov_id = 1;
+  string mount_id = 2;
+  ProjectedFrustum projected_frustum = 3;
+  Position projected_center_ray = 4;
+  CenterRayPose center_ray_pose = 5;
+  double horizontal_fov = 6;   // 水平视场角（弧度）
+  double vertical_fov = 7;     // 垂直视场角（弧度）
+  double range = 8;            // 测量范围（米）
+  string mode = 9;             // 传感器模式: SEARCH, TRACK, WEAPON_SUPPORT, AUTO, MUTE
+}
+
+// ==================== 传感器定义 ====================
+
+// 传感器
+message Sensor {
+  string sensor_id = 1;
+  string operational_state = 2;      // OFF, NON_OPERATIONAL, DEGRADED, OPERATIONAL, DENIED
+  string sensor_type = 3;            // RADAR, CAMERA, TRANSPONDER, RF, GPS, PTU_POS, PERIMETER, SONAR
+  string sensor_description = 4;
+  RFConfiguration rf_configuration = 5;
+  string last_detection_timestamp = 6;  // ISO8601 格式
+  repeated FieldOfView fields_of_view = 7;
+}
+
+// 传感器集合
+message Sensors {
+  repeated Sensor sensors = 1;
+}
+
+// ==================== 载荷相关 ====================
+
+// 载荷配置
+message Config {
+  string capability_id = 1;
+  uint32 quantity = 2;
+  repeated string effective_environment = 3;  // AIR, SURFACE, SUB_SURFACE, LAND, SPACE
+  string payload_operational_state = 4;       // OFF, NON_OPERATIONAL, DEGRADED, OPERATIONAL, OUT_OF_SERVICE, UNKNOWN
+  string payload_description = 5;
+}
+
+// 载荷配置项
+message PayloadConfiguration {
+  Config config = 1;
+}
+
+// 载荷集合
+message Payloads {
+  repeated PayloadConfiguration payload_configurations = 1;
+}
+
+// ==================== 媒体相关 ====================
+
+// 媒体项
+message MediaItem {
+  string item_identifier = 1;
+  string type = 2;              // IMAGE, VIDEO
+  string relative_path = 3;
+}
+
+// 媒体集合
+message Media {
+  repeated MediaItem media = 1;
+  string address = 2;          // 视频流地址（如 RTSP）
+}
+
+// ==================== 关系类型定义 ====================
+
+// 主动跟踪传感器
+message ActivelyTrackingSensors {
+  repeated Sensor sensors = 1;
+}
+
+// 被跟踪关系
+message TrackedBy {
+  ActivelyTrackingSensors actively_tracking_sensors = 1;
+  string last_measurement_timestamp = 2;  // ISO8601 格式
+}
+
+// 组子成员关系（空消息）
+message GroupChild {}
+
+// 组父成员关系（空消息）
+message GroupParent {}
+
+// 合并来源关系（空消息）
+message MergedFrom {}
+
+// 主动目标关系（空消息）
+message ActiveTarget {}
+
+// 关系类型（oneof 选择一种）
+message RelationshipType {
+  oneof type {
+    TrackedBy tracked_by = 1;
+    GroupChild group_child = 2;
+    GroupParent group_parent = 3;
+    MergedFrom merged_from = 4;
+    ActiveTarget active_target = 5;
+  }
+}
+
+// 关系项
+message RelationshipItem {
+  string related_entity_id = 1;
+  string relationship_id = 2;
+  RelationshipType relationship_type = 3;
+}
+
+// 关系集合
+message Relationships {
+  repeated RelationshipItem relationships = 1;
+}
+
+// ==================== 组详情相关 ====================
+
+// 代理（团队成员）
+message Agent {
+  string entity_id = 1;
+}
+
+// 团队信息
+message Team {
+  string entity_id = 1;
+  repeated Agent members = 2;
+}
+
+// 梯队信息
+message Echelon {
+  string army_echelon = 1;     // FIRE_TEAM, SQUAD, PLATOON, COMPANY, BATTALION, REGIMENT, BRIGADE, DIVISION, CORPS, ARMY
+}
+
+// 组详情
+message GroupDetails {
+  Team team = 1;
+  Echelon echelon = 2;
+}
+
+// ==================== 主消息 ====================
+
+// 关系参数（主消息）
+message Relationship {
+  Sensors sensors = 1;
+  Payloads payloads = 2;
+  Media media = 3;
+  Relationships relationships = 4;
+  GroupDetails group_details = 5;
+}

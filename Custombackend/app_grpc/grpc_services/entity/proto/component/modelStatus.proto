@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package modelStatusPkg;
+
+message ModelStatus {
+  string working_state = 1;
+  string last_state_change_time = 2;
+  string state_message = 3;
+}

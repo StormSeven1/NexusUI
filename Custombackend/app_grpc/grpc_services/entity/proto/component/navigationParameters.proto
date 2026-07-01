@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package navigationParametersPkg;
+
+message NavigationParameters {
+  double max_speed_knots = 1;
+  double endurance_hours = 2;
+  double max_range_nm = 3;
+  string sea_state = 4;
+  double draft = 5;
+  string navigation_mode = 6;
+  string navigation_status = 7;
+  uint64 with_radar = 8;
+  uint64 with_ptz = 9;
+  uint64 with_strike = 10;
+}

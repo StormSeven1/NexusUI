@@ -7,7 +7,7 @@ import { useTrackStore } from "@/stores/track-store";
 import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { getMapMeasureHandlers, useMapMeasureUi } from "@/stores/map-measure-bridge";
 import { AreaDrawSetupDialog } from "@/components/map/AreaDrawDialogs";
-import { Pentagon, Ruler, DraftingCompass, BarChart3, Zap, Plane, Ship, Radio, Camera, MonitorPlay } from "lucide-react";
+import { Pentagon, Ruler, DraftingCompass, BarChart3, Zap, Plane, Ship, Radio, Camera, MonitorPlay, MapIcon, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WorkflowStatusOverlay } from "@/components/layout/WorkflowStatusOverlay";
 import { QuickWorkflowModal } from "@/components/layout/QuickWorkflowModal";
@@ -41,7 +41,7 @@ const mapToolBtn =
   "flex items-center justify-center h-7 w-7 rounded-md text-xs font-medium transition-colors border border-transparent";
 
 export function MapContainer() {
-  const { mapViewMode, zoomLevel, setEoVideoModalOpen } = useAppStore();
+  const { mapViewMode, zoomLevel, setMapViewMode, setEoVideoModalOpen } = useAppStore();
   const tracks = useTrackStore((s) => s.tracks);
   const mouseCoords = useMapPointerStore((s) => s.mouseCoords);
   const airCount = tracks.filter((t) => t.type === "air").length;
@@ -162,7 +162,7 @@ export function MapContainer() {
         <div className="h-5 w-px bg-white/10" />
 
         {/* 2D/3D 切换 */}
-        {/* <div className="flex overflow-hidden rounded-md border border-nexus-border nexus-glass">
+        <div className="flex overflow-hidden rounded-md border border-nexus-border nexus-glass">
           <button
             onClick={() => setMapViewMode("2d")}
             title="2D"
@@ -188,7 +188,7 @@ export function MapContainer() {
           >
             <Globe size={14} />
           </button>
-        </div> */}
+        </div>
       </div>
 
       {/* 左上角：目标统计（对空 / 对海） */}

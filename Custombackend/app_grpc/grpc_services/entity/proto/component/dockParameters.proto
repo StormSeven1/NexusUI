@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package dockParametersPkg;
+
+message DockParameters {
+  string dock_sn = 1;
+  uint64 mode_code = 2;
+  bool drone_in_dock = 3;
+  Weather weather = 4;  
+}
+
+message Weather {
+  uint64 humidity = 1;
+  uint64 temperature = 2;
+  uint64 environment_temperature = 3;
+  uint64 wind_speed = 4;
+  uint64 rainfall = 5;
+}

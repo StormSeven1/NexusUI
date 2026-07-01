@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package powerPkg;
+
+message Power {
+  map<string, PowerSource> source_id_to_state = 1;
+}
+
+message PowerSource {
+  string power_status = 1;    // 电源状态
+  string power_type = 2;      // 电源类型
+  PowerLevel power_level = 3; // 电源电量
+  repeated string messages = 4; // 电源系统状态的人类可读消息
+  uint64 offloadable = 5;      // 电源是否可卸载
+}
+
+message PowerLevel {
+  double capacity = 1;              // 系统总电量容量
+  double remaining = 2;             // 剩余电量容量
+  double percent_remaining = 3;     // 剩余电量百分比
+  double voltage = 4;               // 电源电压
+  double current_amps = 5;          // 电流（安培）
+  double run_time_to_empty_mins = 6;  // 预计剩余运行时间（分钟）
+  double consumption_rate_l_per_s = 7; // 燃料消耗率（升/秒）
+}

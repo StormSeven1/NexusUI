@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package deploymentPkg;
+
+message ContainerInfo {
+  string container_id = 1;
+  string image_name = 2;
+  string image_version = 3;
+  string runtime = 4;
+}
+
+message Deployment {
+  string server_id = 1;
+  string deployment_type = 2;
+  string location = 3;
+  ContainerInfo container_info = 4;
+}

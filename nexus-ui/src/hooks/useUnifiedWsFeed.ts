@@ -1676,22 +1676,50 @@ function dispatchWsMessage(raw: string) {
         //   },
         // });
         const modeCode = Number(d.mode_code);
+        const nextLat = Number(d.latitude);
+        const nextLng = Number(d.longitude);
+        const nextStatus = assetStatusFromDeviceState(d.deviceState);
+        const nextDock = {
+          alarm_state: d.alarm_state,
+          battery_capacity_percent: d.battery_capacity_percent,
+          batteryCapacityPercent: d.batteryCapacityPercent,
+          battery_percent: d.battery_percent,
+          batteryPercent: d.batteryPercent,
+          deviceState: d.deviceState,
+          mode_code: d.mode_code,
+        };
+        const prevDock =
+          prevProps.dock && typeof prevProps.dock === "object"
+            ? (prevProps.dock as Record<string, unknown>)
+            : {};
+        const deviceStateProps = deviceStatePropsFromPayload(d);
+        const sameDockRuntime =
+          existingAsset.lat === nextLat &&
+          existingAsset.lng === nextLng &&
+          existingAsset.name === airportName &&
+          existingAsset.status === nextStatus &&
+          prevProps.dock_battery_percent === (batteryPercent ?? prevProps.dock_battery_percent) &&
+          prevProps.dock_mode_code === (Number.isFinite(modeCode) ? modeCode : prevProps.dock_mode_code) &&
+          prevDock.alarm_state === nextDock.alarm_state &&
+          prevDock.deviceState === nextDock.deviceState &&
+          Object.entries(deviceStateProps).every(([key, value]) => prevProps[key] === value);
+        if (sameDockRuntime) break;
         const nextProperties = {
           ...prevProps,
-          dock: d,
+          dock: nextDock,
           map_label: airportName,
           virtual_troop: existingAsset.properties?.virtual_troop ?? false,
           last_packet_at_ms: now,
           dock_status_received_at_ms: now,
           dock_battery_percent: batteryPercent ?? prevProps.dock_battery_percent,
           dock_mode_code: Number.isFinite(modeCode) ? modeCode : prevProps.dock_mode_code,
-          ...deviceStatePropsFromPayload(d),
+          ...deviceStateProps,
         };
         useAssetStore.getState().mergeAssetFields(dockEntityId, {
-          lat: Number(d.latitude),
-          lng: Number(d.longitude),
+          lat: nextLat,
+          lng: nextLng,
           name: airportName,
-          status: assetStatusFromDeviceState(d.deviceState),
+          status: nextStatus,
           properties: nextProperties,
         });
         break;

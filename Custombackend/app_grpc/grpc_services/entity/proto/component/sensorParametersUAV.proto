@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package sensorParametersUAVPkg;
+
+message LiveViewWorldRegion {
+  double left = 1;
+  double top = 2;
+  double right = 3;
+  double bottom = 4;
+}
+
+message CameraSensorParameters {
+  string payload_index = 1;
+  uint64 camera_mode = 2;
+  uint64 photo_state = 3;
+  uint64 recording_state = 4;
+  double zoom_factor = 5;
+  double ir_zoom_factor = 6;
+  LiveViewWorldRegion liveview_world_region = 7;
+  uint64 zoom_focus_mode = 8;
+  double zoom_focus_value = 9;
+  double zoom_max_focus_value = 10;
+  double zoom_min_focus_value = 11;
+  double zoom_calibrate_farthest_focus_value = 12;
+  double zoom_calibrate_nearest_focus_value = 13;
+  uint64 zoom_focus_state = 14;
+}
+
+message SensorParametersUAV {
+  repeated CameraSensorParameters cameras = 1;
+}

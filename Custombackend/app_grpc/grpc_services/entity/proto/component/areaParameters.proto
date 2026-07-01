@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package areaParametersPkg;
+
+// 基础坐标点
+message LatLonPoint {
+  double latitude_degrees = 1;
+  double longitude_degrees = 2;
+}
+
+// 带详细高度信息的点（用于 geoShape）
+message DetailedPosition {
+  double latitude_degrees = 1;
+  double longitude_degrees = 2;
+  double altitude_hae_meters = 3;
+  double altitude_agl_meters = 4;
+  double altitude_asf_meters = 5;
+  double pressure_depth_meters = 6;
+}
+
+// 带高度的环形点（多边形专用）
+message RingPosition {
+  DetailedPosition position = 1;
+  double height_m = 2;
+}
+
+// 几何中的高度范围
+message AltitudeRange {
+  double min = 1;
+  double max = 2;
+}
+
+// 原始 geometry 结构（简单几何 + 高度范围）
+message Geometry {
+  string type = 1;                     // 如 "Polygon"
+  repeated LatLonPoint coordinates = 2; // 简化版坐标（示例中为 [lat, lng] 对）
+  AltitudeRange altitude = 3;
+}
+
+// 新的 geoShape 结构（支持更复杂的形状）
+message GeoShape {
+  message Point {
+    DetailedPosition position = 1;
+  }
+  message Line {
+    repeated DetailedPosition positions = 1;
+  }
+  message Polygon {
+    message Ring {
+      repeated RingPosition positions = 1;
+    }
+    repeated Ring rings = 1;
+    bool is_rectangle = 2;
+  }
+  message Ellipse {
+    double semi_major_axis_m = 1;
+    double semi_minor_axis_m = 2;
+    double orientation_d = 3;
+    double height_m = 4;
+  }
+  message Ellipsoid {
+    double forward_axis_m = 1;
+    double side_axis_m = 2;
+    double up_axis_m = 3;
+  }
+
+  Point point = 1;
+  Line line = 2;
+  Polygon polygon = 3;
+  Ellipse ellipse = 4;
+  Ellipsoid ellipsoid = 5;
+}
+
+// geoDetails 结构
+message GeoDetails {
+  string type = 1;
+  message ControlArea {
+    string type = 1;
+  }
+  ControlArea control_area = 2;
+  message Acm {
+    string acm_type = 1;
+    string acm_description = 2;
+  }
+  Acm acm = 3;
+}
+
+// schedules 结构
+message Schedules {
+  message ScheduleWindow {
+    string cron_expression = 1;
+    string duration_millis = 2;
+  }
+  message Schedule {
+    repeated ScheduleWindow windows = 1;
+    string schedule_id = 2;
+    string schedule_type = 3;
+  }
+  repeated Schedule schedules = 1;
+}
+
+// 有效时间范围
+message ValidTimeRange {
+  string start = 1;  // ISO8601
+  string end = 2;
+}
+
+// 显示属性
+message DisplayProperties {
+  double line_width = 1;
+  string line_color = 2;
+  string fill_color = 3;
+  bool is_selected = 4;  // 示例中为 true/false，改用 bool
+}
+
+// 区域属性
+message AreaProperties {
+  uint64 priority = 1;
+  ValidTimeRange valid_time = 2;
+  string access_level = 3;
+  repeated string tags = 4;
+  string description = 5;
+  uint64 alert_level = 6;
+  DisplayProperties display = 7;
+}
+
+// 主消息体
+message AreaParameters {
+  string group_id = 1;
+  string area_id = 2;
+  string type = 3;                     // 如 "AREA_TYPE_SURVEILLANCE"
+  Geometry geometry = 4;
+  AreaProperties properties = 5;
+  string status = 6;                  // 如 "AREA_STATUS_ACTIVE"
+  GeoShape geo_shape = 7;
+  GeoDetails geo_details = 8;
+  Schedules schedules = 9;
+}

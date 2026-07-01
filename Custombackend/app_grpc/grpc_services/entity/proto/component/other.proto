@@ -1,0 +1,196 @@
+syntax = "proto3";
+
+package otherPkg;
+
+// ==================== 跟踪相关 ====================
+
+// 对象数量（上下界）
+message NumberOfObjects {
+  uint64 lower_bound = 1;
+  uint64 upper_bound = 2;
+}
+
+// 带标准差的测量值
+message Measurement {
+  double value = 1;
+  double sigma = 2;
+}
+
+// 位置信息
+message Pos {
+  double lon = 1;
+  double lat = 2;
+  double alt = 3;
+  bool is2d = 4;
+  string altitude_reference = 5;  // HEIGHT_ABOVE_WGS84, HEIGHT_ABOVE_EGM96, UNKNOWN, BAROMETRIC, ABOVE_SEA_FLOOR, BELOW_SEA_SURFACE
+}
+
+// ENU姿态四元数
+message AttEnu {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double w = 4;
+}
+
+// 相对位姿
+message RelativePose {
+  Pos pos = 1;
+  AttEnu att_enu = 2;
+}
+
+// 方位/仰角协方差矩阵（2x2对称矩阵）
+message BearingElevationCovarianceRad2 {
+  double mxx = 1;
+  double mxy = 2;
+  double myy = 3;
+}
+
+// 到达角
+message AngleOfArrival {
+  RelativePose relative_pose = 1;
+  BearingElevationCovarianceRad2 bearing_elevation_covariance_rad2 = 2;
+}
+
+// 方位线
+message LineOfBearing {
+  AngleOfArrival angle_of_arrival = 1;
+  Measurement range_estimate_m = 2;
+  Measurement max_range_m = 3;
+}
+
+// 被跟踪实体信息
+message Tracked {
+  uint64 track_quality_wrapper = 1;   // 跟踪质量分数 0~15
+  uint64 sensor_hits = 2;              // 传感器命中次数
+  NumberOfObjects number_of_objects = 3;
+  double radar_cross_section = 4;      // 雷达散射截面（dBsm）
+  string last_measurement_time = 5;    // ISO8601 格式
+  LineOfBearing line_of_bearing = 6;
+}
+
+// ==================== 数据分级相关 ====================
+
+// 分级信息
+message ClassificationInformation {
+  string level = 1;      // UNCLASSIFIED, CONTROLLED_UNCLASSIFIED, CONFIDENTIAL, SECRET, TOP_SECRET
+  repeated string caveats = 2;  // NOFORN, FISA 等
+}
+
+// 默认分级
+message DefaultClassification {
+  ClassificationInformation default_classification_information_item = 1;
+}
+
+// 字段级分级
+message FieldClassification {
+  string field_path = 1;
+  ClassificationInformation classification_information = 2;
+}
+
+// 数据分级
+message DataClassification {
+  ClassificationInformation default_classification_information = 1;
+  repeated FieldClassification fields = 2;
+}
+
+// ==================== 视觉详情相关 ====================
+
+// RGBA 颜色
+message Color {
+  double red = 1;    // 0~1
+  double green = 2;  // 0~1
+  double blue = 3;   // 0~1
+  double alpha = 4;  // 0~1，1.0 纯色，0.0 完全透明
+}
+
+// 距离环
+message RangeRings {
+  double min_distance_m = 1;
+  double max_distance_m = 2;
+  uint64 ring_count = 3;
+  Color ring_line_color = 4;
+}
+
+// 视觉详情
+message VisualDetails {
+  RangeRings range_rings = 1;
+}
+
+// ==================== 尺寸相关 ====================
+
+message Dimensions {
+  double length_m = 1;
+}
+
+// ==================== 符号系统相关 ====================
+
+message MilStd2525C {
+  string sidc = 1;  // 符号标识编码
+}
+
+message Symbology {
+  MilStd2525C mil_std2525c = 1;
+}
+
+// ==================== 轨道相关 ====================
+
+// 轨道平均元素元数据
+message OrbitMeanElementsMetadata {
+  string creation_date = 1;       // ISO8601 格式
+  string originator = 2;
+  string message_id = 3;
+  string ref_frame = 4;           // TEME 等
+  string ref_frame_epoch = 5;     // ISO8601 格式
+  string mean_element_theory = 6; // SGP4 等
+}
+
+// 平均开普勒根数
+message MeanKeplerianElements {
+  string epoch = 1;                // ISO8601 格式
+  double semi_major_axis_km = 2;
+  double mean_motion = 3;          // 转/天
+  double eccentricity = 4;
+  double inclination_deg = 5;
+  double ra_of_asc_node_deg = 6;
+  double arg_of_pericenter_deg = 7;
+  double mean_anomaly_deg = 8;
+  double gm = 9;                   // 引力系数
+}
+
+// TLE 参数
+message TleParameters {
+  uint64 ephemeris_type = 1;
+  string classification_type = 2;
+  uint64 norad_cat_id = 3;
+  uint64 element_set_no = 4;
+  uint64 rev_at_epoch = 5;
+  double bstar = 6;        // 阻力参数（1/地球半径）
+  double bterm = 7;        // SGP4-XP 阻力参数（m²/kg）
+  double mean_motion_dot = 8;   // 转/天²
+  double mean_motion_ddot = 9;  // 转/天³
+  double agom = 10;        // 太阳辐射压力系数（m²/kg）
+}
+
+// 轨道平均元素
+message OrbitMeanElements {
+  OrbitMeanElementsMetadata metadata = 1;
+  MeanKeplerianElements mean_keplerian_elements = 2;
+  TleParameters tle_parameters = 3;
+}
+
+// 轨道
+message Orbit {
+  OrbitMeanElements orbit_mean_elements = 1;
+}
+
+// ==================== 主消息 ====================
+
+message Other {
+  Tracked tracked = 1;
+  DataClassification data_classification = 2;
+  VisualDetails visual_details = 3;
+  Dimensions dimensions = 4;
+  Symbology symbology = 5;
+  Orbit orbit = 6;
+}

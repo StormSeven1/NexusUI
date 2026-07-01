@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package ptzPkg;
+
+message Ptz {
+  double pan = 1;          // 水平角度
+  double tilt = 2;         // 俯仰角度
+  double zoom = 3;         // 变焦倍数
+  double pano_offset = 4;  // 雷达相机ptz偏移量
+}

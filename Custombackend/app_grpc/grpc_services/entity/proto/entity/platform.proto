@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package platformPkg;
+
+import "component/aliases.proto";
+import "component/ontology.proto";
+import "component/milView.proto";
+import "component/location.proto";
+import "component/health.proto";
+import "component/power.proto";
+import "component/tasks.proto";
+import "component/sensorParameters.proto";
+import "component/taskCatalog.proto";
+import "component/relationship.proto";
+import "component/other.proto";
+import "component/gimbal.proto";
+import "component/sensorParametersUAV.proto";
+import "component/flightParameters.proto";
+import "component/navigationParameters.proto";
+import "component/supplies.proto";
+import "component/communication.proto";
+
+message Status{
+  string platform_activity = 1;// 活动描述字符串，例如 "RECONNAISSANCE"（侦察）、"INTERDICTION"（拦截）、"RETURN TO BASE (RTB)"（返航）、"PREPARING FOR LAUNCH"（准备发射）
+  string role = 2;// 角色描述字符串，例如 "Team Member"、"Commander"
+  int32 device_state = 3;//设备状态枚举：0(待机)、1(上电)、2(执行)、3(未知)
+}
+
+message Indicators{
+  bool simulated = 1;	//是否为仿真实体。
+  bool exercise = 2;	//是否为演习实体。
+  bool emergency = 3;	//是否为紧急实体。
+  bool c2 = 4;			//是否为指挥控制实体。
+  bool egressable = 5;	//是否应被导出到外部源。
+  bool starred = 6;		//是否被用户全局标记。
+}
+
+message PlatformEntity {
+  string entity_id = 1;
+  uint64 is_live = 2;
+  string created_time = 3;
+  string expiry_time = 4;
+  bool no_expiry = 5;
+  string description = 6;
+  string type = 7;
+  string place = 8;
+  string property = 9;
+  Status status = 10;
+  Indicators indicators = 11;
+  uint64 ttl = 12;
+  
+  aliasesPkg.Aliases aliases = 13;
+  ontologyPkg.Ontology ontology = 14;
+  milViewPkg.MilView mil_view = 15;
+  locationPkg.Location location = 16;
+  healthPkg.Health health = 17;
+  taskCatalogPkg.TaskCatalog task_catalog = 18;
+  suppliesPkg.Supplies supplies = 19;
+  communicationPkg.Communication communication = 20;
+  optional sensorParametersPkg.SensorParameters sensor_parameters = 21;				//USV
+  optional flightParametersPkg.FlightParameters flight_parameters = 22;				//UAV
+  optional navigationParametersPkg.NavigationParameters navigation_parameters = 23;	//USV
+  optional gimbalPkg.Gimbal gimbal = 24;											//UAV
+  optional tasksPkg.Tasks tasks = 25;												//UAV
+  optional sensorParametersUAVPkg.SensorParametersUAV sensor_parameters_UAV = 26;	//UAV
+  optional powerPkg.Power power = 27;												//UAV
+  relationshipPkg.Relationship relationship = 28;
+  otherPkg.Other other = 29;
+}

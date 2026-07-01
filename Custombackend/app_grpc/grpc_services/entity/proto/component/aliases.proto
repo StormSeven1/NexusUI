@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package aliasesPkg;
+
+message Aliases {
+  string name = 1;
+  repeated AlternateId alternate_ids = 2;
+  Auth auth = 3;
+}
+
+message AlternateId {
+  string type = 1;
+  string id = 2;
+}
+
+message Auth {
+  string ip = 1;
+  uint64 port = 2;
+  string username = 3;
+  string password = 4;
+  string suffix = 5;
+  string parent_device_id = 6;
+}

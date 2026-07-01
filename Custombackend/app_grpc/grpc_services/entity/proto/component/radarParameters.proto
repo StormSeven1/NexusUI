@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package radarParametersPkg;
+
+message RadarParameters {
+  int32 radarId = 1;
+  int32 radarType = 2;
+  string radarModel = 3;
+  int32 transmit = 4;
+  int32 range = 5;
+  int32 pluseWidth = 6;
+  int32 enhancement = 7;
+  int32 interferenceReject = 8;
+  double aziOffset = 9;
+  double rangeDelay = 10;
+  int32 sampleRate = 11;
+  double gain = 12;
+  double seaClutter = 13;
+  double rainClutter = 14;
+}

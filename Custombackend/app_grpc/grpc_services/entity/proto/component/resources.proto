@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package resourcesPkg;
+
+message Resources {
+  ResourceUsage current_usage = 1;
+  ResourceLimits limits = 2;
+  Performance performance = 3;
+}
+
+message ResourceUsage {
+  double cpu_usage_percent = 1;
+  double gpu_usage_percent = 2;
+  double memory_usage_mb = 3;
+  double gpu_memory_usage_mb = 4;
+  double disk_usage_mb = 5;
+  double network_bandwidth_mbps = 6;
+}
+
+message ResourceLimits {
+  int32 max_cpu_cores = 1;
+  int32 max_gpu_memory_mb = 2;
+  double max_memory_mb = 3;
+  double max_disk_space_mb = 4;
+  double max_bandwidth_mbps = 5;
+}
+
+message Performance {
+  int32 inference_time_ms = 1;
+  int32 throughput_fps = 2;
+  double power_consumption_w = 3;
+  double max_concurrent_tasks = 4;
+  PerformanceVision vision = 5;
+  PerformanceAudio audio = 6;
+  PerformanceText text = 7;
+  PerformanceMultimodal multimodal = 8;
+  PerformanceSignal signal = 9;
+}
+
+message PerformanceVision {
+  string max_video_resolution = 1;
+  int32 max_fps = 2;
+  int32 max_detections = 3;
+  int32 max_concurrent_streams = 4;
+  repeated string supported_formats = 5;
+}
+
+message PerformanceAudio {
+  int32 max_sample_rate = 1;
+  int32 max_channels = 2;
+  int32 max_bit_depth = 3;
+  int32 max_audio_length = 4;
+  int32 realtime_factor = 5;
+  repeated string supported_codecs = 6;
+}
+
+message PerformanceText {
+  int32 max_input_length = 1;
+  repeated string support_languages = 2;
+  int32 max_batch_size = 3;
+}
+
+message PerformanceMultimodal {
+  int32 max_modality_count = 1;
+  int32 sync_delay_ms = 2;
+  int32 max_batch_size = 3;
+  repeated string supported_modalities = 4;
+}
+
+message PerformanceSignal {
+  int32 sampling_frequency_hz = 1;
+  int32 processing_latency_ms = 2;
+  int32 max_bandwidth_hz = 3;
+  int32 dynamic_range = 4;
+  repeated string supported_signal_types = 5;
+}

@@ -159,21 +159,30 @@ function findDockParentByDrone(
   return null;
 }
 
+function parseDroneBatteryBarPercent(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (value == null) continue;
+    if (typeof value === "string" && value.trim() === "") continue;
+    if (typeof value !== "number" && typeof value !== "string") continue;
+    const n = typeof value === "number" ? value : Number(value.trim());
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
 function dockBatteryPercentFromAsset(asset: AssetData | undefined): number | null {
   const props = asRecord(asset?.properties);
   const dock = asRecord(props?.dock);
-  const direct = Number(props?.dock_battery_percent ?? dock?.battery_capacity_percent);
-  return Number.isFinite(direct) ? direct : null;
+  return parseDroneBatteryBarPercent(props?.dock_battery_percent, dock?.battery_capacity_percent);
 }
 
 function droneBatteryPercentFromStatus(props: Record<string, unknown> | null | undefined): number | null {
   const status = asRecord(props?.drone_status);
-  const direct = Number(
-    status?.battery_capacity_percent ??
-    status?.batteryPercent ??
+  return parseDroneBatteryBarPercent(
+    status?.battery_capacity_percent,
+    status?.batteryPercent,
     status?.battery_percent,
   );
-  return Number.isFinite(direct) ? direct : null;
 }
 
 /**
@@ -191,6 +200,10 @@ export function collectDroneRenderablesFromAssets(
     if (asset.asset_type !== "drone") continue;
     const props = asRecord(asset.properties) ?? {};
     const dockId = findDockParentByDrone(asset.id, relationships);
+    const dockAsset = dockId ? assetById.get(dockId) : undefined;
+    const dockBattery = dockBatteryPercentFromAsset(dockAsset);
+    const droneBattery = droneBatteryPercentFromStatus(props);
+    const batteryPercent = dockBattery ?? droneBattery;
     out[asset.id] = {
       entityId: asset.id,
       displayName: asset.name || asset.id,
@@ -208,9 +221,7 @@ export function collectDroneRenderablesFromAssets(
       lastPacketAtMs: Number.isFinite(Number(props.last_packet_at_ms)) ? Number(props.last_packet_at_ms) : null,
       historyTrail: readHistoryTrail(props.history_trail),
       munitionQuantity: Number.isFinite(Number(props.munition_quantity)) ? Number(props.munition_quantity) : null,
-      batteryPercent:
-        dockBatteryPercentFromAsset(dockId ? assetById.get(dockId) : undefined) ??
-        droneBatteryPercentFromStatus(props),
+      batteryPercent,
     };
   }
   return out;
@@ -822,7 +833,7 @@ function buildDroneGeoJSON(drones: Record<string, DroneRenderable>): GeoJSON.Fea
 
     // 电量进度条
     const bp = tele.batteryPercent;
-    if (typeof bp === "number" && Number.isFinite(bp)) {
+    if (typeof bp === "number" && Number.isFinite(bp) && bp > 0) {
       const step = Math.round(Math.max(0, Math.min(100, bp)) / 5) * 5;
       features.push({
         type: "Feature",

@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package suppliesPkg;
+
+// 燃料箱信息
+message FuelTank {
+  string fuel_id = 1;                            // 燃料箱ID
+  string name = 2;                               // 燃料箱名称
+  double amount_gallons = 3;                     // 当前燃料量（加仑）
+  double max_authorized_capacity_gallons = 4;    // 最大授权容量（加仑）
+  double operational_requirement_gallons = 5;    // 最低运行需求量（加仑）
+}
+
+// 载荷信息
+message Payload {
+  string payload_id = 1;      // 载荷ID
+  string type = 2;            // 载荷类型（如 M3TD_CAMERA）
+  double weight = 3;          // 重量（千克）
+  string status = 4;   // 载荷状态
+}
+
+// 弹药信息
+message Munition {
+  string munition_id = 1;     // 弹药唯一标识
+  string name = 2;            // 弹药全称
+  uint32 quantity_units = 3;  // 数量
+}
+
+message Supplies {
+  repeated FuelTank fuel = 1;       // 燃料箱列表
+  repeated Payload payload = 2;     // 载荷列表
+  repeated Munition munitions = 3;  // 弹药列表
+}

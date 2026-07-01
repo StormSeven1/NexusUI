@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package healthPkg;
+
+message Health {
+  string health_status = 1;
+  repeated Component components = 2;
+}
+
+message Component {
+  string id = 1;
+  string name = 2;
+  string health_status = 3;
+  repeated Message messages = 4;
+}
+
+message Message
+{
+	string status = 1;
+	string message = 2;
+	string timestamp = 3;
+}

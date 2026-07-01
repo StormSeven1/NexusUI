@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package communicationPkg;
+
+message QualityOfService {
+  double packet_loss = 1;
+  double jitter_ms = 2;
+  double throughput_mbps = 3;
+  double reliability = 4;
+}
+
+message CommunicationLink {
+  string status = 1;
+  double signal_strength = 2;
+  double latency_ms = 3;
+  double error_rate = 4;
+  string encryption = 5;
+  string protocol = 6;
+  QualityOfService qos = 7;
+}
+
+message Communication {
+  CommunicationLink primary_link = 1;
+  CommunicationLink backup_link = 2;
+}

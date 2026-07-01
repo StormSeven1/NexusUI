@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package entityPkg;
+
+import "entity/camera.proto";
+import "entity/model.proto";
+import "entity/platform.proto";
+import "entity/area.proto";
+import "entity/rule.proto";
+import "entity/route.proto";
+import "entity/radar.proto";
+import "entity/frame.proto";
+import "entity/dock.proto";
+import "entity/system.proto";
+
+message Entity {  
+  oneof entity {
+    cameraPkg.CameraEntity camera_entity = 1;
+    modelPkg.ModelEntity model_entity = 2;
+    platformPkg.PlatformEntity platform_entity = 3;
+    areaPkg.AreaEntity area_entity = 4;
+    rulePkg.RuleEntity rule_entity = 5;
+    routePkg.RouteEntity route_entity = 6;
+    radarPkg.RadarEntity radar_entity = 7;
+    framePkg.FrameEntity frame_entity = 8;
+    dockPkg.DockEntity dock_entity = 9;
+    systemPkg.SystemEntity system_entity = 10;
+  }
+}
+
+// 实体单次注册请求
+message SingleRegisterEntityRequest{
+	Entity entity = 1;
+}
+
+// 实体单次注册响应
+message SingleRegisterEntityResponse{
+	uint64 code = 1;
+	string data = 2;
+	string message = 3;
+}
+
+// 实体批量注册请求
+message MultiRegisterEntityRequest{
+	repeated Entity entities = 1;
+}
+
+// 实体批量注册响应
+message MultiRegisterEntityResponse{
+	uint64 code = 1;
+	string data = 2;
+	string message = 3;
+}
+
+// 实体单次查询请求
+message SingleQueryEntityRequest{
+  string entityId = 1;
+}
+
+// 实体单次查询响应
+message SingleQueryEntityResponse{
+	uint64 code = 1;
+	Entity entity = 2;
+	string message = 3;
+}
+
+// 实体批量查询请求
+message MultiQueryEntityRequest{
+  string entityTemplate = 1;
+  string entityType = 2;
+  uint64 page = 3;
+  uint64 size = 4;
+}
+
+// 实体批量查询响应
+message MultiQueryEntityResponse{
+	uint64 code = 1;
+	repeated Entity entities = 2;
+	string message = 3;
+}
+
+// 实体删除请求
+message DeleteEntityRequest{
+  string entityId = 1;
+}
+
+// 实体删除响应
+message DeleteEntityResponse{
+	uint64 code = 1;
+	string message = 2;
+}
+
+// 实体类型查询请求
+message GetEntityTypeRequest{
+  string entityId = 1;
+}
+
+// 实体类型查询响应
+message GetEntityTypeResponse{
+	string type = 1;
+}
+
+// 实体关系查询请求
+message GetEntityRelationshipRequest{
+}
+
+// 实体关系查询响应
+message GetEntityRelationshipResponse{
+	uint64 code = 1;
+	string data = 2;
+	string message = 3;
+}
+
+// 实体服务定义
+service EntityService {
+  rpc SingleRegisterEntity(SingleRegisterEntityRequest) returns (SingleRegisterEntityResponse);	//实体单次注册
+  rpc MultiRegisterEntity(MultiRegisterEntityRequest) returns (MultiRegisterEntityResponse);	//实体批量注册
+  rpc SingleQueryEntity(SingleQueryEntityRequest) returns (SingleQueryEntityResponse);		//实体单次查询
+  rpc MultiQueryEntity(MultiQueryEntityRequest) returns (MultiQueryEntityResponse);			//实体批量查询
+  rpc DeleteEntity(DeleteEntityRequest) returns (DeleteEntityResponse);						//实体删除
+  rpc GetEntityType(GetEntityTypeRequest) returns (GetEntityTypeResponse);					//实体类型查询
+  rpc GetEntityRelationship(GetEntityRelationshipRequest) returns (GetEntityRelationshipResponse);	//实体关系查询
+}

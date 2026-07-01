@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package modelParametersPkg;
+
+message ModelParameters {
+  string model_type = 1;
+  string version = 2;
+  string framework = 3;
+  string precision = 4;
+  repeated double input_shape = 5;
+  repeated double output_shape = 6;
+  Metrics metrics = 7;
+  ModelConfig model_config = 8;
+}
+
+message Metrics {
+	double accuracy = 1;				// 准确率（0-1）
+	double recall = 2;					// 召回率（0-1）
+	double precision = 3;				// 精确率（0-1）
+	double f1Score = 4;					// F1分数（0-1）
+	double mAE = 5;						//平均误差
+	uint64 inference_time_ms = 6;			// 平均推理时间（毫秒）
+	MetricsVision vision = 7;			// 视觉模型指标
+	MetricsAudio audio = 8;			// 语音模型指标
+	MetricsMultimodal multimodal = 9;	// 多模态模型指标
+	MetricsSignal signal = 10;			// 信号处理指标
+}
+
+message MetricsVision {
+	double mAP = 1;           // 平均精度（0-1）
+	double iou = 2;           // 交并比（0-1）
+	double fps = 3;           // 处理帧率
+};
+
+message MetricsAudio {
+	double wer = 1;           // 词错误率（0-1）
+	double cer = 2;           // 字符错误率（0-1）
+	double rtf = 3;           // 实时率
+	double mer = 4;           // 混淆错误率（0-1）
+	double snr = 5;           // 信噪比（dB）
+	double latency_ms = 6;     // 延迟（毫秒）
+};
+
+message MetricsMultimodal {
+	double alignment_accuracy = 1;  // 对齐准确率（0-1）
+	double fusion_quality = 2;      // 融合质量（0-1）
+	double cross_modal_recall = 3;   // 跨模态召回率（0-1）
+};
+
+
+message MetricsSignal {
+	double snr = 1;           // 信噪比（dB）
+	double mse = 2;           // 均方误差
+	double psnr = 3;          // 峰值信噪比（dB）
+	double bandwidth = 4;      // 带宽利用率（0-1）
+};
+
+message ModelConfigVision {
+  double min_confidence = 1;
+  double max_detections = 2;
+  repeated string supported_resolutions = 3;
+  repeated string supported_formats = 4;
+}
+
+message ModelConfigAudio {
+  double sample_rate = 1;
+  double channels = 2;
+  double bit_depth = 3;
+  repeated string supported_codecs = 4;
+  double vad_threshold = 5;
+  bool noise_reduction = 6;
+}
+
+message ModelConfigMultimodal {
+  repeated string modality_types = 1;
+  string fusion_strategy = 2;
+  double alignment_window = 3;
+}
+
+message ModelConfigSignal {
+  double frequency = 1;
+  double window_size = 2;
+  double overlap = 3;
+  string filter_type = 4;
+}
+
+message ModelConfig {
+  ModelConfigVision vision = 1;
+  ModelConfigAudio audio = 2;
+  ModelConfigMultimodal multimodal = 3;
+  ModelConfigSignal signal = 4;
+}

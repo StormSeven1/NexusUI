@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package ruleParametersPkg;
+
+message RuleParameters {
+  string type = 1;
+  string status = 2;
+  AlarmRule alarm_rule = 3;
+}
+
+message SpeedCondition {
+  string comparison_operator = 1;
+  double value = 2;
+}
+
+message DistanceCondition {
+  string comparison_operator = 1;
+  double value = 2;
+}
+
+message ValidTime {
+  string start = 1;
+  string end = 2;
+  string cycle = 3;
+}
+
+message AreaCondition {
+  string area_id = 1;
+  string area_name = 2;
+  string area_function = 3;
+  string track_type = 4;
+  string area_judgement = 5;
+  string direction = 6;
+  SpeedCondition speed_condition = 7;
+  DistanceCondition distance_condition = 8;
+  ValidTime valid_time = 9;
+}
+
+message TargetAttributeCondition {
+  string side = 1;
+  string military = 2;
+  int32 type = 3;
+  ValidTime valid_time = 4;
+}
+
+message TargetBehaviorCondition {
+  int32 behavior_type = 1;
+  ValidTime valid_time = 2;
+}
+
+message AlarmCondition {
+  string condition_id = 1;
+  string condition_type = 2;
+  AreaCondition area_condition = 3;
+  TargetAttributeCondition attribute_condition = 4;
+  TargetBehaviorCondition behavior_condition = 5;
+}
+
+message AlarmRule {
+  string name = 1;
+  int32 level = 2;
+  uint64 filter_enabled = 3;
+  repeated AlarmCondition conditions = 4;
+  ValidTime valid_time = 5;
+}

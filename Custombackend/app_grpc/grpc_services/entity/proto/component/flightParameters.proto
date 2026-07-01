@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package flightParametersPkg;
+
+message FlightParameters {
+  double max_altitude_m = 1;
+  double max_speed_mps = 2;
+  double endurance_minutes = 3;
+  double max_range_km = 4;
+  double wind_resistance_mps = 5;
+  string flight_mode = 6;
+  uint64 flight_status = 7;
+  uint64 drone_in_dock = 8;
+  uint64 cover_state = 9;
+  uint64 airport_mode_code = 10;
+}

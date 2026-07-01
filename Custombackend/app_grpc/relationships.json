@@ -1,0 +1,319 @@
+{
+    "code": 0,
+    "data": {
+        "edges": [
+            {
+                "child": "camera_002",
+                "parent": "camera_001",
+                "relationship_id": "parent-camera_001-and-child-camera_002"
+            },
+            {
+                "child": "camera_005",
+                "parent": "camera_004",
+                "relationship_id": "parent-camera_004-and-child-camera_005"
+            },
+            {
+                "child": "uav-001",
+                "parent": "dock-001",
+                "relationship_id": "parent-dock-001-and-child-uav-001"
+            },
+            {
+                "child": "uav-004",
+                "parent": "dock-004",
+                "relationship_id": "parent-dock-004-and-child-uav-004"
+            },
+            {
+                "child": "uav-005",
+                "parent": "dock-005",
+                "relationship_id": "parent-dock-005-and-child-uav-005"
+            },
+            {
+                "child": "uav-006",
+                "parent": "dock-006",
+                "relationship_id": "parent-dock-006-and-child-uav-006"
+            },
+            {
+                "child": "uav-007",
+                "parent": "dock-007",
+                "relationship_id": "parent-dock-007-and-child-uav-007"
+            },
+            {
+                "child": "uav-011",
+                "parent": "dock-011",
+                "relationship_id": "parent-dock-011-and-child-uav-011"
+            },
+            {
+                "child": "uav_jo-001",
+                "parent": "dock_jo-001",
+                "relationship_id": "parent-dock_jo-001-and-child-uav_jo-001"
+            }
+        ],
+        "nodes": [
+            {
+                "id": "camera-cs-001",
+                "name": "蓝贝六楼p1点位"
+            },
+            {
+                "id": "camera-cs-002",
+                "name": "蓝贝六楼p2点位"
+            },
+            {
+                "id": "camera-cs-003",
+                "name": "码头A3点位"
+            },
+            {
+                "id": "camera-cs-004",
+                "name": "码头A4点位"
+            },
+            {
+                "id": "camera-cs-005",
+                "name": "码头A1点位"
+            },
+            {
+                "id": "camera-cs-006",
+                "name": "码头A2点位"
+            },
+            {
+                "id": "camera-hs-001",
+                "name": "高速相机001"
+            },
+            {
+                "id": "camera-hs-002",
+                "name": "高速相机002"
+            },
+            {
+                "id": "camera-hs-003",
+                "name": "高速相机003"
+            },
+            {
+                "id": "camera-hs-004",
+                "name": "高速相机004"
+            },
+            {
+                "id": "camera-hs-009",
+                "name": "第三方相机5"
+            },
+            {
+                "id": "camera-hsgj-001",
+                "name": "高速广角1"
+            },
+            {
+                "id": "camera-hsgj-002",
+                "name": "高速广角2"
+            },
+            {
+                "id": "camera_000",
+                "name": "紫东-可见光"
+            },
+            {
+                "id": "camera_001",
+                "name": "靖子头-可见光"
+            },
+            {
+                "id": "camera_002",
+                "name": "靖子头-红外"
+            },
+            {
+                "id": "camera_003",
+                "name": "紫东-广角"
+            },
+            {
+                "id": "camera_004",
+                "name": "远遥码头-可见光"
+            },
+            {
+                "id": "camera_005",
+                "name": "远遥码头-红外"
+            },
+            {
+                "id": "camera_006",
+                "name": "天测-可见光"
+            },
+            {
+                "id": "camera_007",
+                "name": "天测-红外"
+            },
+            {
+                "id": "camera_008",
+                "name": "天测-广角"
+            },
+            {
+                "id": "camera_009",
+                "name": "紫东-红外"
+            },
+            {
+                "id": "camera_010",
+                "name": "靖子头广角-正北"
+            },
+            {
+                "id": "camera_011",
+                "name": "靖子头广角-西北"
+            },
+            {
+                "id": "camera_012",
+                "name": "远遥灯塔-ptz"
+            },
+            {
+                "id": "camera_013",
+                "name": "远遥灯塔-全景"
+            },
+            {
+                "id": "camera_014",
+                "name": "远遥灯塔-枪机1"
+            },
+            {
+                "id": "camera_015",
+                "name": "远遥灯塔-枪机2"
+            },
+            {
+                "id": "camera_016",
+                "name": "蓝贝六楼监控1"
+            },
+            {
+                "id": "camera_017",
+                "name": "蓝贝六楼监控2"
+            },
+            {
+                "id": "camera_018",
+                "name": "远遥码头广角"
+            },
+            {
+                "id": "camera_019",
+                "name": "码头广角西南"
+            },
+            {
+                "id": "uav-001",
+                "name": "无人机1"
+            },
+            {
+                "id": "uav-002",
+                "name": "无人机2"
+            },
+            {
+                "id": "uav-003",
+                "name": "无人机3"
+            },
+            {
+                "id": "uav-004",
+                "name": "无人机4"
+            },
+            {
+                "id": "uav-005",
+                "name": "无人机5"
+            },
+            {
+                "id": "uav-006",
+                "name": "无人机6"
+            },
+            {
+                "id": "uav-007",
+                "name": "无人机7"
+            },
+            {
+                "id": "uav-011",
+                "name": "无人机11"
+            },
+            {
+                "id": "uav-201",
+                "name": "无人机-201"
+            },
+            {
+                "id": "uav-202",
+                "name": "无人机-202"
+            },
+            {
+                "id": "uav-203",
+                "name": "无人机-203"
+            },
+            {
+                "id": "uav-204",
+                "name": "无人机-204"
+            },
+            {
+                "id": "uav-205",
+                "name": "无人机-205"
+            },
+            {
+                "id": "uav-206",
+                "name": "无人机-206"
+            },
+            {
+                "id": "uav_jo-001",
+                "name": "遥远码头"
+            },
+            {
+                "id": "usv-001",
+                "name": "紫东无人船"
+            },
+            {
+                "id": "radar-jingzitou-HAR2524-002",
+                "name": "靖子头雷达"
+            },
+            {
+                "id": "radar-yuanyao-FAR2127-001",
+                "name": "远遥雷达"
+            },
+            {
+                "id": "radar-yuanyao-tanniao-003",
+                "name": "探鸟雷达"
+            },
+            {
+                "id": "radar-yuanyao-x-005",
+                "name": "方舱X雷达"
+            },
+            {
+                "id": "dock-001",
+                "name": "无人机1机场"
+            },
+            {
+                "id": "dock-004",
+                "name": "无人机4机场"
+            },
+            {
+                "id": "dock-005",
+                "name": "无人机5机场"
+            },
+            {
+                "id": "dock-006",
+                "name": "无人机6机场"
+            },
+            {
+                "id": "dock-007",
+                "name": "无人机7机场"
+            },
+            {
+                "id": "dock-011",
+                "name": "无人机11机场"
+            },
+            {
+                "id": "dock_jo-001",
+                "name": "遥远码头机场"
+            },
+            {
+                "id": "system-TDOA-001",
+                "name": "干扰设备"
+            },
+            {
+                "id": "system-laser-001",
+                "name": "激光武器"
+            },
+            {
+                "id": "system-munition-001",
+                "name": "巡飞弹船"
+            },
+            {
+                "id": "system-munition-002",
+                "name": "巡飞弹002"
+            },
+            {
+                "id": "system-munition-003",
+                "name": "巡飞弹003"
+            },
+            {
+                "id": "system-munition-004",
+                "name": "巡飞弹004"
+            }
+        ]
+    },
+    "message": "success"
+}

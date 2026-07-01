@@ -136,7 +136,6 @@ function readTargetDomainLabel(asset: AssetData | null): string {
 export function EoVideoModal() {
   const appConfigStatus = useAppConfigStore((s) => s.status);
   const assets = useAssetStore((s) => s.assets);
-  const selectedAssetId = useAppStore((s) => s.selectedAssetId);
   const open = useAppStore((s) => s.eoVideoModalOpen);
   const setOpen = useAppStore((s) => s.setEoVideoModalOpen);
   const runtimeStreams = useMemo(
@@ -186,14 +185,11 @@ export function EoVideoModal() {
       setActiveStreamId("");
       return;
     }
-    const selectedStream =
-      selectedAssetId ? runtimeStreams.find((item) => item.id === selectedAssetId) ?? null : null;
     setActiveStreamId((prev) => {
-      if (selectedStream) return selectedStream.id;
       if (prev && runtimeStreams.some((item) => item.id === prev)) return prev;
       return runtimeStreams[0]?.id ?? "";
     });
-  }, [runtimeStreams, selectedAssetId]);
+  }, [runtimeStreams]);
 
   useEffect(() => {
     return () => {
@@ -485,7 +481,7 @@ export function EoVideoModal() {
     <DraggableModal
       open={open}
       onClose={() => setOpen(false)}
-      title="鍏夌數瑙嗛"
+      title="光电视频"
       icon={Camera}
       size="auto"
       minWidth={520}
@@ -525,11 +521,11 @@ export function EoVideoModal() {
           />
 
           <div className="pointer-events-none absolute left-3 top-3 z-[6] rounded-md bg-black/55 px-2.5 py-1 text-xs font-medium text-white/95 backdrop-blur-sm">
-            褰撳墠鐩爣: {targetDomainLabel}
+            当前目标: {targetDomainLabel}
           </div>
 
           <div className="pointer-events-none absolute left-3 top-12 z-[6] max-w-[calc(100%-104px)] rounded-md bg-black/45 px-2.5 py-1 text-[11px] font-medium text-cyan-100/95 backdrop-blur-sm">
-            妫€娴婭D: {detectionEntityIdFromAsset(activeAsset) || "-"} | {detection.diag || "绛夊緟妫€娴嬫暟鎹?.."}
+            检测ID: {detectionEntityIdFromAsset(activeAsset) || "-"} | {detection.diag || "等待检测数据..."}
           </div>
 
           <div className="absolute right-3 top-1/2 z-[6] flex -translate-y-1/2 flex-col gap-2">
@@ -540,8 +536,8 @@ export function EoVideoModal() {
               className="border-white/20 bg-black/35 text-white hover:bg-white/15"
               onClick={() => void onSnapshot()}
               disabled={busy === "snapshot" || !activeStream}
-              title="鎴浘"
-              aria-label="鎴浘"
+              title="截图"
+              aria-label="截图"
             >
               {busy === "snapshot" ? <Loader2 className="size-4 animate-spin" /> : <CameraIcon className="size-4" />}
             </Button>
@@ -560,7 +556,7 @@ export function EoVideoModal() {
           </div>
 
           <div className="pointer-events-none absolute bottom-3 left-3 z-[6] rounded-md bg-black/45 px-2.5 py-1 text-sm font-medium text-white/95 backdrop-blur-sm">
-            {activeStream?.label ?? "绛夊緟鐩告満瀹炰綋..."}
+            {activeStream?.label ?? "等待相机实体..."}
           </div>
 
           {renderContextMenu}
@@ -579,3 +575,4 @@ export function EoVideoModal() {
     </DraggableModal>
   );
 }
+

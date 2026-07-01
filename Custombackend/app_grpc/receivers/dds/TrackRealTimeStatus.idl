@@ -1,0 +1,41 @@
+struct TrackDataClass
+{
+    unsigned long trackId;
+    unsigned long mmsi;
+    unsigned long uniqueId;
+    double longitude;
+    double latitude;
+    double course;
+    double distance;
+    double speed;
+    double speed_N;//北向速度
+    double speed__E;//东向速度
+    double speed_V;//垂向速度
+    double height;
+    double azimuth;
+    double range;
+    double sizeMetres;
+    double sizeDegrees;
+    string radarId; // 雷达ID
+    unsigned long dotID; // 航迹对应的点迹ID
+    octet trackQuality; // 航迹质量
+    octet fusion; // 1-融合，2-非融合
+    unsigned long sensors; // 航迹来源标志位，从最低位起，每一位代表融合来源传感器的航迹ID
+    unsigned long trackID[8]; // 与sensors对应，trackID[0]代表sensors的最低位
+    unsigned long timeStamp;
+    double threatScore;//威胁值0-100
+    octet threatLevel;//威胁等级0-无，1-低，2-中，3-高
+	octet trackCategoryId;    // 航迹分类id
+	string trackCategoryName; // 航迹分类名称
+    string trackAlias;       // 航迹别名，例如“浮标A”
+    boolean isManual;         //是否手动修改
+    string modifiedBy;       // 修改人，例如用户名或操作员ID
+    unsigned long modifiedTime; // 修改时间，Unix时间戳（秒）
+    octet reserved0;
+    octet reserved1;
+    double reserved2;
+    double reserved3;
+    unsigned long reserved4;
+    unsigned long reserved5;
+	string reserved6;
+};
