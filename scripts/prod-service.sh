@@ -12,7 +12,7 @@ usage() {
 case "${1:-}" in
   start)
     chmod +x "$ROOT/prod-start-nginx.sh" "$ROOT/prod-start.sh" 2>/dev/null || true
-    exec "$ROOT/prod-start-nginx.sh" --no-build
+    exec env NGINX_IMAGE=nginx:alpine "$ROOT/prod-start-nginx.sh" --no-build --restart
     ;;
   stop)
     docker rm -f xk_nginx_prod xk_docker_prod 2>/dev/null || true

@@ -81,6 +81,12 @@ def evaluate_track_quality(
     region_type: str = "",
     bounding_box: Optional[Dict[str, float]] = None,
     polygon_points: Optional[List[Dict[str, float]]] = None,
+    fused_track_id: Optional[int] = None,
+    unique_id: Optional[int] = None,
+    attr_range: Optional[Dict[str, float]] = None,
+    sea_fusion_filter: Optional[str] = None,
+    air_fusion_filter: Optional[str] = None,
+    display_sensor_ids: Optional[List[int]] = None,
     timeout_sec: float = 120.0,
 ) -> Dict[str, Any]:
     try:
@@ -124,6 +130,45 @@ def evaluate_track_quality(
         req.end_time.CopyFrom(ts)
     if sensor_ids:
         req.sensor_ids.extend(int(x) for x in sensor_ids)
+    elif display_sensor_ids:
+        req.sensor_ids.extend(int(x) for x in display_sensor_ids)
+
+    if fused_track_id is not None:
+        req.track_id_filter.fused_track_id = int(fused_track_id)
+    elif unique_id is not None:
+        req.track_id_filter.unique_id = int(unique_id)
+
+    if attr_range:
+        ar = req.attr_range
+        for key in (
+            "min_azimuth",
+            "max_azimuth",
+            "min_distance",
+            "max_distance",
+            "min_speed",
+            "max_speed",
+            "min_course",
+            "max_course",
+            "min_size",
+            "max_size",
+        ):
+            if key in attr_range and attr_range[key] is not None:
+                setattr(ar, key, float(attr_range[key]))
+
+    sea_map = {
+        "ALL": track_pb2.SEA_FUSION_ALL,
+        "WITH_AIS": track_pb2.SEA_FUSION_WITH_AIS,
+        "WITHOUT_AIS": track_pb2.SEA_FUSION_WITHOUT_AIS,
+    }
+    air_map = {
+        "ALL": track_pb2.AIR_FUSION_ALL,
+        "WITH_SELF_REPORT": track_pb2.AIR_FUSION_WITH_SELF_REPORT,
+        "WITHOUT_SELF_REPORT": track_pb2.AIR_FUSION_WITHOUT_SELF_REPORT,
+    }
+    if sea_fusion_filter and sea_fusion_filter in sea_map:
+        req.options.sea_fusion_filter = sea_map[sea_fusion_filter]
+    if air_fusion_filter and air_fusion_filter in air_map:
+        req.options.air_fusion_filter = air_map[air_fusion_filter]
 
     if region_type == "rect" and bounding_box:
         req.region.type = track_pb2.RegionFilter.RECT

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useEoEntityDetection } from "@/hooks/useEoEntityDetection";
 import { eoDetectionBoxesEqual } from "@/lib/eo-video/detectionSyncUtils";
 import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import type { EoWebCodecsPresentation } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
+import type { EoVideoObjectFit } from "@/lib/eo-video/eoVideoObjectFit";
 import { EoDetectionOverlay } from "./EoDetectionOverlay";
 
 export interface EoVideoDetectionLayerProps {
@@ -25,7 +26,7 @@ export interface EoVideoDetectionLayerProps {
   encodedSyncHub?: EoEncodedSyncHub;
   videoReceiverRef?: React.MutableRefObject<RTCRtpReceiver | null>;
   onBoxesChange?: (boxes: EoDetectionBox[]) => void;
-  videoObjectFit?: "contain" | "cover";
+  videoObjectFit?: EoVideoObjectFit;
   videoIntrinsicWidth?: number;
   videoIntrinsicHeight?: number;
   /** WebCodecs 呈现 ref：检测按 lastRenderedRtpTimestamp 与 hub 对齐 */
@@ -62,6 +63,11 @@ export function EoVideoDetectionLayer({
   ddsCameraEntityId,
   interactive = true,
 }: EoVideoDetectionLayerProps) {
+  const presentDrawRef = useRef<((frameBoxes?: EoDetectionBox[]) => void) | null>(null);
+  const registerPresentDraw = useCallback((draw: ((frameBoxes?: EoDetectionBox[]) => void) | null) => {
+    presentDrawRef.current = draw;
+  }, []);
+
   const { boxes } = useEoEntityDetection({
     entityId,
     videoRef,
@@ -74,6 +80,13 @@ export function EoVideoDetectionLayer({
     presentationWidth: videoIntrinsicWidth,
     presentationHeight: videoIntrinsicHeight,
     webCodecsPresentationRef,
+    onPresentFrame: (frameBoxes) => {
+      presentDrawRef.current?.(frameBoxes);
+      if (!eoDetectionBoxesEqual(lastNotifiedBoxesRef.current, frameBoxes)) {
+        lastNotifiedBoxesRef.current = frameBoxes;
+        onBoxesChangeRef.current?.(frameBoxes);
+      }
+    },
   });
 
   const onBoxesChangeRef = useRef(onBoxesChange);
@@ -101,6 +114,7 @@ export function EoVideoDetectionLayer({
       videoIntrinsicWidth={videoIntrinsicWidth}
       videoIntrinsicHeight={videoIntrinsicHeight}
       interactive={interactive}
+      onRegisterDraw={registerPresentDraw}
     />
   );
 }

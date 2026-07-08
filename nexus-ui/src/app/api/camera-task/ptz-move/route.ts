@@ -1,28 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const ALLOWED_DIRECTIONS = new Set([
+import {
+  buildPtzMoveTaskPayload,
+  resolveCameraTaskHttpEndpoint,
+  type EoPtzDirection,
+} from "@/server/camera-task-payload";
+import { withCameraTaskEntityLock } from "@/server/camera-task-entity-queue";
+import {
+  isCameraTaskGrpcTransport,
+  ptzMoveViaGrpc,
+  submitCameraTaskViaHttp,
+} from "@/server/camera-task-transport";
+
+const ALLOWED_DIRECTIONS = new Set<EoPtzDirection>([
   "UP",
   "DOWN",
   "LEFT",
   "RIGHT",
+  "LEFT_UP",
+  "LEFT_DOWN",
+  "RIGHT_UP",
+  "RIGHT_DOWN",
   "ZOOM_IN",
   "ZOOM_OUT",
   "FOCUS_IN",
   "FOCUS_OUT",
 ]);
 
-function createTaskId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function resolveTaskEndpoint(backendBaseUrl: string): string | null {
-  try {
-    const u = new URL(backendBaseUrl.trim());
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return `${u.protocol}//${u.host}/api/v1/tasks`;
-  } catch {
-    return null;
-  }
+function parseMoveSpeed(raw: unknown): { pan?: number; tilt?: number } | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const s = raw as { pan?: unknown; tilt?: unknown };
+  const pan = s.pan != null ? Number(s.pan) : undefined;
+  const tilt = s.tilt != null ? Number(s.tilt) : undefined;
+  if (pan == null && tilt == null) return undefined;
+  return {
+    ...(Number.isFinite(pan) ? { pan } : {}),
+    ...(Number.isFinite(tilt) ? { tilt } : {}),
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -33,10 +47,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
 
-  const payloadIn = body as { entityId?: unknown; backendBaseUrl?: unknown; direction?: unknown };
+  const payloadIn = body as {
+    entityId?: unknown;
+    backendBaseUrl?: unknown;
+    direction?: unknown;
+    speed?: unknown;
+  };
   const entityId = String(payloadIn.entityId ?? "").trim().toLowerCase();
   const backendBaseUrl = String(payloadIn.backendBaseUrl ?? "").trim();
-  const direction = String(payloadIn.direction ?? "").trim().toUpperCase();
+  const direction = String(payloadIn.direction ?? "").trim().toUpperCase() as EoPtzDirection;
+  const speed = parseMoveSpeed(payloadIn.speed);
 
   if (!/^camera_\d{3}$/.test(entityId)) {
     return NextResponse.json({ error: "invalid entityId" }, { status: 400 });
@@ -45,53 +65,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid direction" }, { status: 400 });
   }
 
-  const target = resolveTaskEndpoint(backendBaseUrl);
+  if (isCameraTaskGrpcTransport()) {
+    try {
+      const result = await withCameraTaskEntityLock(entityId, () =>
+        ptzMoveViaGrpc({ entityId, direction, speed }),
+      );
+      return new NextResponse(result.body, {
+        status: result.status,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Camera-Task-Transport": result.transport,
+          "X-Camera-Task-Target": result.target,
+        },
+      });
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ error: "ptz grpc failed", detail }, { status: 502 });
+    }
+  }
+
+  const target = resolveCameraTaskHttpEndpoint(backendBaseUrl);
   if (!target) {
     return NextResponse.json({ error: "invalid backendBaseUrl" }, { status: 400 });
   }
 
-  const taskPayload = {
-    taskId: createTaskId("ptz_move"),
-    parentTaskId: createTaskId("task_search"),
-    version: { definitionVersion: 1, statusVersion: 1 },
-    displayName: `云台移动-${direction}`,
-    taskType: "AUTOMATIC",
-    maxExecutionTimeMs: 10000,
-    specification: {
-      "@type": "type.casia.tasks.v1.PTZMoveTask",
-      direction,
-      speed:
-        direction.includes("ZOOM") || direction.includes("FOCUS")
-          ? { pan: 0.5, tilt: 0 }
-          : { pan: 0.5, tilt: 0.5 },
+  const taskPayload = buildPtzMoveTaskPayload({ entityId, direction, speed });
+  const result = await withCameraTaskEntityLock(entityId, () =>
+    submitCameraTaskViaHttp(target, taskPayload),
+  );
+  return new NextResponse(result.body, {
+    status: result.status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "X-Camera-Task-Transport": result.transport,
+      "X-Camera-Task-Target": result.target,
     },
-    createdBy: {
-      system: {
-        serviceName: "camera_control_service",
-        entityId: "service_001",
-        managesOwnScheduling: true,
-        priority: 2,
-      },
-    },
-    owner: { entityId },
-  };
-
-  try {
-    const upstream = await fetch(target, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(taskPayload),
-      cache: "no-store",
-    });
-    const text = await upstream.text();
-    return new NextResponse(text, {
-      status: upstream.status,
-      headers: {
-        "Content-Type": upstream.headers.get("content-type") ?? "application/json; charset=utf-8",
-      },
-    });
-  } catch (e) {
-    const detail = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: "ptz proxy failed", target, detail }, { status: 502 });
-  }
+  });
 }

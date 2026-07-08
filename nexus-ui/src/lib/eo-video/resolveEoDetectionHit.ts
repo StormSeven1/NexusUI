@@ -1,4 +1,5 @@
 import type { EoDetectionBox } from "@/lib/eo-video/types";
+import type { EoVideoObjectFit } from "@/lib/eo-video/eoVideoObjectFit";
 import { mapEoBoxToPresentationNorm } from "@/lib/eo-video/detectionSyncUtils";
 import { getVideoContentRect, resolveEoVideoIntrinsicSize } from "@/lib/eo-video/videoContentRect";
 
@@ -20,7 +21,7 @@ export function resolveEoDetectionHitAtClient(args: {
   container: HTMLElement;
   video: HTMLVideoElement | null;
   boxes: EoDetectionBox[];
-  videoObjectFit?: "contain" | "cover";
+  videoObjectFit?: EoVideoObjectFit;
   videoIntrinsicWidth?: number;
   videoIntrinsicHeight?: number;
   clientX: number;
@@ -35,7 +36,7 @@ export function resolveEoDetectionHitAtClient(args: {
     args.videoIntrinsicWidth,
     args.videoIntrinsicHeight,
   );
-  const content = getVideoContentRect(rect.width, rect.height, vw, vh, args.videoObjectFit ?? "cover");
+  const content = getVideoContentRect(rect.width, rect.height, vw, vh, args.videoObjectFit ?? "fill");
   const pad = 10;
   let hitBoxId: string | null = null;
   let hitBox: EoDetectionBox | null = null;

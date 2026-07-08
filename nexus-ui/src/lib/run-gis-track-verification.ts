@@ -20,6 +20,8 @@ import { getRenderCache } from "@/stores/track-store";
 import { useTargetProfileStore } from "@/stores/target-profile-store";
 import { useDockStore } from "@/stores/dock-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
+import { resolveTrackForDroneSelfReport } from "@/lib/resolve-track-for-drone-self-report";
+import { resolveCamServerSelfPosMapId } from "@/lib/map-gis-camera-task";
 
 /**
  * 告警 trackId → 航迹 showID（与 AlertPanel / 地图选中一致）。
@@ -94,6 +96,17 @@ async function dispatchThirdPartyPosTaskLogged(
   }
 }
 
+/** 地图双击无人机自报位/高频图标：与双击融合航迹相同，下发 POS + 光电重点关注采集 */
+export async function runGisDroneSelfReportVerification(sn: string): Promise<void> {
+  const track = resolveTrackForDroneSelfReport(sn);
+  if (!track) {
+    console.warn("[map-drone-dblclick] 未找到无人机遥测或有效坐标", { sn });
+    return;
+  }
+  console.info("[map-drone-dblclick] 命中无人机自报位", sn, track.showID, track.uniqueID);
+  await runGisTrackVerification(track);
+}
+
 export async function runGisTrackVerification(track: Track): Promise<void> {
   useTargetProfileStore.getState().setFocusedShowId(track.showID);
   const dock = useDockStore.getState();
@@ -109,7 +122,10 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
     showID: track.showID,
     uniqueID: track.uniqueID,
     trackId: track.trackId,
+    camServerSelfPosMapId: resolveCamServerSelfPosMapId(track),
     type: track.type,
+    trackLayerKey: track.trackLayerKey,
+    trackType: posFields?.trackType ?? null,
     lat: track.lat,
     lng: track.lng,
     speed: track.speed,

@@ -23,11 +23,31 @@
  *   - distinguishSeaAir 模式下：对海用 uniqueID，对空用 trackId 做告警匹配
  */
 
-import { isVirtualFromProperties, type Track } from "@/lib/map-entity-model";
+import { isVirtualFromProperties, type Track, type TrackFusionSourceItem } from "@/lib/map-entity-model";
 import { readRealityTypeFromRecord, resolveTrackIsVirtual } from "@/lib/track-reality-type";
 import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
+
+function parseFusionSourcesFromRecord(rec: Record<string, unknown>): TrackFusionSourceItem[] | undefined {
+  const raw = rec.fusionSources;
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out: TrackFusionSourceItem[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const s = item as Record<string, unknown>;
+    const sourceName = String(s.sourceName ?? s.source_name ?? "").trim();
+    const dataSourceId = s.dataSourceId ?? s.data_source_id;
+    const trackId = s.trackId ?? s.track_id;
+    if (!sourceName && dataSourceId == null && trackId == null) continue;
+    out.push({
+      ...(sourceName ? { sourceName } : {}),
+      ...(dataSourceId != null ? { dataSourceId: dataSourceId as string | number } : {}),
+      ...(trackId != null ? { trackId: trackId as string | number } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
 import { transformCoordinate } from "@/lib/coordinate-transform";
 import {
   readTrackCategoryFromRecord,
@@ -47,6 +67,8 @@ const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
   "radar_jingzi",
   "ais_track",
   "uav_pose_track",
+  "boat_self_track",
+  "xpf_track",
 ]);
 
 function readTrackLayerKey(rec: Record<string, unknown>): TrackLayerKey | undefined {
@@ -90,11 +112,11 @@ function surfaceKindFromDdsOrTrackLayerKey(rec: Record<string, unknown>): Track[
     const rid = ddsRaw.trim().toLowerCase();
     const lk = TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[rid];
     if (lk === "fuse_air" || lk === "bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track") return "air";
-    if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi") return "sea";
+    if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track" || lk === "boat_self_track" || lk === "xpf_track") return "sea";
   }
   const tlk = readTrackLayerKey(rec);
   if (tlk === "fuse_air" || tlk === "bird_radar" || tlk === "fanwu_car_radar" || tlk === "uav_pose_track") return "air";
-  if (tlk === "fuse_sea" || tlk === "radar_wharf" || tlk === "radar_jingzi") return "sea";
+  if (tlk === "fuse_sea" || tlk === "radar_wharf" || tlk === "radar_jingzi" || tlk === "ais_track" || tlk === "boat_self_track" || tlk === "xpf_track") return "sea";
   return undefined;
 }
 
@@ -362,6 +384,7 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   // 例：[{ sourceName: "探鸟雷达", trackId: 5744 }] → sensor = "探鸟雷达(5744)"
   // 如果有 fusionSources，优先用它组装 sensor；否则回退到 rec.sensor / rec.source
   const fusionSources = Array.isArray(rec.fusionSources) ? rec.fusionSources : null;
+  const fusionSourcesParsed = parseFusionSourcesFromRecord(rec);
   let sensorValue: string;
   if (fusionSources && fusionSources.length > 0) {
     // 从每个融合源提取 sourceName + trackId，组装成 "源名(trackId)" 格式，逗号分隔
@@ -427,6 +450,7 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     ...(dataSourceIdStr ? { dataSourceId: dataSourceIdStr } : {}),
     ...(ddsSourceIdStr ? { ddsSourceId: ddsSourceIdStr } : {}),
     ...(resolvedTrackLayerKey ? { trackLayerKey: resolvedTrackLayerKey } : {}),
+    ...(fusionSourcesParsed ? { fusionSources: fusionSourcesParsed } : {}),
     ...(realityType !== undefined ? { realityType } : {}),
     ...(isVirtual ? { isVirtual: true } : {}),
     ...(isUav ? { isUav: true } : {}),

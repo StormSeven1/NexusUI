@@ -2,6 +2,7 @@
 
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isTrackEvalGrpcEnabled } from "@/lib/system-eval-track-api";
 import { useTrackEvaluationStore } from "@/stores/track-evaluation-store";
 import { TrackFilterSection } from "@/components/panels/track-evaluation/TrackFilterSection";
 import { TrackQualitySection } from "@/components/panels/track-evaluation/TrackQualitySection";
@@ -11,8 +12,17 @@ function TrackEvalStatusBar() {
   const queryStatus = useTrackEvaluationStore((s) => s.queryStatus);
   const metricsComputing = useTrackEvaluationStore((s) => s.metricsComputing);
 
+  const grpcMode = isTrackEvalGrpcEnabled();
   const wsConnected = connectionState === "open";
   const isAnalyzing = queryStatus.type === "loading" || metricsComputing;
+  const statusReady = grpcMode || wsConnected;
+  const statusLabel = grpcMode
+    ? "gRPC"
+    : wsConnected
+      ? "已连接"
+      : connectionState === "connecting"
+        ? "连接中"
+        : "未连接";
 
   return (
     <div className="flex shrink-0 items-center justify-between gap-2 border-b border-nexus-border px-2 py-1.5">
@@ -30,7 +40,7 @@ function TrackEvalStatusBar() {
       <span
         className={cn(
           "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
-          wsConnected
+          statusReady
             ? "bg-emerald-500/15 text-emerald-400"
             : connectionState === "connecting"
               ? "bg-amber-500/15 text-amber-400"
@@ -40,10 +50,10 @@ function TrackEvalStatusBar() {
         <span
           className={cn(
             "h-1.5 w-1.5 rounded-full",
-            wsConnected ? "bg-emerald-400" : "bg-zinc-500",
+            statusReady ? "bg-emerald-400" : "bg-zinc-500",
           )}
         />
-        {wsConnected ? "已连接" : connectionState === "connecting" ? "连接中" : "未连接"}
+        {statusLabel}
       </span>
     </div>
   );

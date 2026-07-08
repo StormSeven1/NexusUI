@@ -16,6 +16,24 @@ export interface TrackEvalGrpcRequest {
     max_latitude: number;
   };
   polygon?: { points: Array<{ longitude: number; latitude: number }> };
+  /** 显示筛选：单条 fused_track_id（proto oneof；多条由前端再滤） */
+  fused_track_id?: number;
+  unique_id?: number;
+  attr_range?: {
+    min_azimuth?: number;
+    max_azimuth?: number;
+    min_distance?: number;
+    max_distance?: number;
+    min_speed?: number;
+    max_speed?: number;
+    min_course?: number;
+    max_course?: number;
+    min_size?: number;
+    max_size?: number;
+  };
+  sea_fusion_filter?: "ALL" | "WITH_AIS" | "WITHOUT_AIS";
+  air_fusion_filter?: "ALL" | "WITH_SELF_REPORT" | "WITHOUT_SELF_REPORT";
+  display_sensor_ids?: number[];
 }
 
 export interface TrackEvalGrpcApiResponse {
@@ -32,6 +50,11 @@ export interface TrackEvalGrpcApiResponse {
 export function isTrackEvalGrpcEnabled(): boolean {
   const v = process.env.NEXT_PUBLIC_TRACK_EVAL_USE_GRPC?.trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes";
+}
+
+/** 历史查询是否必须 C++ WS（gRPC 查询、直接下载除外） */
+export function trackEvalHistoryQueryNeedsWs(directDownload: boolean): boolean {
+  return directDownload || !isTrackEvalGrpcEnabled();
 }
 
 export async function fetchTrackEvalQuality(
@@ -54,6 +77,12 @@ export async function fetchTrackEvalQuality(
       region_type: body.region_type ?? "",
       bounding_box: body.bounding_box,
       polygon: body.polygon,
+      fused_track_id: body.fused_track_id,
+      unique_id: body.unique_id,
+      attr_range: body.attr_range,
+      sea_fusion_filter: body.sea_fusion_filter,
+      air_fusion_filter: body.air_fusion_filter,
+      display_sensor_ids: body.display_sensor_ids,
     }),
     cache: "no-store",
   });

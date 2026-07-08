@@ -1,3 +1,5 @@
+import type { EoVideoObjectFit } from "@/lib/eo-video/eoVideoObjectFit";
+
 /** 叠层 letterbox 用的 intrinsic：WebCodecs 呈现尺寸优先于 `<video>`（后者常为 0 或与 Canvas 不一致） */
 export function resolveEoVideoIntrinsicSize(
   video: Pick<HTMLVideoElement, "videoWidth" | "videoHeight"> | null | undefined,
@@ -11,19 +13,20 @@ export function resolveEoVideoIntrinsicSize(
 }
 
 /**
- * 视频内容在容器内的像素矩形，根据 object-fit 模式计算。
- * - contain: 居中缩放，可能有黑边（letterbox）
- * - cover: 居中缩放铺满，可能裁切超出部分
+ * 视频内容在容器内的像素矩形，与 CSS `object-fit` 及检测框/PTZ 归一化坐标一致。
+ * - fill: 拉伸铺满容器（默认，对齐 Qt）
+ * - contain: 居中缩放，可能有黑边
+ * - cover: 居中缩放铺满，可能裁切
  */
 export function getVideoContentRect(
   containerW: number,
   containerH: number,
   intrinsicW: number,
   intrinsicH: number,
-  fit: "contain" | "cover" = "cover",
+  fit: EoVideoObjectFit = "fill",
 ): { x: number; y: number; w: number; h: number } {
   if (containerW <= 0 || containerH <= 0) return { x: 0, y: 0, w: 0, h: 0 };
-  if (intrinsicW <= 0 || intrinsicH <= 0) {
+  if (fit === "fill" || intrinsicW <= 0 || intrinsicH <= 0) {
     return { x: 0, y: 0, w: containerW, h: containerH };
   }
   const scale =

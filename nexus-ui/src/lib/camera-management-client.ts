@@ -83,6 +83,19 @@ export function defaultSkyOwnerEntityId(cfg: CameraManagementConfig): string {
   return cameraEntityIdFromIndex(cfg.skyCameraIndex);
 }
 
+/** 按 app-config 对海/对空槽位推断检测框圆标「海|空」（WS 缺 rectType 时兜底） */
+export function inferEoSurfaceRoleForCameraEntity(
+  entityId: string,
+  cfg: CameraManagementConfig | null | undefined,
+): "空" | "海" | null {
+  if (!cfg) return null;
+  const canon = resolveOwnerEntityIdForCameraTask(entityId);
+  if (!canon) return null;
+  if (canon === defaultSkyOwnerEntityId(cfg)) return "空";
+  if (canon === defaultSeaOwnerEntityId(cfg)) return "海";
+  return null;
+}
+
 export type PtzSpeed = { pan: number; tilt: number; zoom?: number };
 
 export type CameraManagementPublishResult = {
@@ -137,12 +150,17 @@ function normalizeImportantTargetCollection(t: ImportantTrackTargetCollection): 
     rawTargetId != null && Number.isFinite(rawTargetId) && rawTargetId > 0
       ? Number(rawTargetId)
       : 0;
+  const altitude =
+    t.altitude != null && Number.isFinite(t.altitude) && t.altitude > 0 ? Number(t.altitude) : undefined;
   return {
     latitude: lat,
     longitude: lng,
     type: t.type,
     checkTime,
     target_id: targetId,
+    // Qt `resolveTaskTargetId` 兼容键；与 target_id 同值
+    ...(targetId > 0 ? { trackID: targetId } : {}),
+    ...(altitude !== undefined ? { altitude } : {}),
     alarmID,
     alarmTime,
     trackTime,
@@ -232,6 +250,8 @@ export type ImportantTrackTargetCollection = {
   checkTime?: number;
   /** 新 DDS `target_id`（全局唯一目标 ID，与 Qt `m_nAlarmTrackID` 一致） */
   target_id?: number;
+  /** 对空目标相对/海拔高度（米）；Qt 自报位查证 fallback 用 */
+  altitude?: number;
   /** Qt `QString`，JSON 为字符串，常 `""` */
   alarmID?: string;
   /** Qt `yyyyMMdd_hhmmss_zzz` */

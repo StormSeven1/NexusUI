@@ -27,17 +27,46 @@ type ForceDisposition = "friendly" | "hostile" | "neutral";
 type TrackKind = "air" | "sea" | "underwater";
 
 /** 与主线程 `TRACK_LAYER_KEY_BY_DDS_SOURCE_ID` / Custombackend 接收器 id 一致（Worker 不能 import 带 @/ 的模块） */
-type LayerKey = "fuse_sea" | "fuse_air" | "bird_radar" | "fanwu_car_radar" | "radar_wharf" | "radar_jingzi" | "ais_track" | "uav_pose_track";
+type LayerKey = "fuse_sea" | "fuse_air" | "bird_radar" | "fanwu_car_radar" | "radar_wharf" | "radar_jingzi" | "ais_track" | "uav_pose_track" | "boat_self_track" | "xpf_track";
+
+type FusionSourceItem = {
+  sourceName?: string;
+  dataSourceId?: string | number;
+  trackId?: string | number;
+};
+
+function _parseFusionSourcesFromRec(rec: Record<string, unknown>): FusionSourceItem[] | undefined {
+  const raw = rec.fusionSources;
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out: FusionSourceItem[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const s = item as Record<string, unknown>;
+    const sourceName = String(s.sourceName ?? s.source_name ?? "").trim();
+    const dataSourceId = s.dataSourceId ?? s.data_source_id;
+    const trackId = s.trackId ?? s.track_id;
+    if (!sourceName && dataSourceId == null && trackId == null) continue;
+    out.push({
+      ...(sourceName ? { sourceName } : {}),
+      ...(dataSourceId != null ? { dataSourceId: dataSourceId as string | number } : {}),
+      ...(trackId != null ? { trackId: trackId as string | number } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 const DDS_TO_LAYER: Record<string, LayerKey> = {
   dds_forward_fuse_track: "fuse_sea",
   dds_forward_fuse_bird_radar_track: "fuse_air",
   dds_forward_bird_radar_track: "bird_radar",
   dds_forward_fanwu_car_track: "fanwu_car_radar",
+  dds_udp_fanwucar_track: "fanwu_car_radar",
   dds_forward_radar_track1: "radar_wharf",
   dds_forward_radar_track2: "radar_jingzi",
   dds_forward_ais_track: "ais_track",
   dds_forward_uav_pose_track: "uav_pose_track",
+  dds_udp_boatself_track: "boat_self_track",
+  dds_udp_xpf_track: "xpf_track",
 };
 
 const VALID_LAYER_KEYS = new Set<string>(Object.values(DDS_TO_LAYER));
@@ -65,7 +94,7 @@ function _surfaceKindFromDdsOrLayer(rec: Record<string, unknown>): TrackKind | u
   const dds = _ddsSourceStr(rec)?.toLowerCase();
   const lk = _layerKeyFromDds(dds) ?? _readTrackLayerKeyFromRec(rec);
   if (lk === "fuse_air" || lk === "bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track") return "air";
-  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track") {
+  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track" || lk === "boat_self_track" || lk === "xpf_track") {
     return "sea";
   }
   return undefined;
@@ -287,6 +316,7 @@ function _normalize(raw: unknown): WorkerTrack | null {
   const distance = distRaw != null && Number.isFinite(Number(distRaw)) ? Number(distRaw) : undefined;
 
   const fusions  = Array.isArray(rec.fusionSources) ? rec.fusionSources : null;
+  const fusionSourcesParsed = _parseFusionSourcesFromRec(rec);
   let sensor: string;
   if (fusions && fusions.length > 0) {
     sensor = fusions.map((src: unknown) => {
@@ -326,6 +356,7 @@ function _normalize(raw: unknown): WorkerTrack | null {
     ...(dsIdStr  ? { dataSourceId: dsIdStr } : {}),
     ...(ddsStr ? { ddsSourceId: ddsStr } : {}),
     ...(resolvedLayerKey ? { trackLayerKey: resolvedLayerKey } : {}),
+    ...(fusionSourcesParsed ? { fusionSources: fusionSourcesParsed } : {}),
     ...((): Record<string, unknown> => {
       const realityType = readRealityTypeFromRecord(rec);
       const rv = rec.is_virtual ?? rec.isVirtual;

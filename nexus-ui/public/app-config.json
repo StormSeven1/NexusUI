@@ -699,7 +699,7 @@
       "enabled": true,
       "seconds": 30,
       "fusionSeconds": 30,
-      "fusionAirSeconds": 30,
+      "fusionAirSeconds": 10,
       "uavSeconds": 10,
       "checkIntervalMs": 2000
     },
@@ -761,19 +761,19 @@
   "softwareCompositionLinks": [
     {
       "label": "实体管理",
-      "url": "http://192.168.18.141:7880/"
+      "url": "http://192.168.18.141:21913/"
     },
     {
       "label": "任务管理",
-      "url": "http://192.168.18.141:8888/chat"
+      "url": "http://192.168.18.141:21914/chat"
     },
     {
       "label": "作战管理",
-      "url": "http://192.168.18.141:24000/"
+      "url": "http://192.168.18.141:21912/"
     },
     {
       "label": "雷达管理",
-      "url": "http://192.168.18.141:22231/dashboard"
+      "url": "http://192.168.18.141:21919/dashboard"
     },
     {
       "label": "相机管理",
@@ -781,7 +781,7 @@
     },
     {
       "label": "无人机管理",
-      "url": "http://192.168.18.115:88/tsa"
+      "url": "http://192.168.18.141:88/tsa"
     },
     {
       "label": "告警管理",

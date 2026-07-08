@@ -16,7 +16,7 @@ ensure_ffmpeg() {
         echo "⚠️ 容器内无 ffmpeg 且无法 apt-get：NEXUS_SPEECH_MODE=2 录音转写将失败"
         return 0
     fi
-    echo "安装 ffmpeg（智能语音 Mode 2 转码需要，仅首次起容器时执行）..."
+    echo "安装 ffmpeg（智能语音 Mode 2 转码需要，后台 apt，不阻塞 Custombackend）..."
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg
     if command -v ffmpeg >/dev/null 2>&1; then
@@ -25,7 +25,16 @@ ensure_ffmpeg() {
         echo "⚠️ ffmpeg 安装失败：NEXUS_SPEECH_MODE=2 录音转写将失败"
     fi
 }
-ensure_ffmpeg
+
+schedule_ensure_ffmpeg() {
+    if command -v ffmpeg >/dev/null 2>&1; then
+        return 0
+    fi
+    ensure_ffmpeg &
+    echo "⏳ ffmpeg 后台安装中（新容器首次约数分钟；Custombackend/Next 不等待）"
+}
+
+schedule_ensure_ffmpeg
 
 BACKEND_PORT="${BACKEND_PORT:-27003}"
 FRONTEND_PORT="${FRONTEND_PORT:-22301}"
@@ -101,6 +110,18 @@ free_tcp_port() {
     echo "✅ 端口 ${p} 已释放"
 }
 
+ensure_grpc_deps() {
+    if python3 -c "import grpc" 2>/dev/null; then
+        return 0
+    fi
+    echo "安装 system-eval 所需 grpcio（requirements 子集）..."
+    if ! python3 -m pip install -q grpcio==1.80.0 grpcio-tools==1.80.0 "protobuf>=6.31.1,<7"; then
+        echo "⚠️ grpcio 安装失败，system-eval 等 gRPC 功能不可用" >&2
+        return 1
+    fi
+    python3 -c "import grpc" 2>/dev/null && echo "✅ grpcio 已就绪"
+}
+
 start_custombackend() {
     echo "启动 Custombackend（端口 ${BACKEND_PORT}）..."
     cd /workspace/Custombackend
@@ -110,6 +131,7 @@ start_custombackend() {
     PIP_PID=""
     if [[ "${NEXUS_PY_SKIP_INSTALL:-0}" == "1" ]]; then
         echo "跳过 pip install（NEXUS_PY_SKIP_INSTALL=1）"
+        ensure_grpc_deps || true
     elif [[ "${NEXUS_PY_UPGRADE:-0}" == "1" ]]; then
         echo "安装/更新后端依赖（requirements.txt，后台，不阻塞 uvicorn）..."
         python3 -m pip install -q --upgrade -r requirements.txt &

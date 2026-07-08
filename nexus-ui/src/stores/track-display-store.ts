@@ -272,7 +272,7 @@ export function neutralFusionColorForTrack(
   if (track.type === "underwater") return sea;
   const lk = resolveTrackLayerKey(track);
   if (lk === "fuse_air" || lk === "bird_radar" || lk === "fanwu_car_radar") return air;
-  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track") {
+  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track" || lk === "boat_self_track" || lk === "xpf_track") {
     return sea;
   }
   return track.isAirTrack === true ? air : sea;

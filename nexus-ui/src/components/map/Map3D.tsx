@@ -52,6 +52,11 @@ import {
   parseAreaLineColor,
 } from "@/lib/area-table-geometry";
 import { isDbAreaLeafVisible } from "@/lib/db-area-panel-helpers";
+import {
+  AREA_ALERT_FLASH_COLOR,
+  computeAreaFlashPulseOpacity,
+  isDbAreaKeyFlashing,
+} from "@/lib/db-area-alert-flash";
 import { ringSouthEastLabelLngLat } from "@/lib/build-db-areas-geojson";
 import {
   DEFAULT_AREA_LAYER_LINE_COLOR,
@@ -141,7 +146,8 @@ type GroupKey =
   | "optoFov"
   | "airportFov"
   | "droneFov"
-  | "dbAreas";
+  | "dbAreas"
+  | "dbAreaFlash";
 
 type DroneLabelStyleResolved = ReturnType<typeof laserLabelStyleFromBundle>;
 
@@ -231,6 +237,72 @@ function syncCesiumDbAreas(
       properties: { dbAreaId: id },
     });
     groups.dbAreas.push(ent);
+  }
+}
+
+/** chat_notification 触发的区域闪烁（不受子项/总开关隐藏影响） */
+function syncCesiumDbAreaFlash(
+  viewer: CesiumViewer,
+  C: CesiumModule,
+  groups: { dbAreaFlash: CesiumEntity[] },
+  rows: AreaTableRow[],
+  areaFlashUntil: Record<string, number>,
+  pulseEpochMs: number,
+) {
+  for (const e of groups.dbAreaFlash) viewer.entities.remove(e);
+  groups.dbAreaFlash.length = 0;
+
+  const now = Date.now();
+  for (const row of rows) {
+    if (!isDbAreaKeyFlashing(areaFlashUntil, row.group_id, row.area_id, now)) continue;
+    const ring = areaRowToPolygonRing(row);
+    if (!ring || ring.length < 4) continue;
+    const coords = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]
+      ? ring.slice(0, -1)
+      : ring;
+    const positions = coords.map(([lng, lat]) => C.Cartesian3.fromDegrees(lng, lat));
+    const ringClosed: [number, number][] = [...coords.map(([lng, lat]) => [lng, lat] as [number, number]), coords[0]];
+    const northLbl =
+      row.area_type === 2 ? circleLabelLngLatNorth(row.start_point, row.end_point) : null;
+    const [labelLng, labelLat] = northLbl ?? ringSouthEastLabelLngLat(ringClosed);
+
+    const name =
+      (row.area_name && String(row.area_name).trim()) ||
+      mapAreaFallbackLabel(row.group_id, row.area_id, row.area_type);
+    const id = dbAreaFeatureId(row);
+
+    const pulseColor = () =>
+      C.Color.fromCssColorString(AREA_ALERT_FLASH_COLOR).withAlpha(
+        computeAreaFlashPulseOpacity(performance.now() - pulseEpochMs),
+      );
+
+    const ent = viewer.entities.add({
+      polygon: {
+        hierarchy: new C.PolygonHierarchy(positions),
+        material: C.Color.TRANSPARENT,
+        outline: true,
+        outlineColor: new C.CallbackProperty(pulseColor, false),
+        outlineWidth: 4,
+        heightReference: C.HeightReference.CLAMP_TO_GROUND,
+      },
+      label: {
+        text: name,
+        font: '11px Roboto, "Noto Sans SC", sans-serif',
+        fillColor: new C.CallbackProperty(pulseColor, false),
+        outlineColor: C.Color.fromCssColorString("#09090b"),
+        outlineWidth: 2,
+        style: C.LabelStyle.FILL_AND_OUTLINE,
+        verticalOrigin: C.VerticalOrigin.BOTTOM,
+        horizontalOrigin: C.HorizontalOrigin.RIGHT,
+        pixelOffset: new C.Cartesian2(0, 0),
+        scaleByDistance: new C.NearFarScalar(1e4, 1, 5e5, 0.4),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      position: C.Cartesian3.fromDegrees(labelLng, labelLat, 120),
+      show: true,
+      properties: { dbAreaFlashId: id },
+    });
+    groups.dbAreaFlash.push(ent);
   }
 }
 
@@ -555,7 +627,9 @@ export function Map3D() {
     airportFov: [],
     droneFov: [],
     dbAreas: [],
+    dbAreaFlash: [],
   });
+  const dbAreaFlashPulseEpochRef = useRef(0);
   /** 供 `syncCesiumTrackBillboards` 与订阅 flush 使用（`loadResolvedAppConfig` 的 `assetDispositionIconAccent`） */
   const cesiumTrackAccentRef = useRef<AssetDispositionIconAccent>({});
   const radarSweepRef = useRef<CesiumEntity[]>([]);
@@ -926,6 +1000,7 @@ export function Map3D() {
         airportFov: [],
         droneFov: [],
         dbAreas: [],
+        dbAreaFlash: [],
       };
     };
   }, [selectTrack, selectAsset]);
@@ -1247,6 +1322,30 @@ export function Map3D() {
       unsub2();
       unsub3();
     };
+  }, []);
+
+  /* chat_notification alert_area：独立闪烁实体（隐藏区域也显示） */
+  useEffect(() => {
+    const flush = () => {
+      const v = viewerRef.current;
+      const C = cesiumRef.current;
+      if (!v || !C || v.isDestroyed()) return;
+      const da = useDbAreaStore.getState();
+      dbAreaFlashPulseEpochRef.current = performance.now();
+      syncCesiumDbAreaFlash(
+        v,
+        C,
+        entityGroupsRef.current,
+        da.rows,
+        da.areaFlashUntil,
+        dbAreaFlashPulseEpochRef.current,
+      );
+    };
+    const unsub = useDbAreaStore.subscribe((s, p) => {
+      if (s.flashRevision !== p.flashRevision || s.rows !== p.rows) flush();
+    });
+    flush();
+    return () => unsub();
   }, []);
 
   /* 航迹：store 全量 → billboard；折线按 `trackMapDrawHistoryTrails`（异步 flush） */

@@ -64,6 +64,62 @@ export function parseDetectionHeader(headerData: unknown): Uint8Array | null {
   return null;
 }
 
+/** syncHeader 前 4 字节 big-endian 包长（camServer QDataStream << avpkt.size 同源） */
+export function readSyncHeaderPacketSize(header: Uint8Array | null | undefined): number | null {
+  if (!header || header.length < 4) return null;
+  return (
+    ((header[0]! << 24) |
+      (header[1]! << 16) |
+      (header[2]! << 8) |
+      header[3]!) >>>
+    0
+  );
+}
+
+/** hub 环 × WS 缓冲交叉匹配统计（诊断 cross=0 用） */
+export function computeSyncHeaderCrossStats(
+  hubHeaders: Uint8Array[],
+  wsHeaders: Uint8Array[],
+): {
+  cross: number;
+  hubLen: number;
+  wsLen: number;
+  bestPrefix: number;
+  hubSize: number | null;
+  wsSize: number | null;
+} {
+  let cross = 0;
+  let bestPrefix = 0;
+  for (const hh of hubHeaders) {
+    let matchedThisHub = false;
+    for (const wh of wsHeaders) {
+      if (headersMatch(hh, wh)) {
+        cross += 1;
+        matchedThisHub = true;
+        break;
+      }
+      const n = Math.min(HEADER_LEN, hh.length, wh.length);
+      let prefix = 0;
+      for (let i = 0; i < n; i++) {
+        if (hh[i] !== wh[i]) break;
+        prefix += 1;
+      }
+      if (prefix > bestPrefix) bestPrefix = prefix;
+    }
+    if (matchedThisHub) continue;
+  }
+  const hubTail = hubHeaders.length > 0 ? hubHeaders[hubHeaders.length - 1]! : null;
+  const wsTail = wsHeaders.length > 0 ? wsHeaders[wsHeaders.length - 1]! : null;
+  return {
+    cross,
+    hubLen: hubHeaders.length,
+    wsLen: wsHeaders.length,
+    bestPrefix,
+    hubSize: readSyncHeaderPacketSize(hubTail),
+    wsSize: readSyncHeaderPacketSize(wsTail),
+  };
+}
+
 /** 与 base-vue 一致：优先整包相等；长度不一致时若两侧均 ≥32B 则只比对前 HEADER_LEN 字节（兼容后端 32/48B 变体）。 */
 export function headersMatch(a: Uint8Array | null, b: Uint8Array | null): boolean {
   if (!a || !b) return false;
@@ -262,6 +318,61 @@ export function rectRowServerTrackId(rect: number[] | undefined): number | undef
   return Math.trunc(v);
 }
 
+/** 从 videoRect 行解析可选的第 6 列：rectType（与 Qt `RectTrackInfo.type` 一致） */
+export function rectRowRectTypeId(rect: number[] | undefined): number | undefined {
+  if (!rect || rect.length < 6) return undefined;
+  const v = Number(rect[5]);
+  if (!Number.isFinite(v)) return undefined;
+  return Math.trunc(v);
+}
+
+export type EoSurfaceShort = "空" | "海";
+
+/** 与 WatchSys_Widget / Qt gConfig：bird=1 plane=2 → 空；ship/buoy=3/4/5 → 海 */
+export function inferEoSurfaceShortFromRectTypeId(
+  rectTypeId: number | undefined | null,
+): EoSurfaceShort | undefined {
+  if (rectTypeId == null || !Number.isFinite(rectTypeId)) return undefined;
+  const t = Math.trunc(rectTypeId);
+  if (t === 1 || t === 2) return "空";
+  if (t === 3 || t === 4 || t === 5) return "海";
+  return undefined;
+}
+
+function eoBoxPresentationForSurface(surface: EoSurfaceShort): {
+  label: string;
+  colorToken: "friendly" | "hostile";
+  singleTagShort: EoSurfaceShort;
+  idPrefix: "boat" | "plane";
+} {
+  if (surface === "空") {
+    return { label: "空", colorToken: "hostile", singleTagShort: "空", idPrefix: "plane" };
+  }
+  return { label: "海", colorToken: "friendly", singleTagShort: "海", idPrefix: "boat" };
+}
+
+function buildEoBoxFromRectRow(
+  rect: number[],
+  j: number,
+  layerSurfaceFallback: EoSurfaceShort,
+  normalized: { x: number; y: number; w: number; h: number },
+): EoDetectionBox {
+  const rectTypeId = rectRowRectTypeId(rect);
+  const surface = inferEoSurfaceShortFromRectTypeId(rectTypeId) ?? layerSurfaceFallback;
+  const pres = eoBoxPresentationForSurface(surface);
+  const tid = rectRowServerTrackId(rect);
+  const idSuffix = tid !== undefined ? tid : j;
+  return {
+    id: `${pres.idPrefix}-${idSuffix}`,
+    ...(tid !== undefined ? { trackId: tid } : {}),
+    ...(rectTypeId !== undefined ? { rectTypeId } : {}),
+    label: pres.label,
+    singleTagShort: pres.singleTagShort,
+    ...normalized,
+    colorToken: pres.colorToken,
+  };
+}
+
 /** 检测算法像素坐标系缺 WS 尺寸时的缺省（与 camServer / 8304 常见输出一致，非 WebCodecs 呈现尺寸） */
 const DEFAULT_DETECTION_FRAME_W = 1920;
 const DEFAULT_DETECTION_FRAME_H = 1080;
@@ -374,9 +485,7 @@ function pixelRectsToNormalizedBoxes(
   rects: number[][],
   videoWidth: number,
   videoHeight: number,
-  idPrefix: string,
-  label: string,
-  colorToken: "friendly" | "hostile" | "neutral" | "accent",
+  layerSurfaceFallback: EoSurfaceShort,
 ): EoDetectionBox[] {
   if (!videoWidth || !videoHeight) return [];
   const out: EoDetectionBox[] = [];
@@ -384,30 +493,30 @@ function pixelRectsToNormalizedBoxes(
     if (!rect || rect.length < 4) return;
     const [x, y, w, h] = rect;
     if (w <= 0 || h <= 0) return;
-    const tid = rectRowServerTrackId(rect);
-    const idSuffix = tid !== undefined ? tid : j;
-    out.push({
-      id: `${idPrefix}-${idSuffix}`,
-      ...(tid !== undefined ? { trackId: tid } : {}),
-      label,
-      x: x / videoWidth,
-      y: y / videoHeight,
-      w: w / videoWidth,
-      h: h / videoHeight,
-      colorToken,
-    });
+    out.push(
+      buildEoBoxFromRectRow(
+        rect,
+        j,
+        layerSurfaceFallback,
+        {
+          x: x / videoWidth,
+          y: y / videoHeight,
+          w: w / videoWidth,
+          h: h / videoHeight,
+        },
+      ),
+    );
   });
   return out;
 }
 
-/** 自动区分「像素框」与「已是 0–1 的框」 */
+/** 自动区分「像素框」与「已是 0–1 的框」；海/空按每框 rectType，层名仅兜底 */
 export function detectionRectsToEoBoxes(
   rects: number[][],
   videoWidth: number,
   videoHeight: number,
-  idPrefix: string,
-  label: string,
-  colorToken: "friendly" | "hostile" | "neutral" | "accent",
+  idPrefix: "boat" | "plane" | "single",
+  layerSurfaceFallback: EoSurfaceShort = idPrefix === "plane" ? "空" : "海",
 ): EoDetectionBox[] {
   if (!rects.length) return [];
   if (rectsLookNormalized(rects)) {
@@ -416,23 +525,12 @@ export function detectionRectsToEoBoxes(
       if (!rect || rect.length < 4) return;
       const [x, y, w, h] = rect;
       if (w <= 0 || h <= 0) return;
-      const tid = rectRowServerTrackId(rect);
-      const idSuffix = tid !== undefined ? tid : j;
-      out.push({
-        id: `${idPrefix}-${idSuffix}`,
-        ...(tid !== undefined ? { trackId: tid } : {}),
-        label,
-        x,
-        y,
-        w,
-        h,
-        colorToken,
-      });
+      out.push(buildEoBoxFromRectRow(rect, j, layerSurfaceFallback, { x, y, w, h }));
     });
     return out;
   }
   if (!videoWidth || !videoHeight) return [];
-  return pixelRectsToNormalizedBoxes(rects, videoWidth, videoHeight, idPrefix, label, colorToken);
+  return pixelRectsToNormalizedBoxes(rects, videoWidth, videoHeight, layerSurfaceFallback);
 }
 
 /** 检测框列表浅比较：避免每帧新数组引用触发父级 setState 循环 */
@@ -454,6 +552,7 @@ export function eoDetectionBoxesEqual(a: EoDetectionBox[], b: EoDetectionBox[]):
       x.colorToken !== y.colorToken ||
       x.variant !== y.variant ||
       x.singleTagShort !== y.singleTagShort ||
+      x.rectTypeId !== y.rectTypeId ||
       x.singleTrackOverlayTitle !== y.singleTrackOverlayTitle ||
       x.ddsTrackId !== y.ddsTrackId ||
       x.frameWidth !== y.frameWidth ||

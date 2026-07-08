@@ -31,6 +31,12 @@ class TrackEvalRequest(BaseModel):
     region_type: str = ""
     bounding_box: Optional[Dict[str, float]] = None
     polygon: Optional[Dict[str, Any]] = Field(default=None, description="含 points 数组")
+    fused_track_id: Optional[int] = None
+    unique_id: Optional[int] = None
+    attr_range: Optional[Dict[str, float]] = None
+    sea_fusion_filter: Optional[str] = None
+    air_fusion_filter: Optional[str] = None
+    display_sensor_ids: Optional[List[int]] = None
 
 
 class CameraSharpnessRequest(BaseModel):
@@ -145,6 +151,12 @@ async def post_track_evaluate(body: TrackEvalRequest = Body(...)):
             region_type=body.region_type,
             bounding_box=body.bounding_box,
             polygon_points=polygon_points,
+            fused_track_id=body.fused_track_id,
+            unique_id=body.unique_id,
+            attr_range=body.attr_range,
+            sea_fusion_filter=body.sea_fusion_filter,
+            air_fusion_filter=body.air_fusion_filter,
+            display_sensor_ids=body.display_sensor_ids,
         )
         if result.get("resource_exhausted"):
             return JSONResponse(

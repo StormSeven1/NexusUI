@@ -8,7 +8,7 @@ import { useAppStore, type LeftPanelTab } from "@/stores/app-store";
 import { useAlertStore } from "@/stores/alert-store";
 import { cn } from "@/lib/utils";
 import { getWindowConfig } from "@/components/dock/windowRegistry";
-import { dockedPanelsInPartition } from "@/components/layout/dock-sidebar-utils";
+import { dockedPanelsInPartition, LEFT_DOCK_TOOL_IDS } from "@/components/layout/dock-sidebar-utils";
 import {
   isElectroOpticalDockPanel,
   useEoVideoPanelFocusStore,
@@ -16,7 +16,7 @@ import {
 import { EoVideoSmartWindowToggle } from "@/components/eo-video/EoVideoSmartWindowToggle";
 
 /** Keep original 4 tools; EO appears only when docked back. */
-const LEFT_TOOLS = ["tracks", "assets", "layers", "alerts", "track-display"] as const satisfies readonly PanelId[];
+const LEFT_TOOLS = LEFT_DOCK_TOOL_IDS;
 
 export function DockLeftSidebar() {
   const MIN_LEFT_WIDTH = 260;
@@ -146,8 +146,9 @@ export function DockLeftSidebar() {
         <div className="flex h-full w-full flex-col">
           {sortedPartitions.map((partition) => {
             const ratio = Math.max(0.08, partition.heightRatio);
-            if (partition.id === "left-0") {
-              const dockedHere = dockedPanelsInPartition(panels, "left-0");
+            const partitionKey = partition.id;
+            if (partitionKey === "left-0" || partitionKey === "left-default") {
+              const dockedHere = dockedPanelsInPartition(panels, partitionKey);
               const dockedIds = new Set(dockedHere.map((p) => p.id));
               const left0Extras = dockedHere
                 .map((p) => p.id)
@@ -156,6 +157,15 @@ export function DockLeftSidebar() {
                 ...LEFT_TOOLS.filter((tid) => dockedIds.has(tid)),
                 ...left0Extras,
               ];
+              if (left0Buttons.length === 0) {
+                return (
+                  <div
+                    key={partition.id}
+                    className="min-h-0 w-full"
+                    style={{ flexBasis: `${ratio * 100}%`, flexGrow: 0, flexShrink: 0 }}
+                  />
+                );
+              }
               return (
                 <div
                   key={partition.id}

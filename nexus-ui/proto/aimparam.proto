@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package aimparam;
+
+message SeaAim {
+  float minAzi = 1;
+  float maxAzi = 2;
+  float minDis = 3;
+  float maxDis = 4;
+  string seamParamP = 5;
+  string seamParamT = 6;
+}
+
+message SkyAim {
+  string skyParamT = 1;
+}
+
+message AimparamRequest {
+  int32 cameraIndex = 1;
+  int32 aimType = 2;
+  string aimPath = 3;
+}
+
+message AimparamResponse {
+  int32 cameraIndex = 1;
+  int32 aimType = 2;
+  repeated SeaAim seamParam = 3;
+  SkyAim skyParam = 4;
+}
+
+service Aimparam {
+  rpc StreamAim(stream AimparamRequest) returns (stream AimparamResponse);
+}

@@ -82,6 +82,8 @@ export interface EoDetectionBox {
   variant?: "default" | "singleTrack";
   /** 单目标：圆标内一字（仅海/空），对齐 Qt DrawCircleTag 圆内 `text` */
   singleTagShort?: string;
+  /** WS 第 6 列 / 对象 `rectType`，与 Qt `RectTrackInfo.type` 一致 */
+  rectTypeId?: number;
   /** 单目标：四行航迹信息（AZI/DIS/SPD/COG），来自 WS 首框对象字段 */
   singleTrackDetail?: {
     azimuthDeg?: number;

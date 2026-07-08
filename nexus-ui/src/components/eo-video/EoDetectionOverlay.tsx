@@ -6,6 +6,7 @@ import type { EoDetectionBox } from "@/lib/eo-video/types";
 import { mergeSingleTrackTelemetry } from "@/lib/eo-video/mergeSingleTrackTelemetry";
 import { mapEoBoxToPresentationNorm } from "@/lib/eo-video/detectionSyncUtils";
 import { resolveEoDetectionHitAtClient } from "@/lib/eo-video/resolveEoDetectionHit";
+import type { EoVideoObjectFit } from "@/lib/eo-video/eoVideoObjectFit";
 import { getVideoContentRect, resolveEoVideoIntrinsicSize } from "@/lib/eo-video/videoContentRect";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 import { useTrackStore } from "@/stores/track-store";
@@ -38,12 +39,14 @@ export interface EoDetectionOverlayProps {
   }) => void;
   className?: string;
   /** 与视频元素/Canvas 的 object-fit 一致 */
-  videoObjectFit?: "contain" | "cover";
+  videoObjectFit?: EoVideoObjectFit;
   /** WebCodecs 模式下 video 元素可能无法提供 intrinsic size，用此 fallback */
   videoIntrinsicWidth?: number;
   videoIntrinsicHeight?: number;
   /** false：仅绘制框，不拦截指针（无人机拖拽瞄准等） */
   interactive?: boolean;
+  /** 由 `useEoEntityDetection` 每帧回调注册，实现与视频同帧 canvas 绘制 */
+  onRegisterDraw?: (draw: ((frameBoxes?: EoDetectionBox[]) => void) | null) => void;
 }
 
 function clamp01(v: number): number {
@@ -255,13 +258,18 @@ export function EoDetectionOverlay({
   onSelectBox,
   onDoubleClickPoint,
   className,
-  videoObjectFit = "cover",
+  videoObjectFit = "fill",
   videoIntrinsicWidth = 0,
   videoIntrinsicHeight = 0,
   interactive = true,
+  onRegisterDraw,
 }: EoDetectionOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rafRef = useRef<number | null>(null);
+  const boxesRef = useRef(boxes);
+  const lastDrawnBoxesRef = useRef<EoDetectionBox[]>([]);
+  const onRegisterDrawRef = useRef(onRegisterDraw);
+  onRegisterDrawRef.current = onRegisterDraw;
+  boxesRef.current = boxes;
 
   const ddsLookupKey = useMemo(() => {
     const raw = (ddsCameraEntityId ?? detectionEntityId ?? "").trim();
@@ -269,15 +277,37 @@ export function EoDetectionOverlay({
     return canonicalEntityId(raw) || raw;
   }, [ddsCameraEntityId, detectionEntityId]);
 
-  const ddsRow = useEoCameraDdsStatusStore((s) => (ddsLookupKey ? s.byEntityId[ddsLookupKey] : undefined));
-  const tracks = useTrackStore((s) => s.tracks);
+  const selectedBoxIdRef = useRef(selectedBoxId);
+  selectedBoxIdRef.current = selectedBoxId;
+  const expandedModeRef = useRef(expandedMode);
+  expandedModeRef.current = expandedMode;
+  const videoObjectFitRef = useRef(videoObjectFit);
+  videoObjectFitRef.current = videoObjectFit;
+  const videoIntrinsicWidthRef = useRef(videoIntrinsicWidth);
+  videoIntrinsicWidthRef.current = videoIntrinsicWidth;
+  const videoIntrinsicHeightRef = useRef(videoIntrinsicHeight);
+  videoIntrinsicHeightRef.current = videoIntrinsicHeight;
+  const ddsLookupKeyRef = useRef(ddsLookupKey);
+  ddsLookupKeyRef.current = ddsLookupKey;
 
-  const draw = useCallback(() => {
+  const draw = useCallback((frameBoxes?: EoDetectionBox[]) => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     const video = videoRef.current;
     if (!canvas || !container) return;
 
+    /** rvfc/onPresentFrame 已接管绘制时，禁止回退到可能滞后的 React boxes（否则会与单目标帧交替闪多目标样式） */
+    const list =
+      frameBoxes !== undefined
+        ? frameBoxes
+        : onRegisterDrawRef.current
+          ? lastDrawnBoxesRef.current
+          : boxesRef.current;
+    if (list.length > 0) {
+      lastDrawnBoxesRef.current = list;
+    } else if (frameBoxes !== undefined) {
+      lastDrawnBoxesRef.current = [];
+    }
     const rect = container.getBoundingClientRect();
     const w = Math.max(1, Math.floor(rect.width));
     const h = Math.max(1, Math.floor(rect.height));
@@ -294,11 +324,19 @@ export function EoDetectionOverlay({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    const { w: vw, h: vh } = resolveEoVideoIntrinsicSize(video, videoIntrinsicWidth, videoIntrinsicHeight);
-    const content = getVideoContentRect(w, h, vw, vh, videoObjectFit);
+    const fit = videoObjectFitRef.current;
+    const viw = videoIntrinsicWidthRef.current;
+    const vih = videoIntrinsicHeightRef.current;
+    const { w: vw, h: vh } = resolveEoVideoIntrinsicSize(video, viw, vih);
+    const content = getVideoContentRect(w, h, vw, vh, fit);
+    const selectedId = selectedBoxIdRef.current;
+    const ex = expandedModeRef.current;
+    const ddsKey = ddsLookupKeyRef.current;
+    const ddsRow = ddsKey ? useEoCameraDdsStatusStore.getState().byEntityId[ddsKey] : undefined;
+    const tracks = useTrackStore.getState().tracks;
 
-    for (const b of boxes) {
-      const isSelected = b.id === selectedBoxId;
+    for (const b of list) {
+      const isSelected = b.id === selectedId;
       const norm = mapEoBoxToPresentationNorm(b, vw, vh);
       const x = content.x + norm.x * content.w;
       const y = content.y + norm.y * content.h;
@@ -307,7 +345,7 @@ export function EoDetectionOverlay({
 
       if (b.variant === "singleTrack") {
         const mergedDetail = mergeSingleTrackTelemetry(b, ddsRow, tracks);
-        drawSingleTrackOverlay(ctx, x, y, bw, bh, b, isSelected, expandedMode, mergedDetail);
+        drawSingleTrackOverlay(ctx, x, y, bw, bh, b, isSelected, ex, mergedDetail);
         continue;
       }
 
@@ -327,50 +365,36 @@ export function EoDetectionOverlay({
         ctx.fillText(b.label, x + pad, y - 4);
       }
     }
-  }, [
-    boxes,
-    containerRef,
-    ddsRow,
-    expandedMode,
-    selectedBoxId,
-    tracks,
-    videoObjectFit,
-    videoIntrinsicWidth,
-    videoIntrinsicHeight,
-    videoRef,
-  ]);
+  }, [containerRef, videoRef]);
 
-  const schedule = useCallback(() => {
-    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
-      draw();
-    });
-  }, [draw]);
+  useEffect(() => {
+    onRegisterDraw?.(draw);
+    return () => onRegisterDraw?.(null);
+  }, [draw, onRegisterDraw]);
 
   useEffect(() => {
     const container = containerRef.current;
     const video = videoRef.current;
     if (!container) return;
 
-    const ro = new ResizeObserver(() => schedule());
+    const ro = new ResizeObserver(() => draw());
     ro.observe(container);
-    const onVideo = () => schedule();
+    const onVideo = () => draw();
     video?.addEventListener("loadedmetadata", onVideo);
     window.addEventListener("resize", onVideo);
-    schedule();
+    draw();
 
     return () => {
       ro.disconnect();
       video?.removeEventListener("loadedmetadata", onVideo);
       window.removeEventListener("resize", onVideo);
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
-  }, [containerRef, schedule, videoRef]);
+  }, [containerRef, draw, videoRef]);
 
+  /** 选中高亮不等待下一视频帧 */
   useEffect(() => {
-    schedule();
-  }, [boxes, ddsRow, schedule, tracks]);
+    draw();
+  }, [draw, selectedBoxId]);
 
   const resolveHit = useCallback(
     (
@@ -398,9 +422,13 @@ export function EoDetectionOverlay({
         const bh = norm.h * content.h;
         return px >= bx - pad && px <= bx + bw + pad && py >= by - pad && py <= by + bh + pad;
       };
+      const hitList =
+        onRegisterDrawRef.current && lastDrawnBoxesRef.current.length > 0
+          ? lastDrawnBoxesRef.current
+          : boxes;
       /** 海/空多目标框优先于单目标角标，避免跟踪态下误点成取消 */
-      for (let i = boxes.length - 1; i >= 0; i--) {
-        const b = boxes[i]!;
+      for (let i = hitList.length - 1; i >= 0; i--) {
+        const b = hitList[i]!;
         if (b.variant === "singleTrack") continue;
         if (tryHit(b)) {
           hitBoxId = b.id;
@@ -409,8 +437,8 @@ export function EoDetectionOverlay({
         }
       }
       if (!hitBox) {
-        for (let i = boxes.length - 1; i >= 0; i--) {
-          const b = boxes[i]!;
+        for (let i = hitList.length - 1; i >= 0; i--) {
+          const b = hitList[i]!;
           if (tryHit(b)) {
             hitBoxId = b.id;
             hitBox = b;

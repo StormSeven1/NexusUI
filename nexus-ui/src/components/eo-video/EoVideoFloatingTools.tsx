@@ -5,6 +5,7 @@ import {
   Bug,
   Camera,
   ChevronDown,
+  ClipboardList,
   Crosshair,
   Loader2,
   Monitor,
@@ -76,6 +77,13 @@ export interface EoVideoFloatingToolsProps {
   showCameraExpandedDebugToggle?: boolean;
   cameraExpandedDebugOpen?: boolean;
   onToggleCameraExpandedDebug?: () => void;
+  /** 相机跟踪标定采集（对齐 Qt CalcRecord） */
+  calcRecordSupported?: boolean;
+  onOpenCalcRecord?: () => void;
+  /** 无人机放大：底部 DRC / MQTT 调试面板 */
+  showUavExpandedDebugToggle?: boolean;
+  uavExpandedDebugOpen?: boolean;
+  onToggleUavExpandedDebug?: () => void;
 }
 
 const uavOverlayToolClass =
@@ -136,6 +144,11 @@ export function EoVideoFloatingTools({
   showCameraExpandedDebugToggle = false,
   cameraExpandedDebugOpen = false,
   onToggleCameraExpandedDebug,
+  calcRecordSupported = false,
+  onOpenCalcRecord,
+  showUavExpandedDebugToggle = false,
+  uavExpandedDebugOpen = false,
+  onToggleUavExpandedDebug,
 }: EoVideoFloatingToolsProps) {
   const log = useCallback((s: string) => onUavClientLog?.(`${new Date().toLocaleTimeString()} ${s}`), [onUavClientLog]);
   const notify = useCallback(
@@ -498,6 +511,20 @@ export function EoVideoFloatingTools({
         <Camera className="size-3.5" />
       </Button>
 
+      {variant === "camera" && calcRecordSupported ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white"
+          title="相机跟踪采集（标定数据记录）"
+          aria-label="相机跟踪采集"
+          onClick={() => onOpenCalcRecord?.()}
+        >
+          <ClipboardList className="size-3.5" />
+        </Button>
+      ) : null}
+
       {variant === "uav" && onToggleUavVideoOnly && expandedMode ? (
         <Button
           type="button"
@@ -601,6 +628,29 @@ export function EoVideoFloatingTools({
           >
             <Gamepad2 className="size-3.5" />
           </Button>
+          {showUavExpandedDebugToggle && onToggleUavExpandedDebug ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              title={
+                uavExpandedDebugOpen
+                  ? "收起底部调试信息（MQTT / DRC 手控）"
+                  : "在底部展开调试信息（MQTT / DRC 手控）"
+              }
+              aria-label="无人机放大调试信息"
+              aria-pressed={uavExpandedDebugOpen}
+              className={cn(
+                "border border-white/25 bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+                uavExpandedDebugOpen
+                  ? "border-amber-400/45 bg-amber-950/40 text-amber-200"
+                  : "text-white/85",
+              )}
+              onClick={() => onToggleUavExpandedDebug()}
+            >
+              <Bug className="size-3.5" />
+            </Button>
+          ) : null}
           <div className="my-0.5 h-px w-6 bg-gradient-to-r from-transparent via-white/35 to-transparent" aria-hidden />
           <Button
             type="button"

@@ -30,10 +30,13 @@ TRACK_LAYER_KEY_BY_RECEIVER = {
     "dds_forward_fuse_bird_radar_track_virtual": "fuse_air",
     "dds_forward_bird_radar_track": "bird_radar",
     "dds_forward_fanwu_car_track": "fanwu_car_radar",
+    "dds_udp_fanwucar_track": "fanwu_car_radar",
     "dds_forward_radar_track1": "radar_wharf",
     "dds_forward_radar_track2": "radar_jingzi",
     "dds_forward_ais_track": "ais_track",
     "dds_forward_uav_pose_track": "uav_pose_track",
+    "dds_udp_boatself_track": "boat_self_track",
+    "dds_udp_xpf_track": "xpf_track",
 }
 
 

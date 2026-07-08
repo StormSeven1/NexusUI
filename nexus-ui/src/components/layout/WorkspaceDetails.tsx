@@ -153,10 +153,8 @@ const WORKSPACE_CONFIGS = {
     title: "态势工作区",
     description: "战场态势监控与分析",
     statistics: [
-      { label: "监控目标", value: "0", icon: MapPin, color: "text-blue-400" },
       { label: "跟踪航迹", value: "0", icon: Route, color: "text-green-400" },
       { label: "告警事件", value: "0", icon: BarChart3, color: "text-orange-400" },
-      { label: "图层显示", value: "0", icon: Layers, color: "text-purple-400" },
     ] as StatRow[],
     tools: [],
   },
@@ -314,52 +312,11 @@ export function WorkspaceDetails() {
   const [quickWorkflowOpen, setQuickWorkflowOpen] = useState(false);
 
   const situationLiveStats = useMemo((): StatRow[] => {
-    const layerN = countLayerPanelEnabled(
-      assets,
-      cameraMenuIds,
-      layerVisibility,
-      basemapGroupVisible,
-      basemapVectorLayers,
-      basemapVectorVisibility,
-      basemapRasterLayers,
-      basemapRasterVisibility,
-      trackSubtypeVisible,
-      airFusionSubtypeVisible,
-      dbAreaRows,
-      dbAreaVisibility,
-      optoDeviceVisibility,
-      droneDeviceVisibility,
-      dronePanelRows,
-      radarDeviceVisibility,
-      radarPanelIds,
-    );
     return [
-      { label: "监控目标", value: String(assets.length), icon: MapPin, color: "text-blue-400" },
       { label: "跟踪航迹", value: String(tracks.length), icon: Route, color: "text-green-400" },
       { label: "告警事件", value: String(alerts.length), icon: BarChart3, color: "text-orange-400" },
-      { label: "图层显示", value: String(layerN), icon: Layers, color: "text-purple-400" },
     ];
-  }, [
-    assets,
-    tracks,
-    alerts,
-    layerVisibility,
-    basemapGroupVisible,
-    basemapVectorLayers,
-    basemapVectorVisibility,
-    basemapRasterLayers,
-    basemapRasterVisibility,
-    trackSubtypeVisible,
-    airFusionSubtypeVisible,
-    dbAreaRows,
-    dbAreaVisibility,
-    optoDeviceVisibility,
-    droneDeviceVisibility,
-    cameraMenuIds,
-    dronePanelRows,
-    radarDeviceVisibility,
-    radarPanelIds,
-  ]);
+  }, [tracks, alerts]);
 
   const assetsLiveStats = useMemo((): StatRow[] => {
     const total = assets.length;

@@ -130,6 +130,8 @@ chmod +x "$ROOT/dev-wss-nginx.sh" 2>/dev/null || true
 _cfg_host="${_site_host}"
 echo "== 写入 nexus-ui/public/app-config.dev.json（开发: ${_cfg_host}:${BP}）=="
 APP_CONFIG_OUT=app-config.dev.json "$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BP"
+chmod +x "$ROOT/docker/apply-proxy-links-to-app-config.sh" 2>/dev/null || true
+"$ROOT/docker/apply-proxy-links-to-app-config.sh" "$ROOT"
 
 _next_dir="$ROOT/nexus-ui/.next"
 if [[ "$DO_REBUILD" -eq 1 && -d "$_next_dir" ]]; then

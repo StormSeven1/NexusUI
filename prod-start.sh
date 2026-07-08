@@ -30,14 +30,17 @@ cd "$ROOT"
 
 DO_GIT_PULL=0
 DO_REBUILD=0
+DO_RESTART=0
 for a in "$@"; do
   case "$a" in
     --pull) DO_GIT_PULL=1 ;;
     --rebuild) DO_REBUILD=1 ;;
+    --restart) DO_RESTART=1 ;;
     -h|--help)
-      echo "用法: $0 [--pull] [--rebuild]"
+      echo "用法: $0 [--pull] [--rebuild] [--restart]"
       echo "  --pull     在 $ROOT 执行 git pull --ff-only"
       echo "  --rebuild  清理前端 .next 并 pip install --upgrade"
+      echo "  --restart  仅 docker restart 现有容器（保留容器内 apt/ffmpeg；改 NexusUI 后配合宿主机 prod-build）"
       exit 0
       ;;
     *)
@@ -98,7 +101,11 @@ echo "== 写入 nexus-ui/public/app-config.prod.json（生产容器: ${_cfg_host
 APP_CONFIG_OUT=app-config.prod.json "$ROOT/docker/apply-app-config-endpoints.sh" "$ROOT" "$_cfg_host" "$BP"
 
 echo "== 重建容器并挂载 /workspace（生产模式，无 DEV_MODE）=="
-docker rm -f "$NAME" 2>/dev/null || true
+if [[ "$DO_RESTART" -eq 1 ]] && docker inspect "$NAME" >/dev/null 2>&1; then
+  echo "== --restart：docker restart ${NAME}（不删容器，跳过重复 apt/ffmpeg）=="
+  docker restart "$NAME" >/dev/null
+else
+  docker rm -f "$NAME" 2>/dev/null || true
 
 if [[ "$DO_REBUILD" -eq 1 ]]; then
   echo "== --rebuild：将清理 nexus-ui/.next 并在容器内刷新依赖 =="
@@ -106,14 +113,39 @@ fi
 
 # 从 nexus-ui/.env.local 读取 NEXUS_DDS_CAMERA_STATUS_MODE（legacy | entity | both），注入 Custombackend 容器
 NEXUS_DDS_CAMERA_STATUS_MODE="${NEXUS_DDS_CAMERA_STATUS_MODE:-legacy}"
+NEXUS_EO_CALC_RECORD_CAM_CONF_DIR="${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR:-/mnt/nfs_200T/camconf}"
+NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT="${NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT:-\\\\192.168.18.142\\store_200T\\camconf}"
+NEXUS_EO_AIM_PARAM_GRPC_ADDR="${NEXUS_EO_AIM_PARAM_GRPC_ADDR:-192.168.18.108:50052}"
 if [[ -f "$ROOT/nexus-ui/.env.local" ]]; then
   _cam_dds_mode="$(grep -E '^[[:space:]]*NEXUS_DDS_CAMERA_STATUS_MODE=' "$ROOT/nexus-ui/.env.local" | tail -1 | cut -d= -f2- | xargs)"
   _cam_dds_mode="${_cam_dds_mode//$'\r'/}"
   _cam_dds_mode="${_cam_dds_mode//\"/}"
   _cam_dds_mode="${_cam_dds_mode//\'/}"
   [[ -n "$_cam_dds_mode" ]] && NEXUS_DDS_CAMERA_STATUS_MODE="$_cam_dds_mode"
+
+  _read_env_local() {
+    local key="$1"
+    grep -E "^[[:space:]]*${key}=" "$ROOT/nexus-ui/.env.local" | tail -1 | cut -d= -f2- | xargs
+  }
+  _v="$(_read_env_local NEXUS_EO_CALC_RECORD_CAM_CONF_DIR)"; [[ -n "$_v" ]] && NEXUS_EO_CALC_RECORD_CAM_CONF_DIR="$_v"
+  _v="$(_read_env_local NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT)"; [[ -n "$_v" ]] && NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT="$_v"
+  _v="$(_read_env_local NEXUS_EO_AIM_PARAM_GRPC_ADDR)"; [[ -n "$_v" ]] && NEXUS_EO_AIM_PARAM_GRPC_ADDR="$_v"
 fi
 echo "NEXUS_DDS_CAMERA_STATUS_MODE=${NEXUS_DDS_CAMERA_STATUS_MODE}（相机 PTZ DDS：legacy=149 / entity=200）"
+echo "NEXUS_EO_CALC_RECORD_CAM_CONF_DIR=${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR}（跟踪采集 camConf 写入）"
+
+# 必须挂载整棵 /mnt/nfs_200T：仅 bind camconf 子目录时，容器内 read/write 易在 NFS 上卡死
+NFS_200T_ROOT="/mnt/nfs_200T"
+NFS_MOUNT_ARGS=()
+if mountpoint -q "$NFS_200T_ROOT" 2>/dev/null || grep -qs " on ${NFS_200T_ROOT} " /proc/mounts 2>/dev/null; then
+  NFS_MOUNT_ARGS=(-v "${NFS_200T_ROOT}:${NFS_200T_ROOT}")
+  echo "NFS 200T 整树挂载: ${NFS_200T_ROOT} → 容器同路径"
+elif [[ -d "$NEXUS_EO_CALC_RECORD_CAM_CONF_DIR" ]]; then
+  NFS_MOUNT_ARGS=(-v "${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR}:${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR}")
+  echo "警告: ${NFS_200T_ROOT} 非 mountpoint，退化为仅 camconf 子目录（容器内读写可能卡住）" >&2
+else
+  echo "警告: camConf 目录不存在 ${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR}，跟踪采集将写入容器内本地路径" >&2
+fi
 
 docker run -d \
   --name "$NAME" \
@@ -128,6 +160,8 @@ docker run -d \
   -e "BACKEND_URL=${BU}" \
   -e "BACKEND_ONLY=${BACKEND_ONLY:-0}" \
   -e "NEXUS_DDS_CAMERA_STATUS_MODE=${NEXUS_DDS_CAMERA_STATUS_MODE}" \
+  -e "NEXUS_EO_CALC_RECORD_CAM_CONF_DIR=${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR}" \
+  -e "NEXUS_EO_AIM_PARAM_GRPC_ADDR=${NEXUS_EO_AIM_PARAM_GRPC_ADDR}" \
   -e "NEXUS_DOCKER_NO_KILL=${NEXUS_DOCKER_NO_KILL:-0}" \
   -e "NEXUS_UI_CLEAN_NEXT=${DO_REBUILD}" \
   -e "NEXUS_UI_SKIP_BUILD=${NEXUS_UI_SKIP_BUILD:-$(( DO_REBUILD == 0 ? 1 : 0 ))}" \
@@ -138,10 +172,12 @@ docker run -d \
   -e "NEXT_PUBLIC_APP_CONFIG_URL=/app-config.prod.json" \
   -v "${ROOT}:/workspace" \
   -v "${START_SH}:/start.sh:ro" \
+  "${NFS_MOUNT_ARGS[@]}" \
   --shm-size=64m \
   --entrypoint /bin/bash \
   "$IMG" \
   -c 'set -e; chmod +x /start.sh 2>/dev/null || true; exec /start.sh'
+fi
 
 sleep 2
 running="$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null || echo false)"
@@ -158,7 +194,7 @@ echo "  后端 API: http://127.0.0.1:${BP}/api  WebSocket: ws://127.0.0.1:${BP}/
 echo ""
 echo "说明: 容器内默认跳过 pip / 跳过 npm run build（已有 .next）；改代码或 NEXT_PUBLIC_* 后用 --rebuild。"
 echo "      浏览器读 public/app-config.prod.json（与开发 app-config.dev.json 互不覆盖）。"
-echo "      NEXUS_SPEECH_MODE=2 时容器启动会自动 apt 安装 ffmpeg（webm→wav 转码）；重建容器后生效。"
+echo "      NEXUS_SPEECH_MODE=2 时 ffmpeg 在容器内后台 apt 安装（不阻塞 :${BP}）；仅改 NexusUI 建议 ./prod-build.sh && $0 --restart。"
 echo "      若路由/API 异常，请确认本机构建时 BACKEND_URL 与上述一致，必要时先 ./prod-build.sh 再重启。"
 echo "查看日志: docker logs -f ${NAME}"
 echo "进入容器: docker exec -it ${NAME} bash"

@@ -4,16 +4,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { buildAvcCFromKeyFrame } from "@/lib/eo-video/h264AvcConfig";
 import type { EncodedFrameData } from "@/lib/eo-video/eoWebrtcEncodedSync";
 
-/** 环缓冲上限：避免挤掉 IDR；与开解阈值分离以控制首帧延迟 */
-const MAX_FRAME_BUFFER = 8;
-const MIN_FRAMES_BEFORE_DECODE = 2;
+/** 环缓冲上限：多路流/PTZ 运动时避免挤掉参考帧；与开解阈值分离以控制首帧延迟 */
+const MAX_FRAME_BUFFER = 30;
+const MIN_FRAMES_BEFORE_DECODE = 1;
+/** 单次 drain 最多连续 decode 的包数（追帧时不阻塞 readable） */
+const MAX_DECODE_BATCH = 4;
 
 /** WebRTC H.264 常用 90kHz RTP 时钟 */
 const RTP_CLOCK_HZ = 90_000;
 /** 允许解码输出相对已显示帧最多回退约 2 帧（25fps） */
 const MAX_RENDER_BACKWARD_TICKS = Math.round((2 / 25) * RTP_CLOCK_HZ);
-/** 相对当前输入前沿超过该 lag 的编码包/解码输出视为过期，拒绝解码或上屏（防「闪很久以前的画面」） */
-const MAX_STALE_TICKS = Math.round(0.5 * RTP_CLOCK_HZ);
+/** 相对当前输入前沿超过该 lag 的编码包视为过期，须跳到 IDR（防花屏：不可只丢中间 P/B 帧） */
+const MAX_STALE_TICKS = Math.round(1.0 * RTP_CLOCK_HZ);
 
 /** RTP timestamp 有符号差值（a - b），正确处理 32-bit 回绕 */
 function rtpSignedDelta(a: number, b: number): number {
@@ -21,6 +23,39 @@ function rtpSignedDelta(a: number, b: number): number {
   if (d > 0x7fffffff) d -= 0x100000000;
   if (d < -0x80000000) d += 0x100000000;
   return d;
+}
+
+/**
+ * H.264 参考链：缓冲溢出时丢队尾（最新）帧，保留已入队的 I/P 链，避免 P/B 无参考花屏。
+ */
+function dropNewestOverflowFrames(fb: EncodedFrameData[], maxLen: number): void {
+  while (fb.length > maxLen) {
+    fb.pop();
+  }
+}
+
+/** 过期追帧：丢弃队头直到 IDR，并重置解码器（不可只 shift 中间 delta） */
+function skipStaleUntilKeyFrame(
+  fb: EncodedFrameData[],
+  inputFront: number,
+  maxStaleTicks: number,
+  resetDecoder: () => void,
+): void {
+  let skipped = false;
+  while (fb.length > 0) {
+    const oldest = fb[0]!;
+    if (inputFront === 0 || rtpSignedDelta(inputFront, oldest.timestamp) <= maxStaleTicks) {
+      break;
+    }
+    fb.shift();
+    skipped = true;
+  }
+  if (skipped) {
+    while (fb.length > 0 && fb[0]!.type !== "key") {
+      fb.shift();
+    }
+    resetDecoder();
+  }
 }
 
 const CODECS = [
@@ -174,25 +209,25 @@ export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
     const drainDecodeQueue = () => {
       if (closed) return;
       const decoder = decoderRef.current;
-      if (!decoder || decoder.decodeQueueSize > 0) return;
+      if (!decoder) return;
 
       const fb = frameBufferRef.current;
       const inputFront = latestInputTimestampRef.current;
 
-      while (fb.length >= MIN_FRAMES_BEFORE_DECODE) {
+      skipStaleUntilKeyFrame(fb, inputFront, MAX_STALE_TICKS, () =>
+        resetDecoderState("stale skip to IDR"),
+      );
+
+      let batch = 0;
+      while (fb.length >= MIN_FRAMES_BEFORE_DECODE && batch < MAX_DECODE_BATCH) {
+        if (decoder.decodeQueueSize > 0) break;
+
         const oldest = fb[0]!;
-        if (inputFront !== 0 && rtpSignedDelta(inputFront, oldest.timestamp) > MAX_STALE_TICKS) {
-          fb.shift();
-          if (oldest.type === "key") {
-            resetDecoderState("stale key frame dropped");
-          }
-          continue;
-        }
 
         if (!firstKeyFrameRef.current && oldest.type !== "key") {
           if (fb.length >= MAX_FRAME_BUFFER) {
-            /** 丢弃最旧 delta，继续等 IDR，避免整段清空导致黑屏 */
-            fb.shift();
+            /** 等 IDR 时缓冲满 `pop` 最新帧，勿 `shift` 破坏参考链 */
+            dropNewestOverflowFrames(fb, MAX_FRAME_BUFFER - 1);
           }
           return;
         }
@@ -221,11 +256,12 @@ export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
             data: oldest.data,
           });
           decoder.decode(chunk);
+          batch += 1;
         } catch (err) {
           console.error("[WebCodecs] decode chunk error:", err);
           resetDecoderState("decode chunk error");
+          return;
         }
-        return;
       }
     };
 
@@ -372,9 +408,11 @@ export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
 
     const fb = frameBufferRef.current;
     fb.push(frame);
-    while (fb.length > MAX_FRAME_BUFFER) {
-      const dropped = fb.shift();
-      if (dropped?.type === "key" && firstKeyFrameRef.current) {
+    /** 溢出丢最新帧，保留 H.264 参考链；若队头 IDR 被 pop 掉则等下一 IDR */
+    dropNewestOverflowFrames(fb, MAX_FRAME_BUFFER);
+    if (firstKeyFrameRef.current && fb.length > 0 && fb[0]!.type !== "key") {
+      const hasKey = fb.some((f) => f.type === "key");
+      if (!hasKey) {
         firstKeyFrameRef.current = false;
         decoderConfiguredRef.current = false;
         const d = decoderRef.current;

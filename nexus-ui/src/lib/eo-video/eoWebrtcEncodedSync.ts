@@ -15,7 +15,8 @@ export interface EoEncodedSyncSnapshot {
 }
 
 const RING_CAP = 128;
-const DEFAULT_PRESENTATION_LAG_FRAMES = 6;
+/** 与 sei_poc_test 一致：RTP 近邻失败时用环上最新帧，不再固定滞后 6 帧 */
+const DEFAULT_PRESENTATION_LAG_FRAMES = 0;
 const PRESENTATION_WALL_STALE_MS = 3000;
 /** 90kHz 下 25fps 约 3600 tick/帧；近邻匹配不超过 2 帧 */
 export const EO_RTP_TICKS_PER_FRAME = 3600;
@@ -116,7 +117,12 @@ export function createEoEncodedSyncHub(): EoEncodedSyncHub {
           if (delta === 0) break;
         }
       }
-      if (!best || bestDelta > maxClockDelta) return null;
+      if (!best || bestDelta > maxClockDelta) {
+        const latest = ring[ring.length - 1]!;
+        const age = Date.now() - latest.wallMs;
+        if (age > PRESENTATION_WALL_STALE_MS || age < -60_000) return null;
+        return { syncHeader: latest.syncHeader, wallMs: latest.wallMs };
+      }
       const age = Date.now() - best.wallMs;
       if (age > PRESENTATION_WALL_STALE_MS || age < -60_000) return null;
       return { syncHeader: best.syncHeader, wallMs: best.wallMs };
@@ -154,11 +160,19 @@ function pushEncodedFrameSideEffects(
     const byteOffset = raw instanceof ArrayBuffer ? 0 : (raw as ArrayBufferView).byteOffset;
     const byteLength = raw instanceof ArrayBuffer ? buf.byteLength : (raw as ArrayBufferView).byteLength;
     const copied = buf.slice(byteOffset, byteOffset + byteLength) as ArrayBuffer;
-    onEncodedFrame({
+    const payload: EncodedFrameData = {
       data: copied,
       timestamp: encodedFrame.timestamp ?? 0,
       type: (encodedFrame as unknown as { type?: string }).type === "key" ? "key" : "delta",
       receivedAt: Date.now(),
+    };
+    /** 先拷贝再异步投递 WebCodecs，避免 transform 内同步 decode 调度阻塞 writable */
+    queueMicrotask(() => {
+      try {
+        onEncodedFrame(payload);
+       } catch {
+        /* ignore */
+      }
     });
   } catch {
     /* ignore copy errors */
@@ -168,6 +182,9 @@ function pushEncodedFrameSideEffects(
 /**
  * WebRTC Insertable Streams：拦截编码帧写入 hub 的 syncHeader 环，并可选拷贝到 `onEncodedFrame`（WebCodecs Canvas）。
  * 默认仍将帧 enqueue 到 writable（`<video>` 硬件解码）；`NEXT_PUBLIC_EO_VIDEO_HARDWARE_PASSTHROUGH=false` 且 WebCodecs 时仅读环、不写 writable。
+ *
+ * 注意：hub syncHeader 来自浏览器 WebRTC 收到的编码 AU（ZLM 重打包），WS header 来自 camServer RTSP `avpkt`
+ *（见 startplaybyffmpeg.cpp / DealTrackRect）。两路 bitstream 包界不同 → 诊断 cross 常为 0，需 wallMs/SEI/captureTs 对齐。
  */
 export function attachEncodedVideoFrameSync(
   receiver: RTCRtpReceiver,
@@ -225,8 +242,9 @@ export function attachEncodedVideoFrameSync(
 
   const transform = new TransformStream<RTCEncodedVideoFrame, RTCEncodedVideoFrame>({
     transform(encodedFrame, controller) {
-      pushEncodedFrameSideEffects(encodedFrame, hub, onEncodedFrame);
+      /** 先 passthrough 给 `<video>` 解码，再写 sync 环（对齐 sei_poc_test，减少观感延迟） */
       controller.enqueue(encodedFrame);
+      pushEncodedFrameSideEffects(encodedFrame, hub, onEncodedFrame);
     },
   });
 

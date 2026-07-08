@@ -67,6 +67,7 @@ PROD_START_ARGS=()
 for a in "$@"; do
   case "$a" in
     --no-build) DO_SKIP_FRONTEND_BUILD=1 ;;
+    --restart) PROD_START_ARGS+=("--restart") ;;
     *) PROD_START_ARGS+=("$a") ;;
   esac
 done
@@ -89,13 +90,13 @@ wait_tcp_port() {
   local label="$2"
   local max_sec="${WAIT_UPSTREAM_SEC:-900}"
   local deadline=$((SECONDS + max_sec))
-  echo "等待 ${label} 监听 127.0.0.1:${port}（最多 ${max_sec}s，含容器内 npm run build）..."
+  echo "等待 ${label} 监听 127.0.0.1:${port}（最多 ${max_sec}s）..."
   while (( SECONDS < deadline )); do
     if ss -tln 2>/dev/null | grep -qE ":${port}( |$)"; then
       echo "✅ ${label} 已就绪（:${port}）"
       return 0
     fi
-    sleep 5
+    sleep 1
   done
   echo "错误: ${label} 未在 ${max_sec}s 内监听 :${port}。查看: docker logs -f ${APP_CONTAINER_NAME}" >&2
   return 1

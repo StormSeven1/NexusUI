@@ -70,19 +70,36 @@ export function isLangGraphWorkflowEvent(parsed: Record<string, unknown>): boole
   return false;
 }
 
-/**
- * chat_notification 事件：data.details.thread_id 与相机管理上报 parentTaskId 一致，
- * 用于查证 SSE 路由到对应工作流会话。
- */
-export function extractChatNotificationThreadId(parsed: Record<string, unknown>): string | null {
+function readChatNotificationDetails(parsed: Record<string, unknown>): Record<string, unknown> | null {
   const ev = String(parsed.event ?? "").toLowerCase();
   if (ev !== "chat_notification") return null;
   const data = parsed.data;
   if (!data || typeof data !== "object") return null;
   const details = (data as Record<string, unknown>).details;
   if (!details || typeof details !== "object") return null;
-  const tid = (details as Record<string, unknown>).thread_id;
+  return details as Record<string, unknown>;
+}
+
+/**
+ * chat_notification 事件：data.details.thread_id 与相机管理上报 parentTaskId 一致，
+ * 用于查证 SSE 路由到对应工作流会话。
+ */
+export function extractChatNotificationThreadId(parsed: Record<string, unknown>): string | null {
+  const details = readChatNotificationDetails(parsed);
+  if (!details) return null;
+  const tid = details.thread_id;
   if (typeof tid === "string" && tid.trim()) return tid.trim();
+  return null;
+}
+
+/**
+ * chat_notification 事件：data.details.alert_area 为区域中文名，与 `area_table.area_name` 对齐。
+ */
+export function extractChatNotificationAlertArea(parsed: Record<string, unknown>): string | null {
+  const details = readChatNotificationDetails(parsed);
+  if (!details) return null;
+  const area = details.alert_area;
+  if (typeof area === "string" && area.trim()) return area.trim();
   return null;
 }
 

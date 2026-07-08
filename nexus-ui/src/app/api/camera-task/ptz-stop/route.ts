@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-function createTaskId(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function resolveTaskEndpoint(backendBaseUrl: string): string | null {
-  try {
-    const u = new URL(backendBaseUrl.trim());
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return `${u.protocol}//${u.host}/api/v1/tasks`;
-  } catch {
-    return null;
-  }
-}
+import { buildPtzStopTaskPayload, resolveCameraTaskHttpEndpoint } from "@/server/camera-task-payload";
+import { withCameraTaskEntityLock } from "@/server/camera-task-entity-queue";
+import {
+  isCameraTaskGrpcTransport,
+  ptzStopViaGrpc,
+  submitCameraTaskViaHttp,
+} from "@/server/camera-task-transport";
 
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -30,44 +24,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid entityId" }, { status: 400 });
   }
 
-  const target = resolveTaskEndpoint(backendBaseUrl);
+  if (isCameraTaskGrpcTransport()) {
+    try {
+      const result = await withCameraTaskEntityLock(entityId, () => ptzStopViaGrpc(entityId));
+      return new NextResponse(result.body, {
+        status: result.status,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "X-Camera-Task-Transport": result.transport,
+          "X-Camera-Task-Target": result.target,
+        },
+      });
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ error: "ptz grpc failed", detail }, { status: 502 });
+    }
+  }
+
+  const target = resolveCameraTaskHttpEndpoint(backendBaseUrl);
   if (!target) {
     return NextResponse.json({ error: "invalid backendBaseUrl" }, { status: 400 });
   }
 
-  const taskPayload = {
-    taskId: createTaskId("ptz_stop"),
-    parentTaskId: createTaskId("task_search"),
-    version: { definitionVersion: 1, statusVersion: 1 },
-    displayName: "云台停止",
-    taskType: "MANUAL",
-    maxExecutionTimeMs: 1000,
-    specification: { "@type": "type.casia.tasks.v1.PTZControlStop" },
-    createdBy: {
-      user: {
-        userId: "operator_001",
-        priority: 0,
-      },
+  const taskPayload = buildPtzStopTaskPayload(entityId);
+  const result = await withCameraTaskEntityLock(entityId, () =>
+    submitCameraTaskViaHttp(target, taskPayload),
+  );
+  return new NextResponse(result.body, {
+    status: result.status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "X-Camera-Task-Transport": result.transport,
+      "X-Camera-Task-Target": result.target,
     },
-    owner: { entityId },
-  };
-
-  try {
-    const upstream = await fetch(target, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(taskPayload),
-      cache: "no-store",
-    });
-    const text = await upstream.text();
-    return new NextResponse(text, {
-      status: upstream.status,
-      headers: {
-        "Content-Type": upstream.headers.get("content-type") ?? "application/json; charset=utf-8",
-      },
-    });
-  } catch (e) {
-    const detail = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: "ptz proxy failed", target, detail }, { status: 502 });
-  }
+  });
 }

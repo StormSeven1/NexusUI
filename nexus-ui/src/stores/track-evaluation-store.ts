@@ -26,6 +26,13 @@ import { getTrackEvalMapHandlers } from "@/lib/track-eval-map-bridge";
 import { getMapMeasureHandlers } from "@/stores/map-measure-bridge";
 import { useMapMeasureUi } from "@/stores/map-measure-bridge";
 import { fetchTrackEvalQuality, isTrackEvalGrpcEnabled } from "@/lib/system-eval-track-api";
+import {
+  buildDisplayFilterGrpcPayload,
+  defaultTrackEvalDisplayFilter,
+  filterEvalTrackFeatures,
+  filterGrpcTrackMetrics,
+  type TrackEvalDisplayFilterState,
+} from "@/lib/track-evaluation-display-filter";
 
 export type QueryStatusType = "" | "loading" | "success" | "error" | "info";
 
@@ -91,7 +98,6 @@ interface TrackEvaluationState {
   directDownload: boolean;
   /** 页面级定时自动查询（`useTrackEvalAutoQuery`） */
   autoAnalysisEnabled: boolean;
-  realtimeTracking: boolean;
   queryStatus: QueryStatus;
 
   regionType: TrackEvalRegionKind;
@@ -108,6 +114,14 @@ interface TrackEvaluationState {
   pendingQueryStats: QueryStats;
   metrics: TrackEvalMetricsResult | null;
   metricsComputing: boolean;
+
+  /** 查询完成后的原始航迹点（显示筛选用） */
+  unfilteredQueryFeatures: EvalTrackFeature[];
+  /** gRPC 查询返回的原始指标（显示筛选用） */
+  unfilteredGrpcMetrics: TrackEvalMetricsResult | null;
+
+  displayAdvancedVisible: boolean;
+  displayFilter: TrackEvalDisplayFilterState;
 
   lastInboundPreview: string;
 
@@ -128,9 +142,12 @@ interface TrackEvaluationState {
   /** 定时任务：以当前时间为结束、最近 N 分钟为开始，恢复默认传感器并发送查询 */
   runScheduledQuery: () => void;
   cancelQuery: () => void;
-  toggleRealtime: () => void;
   requestReevaluate: () => void;
   computeMetricsFromBuffer: () => void;
+  setDisplayAdvancedVisible: (v: boolean) => void;
+  toggleDisplaySensor: (id: number) => void;
+  patchDisplayFilter: (patch: Partial<TrackEvalDisplayFilterState>) => void;
+  applyDisplayFilter: () => void;
 }
 
 function defaultDatetimeLocal(offsetHours: number): string {
@@ -162,12 +179,14 @@ function emptyPendingQueryState(): Pick<
 
 function emptyDisplayedEvalState(): Pick<
   TrackEvaluationState,
-  "queryFeatures" | "queryStats" | "metrics"
+  "queryFeatures" | "queryStats" | "metrics" | "unfilteredQueryFeatures" | "unfilteredGrpcMetrics"
 > {
   return {
     queryFeatures: [],
     queryStats: { total: 0, bySensor: {} },
     metrics: null,
+    unfilteredQueryFeatures: [],
+    unfilteredGrpcMetrics: null,
   };
 }
 
@@ -262,6 +281,7 @@ function handleInbound(
   if (msg.status === "complete") {
     set((s) => ({
       queryFeatures: [...s.pendingQueryFeatures],
+      unfilteredQueryFeatures: [...s.pendingQueryFeatures],
       queryStats: { ...s.pendingQueryStats },
       queryStatus: {
         type: "loading",
@@ -284,23 +304,6 @@ function handleInbound(
       ...emptyPendingQueryState(),
     });
     return;
-  }
-
-  if (msg.status === "realtime" && Array.isArray(msg.data)) {
-    const rows = msg.data as Record<string, unknown>[];
-    const newFeatures = rows.map(wsTrackRowToFeature);
-    set((s) => {
-      const features = [...s.queryFeatures, ...newFeatures];
-      return {
-        queryFeatures: features,
-        queryStats: { total: features.length, bySensor: countBySensor(features) },
-        queryStatus: {
-          type: "success",
-          message: "实时航迹更新",
-          details: `${rows.length} 条（累计 ${features.length}）`,
-        },
-      };
-    });
   }
 }
 
@@ -328,7 +331,6 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   sensorIdsForQuery: [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
   directDownload: false,
   autoAnalysisEnabled: false,
-  realtimeTracking: false,
   queryStatus: { type: "", message: "", details: "" },
 
   regionType: "",
@@ -343,6 +345,12 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   pendingQueryStats: { total: 0, bySensor: {} },
   metrics: null,
   metricsComputing: false,
+
+  unfilteredQueryFeatures: [],
+  unfilteredGrpcMetrics: null,
+
+  displayAdvancedVisible: false,
+  displayFilter: defaultTrackEvalDisplayFilter(),
 
   lastInboundPreview: "",
 
@@ -434,7 +442,6 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
 
   runScheduledQuery: () => {
     const s = get();
-    if (s.realtimeTracking) return;
     if (s.queryStatus.type === "loading" || s.metricsComputing) return;
     if (s.directDownload) return;
 
@@ -486,6 +493,7 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
           }
           set({
             metrics,
+            unfilteredGrpcMetrics: metrics,
             metricsComputing: false,
             mainTab: "quality",
             queryStats: { total: trackPointCount, bySensor: {} },
@@ -559,31 +567,6 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
     });
   },
 
-  toggleRealtime: () => {
-    const s = get();
-    const client = s.client ?? sharedClient;
-    if (!client?.isOpen) {
-      set({ queryStatus: { type: "error", message: "WebSocket 未连接", details: "" } });
-      return;
-    }
-    if (s.realtimeTracking) {
-      client.send({ type: "stopsend" });
-      set({
-        realtimeTracking: false,
-        queryStatus: { type: "info", message: "实时航迹已停止，正在计算指标…", details: "" },
-      });
-      runMetrics(set, get);
-    } else {
-      client.send({ type: "startsend" });
-      set({
-        realtimeTracking: true,
-        ...emptyDisplayedEvalState(),
-        ...emptyPendingQueryState(),
-        queryStatus: { type: "success", message: "实时航迹已启动", details: "约每 2 秒推送并刷新指标" },
-      });
-    }
-  },
-
   requestReevaluate: () => {
     set({
       queryStatus: { type: "info", message: "正在重新计算质量指标…", details: "" },
@@ -592,4 +575,151 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   },
 
   computeMetricsFromBuffer: () => runMetrics(set, get),
+
+  setDisplayAdvancedVisible: (v) => set({ displayAdvancedVisible: v }),
+
+  toggleDisplaySensor: (id) =>
+    set((s) => {
+      const has = s.displayFilter.displaySensorIds.includes(id);
+      return {
+        displayFilter: {
+          ...s.displayFilter,
+          displaySensorIds: has
+            ? s.displayFilter.displaySensorIds.filter((x) => x !== id)
+            : [...s.displayFilter.displaySensorIds, id].sort((a, b) => a - b),
+        },
+      };
+    }),
+
+  patchDisplayFilter: (patch) =>
+    set((s) => ({
+      displayFilter: { ...s.displayFilter, ...patch },
+    })),
+
+  applyDisplayFilter: () => {
+    const s = get();
+    const df = s.displayFilter;
+
+    if (isTrackEvalGrpcEnabled() && !s.directDownload) {
+      if (!s.unfilteredGrpcMetrics && s.queryStats.total === 0) {
+        set({
+          queryStatus: {
+            type: "error",
+            message: "请先发送数据库查询",
+            details: "",
+          },
+        });
+        return;
+      }
+      set({
+        queryStatus: {
+          type: "loading",
+          message: "正在应用显示筛选…",
+          details: "",
+        },
+        metricsComputing: true,
+      });
+      void (async () => {
+        try {
+          const displayGrpc = buildDisplayFilterGrpcPayload(df);
+          const { metrics, status, error, trackPointCount } = await fetchTrackEvalQuality({
+            start_time: formatTimeForQuery(get().startTime),
+            end_time: formatTimeForQuery(get().endTime),
+            sensor_ids:
+              df.displaySensorIds.length > 0
+                ? [...df.displaySensorIds]
+                : [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
+            region_type: get().regionType || "",
+            bounding_box: get().bounding_box ?? undefined,
+            polygon: get().polygon ?? undefined,
+            ...displayGrpc,
+          });
+          const base = metrics ?? get().unfilteredGrpcMetrics;
+          if (!base) {
+            set({
+              metricsComputing: false,
+              queryStatus: {
+                type: "error",
+                message: error?.trim() || "无评估结果可筛选",
+                details: "",
+              },
+            });
+            return;
+          }
+          const filtered = filterGrpcTrackMetrics(base, df);
+          set({
+            metrics: filtered,
+            metricsComputing: false,
+            mainTab: "quality",
+            queryStats: {
+              total: trackPointCount || get().queryStats.total,
+              bySensor: get().queryStats.bySensor,
+            },
+            queryStatus: {
+              type: "success",
+              message: "显示筛选已应用（gRPC）",
+              details:
+                status !== "OK" && status
+                  ? `筛选完成（评估状态: ${status}）`
+                  : "已按高级条件过滤质量指标",
+            },
+          });
+        } catch (e) {
+          const base = get().unfilteredGrpcMetrics;
+          if (base) {
+            set({
+              metrics: filterGrpcTrackMetrics(base, df),
+              metricsComputing: false,
+              mainTab: "quality",
+              queryStatus: {
+                type: "success",
+                message: "显示筛选已应用（本地过滤）",
+                details: e instanceof Error ? e.message : String(e),
+              },
+            });
+            return;
+          }
+          set({
+            metricsComputing: false,
+            queryStatus: {
+              type: "error",
+              message: "显示筛选失败",
+              details: e instanceof Error ? e.message : String(e),
+            },
+          });
+        }
+      })();
+      return;
+    }
+
+    if (s.unfilteredQueryFeatures.length === 0) {
+      set({
+        queryStatus: {
+          type: "error",
+          message: "没有可筛选的航迹数据",
+          details: "请先发送查询并等待数据接收完成",
+        },
+      });
+      return;
+    }
+
+    const radarChannels = resolveTrackEvalRadarChannelsFromAssets(
+      useAssetStore.getState().assets,
+    );
+    computeAllTrackMetrics(s.unfilteredQueryFeatures, radarChannels);
+    const filtered = filterEvalTrackFeatures(s.unfilteredQueryFeatures, df);
+    set({
+      queryFeatures: filtered,
+      queryStats: {
+        total: filtered.length,
+        bySensor: countBySensor(filtered),
+      },
+      queryStatus: {
+        type: "info",
+        message: "正在按显示条件重新计算指标…",
+        details: `筛选后 ${filtered.length} 条航迹点`,
+      },
+    });
+    runMetrics(set, get);
+  },
 }));

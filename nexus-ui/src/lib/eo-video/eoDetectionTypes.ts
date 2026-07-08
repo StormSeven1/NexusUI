@@ -64,3 +64,23 @@ export interface MatchState {
   maxFailures: number;
   isActive: boolean;
 }
+
+/** 一条 WS 相机载荷的原子快照（与 sei_poc_test wsBuffer 条目一致：同包 boat/plane/single + headers） */
+export interface WsDetectionSnapshot {
+  receivedAt: number;
+  videoWidth: number;
+  videoHeight: number;
+  frameId?: number;
+  captureTs?: number;
+  boat: BufferedDetectionEntry | null;
+  plane: BufferedDetectionEntry | null;
+  single: BufferedDetectionEntry | null;
+  headers: Uint8Array[];
+}
+
+export interface UnifiedWsMatchState {
+  lastSuccess: WsDetectionSnapshot | null;
+  failureCount: number;
+  maxFailures: number;
+  isActive: boolean;
+}

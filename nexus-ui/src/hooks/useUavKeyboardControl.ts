@@ -1,35 +1,30 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { UavStickControlPayload } from "@/hooks/useUavMqttDockState";
-import { postUavStickControl } from "@/lib/eo-video/uavAuthClient";
+import {
+  fetchUavDrcSessionStatus,
+  formatUavDrcDebugLine,
+  stopUavStickSession,
+  updateUavStickSession,
+  type UavDrcSessionStatus,
+} from "@/lib/eo-video/uavDrcSessionClient";
 
 /**
- * 无人机键盘手控 hook
- * 对应 C++ ptzmainwidget.cpp keyPressEvent/keyReleaseEvent + mainwindow.cpp slot_onUavStartCtrl
+ * 无人机键盘手控
+ * stick / heart_beat 经 Next 服务端 mqtt://1883 下发（与 C++ mqttworker 同 broker），
+ * 避免生产 HTTPS 下浏览器 wss-mqtt publish 被限流导致 ~1–4m/s。
  */
 
 export type UavKeyCode = "Q" | "W" | "E" | "A" | "S" | "D" | "Z" | "C";
 
 export interface UavKeyState {
-  Q: boolean; // yaw left (逆时针旋转)
-  W: boolean; // pitch forward (前)
-  E: boolean; // yaw right (顺时针旋转)
-  A: boolean; // roll left (左平移)
-  S: boolean; // pitch backward (后)
-  D: boolean; // roll right (右平移)
-  Z: boolean; // throttle down (下降)
-  C: boolean; // throttle up (上升)
+  Q: boolean;
+  W: boolean;
+  E: boolean;
+  A: boolean;
+  S: boolean;
+  D: boolean;
+  Z: boolean;
+  C: boolean;
 }
-
-const KEY_VALUES: Record<UavKeyCode, number> = {
-  Q: 440,
-  W: 660,
-  E: 440,
-  A: 660,
-  S: 660,
-  D: 660,
-  Z: 550,
-  C: 660,
-};
 
 const INITIAL_KEY_STATE: UavKeyState = {
   Q: false,
@@ -49,154 +44,172 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return target.isContentEditable;
 }
 
+function isAnyKeyPressed(state: UavKeyState): boolean {
+  return Object.values(state).some((v) => v);
+}
+
 export interface UseUavKeyboardControlOpts {
-  /** 是否启用键盘控制 */
   enabled: boolean;
-  /** 机场 SN */
   airportSN: string | null;
-  /** 是否已授权控制 */
   hasAuth: boolean;
-  /** 日志回调 */
   onLog?: (line: string) => void;
-  /** 未授权时的回调 */
   onNeedAuth?: () => void;
-  /**
-   * 浏览器经 WS MQTT 直连下发 stick_control（与 `useUavMqttDockState().publishStickControl` 一致）。
-   * 返回 true 表示已由 MQTT 发出，跳过 HTTP `/api/uav-control/stick`。
-   */
-  publishStickMqtt?: (payload: UavStickControlPayload) => boolean;
+  onControlStart?: () => void;
+  /** 浏览器 MQTT 仅用于 OSD 订阅状态展示 */
+  mqttRxConnected?: boolean;
+  /** 为 true 时每 1s 拉取服务端 DRC 会话状态（放大调试面板） */
+  pollDrcStatus?: boolean;
 }
 
 export function useUavKeyboardControl(opts: UseUavKeyboardControlOpts) {
   const [keyState, setKeyState] = useState<UavKeyState>(INITIAL_KEY_STATE);
-  const seqRef = useRef(0);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const lastSendRef = useRef(0);
+  const [drcStatus, setDrcStatus] = useState<UavDrcSessionStatus | null>(null);
+  const keyStateRef = useRef<UavKeyState>(INITIAL_KEY_STATE);
+  const optsRef = useRef(opts);
+  const syncWarnAtRef = useRef(0);
+  optsRef.current = opts;
 
-  const isAnyKeyPressed = Object.values(keyState).some((v) => v);
+  const isControlling = isAnyKeyPressed(keyState);
 
-  // 启动 50ms 定时器
-  useEffect(() => {
-    if (!opts.enabled || !opts.airportSN || !opts.hasAuth || !isAnyKeyPressed) {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+  const pushKeysToServer = useCallback(async (keys: UavKeyState) => {
+    const sn = optsRef.current.airportSN;
+    if (!sn) return;
+    const ret = await updateUavStickSession(sn, keys);
+    if (ret.ok) {
+      setDrcStatus(ret);
       return;
     }
-
-    if (!timerRef.current) {
-      timerRef.current = setInterval(() => {
-        const now = Date.now();
-        if (now - lastSendRef.current < 45) return; // 防止发送过快
-
-        const roll = 1024 + (keyState.D ? KEY_VALUES.D : 0) - (keyState.A ? KEY_VALUES.A : 0);
-        const pitch = 1024 + (keyState.W ? KEY_VALUES.W : 0) - (keyState.S ? KEY_VALUES.S : 0);
-        const throttle = 1024 + (keyState.C ? KEY_VALUES.C : 0) - (keyState.Z ? KEY_VALUES.Z : 0);
-        const yaw = 1024 + (keyState.E ? KEY_VALUES.E : 0) - (keyState.Q ? KEY_VALUES.Q : 0);
-
-        const seq = seqRef.current;
-        const stickPayload: UavStickControlPayload = { roll, pitch, throttle, yaw, seq };
-
-        if (opts.publishStickMqtt?.(stickPayload)) {
-          seqRef.current = (seqRef.current + 1) % 65536;
-          lastSendRef.current = now;
-          return;
-        }
-
-        postUavStickControl({
-          airportSN: opts.airportSN!,
-          roll,
-          pitch,
-          throttle,
-          yaw,
-          seq,
-        }).catch(() => {
-          /* 静默失败，避免日志刷屏 */
-        });
-
-        seqRef.current = (seqRef.current + 1) % 65536;
-        lastSendRef.current = now;
-      }, 50);
+    const now = Date.now();
+    if (now - syncWarnAtRef.current > 3000) {
+      syncWarnAtRef.current = now;
+      optsRef.current.onLog?.(
+        `${new Date().toLocaleTimeString()} 键盘手控：服务端 DRC 同步失败（${ret.detail ?? ret.stickLastError ?? "unknown"}）`,
+      );
     }
+  }, []);
 
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+  const stopControlInternal = useCallback(
+    (logLine?: string) => {
+      keyStateRef.current = INITIAL_KEY_STATE;
+      setKeyState(INITIAL_KEY_STATE);
+      const sn = optsRef.current.airportSN;
+      if (sn) {
+        void stopUavStickSession(sn).then((ret) => {
+          if (ret.ok) setDrcStatus(ret);
+        });
       }
-    };
-  }, [opts.enabled, opts.airportSN, opts.hasAuth, opts.publishStickMqtt, isAnyKeyPressed, keyState]);
+      if (logLine) optsRef.current.onLog?.(logLine);
+    },
+    [],
+  );
 
-  // 键盘事件处理
+  useEffect(() => {
+    if (!opts.enabled || !opts.airportSN || !opts.hasAuth) {
+      if (isAnyKeyPressed(keyStateRef.current)) {
+        stopControlInternal();
+      }
+    }
+  }, [opts.enabled, opts.airportSN, opts.hasAuth, stopControlInternal]);
+
   useEffect(() => {
     if (!opts.enabled) return;
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat) return; // 忽略按住重复
-      const key = e.key.toUpperCase();
-      if (!(key in INITIAL_KEY_STATE)) return;
-      if (isTypingTarget(e.target)) return;
+    const applyKey = (key: UavKeyCode, pressed: boolean) => {
+      const prev = keyStateRef.current;
+      if (prev[key] === pressed) return;
 
-      e.preventDefault();
+      const newState = { ...prev, [key]: pressed };
+      keyStateRef.current = newState;
+      setKeyState(newState);
+      void pushKeysToServer(newState);
 
-      // 检查授权
-      if (!opts.hasAuth) {
-        opts.onNeedAuth?.();
+      if (pressed) {
+        if (!isAnyKeyPressed(prev)) {
+          optsRef.current.onLog?.(`键盘手控开始（${key}）`);
+          optsRef.current.onControlStart?.();
+        }
         return;
       }
 
-      setKeyState((prev) => {
-        if (prev[key as UavKeyCode]) return prev; // 已经按下
-        const newState = { ...prev, [key]: true };
-        // 如果是第一个按键，记录日志
-        if (!Object.values(prev).some((v) => v)) {
-          opts.onLog?.(`键盘手控开始（${key}）`);
-        }
-        return newState;
-      });
+      if (!isAnyKeyPressed(newState)) {
+        stopControlInternal("键盘手控停止");
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      const key = e.key.toUpperCase();
+      if (!(key in INITIAL_KEY_STATE)) return;
+      if (isTypingTarget(e.target)) return;
+      e.preventDefault();
+      if (!optsRef.current.hasAuth) {
+        optsRef.current.onNeedAuth?.();
+        return;
+      }
+      applyKey(key as UavKeyCode, true);
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       const key = e.key.toUpperCase();
       if (!(key in INITIAL_KEY_STATE)) return;
       if (isTypingTarget(e.target)) return;
-
       e.preventDefault();
-
-      setKeyState((prev) => {
-        if (!prev[key as UavKeyCode]) return prev; // 未按下
-        const newState = { ...prev, [key]: false };
-        // 如果全部释放，记录日志
-        if (!Object.values(newState).some((v) => v)) {
-          opts.onLog?.(`键盘手控停止`);
-          seqRef.current = 0;
-        }
-        return newState;
-      });
+      applyKey(key as UavKeyCode, false);
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
+    const handleWindowBlur = () => {
+      if (isAnyKeyPressed(keyStateRef.current)) {
+        stopControlInternal("键盘手控停止（窗口失焦）");
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") handleWindowBlur();
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("blur", handleWindowBlur);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("blur", handleWindowBlur);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [opts]);
+  }, [opts.enabled, pushKeysToServer, stopControlInternal]);
+
+  useEffect(() => {
+    if (!opts.pollDrcStatus || !opts.airportSN) return;
+    let cancelled = false;
+    const poll = () => {
+      void fetchUavDrcSessionStatus(opts.airportSN!).then((ret) => {
+        if (!cancelled && ret.ok) setDrcStatus(ret);
+      });
+    };
+    poll();
+    const id = setInterval(poll, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [opts.pollDrcStatus, opts.airportSN]);
 
   const stopControl = useCallback(() => {
-    setKeyState(INITIAL_KEY_STATE);
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    seqRef.current = 0;
-  }, []);
+    stopControlInternal();
+  }, [stopControlInternal]);
+
+  const drcDebugLine = formatUavDrcDebugLine(drcStatus, {
+    mqttRxConnected: opts.mqttRxConnected,
+    keys: keyState,
+  });
 
   return {
     keyState,
-    isControlling: isAnyKeyPressed,
+    isControlling,
     stopControl,
+    drcStatus,
+    drcDebugLine,
   };
 }

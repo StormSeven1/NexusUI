@@ -63,6 +63,31 @@ export interface FlyToRequest {
   seq: number;
 }
 
+export type LayerPanelSectionKey = "basemap" | "target" | "entity" | "dbArea";
+export type LayerPanelBranchKey =
+  | "basemapStyle"
+  | "targetTree"
+  | "optoTree"
+  | "droneTree"
+  | "radarTree"
+  | "dbAreaTree";
+export type LayerPanelDynamicExpandCategory =
+  | "vectorGroup"
+  | "targetSubtype"
+  | "dbGroup"
+  | "optoDevice"
+  | "droneDevice"
+  | "radarDevice";
+
+export interface LayerPanelExpandState {
+  /** 四大区块（地图 / 目标 / 实体 / 区域）展开状态 */
+  sections: Record<LayerPanelSectionKey, boolean>;
+  /** 固定树分支展开状态 */
+  branches: Record<LayerPanelBranchKey, boolean>;
+  /** 动态 key 分支（设备 id、矢量分组等）展开状态 */
+  dynamic: Record<LayerPanelDynamicExpandCategory, Record<string, boolean>>;
+}
+
 interface AppState {
   /** 左侧边栏是否展开 */
   leftSidebarOpen: boolean;
@@ -127,6 +152,9 @@ interface AppState {
   /** 各栅格底图显隐，键为 `basemapRasterLayers[].id` */
   basemapRasterVisibility: Record<string, boolean>;
 
+  /** 图层面板树形展开状态（与显隐偏好一并持久化） */
+  layerPanelExpand: LayerPanelExpandState;
+
   /** 智能体 / 助手消息列表（右侧等消费） */
   agentMessages: AgentMessage[];
   /** 当前选中的单条智能体消息（详情展示） */
@@ -188,6 +216,13 @@ interface AppState {
   /** 设置单条栅格底图显隐 */
   setBasemapRasterLayerVisible: (layerId: string, visible: boolean) => void;
 
+  /** 切换图层面板四大区块展开/折叠 */
+  toggleLayerPanelSection: (key: LayerPanelSectionKey) => void;
+  /** 切换图层面板固定树分支展开/折叠 */
+  toggleLayerPanelBranch: (key: LayerPanelBranchKey) => void;
+  /** 切换图层面板动态 key 分支展开/折叠 */
+  toggleLayerPanelDynamic: (category: LayerPanelDynamicExpandCategory, id: string) => void;
+
   /** 追加一条智能体消息（自动生成 id、时间，最多保留 50 条） */
   addAgentMessage: (message: Omit<AgentMessage, "id" | "timestamp">) => void;
   markAgentMessageAsRead: (id: string) => void;
@@ -206,6 +241,46 @@ function defaultLayerVisibilityRecord(): Record<string, boolean> {
   record[LYR_DB_AREAS] = false;
   record[LYR_RADAR_COVERAGE] = false;
   return record;
+}
+
+function defaultLayerPanelExpandState(): LayerPanelExpandState {
+  return {
+    sections: {
+      basemap: false,
+      target: false,
+      entity: false,
+      dbArea: false,
+    },
+    branches: {
+      basemapStyle: true,
+      targetTree: true,
+      optoTree: true,
+      droneTree: true,
+      radarTree: true,
+      dbAreaTree: true,
+    },
+    dynamic: {
+      vectorGroup: {},
+      targetSubtype: {},
+      dbGroup: {},
+      optoDevice: {},
+      droneDevice: {},
+      radarDevice: {},
+    },
+  };
+}
+
+function layerPanelDynamicExpandDefault(category: LayerPanelDynamicExpandCategory): boolean {
+  return category === "targetSubtype";
+}
+
+export function isLayerPanelDynamicExpanded(
+  expand: LayerPanelExpandState,
+  category: LayerPanelDynamicExpandCategory,
+  id: string,
+): boolean {
+  const stored = expand.dynamic[category][id];
+  return stored ?? layerPanelDynamicExpandDefault(category);
 }
 
 export const useAppStore = create<AppState>()(
@@ -236,6 +311,8 @@ export const useAppStore = create<AppState>()(
   basemapVectorVisibility: {},
   basemapRasterLayers: [],
   basemapRasterVisibility: {},
+
+  layerPanelExpand: defaultLayerPanelExpandState(),
 
   agentMessages: [],
   selectedAgentMessage: null,
@@ -341,6 +418,46 @@ export const useAppStore = create<AppState>()(
       basemapRasterVisibility: { ...s.basemapRasterVisibility, [layerId]: visible },
     })),
 
+  toggleLayerPanelSection: (key) =>
+    set((s) => ({
+      layerPanelExpand: {
+        ...s.layerPanelExpand,
+        sections: {
+          ...s.layerPanelExpand.sections,
+          [key]: !s.layerPanelExpand.sections[key],
+        },
+      },
+    })),
+
+  toggleLayerPanelBranch: (key) =>
+    set((s) => ({
+      layerPanelExpand: {
+        ...s.layerPanelExpand,
+        branches: {
+          ...s.layerPanelExpand.branches,
+          [key]: !s.layerPanelExpand.branches[key],
+        },
+      },
+    })),
+
+  toggleLayerPanelDynamic: (category, id) =>
+    set((s) => {
+      const prev = s.layerPanelExpand.dynamic[category][id];
+      const open = prev ?? layerPanelDynamicExpandDefault(category);
+      return {
+        layerPanelExpand: {
+          ...s.layerPanelExpand,
+          dynamic: {
+            ...s.layerPanelExpand.dynamic,
+            [category]: {
+              ...s.layerPanelExpand.dynamic[category],
+              [id]: !open,
+            },
+          },
+        },
+      };
+    }),
+
   addAgentMessage: (message) =>
     set((s) => ({
       agentMessages: [
@@ -381,14 +498,21 @@ export const useAppStore = create<AppState>()(
         basemapGroupVisible: s.basemapGroupVisible,
         basemapVectorVisibility: s.basemapVectorVisibility,
         basemapRasterVisibility: s.basemapRasterVisibility,
+        layerPanelExpand: s.layerPanelExpand,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<
           Pick<
             AppState,
-            "layerVisibility" | "basemapGroupVisible" | "basemapVectorVisibility" | "basemapRasterVisibility"
+            | "layerVisibility"
+            | "basemapGroupVisible"
+            | "basemapVectorVisibility"
+            | "basemapRasterVisibility"
+            | "layerPanelExpand"
           >
         >;
+        const expandDefaults = defaultLayerPanelExpandState();
+        const pe = p.layerPanelExpand;
         return {
           ...current,
           layerVisibility: {
@@ -403,6 +527,42 @@ export const useAppStore = create<AppState>()(
           basemapRasterVisibility: {
             ...current.basemapRasterVisibility,
             ...(p.basemapRasterVisibility ?? {}),
+          },
+          layerPanelExpand: {
+            sections: {
+              ...expandDefaults.sections,
+              ...(pe?.sections ?? {}),
+            },
+            branches: {
+              ...expandDefaults.branches,
+              ...(pe?.branches ?? {}),
+            },
+            dynamic: {
+              vectorGroup: {
+                ...expandDefaults.dynamic.vectorGroup,
+                ...(pe?.dynamic?.vectorGroup ?? {}),
+              },
+              targetSubtype: {
+                ...expandDefaults.dynamic.targetSubtype,
+                ...(pe?.dynamic?.targetSubtype ?? {}),
+              },
+              dbGroup: {
+                ...expandDefaults.dynamic.dbGroup,
+                ...(pe?.dynamic?.dbGroup ?? {}),
+              },
+              optoDevice: {
+                ...expandDefaults.dynamic.optoDevice,
+                ...(pe?.dynamic?.optoDevice ?? {}),
+              },
+              droneDevice: {
+                ...expandDefaults.dynamic.droneDevice,
+                ...(pe?.dynamic?.droneDevice ?? {}),
+              },
+              radarDevice: {
+                ...expandDefaults.dynamic.radarDevice,
+                ...(pe?.dynamic?.radarDevice ?? {}),
+              },
+            },
           },
         };
       },

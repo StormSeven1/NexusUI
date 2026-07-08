@@ -194,7 +194,7 @@ class WebSocketManager:
         tlk = str(track_data.get("track_layer_key", "") or "").strip().lower().replace("-", "_")
         if tlk in ("fuse_air", "bird_radar", "fanwu_car_radar", "uav_pose_track"):
             track_data["is_air_track"] = True
-        elif tlk in ("fuse_sea", "radar_wharf", "radar_jingzi"):
+        elif tlk in ("fuse_sea", "radar_wharf", "radar_jingzi", "ais_track", "boat_self_track", "xpf_track"):
             track_data["is_air_track"] = False
 
         dds = str(track_data.get("dds_source_id", "") or "").strip().lower()
@@ -202,10 +202,18 @@ class WebSocketManager:
             "dds_forward_fuse_bird_radar_track",
             "dds_forward_bird_radar_track",
             "dds_forward_fanwu_car_track",
+            "dds_udp_fanwucar_track",
             "dds_forward_uav_pose_track",
         ):
             track_data["is_air_track"] = True
-        elif dds in ("dds_forward_fuse_track", "dds_forward_radar_track1", "dds_forward_radar_track2"):
+        elif dds in (
+            "dds_forward_fuse_track",
+            "dds_forward_radar_track1",
+            "dds_forward_radar_track2",
+            "dds_forward_ais_track",
+            "dds_udp_boatself_track",
+            "dds_udp_xpf_track",
+        ):
             track_data["is_air_track"] = False
 
     def queue_message(self, message: Dict[str, Any]):

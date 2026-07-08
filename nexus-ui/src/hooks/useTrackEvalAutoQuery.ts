@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { isTrackEvalGrpcEnabled } from "@/lib/system-eval-track-api";
 import {
   TRACK_EVAL_AUTO_QUERY_INTERVAL_MS,
   useTrackEvaluationStore,
@@ -18,7 +19,9 @@ export function useTrackEvalAutoQuery() {
   }, [connectWs]);
 
   useEffect(() => {
-    if (connectionState !== "open" || !autoAnalysisEnabled) return;
+    if (!autoAnalysisEnabled) return;
+    const grpcReady = isTrackEvalGrpcEnabled();
+    if (!grpcReady && connectionState !== "open") return;
 
     runScheduledQuery();
     const timerId = window.setInterval(() => {

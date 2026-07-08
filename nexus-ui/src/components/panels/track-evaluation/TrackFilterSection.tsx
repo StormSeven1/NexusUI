@@ -1,10 +1,12 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { trackEvalHistoryQueryNeedsWs } from "@/lib/system-eval-track-api";
 import {
   TRACK_EVAL_SENSOR_OPTIONS,
   useTrackEvaluationStore,
 } from "@/stores/track-evaluation-store";
+import { TrackEvalDisplayFilterSection } from "@/components/panels/track-evaluation/TrackEvalDisplayFilterSection";
 
 function sensorLabel(id: number): string {
   return TRACK_EVAL_SENSOR_OPTIONS.find((o) => o.id === id)?.label ?? `传感器 ${id}`;
@@ -16,7 +18,6 @@ export function TrackFilterSection() {
   const sensorIdsForQuery = useTrackEvaluationStore((s) => s.sensorIdsForQuery);
   const directDownload = useTrackEvaluationStore((s) => s.directDownload);
   const autoAnalysisEnabled = useTrackEvaluationStore((s) => s.autoAnalysisEnabled);
-  const realtimeTracking = useTrackEvaluationStore((s) => s.realtimeTracking);
   const queryStatus = useTrackEvaluationStore((s) => s.queryStatus);
   const queryStats = useTrackEvaluationStore((s) => s.queryStats);
   const connectionState = useTrackEvaluationStore((s) => s.connectionState);
@@ -32,14 +33,15 @@ export function TrackFilterSection() {
   const setAutoAnalysisEnabled = useTrackEvaluationStore((s) => s.setAutoAnalysisEnabled);
   const sendQuery = useTrackEvaluationStore((s) => s.sendQuery);
   const cancelQuery = useTrackEvaluationStore((s) => s.cancelQuery);
-  const toggleRealtime = useTrackEvaluationStore((s) => s.toggleRealtime);
   const requestReevaluate = useTrackEvaluationStore((s) => s.requestReevaluate);
   const selectRegionType = useTrackEvaluationStore((s) => s.selectRegionType);
   const clearRegion = useTrackEvaluationStore((s) => s.clearRegion);
 
   const wsConnected = connectionState === "open";
   const isLoading = queryStatus.type === "loading" || metricsComputing;
-  const canQuery = wsConnected && startTime && endTime && !realtimeTracking;
+  const needsWs = trackEvalHistoryQueryNeedsWs(directDownload);
+  const canQuery =
+    Boolean(startTime && endTime) && (!needsWs || wsConnected);
 
   return (
     <div className="space-y-3 overflow-y-auto pr-1">
@@ -184,19 +186,6 @@ export function TrackFilterSection() {
           )}
           <button
             type="button"
-            onClick={() => toggleRealtime()}
-            disabled={queryStatus.type === "loading"}
-            className={cn(
-              "rounded-md border px-2.5 py-1.5 text-[11px]",
-              realtimeTracking
-                ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                : "border-nexus-border bg-nexus-bg-elevated text-nexus-text-secondary hover:bg-nexus-bg-surface",
-            )}
-          >
-            {realtimeTracking ? "停止实时" : "实时航迹"}
-          </button>
-          <button
-            type="button"
             onClick={() => requestReevaluate()}
             disabled={isLoading || queryStats.total === 0}
             className="rounded-md border border-nexus-border bg-nexus-bg-elevated px-2.5 py-1.5 text-[11px] text-nexus-text-secondary hover:bg-nexus-bg-surface disabled:opacity-50"
@@ -246,6 +235,8 @@ export function TrackFilterSection() {
           </div>
         ) : null}
       </section>
+
+      <TrackEvalDisplayFilterSection />
     </div>
   );
 }

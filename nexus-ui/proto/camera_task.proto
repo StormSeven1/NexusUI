@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package cameraTaskPkg;
+
+// 与 HTTP PTZMoveTask direction 字段一致
+enum PtzDirection {
+  PTZ_DIRECTION_UNSPECIFIED = 0;
+  UP = 1;
+  DOWN = 2;
+  LEFT = 3;
+  RIGHT = 4;
+  LEFT_UP = 5;
+  LEFT_DOWN = 6;
+  RIGHT_UP = 7;
+  RIGHT_DOWN = 8;
+  ZOOM_IN = 9;
+  ZOOM_OUT = 10;
+  FOCUS_IN = 11;
+  FOCUS_OUT = 12;
+}
+
+message PtzSpeed {
+  double pan = 1;
+  double tilt = 2;
+}
+
+message PtzMoveRequest {
+  string entity_id = 1;
+  PtzDirection direction = 2;
+  PtzSpeed speed = 3;
+}
+
+message PtzStopRequest {
+  string entity_id = 1;
+}
+
+/** 与 POST /api/v1/tasks 请求体 JSON 等价，便于扩展其它任务类型 */
+message SubmitTaskRequest {
+  string task_json = 1;
+}
+
+message CameraTaskResponse {
+  bool ok = 1;
+  string message = 2;
+  string task_id = 3;
+}
+
+service CameraTaskService {
+  rpc PtzMove(PtzMoveRequest) returns (CameraTaskResponse);
+  rpc PtzStop(PtzStopRequest) returns (CameraTaskResponse);
+  rpc SubmitTask(SubmitTaskRequest) returns (CameraTaskResponse);
+}

@@ -34,6 +34,8 @@ type PosBody = {
   targetAlt?: unknown;
   tarSpeed?: unknown;
   tarCourse?: unknown;
+  /** 0=雷达航迹，1=自报位；缺省 0 */
+  trackType?: unknown;
 };
 
 function num(v: unknown): number | undefined {
@@ -76,6 +78,8 @@ export async function POST(req: NextRequest) {
   const targetAltN = num(p.targetAlt);
   const tarSpeedN = num(p.tarSpeed);
   const tarCourseN = num(p.tarCourse);
+  const trackTypeRaw = num(p.trackType);
+  const trackType = trackTypeRaw === 1 ? 1 : 0;
 
   if (targetLon === undefined || targetLat === undefined) {
     return NextResponse.json({ error: "targetLon/targetLat required" }, { status: 400 });
@@ -92,6 +96,7 @@ export async function POST(req: NextRequest) {
     /** 相机 id：态势双击固定传空字符串（由后端按 targetId 路由） */
     entityId: specEntityId || "",
     targetId: Math.trunc(targetIdN),
+    trackType,
     targetLon,
     targetLat,
     targetAlt: targetAltN,

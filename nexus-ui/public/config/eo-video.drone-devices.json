@@ -1,34 +1,5 @@
 {
-  "syncedAt": "2026-06-29T09:49:56.687Z",
+  "syncedAt": "2026-07-08T11:02:24.970Z",
   "sourceUrl": "http://192.168.18.141:8090/api/v1/entities?page=1&size=100",
-  "devices": [
-    {
-      "entityId": "uav-001",
-      "name": "无人机1",
-      "deviceSN": "1581F6Q8D246S00G94B3",
-      "airportSN": "7CTDM7D00BP0G0",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-004",
-      "name": "无人机4",
-      "deviceSN": "1581F6Q8D248X00G7SDL",
-      "airportSN": "7CTXM8G00B0088",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-005",
-      "name": "无人机5",
-      "deviceSN": "1581F6Q8X251H00G04XX",
-      "airportSN": "7CTXM8G00B008C",
-      "vendor": "dji"
-    },
-    {
-      "entityId": "uav-006",
-      "name": "无人机6",
-      "deviceSN": "1581F6Q8D249C00GR66R",
-      "airportSN": "7CTDM7900B33P7",
-      "vendor": "dji"
-    }
-  ]
+  "devices": []
 }

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# NexusUI 28.9 现场部署（生产 HTTPS：prod-start-nginx.sh）
+# NexusUI 28.9 现场部署（生产 HTTPS：prod-build + prod-start-nginx --no-build）
 # 用法：在 28.9 上 cd /home/dell/zhu_heng/NexusUI && ./deploy-28.9.sh
+# 改代码后重启：./prod-build.sh && NGINX_IMAGE=nginx:alpine ./prod-start-nginx.sh --no-build --restart
+# 仅重启（未改前端）：NGINX_IMAGE=nginx:alpine ./prod-start-nginx.sh --no-build --restart
 # 开发模式（22301/27003 + dev WSS :22402）：./dev-start.sh（与生产 :21911/:27004 独立，可并行）
 set -euo pipefail
 
@@ -58,8 +60,11 @@ NEXUS_UAV_MQTT_BROKER_URL=mqtt://${HOST}:1893
 NEXT_PUBLIC_TRACK_EVAL_WS_URL=ws://${HOST}:12600/ws/test-client
 NEXT_PUBLIC_TRACK_EVAL_USE_GRPC=true
 NEXT_PUBLIC_WS_DISABLE_TRACK_INGEST=false
-NEXT_PUBLIC_EO_VIDEO_WEBCODECS_CANVAS=true
+NEXT_PUBLIC_EO_VIDEO_DEBUG_UI=false
+NEXT_PUBLIC_DEBUG_WS_CAMERA=false
+NEXT_PUBLIC_EO_VIDEO_WEBCODECS_CANVAS=false
 NEXT_PUBLIC_EO_VIDEO_HARDWARE_PASSTHROUGH=false
+NEXT_PUBLIC_EO_VIDEO_OBJECT_FIT=fill
 VLM_IMAGE_ANALYSIS_BASE_URL=http://192.168.18.141:7860
 VLM_IMAGE_ANALYSIS_MODEL=Qwen/Qwen3-VL-8B-Instruct
 EOF
@@ -121,22 +126,48 @@ export PUBLIC_HTTPS_PORT="$FP"
 export BACKEND_URL="http://127.0.0.1:${BP}"
 export TRACK_WS_BACKEND_HOST="$HOST"
 export TRACK_WS_BACKEND_PORT="$BP"
-chmod +x "$ROOT/prod-start.sh" "$ROOT/prod-start-nginx.sh" "$ROOT/dev-start.sh" "$ROOT/dev-wss-nginx.sh" "$ROOT/docker/start.sh" 2>/dev/null || true
+chmod +x "$ROOT/prod-build.sh" "$ROOT/prod-start.sh" "$ROOT/prod-start-nginx.sh" "$ROOT/dev-start.sh" "$ROOT/dev-wss-nginx.sh" "$ROOT/docker/start.sh" 2>/dev/null || true
 
 # Custombackend DDS XML discovery 地址 → 28.9
 find "$ROOT/Custombackend" -name '*.xml' -type f -print0 2>/dev/null | while IFS= read -r -d '' f; do
   sed -i 's/192.168.18.141/192.168.28.9/g' "$f" 2>/dev/null || true
 done
 
-REBUILD_FLAG=()
+_tunnel_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[[ -n "${_tunnel_ip:-}" ]] || _tunnel_ip="127.0.0.1"
+export NEXT_PUBLIC_WS_USE_NGINX_TUNNEL="${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL:-true}"
+export NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT="${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT:-${_tunnel_ip}:${FP}}"
+
+DO_SKIP_BUILD=0
+DO_RESTART=0
 for a in "$@"; do
-  [[ "$a" == "--rebuild" ]] && REBUILD_FLAG=(--rebuild)
+  case "$a" in
+    --no-build) DO_SKIP_BUILD=1 ;;
+    --restart) DO_RESTART=1 ;;
+    --rebuild) DO_SKIP_BUILD=0 ;; # 兼容旧参数：等价于默认（先 prod-build）
+  esac
 done
-"$ROOT/prod-start-nginx.sh" "${REBUILD_FLAG[@]}"
+
+if [[ "$DO_SKIP_BUILD" -eq 0 ]]; then
+  echo "== 宿主机 prod-build =="
+  NEXT_PUBLIC_WS_USE_NGINX_TUNNEL="${NEXT_PUBLIC_WS_USE_NGINX_TUNNEL}" \
+  NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT="${NEXT_PUBLIC_NGINX_WS_PUBLIC_HOSTPORT}" \
+  BACKEND_PORT="${BP}" \
+  BACKEND_URL="${BACKEND_URL}" \
+  "$ROOT/prod-build.sh"
+else
+  echo "== 跳过 prod-build（--no-build）=="
+fi
+
+NGINX_ARGS=(--no-build)
+[[ "$DO_RESTART" -eq 1 ]] && NGINX_ARGS+=(--restart)
+NGINX_IMAGE=nginx:alpine "$ROOT/prod-start-nginx.sh" "${NGINX_ARGS[@]}"
 
 echo ""
 echo "== NexusUI 28.9 部署完成 =="
 echo "  生产 HTTPS: https://${HOST}:${FP}/  （xk_docker_prod + xk_nginx_prod）"
+echo "  改代码后重启: ./prod-build.sh && NGINX_IMAGE=nginx:alpine ./prod-start-nginx.sh --no-build --restart"
+echo "  仅重启(未改前端): NGINX_IMAGE=nginx:alpine ./prod-start-nginx.sh --no-build --restart"
 echo "  开发模式:   ./dev-start.sh  → https://${HOST}:22301/  （xk_docker + dev WSS :22402，与生产独立）"
 echo "  后端 API:   生产 http://${HOST}:${BP}/api  |  开发 http://${HOST}:27003/api"
 echo "  日志: docker logs -f xk_docker_prod | docker logs -f xk_nginx_prod"

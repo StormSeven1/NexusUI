@@ -17,4 +17,8 @@ export type EoWebCodecsPresentation = {
   canvas: HTMLCanvasElement | null;
   /** WebCodecs 已上屏最新 RTP timestamp；检测对齐优先于 hub 固定 lag */
   lastRenderedRtpTimestamp: number;
+  /** 已回退 `<video>` 硬件出画；检测改走 rvfc 而非 Canvas RTP */
+  videoFallbackActive: boolean;
+  /** 呈现恢复/切换时递增，供检测层重置 sync 对齐状态 */
+  presentationEpoch: number;
 };

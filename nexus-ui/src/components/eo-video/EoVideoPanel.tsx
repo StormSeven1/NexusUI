@@ -49,6 +49,7 @@ import { pokeDroneLiveStream } from "@/lib/eo-video/pokeDroneLiveStream";
 import { postUavGimbalReset, uavMainPayloadIndexForDrone } from "@/lib/eo-video/postUavGimbalReset";
 import { postUavImgTrackingTask } from "@/lib/eo-video/uavImgTrackingClient";
 import { postUavTaskStop } from "@/lib/eo-video/uavTaskStopClient";
+import { startUavDrcHeartBeat, stopUavDrcHeartBeat } from "@/lib/eo-video/uavDrcSessionClient";
 import { postUavSwitchVideoCamera, type UavVideoLensType } from "@/lib/eo-video/postUavSwitchVideoCamera";
 import { resolveEoPipPlaybackUrl } from "@/lib/eo-video/resolveEoPipPlaybackUrl";
 import { useEoVideoDdsTaskLine } from "@/hooks/useEoVideoDdsTaskLine";
@@ -78,13 +79,16 @@ import { EoVideoPtzPanel } from "./EoVideoPtzPanel";
 import type { EoVideoTaskTrace } from "./EoVideoTaskTracePanel";
 import { EoVideoTaskTracePanel } from "./EoVideoTaskTracePanel";
 import { EoCaptureCollectDialog } from "./EoCaptureCollectDialog";
+import { EoCalcRecordDialog } from "./EoCalcRecordDialog";
+import { EoCalcRecordLocationDialog } from "./EoCalcRecordLocationDialog";
 import { EoSnapshotPreviewPopout, type EoSnapshotPreviewPayload } from "./EoSnapshotPreviewPopout";
 import { eoCollectDataTypeForPreviewKind } from "@/lib/eo-video/eoCaptureCollectUpload";
+import { useEoCalcRecordController } from "@/hooks/useEoCalcRecordController";
 import { getEoVideoExpandDockBaseTitle } from "@/lib/eo-video/eoVideoExpandDockTitle";
 import { EoVideoExpandFloatingFrame } from "./EoVideoExpandFloatingFrame";
 import { useEoFocusedUavAirportSnStore } from "@/stores/eo-focused-uav-airport-sn-store";
 import { useEoThirdPartyUdpDevStatusStore } from "@/stores/eo-third-party-udp-dev-status-store";
-import { isThirdPartyUdpStreamEntry } from "@/lib/eo-video/thirdPartyCamCtrlType";
+import { isThirdPartyUdpStreamEntry, isThirdPartyWebrtcStreamEntry } from "@/lib/eo-video/thirdPartyCamCtrlType";
 import { useEoVideoPanelFocusStore } from "@/stores/eo-video-panel-focus-store";
 import { useEoVideoSmartWindowStore } from "@/stores/eo-video-smart-window-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
@@ -232,6 +236,7 @@ export function EoVideoPanel({
   const [zoomWindowOpen, setZoomWindowOpen] = useState(false);
   /** 全局调试 UI 关闭时：放大 + 相机在右侧点「调试」后于底部展开任务跟踪面板 */
   const [cameraExpandedDebugOpen, setCameraExpandedDebugOpen] = useState(false);
+  const [uavExpandedDebugOpen, setUavExpandedDebugOpen] = useState(false);
 
   const eoFocusedDockId = useEoVideoPanelFocusStore((s) => s.focusedDockPanelId);
   const setEoFocusedDockPanel = useEoVideoPanelFocusStore((s) => s.setFocusedDockPanel);
@@ -718,6 +723,11 @@ export function EoVideoPanel({
     /** 勿用 activeStream 的 streams[0] 回退判断 uav：失配时会错把相机检测关掉或反过来 */
     const cur = cfg?.streams.find((s) => s.id === activeStreamId);
     if (isThirdPartyUdpStreamEntry(cur)) return undefined;
+    /** 第三方 WebRTC（如 camera-ms-001）：2088 检测 WS 按流 entityId 订阅 */
+    if (isThirdPartyWebrtcStreamEntry(cur)) {
+      const id = cur!.id.trim();
+      return id ? canonicalEntityId(id) : undefined;
+    }
     /** 无人机检测框 WS 已与相机一致（entityId=uav-xxx + boatRect/header 等），按机实体订阅 */
     if (cur?.uav) {
       const uavId = cur.uav.entityId?.trim();
@@ -863,7 +873,7 @@ export function EoVideoPanel({
     useEoFocusedUavAirportSnStore.getState().setAirportSn(ap);
   }, [dockPidNorm, eoFocusedDockId, activeStream?.uav, mqttAirportSn, activeStream?.uav?.airportSN]);
 
-  const { droneInDock: mqttDroneInDock, mqttAirportLatLon, mqttTelemetry, mqttHud, publishStickControl } = useUavMqttDockState({
+  const { droneInDock: mqttDroneInDock, mqttAirportLatLon, mqttTelemetry, mqttHud, mqttConnected } = useUavMqttDockState({
     enabled: Boolean(activeStream?.uav && mqttWsUrl && (mqttAirportSn || mqttDeviceSn)),
     airportSN: mqttAirportSn,
     deviceSN: mqttDeviceSn,
@@ -1366,6 +1376,16 @@ export function EoVideoPanel({
     });
   }, []);
 
+  const [calcRecordLocationOpen, setCalcRecordLocationOpen] = useState(false);
+  const calcRecord = useEoCalcRecordController({
+    entityId: detectionEntityId,
+    cameraName: activeStream?.label ?? detectionEntityId ?? "相机",
+    detectionBoxes,
+    videoRef,
+    snapshotCanvasRef,
+    onClientLog: appendClientLog,
+  });
+
   const handleThirdPartyCamKindSelect = useCallback(
     async (kind: ThirdPartyCamTaskKind) => {
       const sid = activeStream?.id?.trim();
@@ -1650,6 +1670,7 @@ export function EoVideoPanel({
         }
         const ret = await postUavAuth("exit", mqttAirportSn, clientId);
         if (ret.ok) {
+          void stopUavDrcHeartBeat(mqttAirportSn);
           setUavCtrlAuth({ hasAuth: false, ctrlInfo: null, busy: false });
           appendClientLog(`${new Date().toLocaleTimeString()} 退出无人机控制成功`);
           showUavBottomFeedback("退出控制成功", "success");
@@ -1670,6 +1691,7 @@ export function EoVideoPanel({
 
         const enterRet = await postUavAuth("enter", mqttAirportSn, connRet.ctrlInfo.client_id);
         if (enterRet.ok) {
+          void startUavDrcHeartBeat(mqttAirportSn);
           setUavCtrlAuth({ hasAuth: true, ctrlInfo: connRet.ctrlInfo, busy: false });
           appendClientLog(`${new Date().toLocaleTimeString()} 请求控制权限成功`);
           showUavBottomFeedback("请求控制权限成功", "success");
@@ -1691,12 +1713,24 @@ export function EoVideoPanel({
     activeStream?.uav && (!dockPidNorm || eoPanelSelected),
   );
 
+  const onUavKeyboardControlStart = useCallback(() => {
+    const tid = uavTrackTaskId?.trim();
+    if (!tid) return;
+    void postUavTaskStop({ taskIds: [tid] })
+      .then(() => setUavTrackTaskId(null))
+      .catch(() => {
+        /* 与 C++ SendUavStopTask 对齐；失败不阻断手控 */
+      });
+  }, [uavTrackTaskId]);
+
   // 键盘手控（对应 C++ ptzmainwidget keyPressEvent/keyReleaseEvent + mainwindow slot_onUavStartCtrl）
-  const { keyState, isControlling } = useUavKeyboardControl({
+  const { keyState, isControlling, drcDebugLine } = useUavKeyboardControl({
     enabled: uavKeyboardEnabled,
     airportSN: mqttAirportSn,
     hasAuth: uavCtrlAuth.hasAuth,
-    publishStickMqtt: publishStickControl,
+    mqttRxConnected: mqttConnected,
+    pollDrcStatus: uavExpandedDebugOpen || uavCtrlAuth.hasAuth,
+    onControlStart: onUavKeyboardControlStart,
     onLog: appendClientLog,
     onNeedAuth: () => {
       appendClientLog(`${new Date().toLocaleTimeString()} 请先获取无人机控制权`);
@@ -2446,6 +2480,9 @@ export function EoVideoPanel({
                       uavGimbalDisabled={!mqttAirportSn?.trim() || !activeStream?.uav}
                       uavVideoOnly={uavVideoOnly}
                       onToggleUavVideoOnly={() => setUavVideoOnly((v) => !v)}
+                      showUavExpandedDebugToggle={!EO_VIDEO_DEBUG_UI && expandedMode}
+                      uavExpandedDebugOpen={uavExpandedDebugOpen}
+                      onToggleUavExpandedDebug={() => setUavExpandedDebugOpen((v) => !v)}
                     />
                     {snapshotPreview ? (
                       <EoSnapshotPreviewPopout
@@ -2478,6 +2515,15 @@ export function EoVideoPanel({
                         onAction={triggerUavAction}
                         actionBusy={uavActionBusy}
                         onClientLog={appendClientLog}
+                      />
+                    </div>
+                  ) : null}
+                  {!EO_VIDEO_DEBUG_UI && expandedMode && uavExpandedDebugOpen ? (
+                    <div className="pointer-events-auto z-[26] w-full max-h-[min(42vh,300px)] shrink-0 overflow-auto border-t border-white/[0.12] bg-black/82 backdrop-blur-sm">
+                      <EoVideoTaskTracePanel
+                        trace={taskTrace}
+                        clientEcho={clientEcho}
+                        uavMqttStatus={[uavMqttFooterLine, drcDebugLine].filter(Boolean).join("\n")}
                       />
                     </div>
                   ) : null}
@@ -2610,6 +2656,8 @@ export function EoVideoPanel({
                         onToggleCameraExpandedDebug={() =>
                           setCameraExpandedDebugOpen((v) => !v)
                         }
+                        calcRecordSupported={ptzSupported && !isThirdPartyUdpStream}
+                        onOpenCalcRecord={() => calcRecord.setDialogOpen(true)}
                       />
                       {snapshotPreview ? (
                         <EoSnapshotPreviewPopout
@@ -2749,6 +2797,38 @@ export function EoVideoPanel({
           appendClientLog(`${new Date().toLocaleTimeString()} 采集上传失败：${msg}`);
           toast.error("采集上传失败", { description: msg });
         }}
+      />
+
+      <EoCalcRecordDialog
+        open={calcRecord.dialogOpen}
+        onClose={() => calcRecord.setDialogOpen(false)}
+        cameraName={calcRecord.cameraName}
+        baselineTargetId={calcRecord.baselineTargetId}
+        canRecord={calcRecord.canRecord}
+        recordBlockReason={calcRecord.recordBlockReason}
+        sessionActive={calcRecord.sessionActive}
+        canStartSession={calcRecord.canStartSession}
+        recording={calcRecord.recording}
+        recordSessionLabel={calcRecord.recordSessionLabel}
+        rowCount={calcRecord.rowCount}
+        pendingSyncCount={calcRecord.pendingSyncCount}
+        nfsSynced={calcRecord.nfsSynced}
+        syncBusy={calcRecord.syncBusy}
+        locationPoints={calcRecord.locationPoints}
+        aimSeaBusy={calcRecord.aimSeaBusy}
+        aimSkyBusy={calcRecord.aimSkyBusy}
+        onToggleRecording={calcRecord.toggleRecording}
+        onSyncSession={() => void calcRecord.syncSessionToNfs()}
+        onDeleteSession={() => void calcRecord.deleteSession()}
+        onSeaAim={() => void calcRecord.requestAimParam(0)}
+        onSkyAim={() => void calcRecord.requestAimParam(1)}
+        onResetDefault={calcRecord.resetDefaultParams}
+        showLocation={() => setCalcRecordLocationOpen(true)}
+      />
+      <EoCalcRecordLocationDialog
+        open={calcRecordLocationOpen}
+        onClose={() => setCalcRecordLocationOpen(false)}
+        points={calcRecord.locationPoints}
       />
 
     </div>

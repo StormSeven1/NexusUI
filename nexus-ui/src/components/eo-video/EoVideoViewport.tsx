@@ -8,6 +8,8 @@ import { isEoVideoHardwarePassthroughEnabled } from "@/lib/eo-video/eoVideoHardw
 import { isEoVideoWebCodecsCanvasEnabled } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 import type { EoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import type { EoVideoIceServer } from "@/lib/eo-video/types";
+import type { EoVideoObjectFit } from "@/lib/eo-video/eoVideoObjectFit";
+import { eoVideoObjectFitToTailwindClass } from "@/lib/eo-video/eoVideoObjectFit";
 import { useWebCodecsCanvas } from "@/hooks/useWebCodecsCanvas";
 import { useWebRtcPlayer } from "@/hooks/useWebRtcPlayer";
 
@@ -21,7 +23,7 @@ export interface EoVideoViewportProps {
   videoReceiverRef?: React.MutableRefObject<RTCRtpReceiver | null>;
   containerClassName?: string;
   streamLabel?: string;
-  videoObjectFit?: "contain" | "cover";
+  videoObjectFit?: EoVideoObjectFit;
   /** 无人机停帧看门狗：每 N ms 查 framesDecoded（通常 6000） */
   stallWatchIntervalMs?: number;
   /** 停帧恢复前回调（如 poke 推流） */
@@ -44,6 +46,9 @@ export interface EoVideoViewportProps {
 
 /** WebCodecs 已就绪但迟迟无首帧时回退 `<video>`（无 GPU 软解成功但缺关键帧等） */
 const WEBCODECS_NO_FRAME_FALLBACK_MS = 5000;
+/** Canvas 曾出画但 RTP 长时间不更新（等 IDR / 解码卡死）时回退 `<video>` */
+const WEBCODECS_CANVAS_STALL_FALLBACK_MS = 2500;
+const WEBCODECS_CANVAS_STALL_CHECK_MS = 400;
 export function EoVideoViewport({
   signalingUrl,
   iceServers,
@@ -54,7 +59,7 @@ export function EoVideoViewport({
   videoReceiverRef,
   containerClassName,
   streamLabel,
-  videoObjectFit = "cover",
+  videoObjectFit = "fill",
   webCodecsPresentationRef,
   stallWatchIntervalMs,
   onStallRecover,
@@ -120,7 +125,7 @@ function EoVideoViewportHardware({
   videoReceiverRef,
   containerClassName,
   streamLabel,
-  videoObjectFit = "cover",
+  videoObjectFit = "fill",
   webCodecsPresentationRef,
   stallWatchIntervalMs,
   onStallRecover,
@@ -133,6 +138,8 @@ function EoVideoViewportHardware({
       height: 0,
       canvas: null,
       lastRenderedRtpTimestamp: 0,
+      videoFallbackActive: false,
+      presentationEpoch: 0,
     });
     return () => {
       applyPresentationRef(webCodecsPresentationRef, {
@@ -141,6 +148,8 @@ function EoVideoViewportHardware({
         height: 0,
         canvas: null,
         lastRenderedRtpTimestamp: 0,
+        videoFallbackActive: false,
+        presentationEpoch: 0,
       });
     };
   }, [webCodecsPresentationRef]);
@@ -163,7 +172,7 @@ function EoVideoViewportHardware({
         ref={videoRef}
         className={cn(
           "pointer-events-none absolute inset-0 z-0 h-full w-full",
-          videoObjectFit === "contain" ? "object-contain" : "object-cover",
+          eoVideoObjectFitToTailwindClass(videoObjectFit),
           containerClassName,
         )}
         playsInline
@@ -199,7 +208,7 @@ function EoVideoViewportWebCodecs({
   videoReceiverRef,
   containerClassName,
   streamLabel,
-  videoObjectFit = "cover",
+  videoObjectFit = "fill",
   webCodecsPresentationRef,
   stallWatchIntervalMs,
   onStallRecover,
@@ -218,18 +227,35 @@ function EoVideoViewportWebCodecs({
   } = useWebCodecsCanvas();
   const [videoFallback, setVideoFallback] = useState(false);
   const fallbackRestartedRef = useRef(false);
+  const presentationEpochRef = useRef(0);
+  const canvasWasPresentingRef = useRef(false);
+  const lastCanvasRtpRef = useRef(0);
+  const lastCanvasRtpChangeAtRef = useRef(0);
+
+  const bumpPresentationEpoch = (reason: string) => {
+    presentationEpochRef.current += 1;
+    if (isEoVideoDebugUiEnabled()) {
+      console.info(`[WebCodecs] presentationEpoch=${presentationEpochRef.current} (${reason})`);
+    }
+  };
 
   /** 舱内/舱外或任意信令切换：清 Canvas 残留帧，避免长时间仍显示机场画面 */
   useEffect(() => {
     resetForNewStream();
     setVideoFallback(false);
     fallbackRestartedRef.current = false;
+    presentationEpochRef.current = 0;
+    canvasWasPresentingRef.current = false;
+    lastCanvasRtpRef.current = 0;
+    lastCanvasRtpChangeAtRef.current = 0;
     applyPresentationRef(webCodecsPresentationRef, {
       active: false,
       width: 0,
       height: 0,
       canvas: null,
       lastRenderedRtpTimestamp: 0,
+      videoFallbackActive: false,
+      presentationEpoch: 0,
     });
   }, [signalingUrl, resetForNewStream, webCodecsPresentationRef]);
 
@@ -273,11 +299,40 @@ function EoVideoViewportWebCodecs({
       fallbackRestartedRef.current = false;
       return;
     }
+    bumpPresentationEpoch("videoFallback");
     if (fallbackRestartedRef.current) return;
     fallbackRestartedRef.current = true;
     console.info("[WebCodecs] video fallback active, restarting WebRTC with passthrough");
     restart();
   }, [videoFallback, restart]);
+
+  /** 曾出画但 Canvas RTP 停更超过阈值 → 回退 `<video>`（PASSTHROUGH=false 时防长期黑屏） */
+  useEffect(() => {
+    if (videoFallback || !hasRenderedFrame || decodePath === "pending" || decodePath === "failed") {
+      return;
+    }
+    lastCanvasRtpRef.current = lastRenderedRtpTimestampRef.current;
+    lastCanvasRtpChangeAtRef.current = Date.now();
+
+    const tid = window.setInterval(() => {
+      const ts = lastRenderedRtpTimestampRef.current;
+      const now = Date.now();
+      if (ts <= 0) return;
+      if (ts !== lastCanvasRtpRef.current) {
+        lastCanvasRtpRef.current = ts;
+        lastCanvasRtpChangeAtRef.current = now;
+        return;
+      }
+      if (now - lastCanvasRtpChangeAtRef.current >= WEBCODECS_CANVAS_STALL_FALLBACK_MS) {
+        console.warn(
+          `[WebCodecs] canvas stall ${now - lastCanvasRtpChangeAtRef.current}ms, falling back to <video>`,
+        );
+        setVideoFallback(true);
+      }
+    }, WEBCODECS_CANVAS_STALL_CHECK_MS);
+
+    return () => window.clearInterval(tid);
+  }, [videoFallback, hasRenderedFrame, decodePath, lastRenderedRtpTimestampRef]);
 
   useEffect(() => {
     let rafId = 0;
@@ -288,13 +343,37 @@ function EoVideoViewportWebCodecs({
       const canvas = canvasRef.current;
       const canvasPresenting =
         !videoFallback && hasRenderedFrame && videoWidth > 0 && videoHeight > 0;
+      const ts =
+        lastRenderedRtpTimestampRef.current > 0 ? lastRenderedRtpTimestampRef.current : 0;
+
+      if (canvasPresenting && ts > 0) {
+        if (!canvasWasPresentingRef.current) {
+          bumpPresentationEpoch("canvas-resume");
+        } else if (ts !== lastCanvasRtpRef.current) {
+          const gapMs = Date.now() - lastCanvasRtpChangeAtRef.current;
+          if (lastCanvasRtpRef.current > 0 && gapMs >= 600) {
+            bumpPresentationEpoch("canvas-rtp-resume");
+          }
+        }
+        if (ts !== lastCanvasRtpRef.current) {
+          lastCanvasRtpRef.current = ts;
+          lastCanvasRtpChangeAtRef.current = Date.now();
+        }
+      } else {
+        canvasWasPresentingRef.current = false;
+      }
+      if (canvasPresenting) {
+        canvasWasPresentingRef.current = true;
+      }
+
       applyPresentationRef(webCodecsPresentationRef, {
         active: canvasPresenting,
         width: videoWidth,
         height: videoHeight,
         canvas: canvasPresenting ? canvas : null,
-        lastRenderedRtpTimestamp:
-          lastRenderedRtpTimestampRef.current > 0 ? lastRenderedRtpTimestampRef.current : 0,
+        lastRenderedRtpTimestamp: ts,
+        videoFallbackActive: videoFallback,
+        presentationEpoch: presentationEpochRef.current,
       });
       rafId = window.requestAnimationFrame(syncPresentation);
     };
@@ -309,6 +388,8 @@ function EoVideoViewportWebCodecs({
         height: 0,
         canvas: null,
         lastRenderedRtpTimestamp: 0,
+        videoFallbackActive: false,
+        presentationEpoch: presentationEpochRef.current,
       });
     };
   }, [
@@ -341,7 +422,7 @@ function EoVideoViewportWebCodecs({
         className={cn(
           "pointer-events-none absolute inset-0 z-0 h-full w-full",
           canvasPresenting ? "opacity-0" : "opacity-100",
-          videoObjectFit === "contain" ? "object-contain" : "object-cover",
+          eoVideoObjectFitToTailwindClass(videoObjectFit),
           containerClassName,
         )}
         playsInline
@@ -357,7 +438,7 @@ function EoVideoViewportWebCodecs({
         className={cn(
           "pointer-events-none absolute inset-0 z-[4] h-full w-full",
           !canvasPresenting && "opacity-0",
-          videoObjectFit === "contain" ? "object-contain" : "object-cover",
+          eoVideoObjectFitToTailwindClass(videoObjectFit),
           containerClassName,
         )}
         aria-hidden

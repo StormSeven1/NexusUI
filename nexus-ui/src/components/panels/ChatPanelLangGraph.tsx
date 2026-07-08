@@ -29,6 +29,7 @@ import {
 import {
   extractLangGraphTaskIds,
   extractChatNotificationThreadId,
+  extractChatNotificationAlertArea,
   isLangGraphToolCallEvent,
   shouldRouteToWorkflowSessionTab,
 } from "@/lib/langgraph-workflow-task-id";
@@ -48,6 +49,7 @@ import {
 import { Bot, ChevronRight, Eraser, MessageSquare, Plus, Trash2, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useDbAreaStore } from "@/stores/db-area-store";
 import {
   logLangGraphChatRequest,
   logLangGraphChatResponse,
@@ -105,8 +107,8 @@ function ChatTabSidebar({
   onCreateSession: () => void;
 }) {
   return (
-    <aside className="flex w-[72px] shrink-0 flex-col border-r border-nexus-border bg-nexus-bg-base/40">
-      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto py-2">
+    <aside className="flex w-[52px] shrink-0 flex-col border-r border-nexus-border bg-nexus-bg-base/40">
+      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto py-1.5">
         {tabs.map((tab) => {
           const active = tab.id === activeTabId;
           const unread = tab.messages.length > 0 && !active;
@@ -117,17 +119,17 @@ function ChatTabSidebar({
               onClick={() => onSelect(tab.id)}
               title={tab.title}
               className={cn(
-                "relative mx-1 flex flex-col items-center gap-1 rounded-lg px-1 py-2 text-center transition-colors",
+                "relative mx-0.5 flex flex-col items-center gap-0.5 rounded-md px-0.5 py-1.5 text-center transition-colors",
                 active
                   ? "bg-sky-500/15 text-sky-200 ring-1 ring-sky-400/30"
                   : "text-nexus-text-muted hover:bg-white/[0.05] hover:text-nexus-text-primary",
               )}
             >
-              <MessageSquare className="h-4 w-4 shrink-0" aria-hidden />
-              <span className="line-clamp-2 w-full text-[9px] leading-tight">{tab.title}</span>
+              <MessageSquare className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="line-clamp-1 w-full text-[8px] leading-tight">{tab.title}</span>
               {unread && (
                 <span
-                  className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-sky-400"
+                  className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-sky-400"
                   aria-hidden
                 />
               )}
@@ -141,7 +143,7 @@ function ChatTabSidebar({
           onClick={onCreateSession}
           title="新建会话"
           className={cn(
-            "mx-auto flex h-9 w-9 items-center justify-center rounded-lg",
+            "mx-auto flex h-8 w-8 items-center justify-center rounded-md",
             "text-nexus-text-muted transition-colors hover:bg-sky-500/15 hover:text-sky-200",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40",
           )}
@@ -449,6 +451,11 @@ export function ChatPanelLangGraph() {
       if (notifyThreadId && !isDailyVerificationParentTaskId(notifyThreadId)) {
         tabId = ensureWorkflowTabForStream();
         registerWorkflowVerifyThreadId(notifyThreadId, tabId);
+      }
+
+      const alertArea = extractChatNotificationAlertArea(parsed);
+      if (alertArea) {
+        useDbAreaStore.getState().triggerAreaFlashByName(alertArea);
       }
 
       const tid = parsed.thread_id;

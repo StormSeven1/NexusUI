@@ -30,6 +30,7 @@ import {
   syncEntityLayerMasterFromDeviceLeaves,
   syncMasterOffWhenAllLeavesOff,
   visibilityFromBoolean,
+  type PanelTreeVisibilityState,
 } from "@/lib/panel-tree-visibility";
 import { useTrackDisplayStore } from "@/stores/track-display-store";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
@@ -57,11 +58,11 @@ import {
   VECTOR_LAYER_GROUP_LABELS,
   type VectorLayerPanelItem,
 } from "@/lib/map-2d-basemap-layer-panel";
-import { useAppStore } from "@/stores/app-store";
+import { useAppStore, isLayerPanelDynamicExpanded } from "@/stores/app-store";
 import { useDbAreaStore } from "@/stores/db-area-store";
 import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
-import { countVisibleDbAreaLeaves, isDbAreaDrawable, isDbAreaLeafVisible } from "@/lib/db-area-panel-helpers";
+import { countVisibleDbAreaLeaves, isDbAreaListable, isDbAreaLeafVisible, syncDbAreaLayerMasterFromLeaves } from "@/lib/db-area-panel-helpers";
 import { collectMapGisDroneRowsSync, mapGisDroneSyncSignature } from "@/lib/map-gis-drone-rows";
 import { useDroneStore } from "@/stores/drone-store";
 import {
@@ -79,7 +80,7 @@ import {
   Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, type ReactNode } from "react";
 
 export function LayerPanel() {
   const assets = useAssetStore((s) => s.assets);
@@ -204,22 +205,21 @@ export function LayerPanel() {
   const setTrackSubtypeVisible = useTrackDisplayStore((s) => s.setTrackSubtypeVisible);
   const setAirFusionSubtypesVisible = useTrackDisplayStore((s) => s.setAirFusionSubtypesVisible);
 
-  const [openBasemap, setOpenBasemap] = useState(false);
-  const [openBasemapStyle, setOpenBasemapStyle] = useState(true);
-  const [openTargetSection, setOpenTargetSection] = useState(false);
-  const [openTargetTree, setOpenTargetTree] = useState(true);
-  const [openTargetSubtype, setOpenTargetSubtype] = useState<Record<string, boolean>>({});
-  const [openEntityLayers, setOpenEntityLayers] = useState(false);
-  const [openVectorGroup, setOpenVectorGroup] = useState<Record<string, boolean>>({});
-  const [openDbAreaSection, setOpenDbAreaSection] = useState(false);
-  const [openDbAreaTree, setOpenDbAreaTree] = useState(true);
-  const [openDbGroup, setOpenDbGroup] = useState<Record<number, boolean>>({});
-  const [openOptoTree, setOpenOptoTree] = useState(true);
-  const [openOptoDevice, setOpenOptoDevice] = useState<Record<string, boolean>>({});
-  const [openDroneTree, setOpenDroneTree] = useState(true);
-  const [openDroneDevice, setOpenDroneDevice] = useState<Record<string, boolean>>({});
-  const [openRadarTree, setOpenRadarTree] = useState(true);
-  const [openRadarDevice, setOpenRadarDevice] = useState<Record<string, boolean>>({});
+  const layerPanelExpand = useAppStore((s) => s.layerPanelExpand);
+  const toggleLayerPanelSection = useAppStore((s) => s.toggleLayerPanelSection);
+  const toggleLayerPanelBranch = useAppStore((s) => s.toggleLayerPanelBranch);
+  const toggleLayerPanelDynamic = useAppStore((s) => s.toggleLayerPanelDynamic);
+
+  const openBasemap = layerPanelExpand.sections.basemap;
+  const openBasemapStyle = layerPanelExpand.branches.basemapStyle;
+  const openTargetSection = layerPanelExpand.sections.target;
+  const openTargetTree = layerPanelExpand.branches.targetTree;
+  const openEntityLayers = layerPanelExpand.sections.entity;
+  const openDbAreaSection = layerPanelExpand.sections.dbArea;
+  const openDbAreaTree = layerPanelExpand.branches.dbAreaTree;
+  const openOptoTree = layerPanelExpand.branches.optoTree;
+  const openDroneTree = layerPanelExpand.branches.droneTree;
+  const openRadarTree = layerPanelExpand.branches.radarTree;
 
   const tracksMasterOn = layerVisibility[LYR_TRACKS] !== false;
   const optoMasterOn = layerVisibility[LYR_OPTO_FOV] !== false;
@@ -328,26 +328,28 @@ export function LayerPanel() {
   ]);
 
   useEffect(() => {
-    const drawable = dbAreaRows.filter(isDbAreaDrawable);
-    if (drawable.length === 0) return;
-    const anyOn = drawable.some((r) =>
-      isDbAreaLeafVisible(r.group_id, r.area_id, dbAreaVisibility),
+    syncDbAreaLayerMasterFromLeaves(
+      dbAreaMasterOn,
+      dbAreaRows,
+      dbAreaVisibility,
+      (on) => setLayerVisibility(LYR_DB_AREAS, on),
     );
-    syncMasterOffWhenAllLeavesOff(dbAreaMasterOn, anyOn, (on) => setLayerVisibility(LYR_DB_AREAS, on));
   }, [dbAreaRows, dbAreaVisibility, dbAreaMasterOn, setLayerVisibility]);
 
-  const toggleVectorGroup = useCallback((gk: string) => {
-    setOpenVectorGroup((prev) => ({ ...prev, [gk]: !prev[gk] }));
-  }, []);
+  const toggleVectorGroup = useCallback(
+    (gk: string) => toggleLayerPanelDynamic("vectorGroup", gk),
+    [toggleLayerPanelDynamic],
+  );
 
-  const toggleDbGroupOpen = useCallback((gid: number) => {
-    setOpenDbGroup((prev) => ({ ...prev, [gid]: !prev[gid] }));
-  }, []);
+  const toggleDbGroupOpen = useCallback(
+    (gid: number) => toggleLayerPanelDynamic("dbGroup", String(gid)),
+    [toggleLayerPanelDynamic],
+  );
 
   const dbAreaGroups = useMemo(() => {
     const m = new globalThis.Map<number, typeof dbAreaRows>();
     for (const r of dbAreaRows) {
-      if (!isDbAreaDrawable(r)) continue;
+      if (!isDbAreaListable(r)) continue;
       const arr = m.get(r.group_id) ?? [];
       arr.push(r);
       m.set(r.group_id, arr);
@@ -357,7 +359,7 @@ export function LayerPanel() {
 
   const groupAreaVisibility = useCallback(
     (groupId: number) => {
-      const list = dbAreaRows.filter((r) => r.group_id === groupId && isDbAreaDrawable(r));
+      const list = dbAreaRows.filter((r) => r.group_id === groupId && isDbAreaListable(r));
       if (list.length === 0) return "all" as const;
       const flags = list.map((r) =>
         isDbAreaLeafVisible(r.group_id, r.area_id, dbAreaVisibility),
@@ -369,7 +371,7 @@ export function LayerPanel() {
 
   const dbAreaMasterVisibility = useMemo(() => {
     const flags = dbAreaRows
-      .filter(isDbAreaDrawable)
+      .filter(isDbAreaListable)
       .map((r) => isDbAreaLeafVisible(r.group_id, r.area_id, dbAreaVisibility));
     return aggregatePanelVisibility(flags);
   }, [dbAreaRows, dbAreaVisibility]);
@@ -515,6 +517,24 @@ export function LayerPanel() {
     setAllDrawableAreasVisible(turnOn);
   }, [dbAreaMasterVisibility, setLayerVisibility, setAllDrawableAreasVisible]);
 
+  const toggleDbAreaGroupVisibility = useCallback(
+    (groupId: number, gVis: PanelTreeVisibilityState) => {
+      const turnOn = parentToggleTurnOn(gVis);
+      setGroupAllAreasVisible(groupId, turnOn);
+      if (turnOn && !dbAreaMasterOn) setLayerVisibility(LYR_DB_AREAS, true);
+    },
+    [setGroupAllAreasVisible, dbAreaMasterOn, setLayerVisibility],
+  );
+
+  const toggleDbAreaLeafVisibility = useCallback(
+    (groupId: number, areaId: number, currentlyVisible: boolean) => {
+      const next = !currentlyVisible;
+      setAreaVisible(groupId, areaId, next);
+      if (next && !dbAreaMasterOn) setLayerVisibility(LYR_DB_AREAS, true);
+    },
+    [setAreaVisible, dbAreaMasterOn, setLayerVisibility],
+  );
+
   const groupDisplayName = useCallback(
     (groupId: number) => {
       const first = dbAreaRows.find((r) => r.group_id === groupId);
@@ -609,7 +629,7 @@ export function LayerPanel() {
         <div>
           {sectionHeader(
             openBasemap,
-            () => setOpenBasemap((v) => !v),
+            () => toggleLayerPanelSection("basemap"),
             <MapIcon size={12} className="shrink-0 text-nexus-text-muted" />,
             "地图",
           )}
@@ -630,7 +650,7 @@ export function LayerPanel() {
                 <PanelTreeBranchRow
                   depth={0}
                   open={openBasemapStyle}
-                  onToggleOpen={() => setOpenBasemapStyle((v) => !v)}
+                  onToggleOpen={() => toggleLayerPanelBranch("basemapStyle")}
                   label={basemapStyleName ?? "本地地图"}
                   visibility={basemapLocalVisibility}
                   onToggleVisible={toggleBasemapLocalVisibility}
@@ -647,7 +667,7 @@ export function LayerPanel() {
                     groupKeys.map((gk) => {
                       const items = vectorByGroup.get(gk) ?? [];
                       if (items.length === 0) return null;
-                      const subOpen = openVectorGroup[gk] ?? false;
+                      const subOpen = isLayerPanelDynamicExpanded(layerPanelExpand, "vectorGroup", gk);
                       return (
                         <div key={gk}>
                           <PanelTreeBranchRow
@@ -686,7 +706,7 @@ export function LayerPanel() {
         <div>
           {sectionHeader(
             openTargetSection,
-            () => setOpenTargetSection((v) => !v),
+            () => toggleLayerPanelSection("target"),
             <Target size={12} className="shrink-0 text-nexus-text-muted" />,
             "目标图层",
           )}
@@ -696,7 +716,7 @@ export function LayerPanel() {
                 <PanelTreeBranchRow
                   depth={0}
                   open={openTargetTree}
-                  onToggleOpen={() => setOpenTargetTree((v) => !v)}
+                  onToggleOpen={() => toggleLayerPanelBranch("targetTree")}
                   label="全部目标"
                   visibility={targetMasterVisibility}
                   onToggleVisible={toggleTargetMasterVisibility}
@@ -707,7 +727,11 @@ export function LayerPanel() {
                       const showAirChildren = key === "fuse_air";
                       const subtypeDisabled = !tracksMasterOn;
                       if (showAirChildren) {
-                        const subOpen = openTargetSubtype[key] ?? true;
+                        const subOpen = isLayerPanelDynamicExpanded(
+                          layerPanelExpand,
+                          "targetSubtype",
+                          key,
+                        );
                         const fuseAirVis = fuseAirSubtypeVisibility(
                           tracksMasterOn,
                           trackSubtypeVisible,
@@ -718,12 +742,7 @@ export function LayerPanel() {
                             <PanelTreeBranchRow
                               depth={1}
                               open={subOpen}
-                              onToggleOpen={() =>
-                                setOpenTargetSubtype((prev) => ({
-                                  ...prev,
-                                  [key]: !subOpen,
-                                }))
-                              }
+                              onToggleOpen={() => toggleLayerPanelDynamic("targetSubtype", key)}
                               label={TRACK_SUBTYPE_LABELS[key]}
                               visibility={fuseAirVis}
                               onToggleVisible={() => {
@@ -782,7 +801,7 @@ export function LayerPanel() {
         <div>
           {sectionHeader(
             openEntityLayers,
-            () => setOpenEntityLayers((v) => !v),
+            () => toggleLayerPanelSection("entity"),
             <Database size={12} className="shrink-0 text-nexus-text-muted" />,
             "实体图层",
           )}
@@ -796,7 +815,7 @@ export function LayerPanel() {
                         <PanelTreeBranchRow
                           depth={0}
                           open={openRadarTree}
-                          onToggleOpen={() => setOpenRadarTree((v) => !v)}
+                          onToggleOpen={() => toggleLayerPanelBranch("radarTree")}
                           label={layer.name}
                           visibility={radarLayerVisibility}
                           onToggleVisible={() =>
@@ -813,17 +832,18 @@ export function LayerPanel() {
                             </div>
                           ) : (
                             radarPanelDevices.map((dev) => {
-                              const dOpen = openRadarDevice[dev.id] ?? false;
+                              const dOpen = isLayerPanelDynamicExpanded(
+                                layerPanelExpand,
+                                "radarDevice",
+                                dev.id,
+                              );
                               return (
                                 <div key={dev.id}>
                                   <PanelTreeBranchRow
                                     depth={1}
                                     open={dOpen}
                                     onToggleOpen={() =>
-                                      setOpenRadarDevice((prev) => ({
-                                        ...prev,
-                                        [dev.id]: !prev[dev.id],
-                                      }))
+                                      toggleLayerPanelDynamic("radarDevice", dev.id)
                                     }
                                     label={dev.label}
                                     visibility={radarDeviceVisibilityState(dev.id)}
@@ -866,7 +886,7 @@ export function LayerPanel() {
                         <PanelTreeBranchRow
                           depth={0}
                           open={openDroneTree}
-                          onToggleOpen={() => setOpenDroneTree((v) => !v)}
+                          onToggleOpen={() => toggleLayerPanelBranch("droneTree")}
                           label={layer.name}
                           visibility={droneLayerVisibility}
                           onToggleVisible={() =>
@@ -883,7 +903,11 @@ export function LayerPanel() {
                             </div>
                           ) : (
                             dronePanelDevices.map((dev) => {
-                              const dOpen = openDroneDevice[dev.sn] ?? false;
+                              const dOpen = isLayerPanelDynamicExpanded(
+                                layerPanelExpand,
+                                "droneDevice",
+                                dev.sn,
+                              );
                               const airportSn = dev.airportSN.trim();
                               const airportLabel = airportSn
                                 ? airportNameById.get(airportSn) ?? airportSn
@@ -894,10 +918,7 @@ export function LayerPanel() {
                                     depth={1}
                                     open={dOpen}
                                     onToggleOpen={() =>
-                                      setOpenDroneDevice((prev) => ({
-                                        ...prev,
-                                        [dev.sn]: !prev[dev.sn],
-                                      }))
+                                      toggleLayerPanelDynamic("droneDevice", dev.sn)
                                     }
                                     label={dev.label}
                                     visibility={droneDeviceVisibilityState(dev)}
@@ -963,7 +984,7 @@ export function LayerPanel() {
                       <PanelTreeBranchRow
                         depth={0}
                         open={openOptoTree}
-                        onToggleOpen={() => setOpenOptoTree((v) => !v)}
+                        onToggleOpen={() => toggleLayerPanelBranch("optoTree")}
                         label={layer.name}
                         visibility={optoLayerVisibility}
                         onToggleVisible={() =>
@@ -987,17 +1008,18 @@ export function LayerPanel() {
                           </div>
                         ) : (
                           optoCameraDevices.map((dev) => {
-                            const dOpen = openOptoDevice[dev.id] ?? false;
+                            const dOpen = isLayerPanelDynamicExpanded(
+                              layerPanelExpand,
+                              "optoDevice",
+                              dev.id,
+                            );
                             return (
                               <div key={dev.id}>
                                 <PanelTreeBranchRow
                                   depth={1}
                                   open={dOpen}
                                   onToggleOpen={() =>
-                                    setOpenOptoDevice((prev) => ({
-                                      ...prev,
-                                      [dev.id]: !prev[dev.id],
-                                    }))
+                                    toggleLayerPanelDynamic("optoDevice", dev.id)
                                   }
                                   label={dev.label}
                                   visibility={optoDeviceVisibilityState(dev.id)}
@@ -1042,7 +1064,7 @@ export function LayerPanel() {
         <div>
           {sectionHeader(
             openDbAreaSection,
-            () => setOpenDbAreaSection((v) => !v),
+            () => toggleLayerPanelSection("dbArea"),
             <FolderTree size={12} className="shrink-0 text-nexus-text-muted" />,
             "区域图层",
           )}
@@ -1052,14 +1074,18 @@ export function LayerPanel() {
                 <PanelTreeBranchRow
                   depth={0}
                   open={openDbAreaTree}
-                  onToggleOpen={() => setOpenDbAreaTree((v) => !v)}
+                  onToggleOpen={() => toggleLayerPanelBranch("dbAreaTree")}
                   label="全部区域"
                   visibility={dbAreaMasterVisibility}
                   onToggleVisible={toggleDbAreaMasterVisibility}
                 />
                 {openDbAreaTree
                   ? dbAreaGroups.map(([groupId, list]) => {
-                      const gOpen = openDbGroup[groupId] ?? false;
+                      const gOpen = isLayerPanelDynamicExpanded(
+                        layerPanelExpand,
+                        "dbGroup",
+                        String(groupId),
+                      );
                       const gVis = groupAreaVisibility(groupId);
                       return (
                         <div key={groupId}>
@@ -1069,9 +1095,7 @@ export function LayerPanel() {
                             onToggleOpen={() => toggleDbGroupOpen(groupId)}
                             label={groupDisplayName(groupId)}
                             visibility={gVis}
-                            onToggleVisible={() =>
-                              setGroupAllAreasVisible(groupId, parentToggleTurnOn(gVis))
-                            }
+                            onToggleVisible={() => toggleDbAreaGroupVisibility(groupId, gVis)}
                           />
                           {gOpen
                             ? list.map((r) => {
@@ -1085,7 +1109,9 @@ export function LayerPanel() {
                                     key={key}
                                     depth={2}
                                     visibility={visibilityFromBoolean(v)}
-                                    onToggle={() => setAreaVisible(r.group_id, r.area_id, !v)}
+                                    onToggle={() =>
+                                      toggleDbAreaLeafVisibility(r.group_id, r.area_id, v)
+                                    }
                                     label={label}
                                   />
                                 );

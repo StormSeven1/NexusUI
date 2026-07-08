@@ -44,7 +44,7 @@ import {
   ensureEntitiesTrackTaskCache,
   listTrackTaskOwnerEntityIds,
 } from "@/lib/entities-track-task-cache";
-import { runGisTrackVerification } from "@/lib/run-gis-track-verification";
+import { runGisDroneSelfReportVerification, runGisTrackVerification } from "@/lib/run-gis-track-verification";
 import { TargetPlacard, type PlacardKind } from "@/components/map/TargetPlacard";
 import {
   buildMarkerSymbolDataUrl,
@@ -137,13 +137,22 @@ import {
   installDbAreasLayers,
   removeLegacyDbAreasFillLayer,
   setDbAreasGeoJSON,
+  setDbAreasFlashGeoJSON,
+  setDbAreasFlashLayersVisible,
+  setDbAreasFlashPulseOpacity,
   DB_AREAS_SOURCE,
+  DB_AREAS_FLASH_SOURCE,
   DB_AREAS_LAYER_IDS,
   DB_AREAS_LINE_LAYER,
   DB_AREAS_LABEL_LAYER,
 } from "@/components/map/modules/db-areas-maplibre";
 import { AreaDbContextMenu, type AreaDbMenuState } from "@/components/map/AreaDbContextMenu";
 import { buildDbAreasFeatureCollection } from "@/lib/build-db-areas-geojson";
+import {
+  buildDbAreasFlashFeatureCollection,
+  computeAreaFlashPulseOpacity,
+  hasAnyActiveAreaFlash,
+} from "@/lib/db-area-alert-flash";
 import { LaserMaplibre, LASER_CENTER, LASER_LAYER_IDS, type LaserDevice } from "@/components/map/modules/laser-maplibre";
 import { TdoaMaplibre, TDOA_CENTER, TDOA_LAYER_IDS, type TdoaDevice } from "@/components/map/modules/tdoa-maplibre";
 import {
@@ -927,6 +936,19 @@ export function Map2D() {
           map.on("dblclick", TRACK_DOT, onTrackDblClick);
         }
 
+        /* 双击无人机自报位/高频图标：与双击融合航迹一致，下发相机跟踪任务 */
+        const onDroneMarkerDblClick = (e: maplibregl.MapLayerMouseEvent) => {
+          const ev = e.originalEvent;
+          if (typeof ev.preventDefault === "function") ev.preventDefault();
+          const f = e.features?.[0];
+          const sn = f?.properties?.sn as string | undefined;
+          if (!sn?.trim()) return;
+          void runGisDroneSelfReportVerification(sn.trim()).catch((err: unknown) =>
+            console.error("[map-drone-dblclick]", err),
+          );
+        };
+        map.on("dblclick", DRONES_SYMBOL_LAYER, onDroneMarkerDblClick);
+
         /* 右键：地图 / 航迹 业务菜单（量算工具激活时不弹出，交予各工具） */
         map.on("contextmenu", (e) => {
           if (useMapMeasureUi.getState().activeDrawTool != null) return;
@@ -1422,6 +1444,74 @@ export function Map2D() {
       unsubDb();
       unsubMaster();
       unsubSituation();
+    };
+  }, []);
+
+  /* chat_notification alert_area：独立闪烁层（不受区域子项/总开关隐藏影响） */
+  useEffect(() => {
+    let raf = 0;
+    let pulseStart = performance.now();
+
+    const flushFlashGeo = () => {
+      const m = mapRef.current;
+      if (!m?.getSource(DB_AREAS_FLASH_SOURCE)) return;
+      try {
+        const { rows, areaFlashUntil } = useDbAreaStore.getState();
+        const active = hasAnyActiveAreaFlash(areaFlashUntil);
+        if (!active) {
+          setDbAreasFlashGeoJSON(m, { type: "FeatureCollection", features: [] });
+          setDbAreasFlashLayersVisible(m, false);
+          return;
+        }
+        setDbAreasFlashGeoJSON(m, buildDbAreasFlashFeatureCollection(rows, areaFlashUntil));
+        setDbAreasFlashLayersVisible(m, true);
+      } catch {
+        /* style 过渡 */
+      }
+    };
+
+    const stopPulse = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+    };
+
+    const tickPulse = () => {
+      const m = mapRef.current;
+      useDbAreaStore.getState().pruneExpiredAreaFlashes();
+      const { areaFlashUntil } = useDbAreaStore.getState();
+      if (!m?.getSource(DB_AREAS_FLASH_SOURCE) || !hasAnyActiveAreaFlash(areaFlashUntil)) {
+        stopPulse();
+        flushFlashGeo();
+        return;
+      }
+      const opacity = computeAreaFlashPulseOpacity(performance.now() - pulseStart);
+      setDbAreasFlashPulseOpacity(m, opacity);
+      raf = requestAnimationFrame(tickPulse);
+    };
+
+    const ensurePulse = () => {
+      const { areaFlashUntil } = useDbAreaStore.getState();
+      if (!hasAnyActiveAreaFlash(areaFlashUntil)) {
+        stopPulse();
+        return;
+      }
+      if (!raf) {
+        pulseStart = performance.now();
+        raf = requestAnimationFrame(tickPulse);
+      }
+    };
+
+    const unsub = useDbAreaStore.subscribe((s, p) => {
+      if (s.flashRevision !== p.flashRevision || s.rows !== p.rows) {
+        flushFlashGeo();
+        ensurePulse();
+      }
+    });
+    flushFlashGeo();
+    ensurePulse();
+    return () => {
+      unsub();
+      stopPulse();
     };
   }, []);
 

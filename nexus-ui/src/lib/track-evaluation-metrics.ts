@@ -1986,6 +1986,29 @@ function calculateSeaFusionErrors(
         timestamp: fusionTime,
       });
     }
+
+    const courseErr =
+      fusionCourse !== undefined && aisCourse !== undefined
+        ? calculateAngleDifference(fusionCourse, aisCourse)
+        : null;
+    const speedErr =
+      fusionSpeed !== undefined && aisSpeed !== undefined ? fusionSpeed - aisSpeed : null;
+
+    fusionTrack.originalData.errorInfo = {
+      distance: { fusion: fusionError, radar1: radar1Error, radar2: radar2Error },
+      azimuth: {
+        fusion: fusionAzimuthError,
+        radar1: radar1AzimuthError,
+        radar2: radar2AzimuthError,
+      },
+      elevation: {
+        fusion: fusionElevationError,
+        radar1: radar1ElevationError,
+        radar2: radar2ElevationError,
+      },
+      ...(courseErr != null ? { course: { fusion: courseErr } } : {}),
+      ...(speedErr != null ? { speed: { fusion: speedErr } } : {}),
+    };
   });
 
   return {
@@ -2295,6 +2318,40 @@ function calculateAirFusionErrors(
         timestamp: fusionTime,
       });
     }
+
+    const courseErr =
+      fusionCourse !== undefined && selfReportCourse !== undefined
+        ? calculateAngleDifference(fusionCourse, selfReportCourse)
+        : null;
+    const speedErr =
+      fusionSpeed !== undefined && selfReportSpeed !== undefined
+        ? fusionSpeed - selfReportSpeed
+        : null;
+
+    fusionTrack.originalData.errorInfo = {
+      distance: {
+        fusion: fusionDistanceError,
+        radar1: radar1DistanceError,
+        radar2: radar2DistanceError,
+      },
+      height: {
+        fusion: fusionHeightError,
+        radar1: radar1HeightError,
+        radar2: radar2HeightError,
+      },
+      azimuth: {
+        fusion: fusionAzimuthError,
+        radar1: radar1AzimuthError,
+        radar2: radar2AzimuthError,
+      },
+      elevation: {
+        fusion: fusionElevationError,
+        radar1: radar1ElevationError,
+        radar2: radar2ElevationError,
+      },
+      ...(courseErr != null ? { course: { fusion: courseErr } } : {}),
+      ...(speedErr != null ? { speed: { fusion: speedErr } } : {}),
+    };
   });
 
   return {

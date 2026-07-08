@@ -60,10 +60,10 @@ export const EXCLUDE_LASER_IDS = new Set<string>([]);
 export const EXCLUDE_TDOA_IDS = new Set<string>([]);
 
 /** 机场：dockSn 黑名单（useUnifiedWsFeed 中 airportId = ap.dockSn；支持 `airport_${sn}` 写法） */
-export const EXCLUDE_AIRPORT_IDS = new Set<string>(["whzdh01"]);
+export const EXCLUDE_AIRPORT_IDS = new Set<string>([]);
 
 /** 无人机：deviceSn 黑名单（useUnifiedWsFeed 中 droneAssetId = dr.deviceSn，与机场用 dockSn 一致） */
-export const EXCLUDE_DRONE_IDS = new Set<string>(["uav_jo-001"]);
+export const EXCLUDE_DRONE_IDS = new Set<string>([]);
 
 /**
  * 无人机：**显示名**精确匹配则隐藏（与 entityStore `EXCLUDED_DRONE_NAMES` 一致）

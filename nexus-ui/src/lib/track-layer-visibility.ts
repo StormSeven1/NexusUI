@@ -32,6 +32,8 @@ export const DEFAULT_TRACK_SUBTYPE_VISIBLE: TrackSubtypeVisibility = {
   radar_jingzi: false,
   ais_track: false,
   uav_pose_track: false,
+  boat_self_track: false,
+  xpf_track: false,
 };
 
 /** 与 Custombackend `receiver_manager.TRACK_LAYER_KEY_BY_RECEIVER` 一致 */
@@ -41,10 +43,13 @@ export const TRACK_LAYER_KEY_BY_DDS_SOURCE_ID: Record<string, TrackLayerKey> = {
   dds_forward_fuse_bird_radar_track: "fuse_air",
   dds_forward_bird_radar_track: "bird_radar",
   dds_forward_fanwu_car_track: "fanwu_car_radar",
+  dds_udp_fanwucar_track: "fanwu_car_radar",
   dds_forward_radar_track1: "radar_wharf",
   dds_forward_radar_track2: "radar_jingzi",
   dds_forward_ais_track: "ais_track",
   dds_forward_uav_pose_track: "uav_pose_track",
+  dds_udp_boatself_track: "boat_self_track",
+  dds_udp_xpf_track: "xpf_track",
 };
 
 /** 目标图层 / 目标列表 / 航迹显示面板共用标签 */
@@ -57,6 +62,8 @@ export const TRACK_SUBTYPE_LABELS: Record<TrackLayerKey, string> = {
   radar_jingzi: "靖子头雷达航迹",
   ais_track: "AIS 航迹",
   uav_pose_track: "自报位航迹",
+  boat_self_track: "船自报位航迹",
+  xpf_track: "远遥鹏飞航迹",
 };
 
 /** 雷达类 DDS 来源：地图上用圆点而非军标 */
@@ -66,15 +73,21 @@ export function isRadarTrackLayerKey(k: TrackLayerKey): boolean {
 
 /** 地图与目标列表上用圆点表示的航迹（雷达 + AIS + 自报位） */
 export function isDotTrackLayerKey(k: TrackLayerKey): boolean {
-  return isRadarTrackLayerKey(k) || k === "ais_track" || k === "uav_pose_track";
+  return (
+    isRadarTrackLayerKey(k) ||
+    k === "ais_track" ||
+    k === "uav_pose_track" ||
+    k === "boat_self_track" ||
+    k === "xpf_track"
+  );
 }
 
-type LayerResolveInput = Pick<
+export type TrackLayerResolveInput = Pick<
   Track,
   "trackLayerKey" | "ddsSourceId" | "dataSourceId" | "sensor" | "targetType" | "name" | "isAirTrack" | "type"
 >;
 
-function inferTrackLayerKeyFromText(track: LayerResolveInput): TrackLayerKey | undefined {
+function inferTrackLayerKeyFromText(track: TrackLayerResolveInput): TrackLayerKey | undefined {
   const idBlob = `${track.ddsSourceId ?? ""} ${track.dataSourceId ?? ""}`.toLowerCase();
   const textBlob = `${idBlob} ${track.sensor ?? ""} ${track.targetType ?? ""} ${track.name ?? ""}`.toLowerCase();
   /**
@@ -88,8 +101,11 @@ function inferTrackLayerKeyFromText(track: LayerResolveInput): TrackLayerKey | u
   if (/\bdds_forward_fuse_track\b/.test(textBlob)) return "fuse_sea";
   if (/\bdds_forward_bird_radar_track\b/.test(textBlob)) return "bird_radar";
   if (/\bdds_forward_fanwu_car_track\b/.test(textBlob)) return "fanwu_car_radar";
+  if (/\bdds_udp_fanwucar_track\b/.test(textBlob)) return "fanwu_car_radar";
   if (/\bdds_forward_ais_track\b/.test(textBlob)) return "ais_track";
   if (/\bdds_forward_uav_pose_track\b/.test(textBlob)) return "uav_pose_track";
+  if (/\bdds_udp_boatself_track\b/.test(textBlob)) return "boat_self_track";
+  if (/\bdds_udp_xpf_track\b/.test(textBlob)) return "xpf_track";
   return undefined;
 }
 
@@ -98,7 +114,7 @@ function inferTrackLayerKeyFromText(track: LayerResolveInput): TrackLayerKey | u
  * 顺序：**`dds_source_id` 映射（权威）** → `track_layer_key` → 文本中的完整 dds id → 对空/对海兜底。
  * DDS 接收器 id 优先于报文里的 `track_layer_key`（解析器偶发错写时仍以接收器为准）。
  */
-export function resolveTrackLayerKey(track: LayerResolveInput): TrackLayerKey {
+export function resolveTrackLayerKey(track: TrackLayerResolveInput): TrackLayerKey {
   const rid = track.ddsSourceId?.trim().toLowerCase();
   if (rid && TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[rid]) {
     return TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[rid];
@@ -114,7 +130,7 @@ export function resolveTrackLayerKey(track: LayerResolveInput): TrackLayerKey {
 }
 
 /** @deprecated 使用 `resolveTrackLayerKey`（不再默认全部为对海融合） */
-export function effectiveTrackLayerKey(track: LayerResolveInput): TrackLayerKey {
+export function effectiveTrackLayerKey(track: TrackLayerResolveInput): TrackLayerKey {
   return resolveTrackLayerKey(track);
 }
 

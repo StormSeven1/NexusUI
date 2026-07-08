@@ -1,7 +1,13 @@
-import type { BufferedDetectionEntry, EoCameraWsPayload, EoRectLayerPayload } from "@/lib/eo-video/eoDetectionTypes";
-import { parseDetectionHeader } from "@/lib/eo-video/detectionSyncUtils";
+import type {
+  BufferedDetectionEntry,
+  EoCameraWsPayload,
+  EoRectLayerPayload,
+  WsDetectionSnapshot,
+} from "@/lib/eo-video/eoDetectionTypes";
+import { inferEoSurfaceShortFromRectTypeId, parseDetectionHeader } from "@/lib/eo-video/detectionSyncUtils";
 
-export const ENTITY_DETECTION_BUFFER_CAP = 200;
+/** 与 sync 环容量同量级即可；过大时每帧 header 扫描与 cross 诊断更重 */
+export const ENTITY_DETECTION_BUFFER_CAP = 64;
 
 function pickStrFromRecord(r: Record<string, unknown>, keys: string[]): string {
   for (const k of keys) {
@@ -64,10 +70,7 @@ function inferTypeShortFromRecord(r: Record<string, unknown>): string | undefine
   if (/ship|boat|vessel|buoy|海|船|浮|surface/.test(s)) return "海";
   const n = Number(rt);
   if (Number.isFinite(n)) {
-    const t = Math.trunc(n);
-    // 与 Qt 常量保持一致：bird=1、plane=2；ship=4、buoy=5。部分链路 ship 可能为 3，一并归海。
-    if (t === 1 || t === 2) return "空";
-    if (t === 3 || t === 4 || t === 5) return "海";
+    return inferEoSurfaceShortFromRectTypeId(Math.trunc(n));
   }
   return undefined;
 }
@@ -153,7 +156,35 @@ function rectRowFromRecord(o: unknown): number[] | null {
     const tid = Number(ridRaw);
     if (Number.isFinite(tid)) row.push(tid);
   }
+  const rtRaw =
+    r.rectType ??
+    r.rect_type ??
+    r.classId ??
+    r.class_id ??
+    r.targetTypeId ??
+    r.target_type_id;
+  if (rtRaw !== undefined && rtRaw !== null && String(rtRaw).trim() !== "") {
+    const rt = Number(rtRaw);
+    if (Number.isFinite(rt) && rt > 0) row.push(Math.trunc(rt));
+  }
   return row;
+}
+
+function pushRectRowFromNumbers(rects: number[][], row: number[]) {
+  if (row.length >= 6) {
+    rects.push([
+      Number(row[0]),
+      Number(row[1]),
+      Number(row[2]),
+      Number(row[3]),
+      Number(row[4]),
+      Number(row[5]),
+    ]);
+  } else if (row.length >= 5) {
+    rects.push([Number(row[0]), Number(row[1]), Number(row[2]), Number(row[3]), Number(row[4])]);
+  } else {
+    rects.push([Number(row[0]), Number(row[1]), Number(row[2]), Number(row[3])]);
+  }
 }
 
 /**
@@ -170,18 +201,13 @@ export function extractVideoRectsFromLayer(layer: EoCameraWsPayload["boatRect"])
     if (typeof vr[0] === "number") {
       const flat = vr as number[];
       if (flat.length < 4) return null;
-      return flat.length >= 5
-        ? [[Number(flat[0]), Number(flat[1]), Number(flat[2]), Number(flat[3]), Number(flat[4])]]
-        : [[Number(flat[0]), Number(flat[1]), Number(flat[2]), Number(flat[3])]];
+      const row = flat.slice(0, Math.min(flat.length, 6)).map(Number);
+      return [row];
     }
     const rects: number[][] = [];
     for (const row of vr) {
       if (Array.isArray(row) && row.length >= 4) {
-        rects.push(
-          row.length >= 5
-            ? [Number(row[0]), Number(row[1]), Number(row[2]), Number(row[3]), Number(row[4])]
-            : [Number(row[0]), Number(row[1]), Number(row[2]), Number(row[3])],
-        );
+        pushRectRowFromNumbers(rects, row.map(Number));
       } else {
         const conv = rectRowFromRecord(row);
         if (conv) rects.push(conv);
@@ -220,19 +246,29 @@ function toFiniteNumber(v: unknown): number | undefined {
 let _headerDiagDone = false;
 let _rectIdDiagDone = false;
 
-/** 将一条 WS 相机载荷写入船/机/单目标缓冲 */
+/** 将一条 WS 相机载荷写入船/机/单目标缓冲；可选写入 unifiedBuf（与 sei_poc_test wsBuffer 同包原子性） */
 export function ingestEntityDetectionPayload(
   data: EoCameraWsPayload,
   boatBuf: BufferedDetectionEntry[],
   planeBuf: BufferedDetectionEntry[],
   singleBuf: BufferedDetectionEntry[],
+  unifiedBuf?: WsDetectionSnapshot[],
 ): EntityIngestResult {
+  const receivedAt = Date.now();
   const vw = Number(data.videoWidth) || 0;
   const vh = Number(data.videoHeight) || 0;
   const topFrameId = toFiniteNumber(data.frameId);
   const topCaptureTs = toFiniteNumber(data.captureTs);
   const topEncodeTs = toFiniteNumber(data.encodeTs);
   const cleared: EntityIngestResult = { clearedBoat: false, clearedPlane: false, clearedSingle: false };
+  let snapBoat: BufferedDetectionEntry | null = null;
+  let snapPlane: BufferedDetectionEntry | null = null;
+  let snapSingle: BufferedDetectionEntry | null = null;
+  const snapHeaders: Uint8Array[] = [];
+
+  const rememberHeader = (entry: BufferedDetectionEntry) => {
+    if (entry.header?.byteLength) snapHeaders.push(entry.header);
+  };
 
   // 一次性诊断：打印 WS header 原始信息
   if (!_headerDiagDone) {
@@ -278,17 +314,21 @@ export function ingestEntityDetectionPayload(
       if (rects.length === 0) {
         boatBuf.length = 0;
         cleared.clearedBoat = true;
+      } else {
+        const entry: BufferedDetectionEntry = {
+          header: parseDetectionHeader(data.boatRect.header),
+          videoRects: rects,
+          videoWidth: vw,
+          videoHeight: vh,
+          frameId: toFiniteNumber(data.boatRect.frameId) ?? topFrameId,
+          captureTs: toFiniteNumber(data.boatRect.captureTs) ?? topCaptureTs,
+          encodeTs: toFiniteNumber(data.boatRect.encodeTs) ?? topEncodeTs,
+          receivedAt,
+        };
+        pushBuffer(boatBuf, entry);
+        snapBoat = entry;
+        rememberHeader(entry);
       }
-      pushBuffer(boatBuf, {
-        header: parseDetectionHeader(data.boatRect.header),
-        videoRects: rects,
-        videoWidth: vw,
-        videoHeight: vh,
-        frameId: toFiniteNumber(data.boatRect.frameId) ?? topFrameId,
-        captureTs: toFiniteNumber(data.boatRect.captureTs) ?? topCaptureTs,
-        encodeTs: toFiniteNumber(data.boatRect.encodeTs) ?? topEncodeTs,
-        receivedAt: Date.now(),
-      });
     }
   }
   if (data.planeRect) {
@@ -317,17 +357,21 @@ export function ingestEntityDetectionPayload(
       if (rects.length === 0) {
         planeBuf.length = 0;
         cleared.clearedPlane = true;
+      } else {
+        const entry: BufferedDetectionEntry = {
+          header: parseDetectionHeader(data.planeRect.header),
+          videoRects: rects,
+          videoWidth: vw,
+          videoHeight: vh,
+          frameId: toFiniteNumber(data.planeRect.frameId) ?? topFrameId,
+          captureTs: toFiniteNumber(data.planeRect.captureTs) ?? topCaptureTs,
+          encodeTs: toFiniteNumber(data.planeRect.encodeTs) ?? topEncodeTs,
+          receivedAt,
+        };
+        pushBuffer(planeBuf, entry);
+        snapPlane = entry;
+        rememberHeader(entry);
       }
-      pushBuffer(planeBuf, {
-        header: parseDetectionHeader(data.planeRect.header),
-        videoRects: rects,
-        videoWidth: vw,
-        videoHeight: vh,
-        frameId: toFiniteNumber(data.planeRect.frameId) ?? topFrameId,
-        captureTs: toFiniteNumber(data.planeRect.captureTs) ?? topCaptureTs,
-        encodeTs: toFiniteNumber(data.planeRect.encodeTs) ?? topEncodeTs,
-        receivedAt: Date.now(),
-      });
     }
   }
   if (data.singleRect) {
@@ -359,7 +403,7 @@ export function ingestEntityDetectionPayload(
         singleBuf.length = 0;
         cleared.clearedSingle = true;
       } else {
-        pushBuffer(singleBuf, {
+        const entry: BufferedDetectionEntry = {
           header: parseDetectionHeader(data.singleRect.header),
           videoRects: validRects,
           videoWidth: vw,
@@ -367,11 +411,30 @@ export function ingestEntityDetectionPayload(
           frameId: toFiniteNumber(data.singleRect.frameId) ?? topFrameId,
           captureTs: toFiniteNumber(data.singleRect.captureTs) ?? topCaptureTs,
           encodeTs: toFiniteNumber(data.singleRect.encodeTs) ?? topEncodeTs,
-          receivedAt: Date.now(),
+          receivedAt,
           singleDisplayMeta: parseSingleRectDisplayMetaFromPayload(data.singleRect, data),
-        });
+        };
+        pushBuffer(singleBuf, entry);
+        snapSingle = entry;
+        rememberHeader(entry);
       }
     }
   }
+
+  if (unifiedBuf) {
+    unifiedBuf.push({
+      receivedAt,
+      videoWidth: vw,
+      videoHeight: vh,
+      frameId: topFrameId,
+      captureTs: topCaptureTs,
+      boat: snapBoat,
+      plane: snapPlane,
+      single: snapSingle,
+      headers: snapHeaders,
+    });
+    while (unifiedBuf.length > ENTITY_DETECTION_BUFFER_CAP) unifiedBuf.shift();
+  }
+
   return cleared;
 }

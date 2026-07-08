@@ -29,6 +29,15 @@ export function isDailyAreaVerificationTaskType(taskType: unknown): boolean {
   );
 }
 
+/** DDS 任务类型 → 检测圆标「海|空」；无明确语义时返回 null */
+export function inferEoSurfaceFromDdsTaskType(taskType: unknown): "空" | "海" | null {
+  const t = String(taskType ?? "").trim();
+  if (!t) return null;
+  if (t === "type.casia.tasks.v1.CameraSkyVerification" || /Sky/i.test(t)) return "空";
+  if (t === "type.casia.tasks.v1.CameraVerification") return "海";
+  return null;
+}
+
 /** DDS 相机状态超过此时间未更新则不再视为「正在查证」（避免断流后按钮常亮） */
 export const DDS_CAMERA_STATUS_STALE_MS = 15000;
 
@@ -118,6 +127,9 @@ export function formatEoDdsCameraLine(row: EoCameraDdsStatusRow | undefined): st
   if (taskType === "type.casia.tasks.v1.TargetCollectionIMChildTask") {
     return active && tid != null ? `正在跟踪${tid}号目标` : "空闲中";
   }
+  if (taskType === "type.casia.tasks.v1.VisualTrackingTask") {
+    return active && tid != null ? `正在跟踪${tid}号目标` : "空闲中";
+  }
   if (taskType === "type.casia.tasks.v1.CameraPointingAccuracyChild") {
     return active
       ? tid != null
@@ -167,6 +179,9 @@ export function isCameraSingleTrackDetectionActive(row: EoCameraDdsStatusRow | u
     taskType === "type.casia.tasks.v1.TargetCollectionChildTask" ||
     taskType === "type.casia.tasks.v1.TargetCollectionIMChildTask"
   ) {
+    return active && tid != null;
+  }
+  if (taskType === "type.casia.tasks.v1.VisualTrackingTask") {
     return active && tid != null;
   }
   if (taskType === "type.casia.tasks.v1.TargetStrikeChildTask") {

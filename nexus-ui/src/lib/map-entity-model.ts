@@ -9,7 +9,9 @@ export type TrackLayerKey =
   | "radar_wharf"
   | "radar_jingzi"
   | "ais_track"
-  | "uav_pose_track";
+  | "uav_pose_track"
+  | "boat_self_track"
+  | "xpf_track";
 
 /** 稳定顺序：签名 / 目标侧边栏 / 航迹显示面板 */
 export const TRACK_LAYER_KEYS_ORDERED = [
@@ -21,6 +23,8 @@ export const TRACK_LAYER_KEYS_ORDERED = [
   "radar_jingzi",
   "ais_track",
   "uav_pose_track",
+  "boat_self_track",
+  "xpf_track",
 ] as const satisfies readonly TrackLayerKey[];
 
 /** 从 WS / 后端 properties 解析是否虚兵（供地图符号与适配器共用） */
@@ -36,6 +40,13 @@ export function isVirtualFromProperties(properties: Record<string, unknown> | nu
   }
   return false;
 }
+
+/** WS / NewTrackStruct 融合来源项（与 Custombackend `fusionSources` 一致） */
+export type TrackFusionSourceItem = {
+  sourceName?: string;
+  dataSourceId?: string | number;
+  trackId?: string | number;
+};
 
 export interface Track {
   /** 缓存主键（= uniqueID），整个工程用此字段做 key */
@@ -102,6 +113,8 @@ export interface Track {
   verificationImage?: string;
   /** 航迹别名（报文 trackAlias / track_alias；有则优先作标题） */
   trackAlias?: string;
+  /** 融合航迹多源（DDS reserved6 / NewTrackStruct sources）；用于自报位判定等 */
+  fusionSources?: TrackFusionSourceItem[];
 }
 
 /** GIS 地图标牌 / 列表主显示 ID：NewTrack `target_id`（`uniqueID` / `showID`） */

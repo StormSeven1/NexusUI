@@ -280,6 +280,84 @@ export function getDockInitialLayoutSnapshot(): DockLayoutSnapshot {
   return structuredClone(DOCK_INITIAL_LAYOUT_SNAPSHOT);
 }
 
+/** 旧版 cleanupEmptyPartitions 曾写入 left-default；UI 与菜单均认 left-0/right-0 */
+function defaultEmptyPartitionId(side: "left" | "right"): PartitionLocation {
+  return `${side}-0` as PartitionLocation;
+}
+
+function normalizeLegacyPartitionId(id: string, side: "left" | "right"): string {
+  if (id === `${side}-default`) return defaultEmptyPartitionId(side);
+  return id;
+}
+
+function normalizePartitionsOnRehydrate(
+  partitions: DockPartition[],
+  side: "left" | "right",
+): DockPartition[] {
+  return partitions.map((p) => ({
+    ...p,
+    id: normalizeLegacyPartitionId(p.id, side) as PartitionLocation,
+  }));
+}
+
+function normalizeSidePartitionsOnRehydrate(
+  partitions: DockPartition[],
+  side: "left" | "right",
+): DockPartition[] {
+  let next = normalizePartitionsOnRehydrate(partitions, side);
+  if (next.length === 1 && next[0].currentPanelId === null) {
+    const defaults = defaultPartitionsWhenAllEmpty(side);
+    if (defaults.length > 1) {
+      next = defaults;
+    }
+  }
+  return next;
+}
+
+function defaultPartitionsWhenAllEmpty(side: "left" | "right"): DockPartition[] {
+  const snap = getDockInitialLayoutSnapshot();
+  const source = side === "left" ? snap.leftPartitions : snap.rightPartitions;
+  return source.map((p) => ({ ...p, currentPanelId: null }));
+}
+
+/** 确保目标分区 id 存在于该侧（含从出厂布局补回 right-1 等） */
+function ensurePartitionsIncludeTarget(
+  partitions: DockPartition[],
+  side: "left" | "right",
+  partitionId: string,
+): DockPartition[] {
+  const normalized = normalizeLegacyPartitionId(partitionId, side) as PartitionLocation;
+  let next: DockPartition[] = partitions.map((p) => ({
+    ...p,
+    id: normalizeLegacyPartitionId(p.id, side) as PartitionLocation,
+  }));
+
+  if (next.some((p) => p.id === normalized)) {
+    return next;
+  }
+
+  const snap = getDockInitialLayoutSnapshot();
+  const defaults = side === "left" ? snap.leftPartitions : snap.rightPartitions;
+  const template = defaults.find((p) => p.id === normalized);
+
+  if (
+    next.length === 1 &&
+    next[0].currentPanelId === null &&
+    defaults.some((p) => p.id === normalized)
+  ) {
+    next = defaultPartitionsWhenAllEmpty(side);
+    if (next.some((p) => p.id === normalized)) {
+      return next;
+    }
+  }
+
+  if (template) {
+    next = [...next, { ...template, currentPanelId: null }].sort((a, b) => a.index - b.index);
+  }
+
+  return next;
+}
+
 // ============ Store 创建 ============
 
 /**
@@ -910,15 +988,8 @@ export const useDockStore = create<DockStoreWithSidebar>()(
 
     // 如果所有分区都空了，保留一个空分区
     if (nonEmptyPartitions.length === 0) {
-      log("debug", `All partitions are empty, keeping one empty partition on ${side} side`);
-      const singlePartition: DockPartition = {
-        id: `${side}-default`,
-        side,
-        index: 0,
-        heightRatio: 1.0,
-        currentPanelId: null,
-      };
-      set({ [partitionsKey]: [singlePartition] });
+      log("debug", `All partitions are empty, restoring default partition layout on ${side} side`);
+      set({ [partitionsKey]: defaultPartitionsWhenAllEmpty(side) });
       return;
     }
 
@@ -1096,26 +1167,49 @@ export const useDockStore = create<DockStoreWithSidebar>()(
 
     const side = partitionId.startsWith("left") ? "left" : "right";
     const partitionsKey = side === "left" ? "leftPartitions" : "rightPartitions";
-    const partitions = state[partitionsKey];
+    const requestedId = normalizeLegacyPartitionId(partitionId, side) as PartitionLocation;
+    let partitions = ensurePartitionsIncludeTarget(state[partitionsKey], side, requestedId);
 
-    const targetPartition = partitions.find((p) => p.id === partitionId);
+    let resolvedPartitionId = requestedId;
+    let targetPartition = partitions.find((p) => p.id === requestedId);
     if (!targetPartition) {
-      log("warn", `Partition not found: ${partitionId}`);
+      targetPartition = partitions.find((p) => p.id === defaultEmptyPartitionId(side));
+    }
+    if (!targetPartition && partitions.length > 0) {
+      targetPartition = partitions[0];
+    }
+    if (!targetPartition) {
+      partitions = defaultPartitionsWhenAllEmpty(side);
+      targetPartition =
+        partitions.find((p) => p.id === requestedId) ?? partitions[0] ?? null;
+    }
+    if (!targetPartition) {
+      log("warn", `No partition available on ${side} for panel ${panelId}`);
       return;
+    }
+    resolvedPartitionId = targetPartition.id as PartitionLocation;
+    if (resolvedPartitionId !== partitionId) {
+      log(
+        "info",
+        `Partition ${partitionId} not found; using ${resolvedPartitionId} for panel ${panelId}`,
+      );
+    }
+    if (partitions !== state[partitionsKey]) {
+      set({ [partitionsKey]: partitions });
     }
 
     // 如果面板之前在另一个分区，需要清理那个分区的 currentPanelId
     const oldPartitionId = panel.location;
     let updatedPartitions = partitions;
 
-    if (oldPartitionId && oldPartitionId !== partitionId) {
+    if (oldPartitionId && oldPartitionId !== resolvedPartitionId) {
       const oldSide = oldPartitionId.startsWith("left") ? "left" : "right";
       const oldPartitionsKey = oldSide === "left" ? "leftPartitions" : "rightPartitions";
 
       // 如果是同一侧，需要清理原分区
       if (oldSide === side) {
-        updatedPartitions = partitions.map(p =>
-          p.id === oldPartitionId ? { ...p, currentPanelId: null } : p
+        updatedPartitions = partitions.map((p) =>
+          p.id === oldPartitionId ? { ...p, currentPanelId: null } : p,
         );
       } else {
         // 如果是不同侧，需要更新另一侧的分区
@@ -1134,13 +1228,13 @@ export const useDockStore = create<DockStoreWithSidebar>()(
     // 更新面板位置
     const updatedPanels = state.panels.map((p) =>
       p.id === panelId
-        ? { ...p, location: partitionId as PartitionLocation, mode: "docked" as const }
+        ? { ...p, location: resolvedPartitionId as PartitionLocation, mode: "docked" as const }
         : p
     );
 
     // 更新目标分区的当前面板
     updatedPartitions = updatedPartitions.map((p) =>
-      p.id === partitionId ? { ...p, currentPanelId: panelId } : p
+      p.id === resolvedPartitionId ? { ...p, currentPanelId: panelId } : p
     );
 
     set({
@@ -1289,9 +1383,24 @@ export const useDockStore = create<DockStoreWithSidebar>()(
       if (!state) return;
       const existingIds = new Set(state.panels.map((p) => p.id));
       const missing = DEFAULT_PANELS.filter((p) => !existingIds.has(p.id));
+      const leftPartitions = normalizeSidePartitionsOnRehydrate(state.leftPartitions, "left");
+      const rightPartitions = normalizeSidePartitionsOnRehydrate(state.rightPartitions, "right");
+      const panels = state.panels.map((p) => {
+        if (!p.location) return p;
+        const side = p.location.startsWith("left")
+          ? "left"
+          : p.location.startsWith("right")
+            ? "right"
+            : null;
+        if (!side) return p;
+        const normalized = normalizeLegacyPartitionId(p.location, side);
+        return normalized === p.location ? p : { ...p, location: normalized as PartitionLocation };
+      });
+      const patch: Partial<DockStoreWithSidebar> = { panels, leftPartitions, rightPartitions };
       if (missing.length > 0) {
-        useDockStore.setState({ panels: [...state.panels, ...missing] });
+        patch.panels = [...panels, ...missing];
       }
+      useDockStore.setState(patch);
     },
     partialize: (state) => ({
       panels: state.panels,

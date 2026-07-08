@@ -9,11 +9,21 @@ export function isDockPanelOpen(panelId: PanelId): boolean {
   return panel?.mode === "docked" || panel?.mode === "popup";
 }
 
+function normalizeMenuPartitionId(location: string): string {
+  if (location === "left-default") return "left-0";
+  if (location === "right-default") return "right-0";
+  return location;
+}
+
 function resolvePartitionId(panelId: PanelId): string {
   const state = useDockStore.getState();
   const panel = state.panels.find((p) => p.id === panelId);
-  if (panel?.location?.startsWith("left")) return panel.location;
-  if (panel?.location?.startsWith("right")) return panel.location;
+  if (panel?.location?.startsWith("left")) {
+    return normalizeMenuPartitionId(panel.location);
+  }
+  if (panel?.location?.startsWith("right")) {
+    return normalizeMenuPartitionId(panel.location);
+  }
 
   const defaultPanel = getDockInitialLayoutSnapshot().panels.find((p) => p.id === panelId);
   if (defaultPanel?.location) return defaultPanel.location;

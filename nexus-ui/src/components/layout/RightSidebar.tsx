@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { BotMessageSquare, Circle, ExternalLink, ScanLine } from "lucide-react";
 import type { RightPanelTab } from "@/stores/app-store";
 import { getWindowConfig } from "@/components/dock/windowRegistry";
-import { dockedPanelsInPartition } from "@/components/layout/dock-sidebar-utils";
+import { dockedPanelsInPartition, RIGHT_DOCK_TOOL_IDS } from "@/components/layout/dock-sidebar-utils";
 import {
   isElectroOpticalDockPanel,
   useEoVideoPanelFocusStore,
@@ -15,12 +15,7 @@ import {
 import { EoVideoSmartWindowToggle } from "@/components/eo-video/EoVideoSmartWindowToggle";
 
 /** 右侧竖条：上目标档案、下系统评估 + 智能助手 + 知识库查询（与 `rightPartitions` 顺序一致） */
-const RIGHT_TOOLS = [
-  "target-profile",
-  "system-evaluation",
-  "chat",
-  "knowledge-base",
-] as const satisfies readonly PanelId[];
+const RIGHT_TOOLS = RIGHT_DOCK_TOOL_IDS;
 const rightToolSet = new Set<string>(RIGHT_TOOLS);
 
 export function RightSidebar() {
