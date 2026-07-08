@@ -42,7 +42,7 @@ function parseMoveSpeed(raw: unknown): { pan?: number; tilt?: number } | undefin
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {
-    body = await req.json();
+    body = await req.json(); 
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
