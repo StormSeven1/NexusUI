@@ -99,6 +99,7 @@ async def lifespan(app: FastAPI):
         raise
 
     receiver_manager.local_interface = settings.LOCAL_INTERFACE
+    receiver_manager.event_loop = asyncio.get_running_loop()
 
     logger.info("Ensuring destroy gRPC proto python files are generated...")
     ensure_destroy_proto_generated()

@@ -161,6 +161,46 @@ class DestroyGrpcService:
         )
         return connected
 
+    async def publish_destroy_http_body(self, body: dict) -> int:
+        """Publish a destroy event from the same JSON shape used by HTTP."""
+        if not isinstance(body, dict):
+            raise ValueError("destroy payload must be a JSON object")
+
+        version = body.get("version") or {}
+        specification = body.get("specification") or {}
+        created_by = body.get("createdBy") or {}
+        created_by_system = created_by.get("system") if isinstance(created_by, dict) else {}
+        owner = body.get("owner") or {}
+
+        if not isinstance(version, dict):
+            version = {}
+        if not isinstance(specification, dict):
+            specification = {}
+        if not isinstance(created_by_system, dict):
+            created_by_system = {}
+        if not isinstance(owner, dict):
+            owner = {}
+
+        return await self.publish_destroy_event(
+            {
+                "task_id": body.get("taskId", ""),
+                "parent_task_id": body.get("parentTaskId", ""),
+                "version_definition_version": version.get("definitionVersion", 0),
+                "version_status_version": version.get("statusVersion", 0),
+                "display_name": body.get("displayName", ""),
+                "task_type": body.get("taskType", ""),
+                "max_execution_time_ms": body.get("maxExecutionTimeMs", 0),
+                "specification_at_type": specification.get("@type", ""),
+                "specification_type": specification.get("type", 0),
+                "specification_id": specification.get("id", ""),
+                "created_by_service_name": created_by_system.get("serviceName", ""),
+                "created_by_entity_id": created_by_system.get("entityId", ""),
+                "created_by_manages_own_scheduling": created_by_system.get("managesOwnScheduling", False),
+                "created_by_priority": created_by_system.get("priority", 0),
+                "owner_entity_id": owner.get("entityId", ""),
+            }
+        )
+
     def _build_servicer(self):
         """创建真正挂到 gRPC server 上的 servicer。"""
         broadcaster = self._broadcaster

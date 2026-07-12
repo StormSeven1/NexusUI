@@ -97,6 +97,18 @@ def _to_int(value: Any) -> Any:
         return value
 
 
+def _disposition_name(value: Any) -> Optional[str]:
+    # gRPC 阵营枚举：0=友方，1=敌方，2=中立；前端按字符串 disposition 上色。
+    value = _to_int(value)
+    if value == 0:
+        return "friendly"
+    if value == 1:
+        return "hostile"
+    if value == 2:
+        return "neutral"
+    return None
+
+
 def _base_dds_fields(
     *,
     entity_id: str,
@@ -115,6 +127,7 @@ def _base_dds_fields(
         "elec": base.get("elec"),
         "isVirtualWeapon": base.get("isVirtualWeapon"),
         "dispositionType": base.get("dispositionType"),
+        "disposition": _disposition_name(base.get("dispositionType")),
         "entityType": base.get("entityType"),
         "targetID": base.get("targetId"),
         "targetName": base.get("targetName"),
@@ -407,12 +420,12 @@ def _log_parsed_radar_entities(client_id: str, entities_result: Dict[str, Any]) 
             "deviceState": entity.get("deviceState"),
             "radarParameters": entity.get("radarParameters"),
         })
-    logger.warning(
-        "[entity-grpc] parsed radar entities from grpc response | id={} count={} radars={}",
-        client_id,
-        len(radars),
-        samples,
-    )
+    # logger.warning(
+    #     "[entity-grpc] parsed radar entities from grpc response | id={} count={} radars={}",
+    #     client_id,
+    #     len(radars),
+    #     samples,
+    # )
 
 
 class EntityGrpcClient:
@@ -438,6 +451,7 @@ class EntityGrpcClient:
         self.query_entities_method = str(config.get("query_entities_method") or "MultiQueryEntity")
         self.query_relationships_method = str(config.get("query_relationships_method") or "GetEntityRelationship")
         self.status_stream_method = str(config.get("status_stream_method") or "EntityStatusMethod")
+        self.allowed_status_fields = self._parse_allowed_status_fields(config.get("allowed_status_fields"))
         self._status_stream_unsupported = False
 
         self._entities_callback = entities_callback
@@ -458,6 +472,19 @@ class EntityGrpcClient:
     @property
     def target(self) -> str:
         return f"{self.host}:{self.port}"
+
+    @staticmethod
+    def _parse_allowed_status_fields(value: Any) -> Optional[set[str]]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",")]
+        elif isinstance(value, (list, tuple, set)):
+            items = [str(item).strip() for item in value]
+        else:
+            items = []
+        fields = {item for item in items if item}
+        return fields or None
 
     async def start(self) -> None:
         if self._running:
@@ -592,6 +619,8 @@ class EntityGrpcClient:
     def _status_response_to_patch(self, response: Any) -> Optional[Dict[str, Any]]:
         field = response.WhichOneof("status")
         if not field:
+            return None
+        if self.allowed_status_fields is not None and field not in self.allowed_status_fields:
             return None
         message = getattr(response, field)
         raw = _normalize_keys(_message_to_dict(message, status_stream=True))

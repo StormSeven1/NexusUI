@@ -608,9 +608,11 @@ function waypointsLineString(
 function trailLineString(tele: DroneRenderable): GeoJSON.Feature<GeoJSON.LineString> | null {
   const cfg = getDroneMapRenderingConfig();
   if (!cfg.showHistoryTrail || tele.historyTrail.length < 2) return null;
+  const disp = tele.disposition ?? droneDispositionFromAssetStore(tele.entityId);
+  const trailColor = assetMapLabelTextColor(disp, "online", null, cfg.historyTrailLineColor);
   return {
     type: "Feature",
-    properties: { kind: "trail", entityId: tele.entityId, virt: tele.virtualTroop ? 1 : 0 },
+    properties: { kind: "trail", entityId: tele.entityId, virt: tele.virtualTroop ? 1 : 0, trailColor },
     geometry: { type: "LineString", coordinates: tele.historyTrail },
   };
 }
@@ -819,6 +821,8 @@ function buildDroneGeoJSON(drones: Record<string, DroneRenderable>): GeoJSON.Fea
     });
     if (cfg.showSnLabel) {
       const dn = tele.displayName || tele.entityId;
+      const friendlyOv = disp === "friendly" ? (cfg.labelFontColor?.trim() || "#FFFFFF") : undefined;
+      const labelColor = assetMapLabelTextColor(disp, "online", null, friendlyOv);
       features.push({
         type: "Feature",
         properties: {
@@ -826,6 +830,7 @@ function buildDroneGeoJSON(drones: Record<string, DroneRenderable>): GeoJSON.Fea
           id: tele.entityId,
           entityId: tele.entityId,
           displayName: dn,
+          labelColor,
         },
         geometry: { type: "Point", coordinates: [pose.lng, pose.lat] },
       });
@@ -987,7 +992,7 @@ export class DronesMaplibre {
       "line-dasharray": [4, 2],
     });
     const trailPaintBase = {
-      "line-color": cfg0.historyTrailLineColor,
+      "line-color": ["coalesce", ["get", "trailColor"], cfg0.historyTrailLineColor],
       "line-width": cfg0.historyTrailLineWidth,
       "line-opacity": cfg0.historyTrailLineOpacity,
     };
@@ -1122,7 +1127,7 @@ export class DronesMaplibre {
             "text-anchor": "top",
           },
           paint: {
-            "text-color": "#bae6fd",
+            "text-color": ["coalesce", ["get", "labelColor"], "#bae6fd"],
             "text-halo-color": "#09090b",
             "text-halo-width": 1.2,
           },
@@ -1233,7 +1238,7 @@ export class DronesMaplibre {
     }
     try {
       if (m.getLayer(DRONES_LABEL_LAYER)) {
-        m.setPaintProperty(DRONES_LABEL_LAYER, "text-color", L.textColor);
+        m.setPaintProperty(DRONES_LABEL_LAYER, "text-color", ["coalesce", ["get", "labelColor"], L.textColor]);
       }
     } catch {
       /* ignore */
@@ -1336,7 +1341,7 @@ export class DronesMaplibre {
     }
     for (const lid of [DRONES_TRAIL_SOLID, DRONES_TRAIL_DASH]) {
       if (m.getLayer(lid)) {
-        m.setPaintProperty(lid, "line-color", cfg.historyTrailLineColor);
+        m.setPaintProperty(lid, "line-color", ["coalesce", ["get", "trailColor"], cfg.historyTrailLineColor]);
         m.setPaintProperty(lid, "line-width", cfg.historyTrailLineWidth);
         m.setPaintProperty(lid, "line-opacity", cfg.historyTrailLineOpacity);
       }

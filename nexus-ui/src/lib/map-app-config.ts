@@ -1287,12 +1287,17 @@ export type AppConfigSectorBundle = {
    idSize: number;
  };
 
+ export type AppConfigTargetStateStyle = {
+   color: string;
+ };
+
  export type AppConfigTrackRendering = {
    trackTypeStyles: {
      sea: AppConfigTrackTypeStyle;
      air: AppConfigTrackTypeStyle;
      underwater: AppConfigTrackTypeStyle;
    };
+   targetStateStyles: Record<number, AppConfigTargetStateStyle>;
    /**
     * `showTrackId`、`maxViewportPoints`、`maxHistoryPointsPerTrack` 被读取；
     * `maxViewportPoints`：全图航迹折线顶点总预算；`maxHistoryPointsPerTrack`：单条航迹在 store 内保留的历史点数上限（与总预算独立）。
@@ -1363,6 +1368,9 @@ export type AppConfigDroneMapRendering = {
      },
      underwater: { ...DEFAULT_TYPE_STYLE },
    },
+   targetStateStyles: {
+     1: { color: "#ffcc00" },
+   },
    trackDisplay: {
      showTrackId: true,
      maxViewportPoints: 2000,
@@ -1410,12 +1418,34 @@ export type AppConfigDroneMapRendering = {
    };
  }
 
+ function parseTargetStateStyles(
+   o: unknown,
+   base: Record<number, AppConfigTargetStateStyle>,
+ ): Record<number, AppConfigTargetStateStyle> {
+   const out: Record<number, AppConfigTargetStateStyle> = {};
+   for (const [state, style] of Object.entries(base)) {
+     out[Number(state)] = { ...style };
+   }
+   const r = asCfgObject(o);
+   if (!r) return out;
+   for (const [stateKey, rawStyle] of Object.entries(r)) {
+     const state = Number(stateKey);
+     if (!Number.isInteger(state)) continue;
+     const style = asCfgObject(rawStyle);
+     const baseStyle = out[state];
+     const color = str(style?.color, baseStyle?.color ?? "");
+     if (color) out[state] = { color };
+   }
+   return out;
+ }
+
  /** 解析根对象上的 `trackRendering`，或 V2 根级 `trackTypeStyles` / `trackDisplay` / `trackTimeout` / 航向角键 */
  export function parseTrackRenderingConfig(root: Record<string, unknown>): AppConfigTrackRendering {
    let tr = asCfgObject(root.trackRendering);
    if (!tr) {
      const legacy =
        root.trackTypeStyles != null ||
+       root.targetStateStyles != null ||
        root.trackDisplay != null ||
        root.trackTimeout != null ||
        root.airIconHeadingOffsetDeg != null ||
@@ -1423,6 +1453,7 @@ export type AppConfigDroneMapRendering = {
      if (legacy) {
        tr = {
          trackTypeStyles: root.trackTypeStyles,
+         targetStateStyles: root.targetStateStyles,
          trackDisplay: root.trackDisplay,
          trackTimeout: root.trackTimeout,
          airIconHeadingOffsetDeg: root.airIconHeadingOffsetDeg,
@@ -1433,6 +1464,7 @@ export type AppConfigDroneMapRendering = {
    if (!tr) return { ...DEFAULT_TRACK_RENDERING };
 
    const tts = asCfgObject(tr.trackTypeStyles);
+   const tss = asCfgObject(tr.targetStateStyles);
    const td = asCfgObject(tr.trackDisplay);
    const tt = asCfgObject(tr.trackTimeout);
 
@@ -1443,6 +1475,7 @@ export type AppConfigDroneMapRendering = {
        air: parseTypeStyle(tts?.air, base.trackTypeStyles.air),
        underwater: parseTypeStyle(tts?.underwater, base.trackTypeStyles.underwater),
      },
+     targetStateStyles: parseTargetStateStyles(tss, base.targetStateStyles),
      trackDisplay: {
        showTrackId: bool(td?.showTrackId, base.trackDisplay.showTrackId),
        maxViewportPoints: num(td?.maxViewportPoints, base.trackDisplay.maxViewportPoints),
@@ -1551,6 +1584,13 @@ export type AppConfigDroneMapRendering = {
 
  export function getTrackRenderingConfig(): AppConfigTrackRendering {
    return resolvedTrackRenderingConfig;
+ }
+
+ export function getTrackTargetStateColor(targetState: number | null | undefined): string | undefined {
+   if (targetState == null || !Number.isFinite(targetState)) return undefined;
+   const style = resolvedTrackRenderingConfig.targetStateStyles[targetState];
+   const color = style?.color?.trim();
+   return color || undefined;
  }
 
  export function getDroneMapRenderingConfig(): AppConfigDroneMapRendering {

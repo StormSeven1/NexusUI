@@ -45,13 +45,17 @@ export interface Track {
   lastUpdate: string;
   starred: boolean;
   isAirTrack?: boolean;
+  trackType?: number;
+  trackCategoryName?: string;
   targetType?: string;
+  targetDescription?: string;
   course?: number;
   azimuth?: number;
   distance?: number;
   dataSourceId?: string;
   isVirtual?: boolean;
   isUav?: boolean;
+  targetState?: number;
   hasAlarm?: boolean;
   alarmCount?: number;
   alarms?: Record<string, unknown>[];

@@ -30,7 +30,7 @@ import {
   isMunitionAsset,
 } from "@/lib/map-app-config";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
-import { useAssetStore } from "@/stores/asset-store";
+import { useAssetStore, type AssetData } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react";
@@ -104,7 +104,7 @@ function readAssetSpeedMps(properties: Record<string, unknown> | null | undefine
   return readSpeedMpsFromRecord(highFreq) ?? readSpeedMpsFromRecord(status) ?? readSpeedMpsFromRecord(properties);
 }
 
-function readHeadingDegrees(asset: AssetData | null, properties: Record<string, unknown> | null | undefined): number | null {
+function readHeadingDegrees(asset: AssetData | null | undefined, properties: Record<string, unknown> | null | undefined): number | null {
   const heading = Number(
     asset?.heading ??
       properties?.heading ??
@@ -146,6 +146,44 @@ function assetTypeDisplayLabel(t: PublicMapAssetType | string | undefined): stri
   if (n === "laser") return "激光";
   if (n === "tdoa") return "TDOA";
   return n || "资产";
+}
+
+const UNIT_TYPE_LABELS: Record<number, string> = {
+  0: "未知",
+  1: "无人机",
+  2: "鸟",
+  3: "直升机",
+  4: "飞机",
+  5: "导弹",
+  6: "浮标",
+  7: "船舶",
+  8: "潜艇",
+  9: "地面车辆",
+  10: "人员",
+  11: "动物",
+  12: "其他",
+};
+
+const TARGET_STATE_LABELS: Record<number, string> = {
+  0: "稳定",
+  1: "外推",
+  2: "丢失",
+  3: "合并",
+  4: "拆分",
+};
+
+function formatTrackType(track: Track | undefined): string {
+  if (!track) return "-";
+  const large = typeof track.trackType === "number" ? UNIT_TYPE_LABELS[track.trackType] ?? String(track.trackType) : "";
+  const small = String(track.targetDescription ?? "").trim();
+  if (large && small && large !== small) return `${large}-${small}`;
+  return large || small || "-";
+}
+
+function formatTargetState(state: number | null | undefined): string {
+  if (state == null || !Number.isFinite(state)) return "-";
+  const label = TARGET_STATE_LABELS[state] ?? "未知";
+  return `${label}(${state})`;
 }
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
@@ -407,6 +445,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
         <>
           <div className="mt-1 flex flex-col gap-y-1">
             <Row k="坐标" v={formatLatLng(track?.lat, track?.lng)} />
+            <Row k="类型" v={formatTrackType(track)} />
+            <Row k="状态" v={formatTargetState(track?.targetState)} />
             <Row k="航速" v={track ? formatSpeedMps(track.speed) : "-"} />
             <Row k="航向" v={track && typeof track.course === "number" ? `${track.course.toFixed(1)}°` : "-"} />
           </div>
@@ -435,10 +475,10 @@ export function TargetPlacard(props: TargetPlacardProps) {
           {expanded && (
             <>
               <div className="mt-1 flex flex-col gap-y-1">
-                {track?.targetID && <Row k="targetID" v={track.targetID} />}
-                {track?.external_target_id && <Row k="external_target_id" v={track.external_target_id} />}
+                {track?.targetID && <Row k="ID" v={track.targetID} />}
+                {track?.external_target_id && <Row k="TrackID" v={track.external_target_id} />}
                 <Row k="来源" v={track?.sensor ?? "-"} />
-                <Row k="最后更新" v={track?.lastUpdate ?? "-"} />
+                <Row k="最后更新" v={<span className="whitespace-nowrap">{formatIsoToSecond(track?.lastUpdate)}</span>} />
                 <Row k="高度" v={track?.altitude != null ? `${track.altitude.toFixed(1)}` : "-"} />
               </div>
 
@@ -546,4 +586,3 @@ export function TargetPlacard(props: TargetPlacardProps) {
     </div>
   );
 }
-

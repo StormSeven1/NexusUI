@@ -85,6 +85,8 @@ const SENSOR_OFFSET_M: Record<PublicMapAssetType, number> = {
   tdoa:     3,   // TDOA 天线离基座
   airport:  0,   // 机场停机坪，视场从基座出发
   drone:    0,   // 由 drones-cesium 独立处理
+  usv:      0,
+  missile:  0,
 };
 
 /* ── 接口 ── */

@@ -297,10 +297,10 @@ function scheduleDroneAssetPatch(entityId: string, patch: Partial<AssetData>): v
   });
 
   if (pendingDronePatchFrame != null) return;
-  const schedule =
+  const schedule: (cb: FrameRequestCallback) => number =
     typeof requestAnimationFrame === "function"
       ? requestAnimationFrame
-      : (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 16);
+      : (cb) => window.setTimeout(() => cb(Date.now()), 16);
   pendingDronePatchFrame = schedule(() => {
     pendingDronePatchFrame = null;
     const entries = [...pendingDroneAssetPatches.entries()];
@@ -2183,6 +2183,7 @@ function startDroneRuntimePrune() {
         props.high_freq == null &&
         props.drone_status == null &&
         props.drone_flight_path == null &&
+        props.flight_path_received_at_ms == null &&
         props.last_packet_at_ms == null
       ) {
         continue;
@@ -2194,6 +2195,8 @@ function startDroneRuntimePrune() {
           history_trail: [],
           high_freq: null,
           drone_status: null,
+          drone_flight_path: null,
+          flight_path_received_at_ms: null,
           high_freq_received_at_ms: null,
           status_received_at_ms: null,
           last_packet_at_ms: null,
@@ -2210,6 +2213,8 @@ function startDroneRuntimePrune() {
           history_trail: [],
           high_freq: null,
           drone_status: null,
+          drone_flight_path: null,
+          flight_path_received_at_ms: null,
           high_freq_received_at_ms: null,
           status_received_at_ms: null,
           last_packet_at_ms: null,

@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack -p 24000",
     "dev:turbo": "next dev -p 24000",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start -p 24000",
     "lint": "eslint",
     "download-glyphs": "node scripts/download-glyphs.mjs"

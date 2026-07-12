@@ -102,6 +102,10 @@ export function friendlyTintSuffix(tint: string | null | undefined): string {
 export const MAP_FORCE_DISPOSITIONS: ForceDisposition[] = ["friendly", "hostile", "neutral"];
 const VIRTUAL_SYMBOL_OPACITY = 0.6;
 
+type AssetSymbolBuildOptions = {
+  applyVirtualOpacity?: boolean;
+};
+
 /* ── 目标航迹图标：运行时从 public/icons/ 加载（改 SVG 后强刷页面即可） ── */
 
 const TRACK_ICON_SVG_FILES: Record<TrackType, string> = {
@@ -161,7 +165,6 @@ export function getMarkerSymbolId(
   friendlyTint?: string | null,
 ): string {
   const base = `track-${type}-${disposition}-${virtual ? "v" : "r"}`;
-  if (disposition !== "friendly") return base;
   const suf = friendlyTintSuffix(friendlyTint);
   return suf ? `${base}${suf}` : base;
 }
@@ -224,10 +227,10 @@ export function resolveTrackMarkerFill(
   accent?: AssetDispositionIconAccent | null,
   friendlyFill?: string | null,
 ): string {
-  if (disposition === "hostile") return accent?.hostileIcon ?? FORCE_COLORS.hostile;
-  if (disposition === "neutral") return accent?.neutralIcon ?? FORCE_COLORS.neutral;
   const o = friendlyFill?.trim();
   if (o) return o;
+  if (disposition === "hostile") return accent?.hostileIcon ?? FORCE_COLORS.hostile;
+  if (disposition === "neutral") return accent?.neutralIcon ?? FORCE_COLORS.neutral;
   return FORCE_COLORS.friendly;
 }
 
@@ -301,6 +304,7 @@ type TrackStylesForPrereg = {
     air?: { idColor?: string };
     underwater?: { idColor?: string };
   };
+  targetStateStyles?: Record<string | number, { color?: string } | undefined>;
 };
 
 /** 友方航迹符号：为每种 `trackTypeStyles.*.idColor` 预注册一套 tint（另含无 tint 的默认友方色） */
@@ -322,7 +326,15 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
       if (typeof c === "string" && c.trim()) friendlyTints.add(c.trim());
     }
   }
+  const targetStateTints = new Set<string>();
+  if (trackRendering?.targetStateStyles) {
+    for (const style of Object.values(trackRendering.targetStateStyles)) {
+      const c = style?.color;
+      if (typeof c === "string" && c.trim()) targetStateTints.add(c.trim());
+    }
+  }
   const tintList = [...friendlyTints];
+  const stateTintList = [...targetStateTints];
   const out: Array<{
     id: string;
     type: TrackType;
@@ -340,9 +352,18 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
             disposition,
             virtual,
           });
+          for (const tint of stateTintList) {
+            out.push({
+              id: getMarkerSymbolId(type, disposition, virtual, tint),
+              type,
+              disposition,
+              virtual,
+              friendlyFill: tint,
+            });
+          }
           continue;
         }
-        for (const tint of tintList) {
+        for (const tint of [...new Set([...tintList, ...stateTintList])]) {
           out.push({
             id: getMarkerSymbolId(type, disposition, virtual, tint || undefined),
             type,
@@ -786,10 +807,11 @@ function buildPublicGlyphSvgString(
   virtual: boolean,
   size: number,
   pad = 0,
+  applyVirtualOpacity = true,
 ): string {
   const cfg = getAssetIconFrameConfig();
   const inner = size - pad * 2;
-  const opacity = virtual ? VIRTUAL_SYMBOL_OPACITY : 1;
+  const opacity = virtual && applyVirtualOpacity ? VIRTUAL_SYMBOL_OPACITY : 1;
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
     `<defs>`,
@@ -841,20 +863,22 @@ export function buildAssetWrappedSvgFromPublicBody(
   disposition: ForceDisposition = "friendly",
   accent?: AssetDispositionIconAccent | null,
   friendlyOverride?: string | null,
+  options?: AssetSymbolBuildOptions,
 ): string {
   const color = resolveAssetIconAccentFill(disposition, status, accent, friendlyOverride);
   const cfg = getAssetIconFrameConfig();
   const pad = 0;
+  const applyVirtualOpacity = options?.applyVirtualOpacity ?? true;
   if (type === "usv") {
     const { viewBox: vb, inner } = plainGlyphUsvTrackInner(color, virtual);
-    return buildPublicGlyphSvgString(vb, inner, virtual, cfg.plainCanvasPx);
+    return buildPublicGlyphSvgString(vb, inner, virtual, cfg.plainCanvasPx, 0, applyVirtualOpacity);
   }
   if (type === "missile") {
     const { viewBox: vb, inner } = plainGlyphMissilePublicInner(viewBox, iconInner, color);
-    return buildPublicGlyphSvgString(vb, inner, virtual, cfg.canvasPx);
+    return buildPublicGlyphSvgString(vb, inner, virtual, cfg.canvasPx, 0, applyVirtualOpacity);
   }
   const tinted = tintPublicAssetIconInner(iconInner, color, type);
-  return buildPublicGlyphSvgString(viewBox, tinted, virtual, cfg.canvasPx, pad);
+  return buildPublicGlyphSvgString(viewBox, tinted, virtual, cfg.canvasPx, pad, applyVirtualOpacity);
 }
 
 export function getAssetSymbolId(
@@ -880,12 +904,13 @@ export async function buildAssetSymbolSvg(
   disposition: ForceDisposition = "friendly",
   accent?: AssetDispositionIconAccent | null,
   friendlyOverride?: string | null,
+  options?: AssetSymbolBuildOptions,
 ): Promise<string> {
   if (type === "drone" && DRONE_MAP_ICON_SOURCE === "generated") {
     throw new Error("[map-icons] drone 为 generated 模式，请使用 buildAssetSymbolDataUrl");
   }
   const fr = await fetchPublicMapAssetFragment(type, virtual);
-  return buildAssetWrappedSvgFromPublicBody(fr.viewBox, fr.body, type, status, virtual, disposition, accent, friendlyOverride);
+  return buildAssetWrappedSvgFromPublicBody(fr.viewBox, fr.body, type, status, virtual, disposition, accent, friendlyOverride, options);
 }
 
 export async function buildAssetSymbolDataUrl(
@@ -895,12 +920,13 @@ export async function buildAssetSymbolDataUrl(
   disposition: ForceDisposition = "friendly",
   accent?: AssetDispositionIconAccent | null,
   friendlyOverride?: string | null,
+  options?: AssetSymbolBuildOptions,
 ): Promise<string> {
   if (type === "drone" && DRONE_MAP_ICON_SOURCE === "generated") {
     const fill = resolveAssetIconAccentFill(disposition, status, accent ?? null, friendlyOverride ?? null);
     return buildDroneTriangleDataUrl(fill, virtual);
   }
-  const svg = await buildAssetSymbolSvg(type, status, virtual, disposition, accent, friendlyOverride);
+  const svg = await buildAssetSymbolSvg(type, status, virtual, disposition, accent, friendlyOverride, options);
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 

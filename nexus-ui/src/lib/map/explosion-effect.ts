@@ -122,9 +122,9 @@ async function playExplosion3D(lng: number, lat: number): Promise<void> {
         imageSize: new Cesium.Cartesian2(80, 80),
         emissionRate: 0,
         bursts: [
-          { time: 0.0, minimum: 80, maximum: 140 },
-          { time: 0.15, minimum: 50, maximum: 90 },
-          { time: 0.35, minimum: 30, maximum: 55 },
+          { time: 0.0, minimum: 80, maximum: 140, complete: false },
+          { time: 0.15, minimum: 50, maximum: 90, complete: false },
+          { time: 0.35, minimum: 30, maximum: 55, complete: false },
         ],
         lifetime: 2.2,
         emitter: new Cesium.SphereEmitter(18),

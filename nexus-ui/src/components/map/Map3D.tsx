@@ -7,7 +7,7 @@ import { useTrackStore } from "@/stores/track-store";
 import { LYR_DB_AREAS, type Track } from "@/lib/map-entity-model";
 import { useAssetStore } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
-import { getTrackRenderingConfig } from "@/lib/map-app-config";
+import { getTrackRenderingConfig, getTrackTargetStateColor } from "@/lib/map-app-config";
 import { installDronesCesium } from "@/components/map/modules/drones-cesium";
 import { installTracksCesium } from "@/components/map/modules/tracks-cesium";
 import { installAssetsCesium } from "@/components/map/modules/assets-cesium";
@@ -218,6 +218,7 @@ async function syncCesiumTrackBillboards(
     if (!trail || trail.length < 1) continue;
     const ts2 = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
     const friendlyFill2 = t.disposition === "friendly" ? ts2.idColor : undefined;
+    const stateColor = getTrackTargetStateColor(t.targetState);
     const positions = [...trail, [t.lng, t.lat] as [number, number]].map(([lng, lat]) =>
       Cesium.Cartesian3.fromDegrees(lng, lat, alt(t.altitude)),
     );
@@ -226,7 +227,7 @@ async function syncCesiumTrackBillboards(
         positions,
         width: 2,
         material: Cesium.Color.fromCssColorString(
-          resolveTrackMarkerFill(t.disposition, accent, friendlyFill2),
+          stateColor ?? resolveTrackMarkerFill(t.disposition, accent, friendlyFill2),
         ).withAlpha(0.48),
         clampToGround: true,
       },

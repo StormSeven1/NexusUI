@@ -12,6 +12,7 @@
 import { useTrackStore } from "@/stores/track-store";
 import { resolveAliasKey, useTrackAliasStore } from "@/stores/track-alias-store";
 import type { Track } from "@/lib/map-entity-model";
+import { getTrackTargetStateColor } from "@/lib/map-app-config";
 
 type CesiumModule = typeof import("cesium");
 type CesiumViewer = import("cesium").Viewer;
@@ -48,6 +49,28 @@ function getTrackLabelText(track: Track): string {
   return track.name || "";
 }
 
+function targetStateCesiumColor(C: CesiumModule, track: Track) {
+  const color = getTrackTargetStateColor(track.targetState);
+  return color ? C.Color.fromCssColorString(color) : null;
+}
+
+function applyTargetStateColor(C: CesiumModule, entity: CesiumEntity, track: Track): void {
+  const color = targetStateCesiumColor(C, track);
+  if (entity.model) {
+    const model = entity.model as unknown as {
+      color?: unknown;
+      colorBlendMode?: unknown;
+      colorBlendAmount?: unknown;
+    };
+    model.color = color ? new C.ConstantProperty(color) : undefined;
+    model.colorBlendMode = color ? new C.ConstantProperty(C.ColorBlendMode.MIX) : undefined;
+    model.colorBlendAmount = color ? new C.ConstantProperty(0.72) : undefined;
+  }
+  if (entity.label) {
+    entity.label.fillColor = new C.ConstantProperty(color ?? C.Color.WHITE);
+  }
+}
+
 /* ── 创建 / 更新 / 移除 ── */
 
 function createTrackEntity(
@@ -61,6 +84,7 @@ function createTrackEntity(
   const headingDeg = track.type === "air" ? (track.heading ?? 0) - 90 : (track.heading ?? 0);
   const hpr = new C.HeadingPitchRoll(C.Math.toRadians(headingDeg), 0, 0);
   const orientation = C.Transforms.headingPitchRollQuaternion(pos, hpr);
+  const stateColor = targetStateCesiumColor(C, track);
 
   const entity = viewer.entities.add({
     position: new C.ConstantPositionProperty(pos),
@@ -71,10 +95,18 @@ function createTrackEntity(
       minimumPixelSize: MODEL_MIN_PIXEL_SIZE,
       maximumScale: MODEL_MAX_SCALE,
       heightReference: C.HeightReference.NONE,
+      ...(stateColor
+        ? {
+            color: stateColor,
+            colorBlendMode: C.ColorBlendMode.MIX,
+            colorBlendAmount: 0.72,
+          }
+        : {}),
     },
     label: {
       text: getTrackLabelText(track),
       font: "12px sans-serif",
+      fillColor: stateColor ?? C.Color.WHITE,
       style: C.LabelStyle.FILL_AND_OUTLINE,
       outlineWidth: 2,
       verticalOrigin: C.VerticalOrigin.BOTTOM,
@@ -87,6 +119,7 @@ function createTrackEntity(
       targetID: track.targetID,
       external_target_id: track.external_target_id ?? null,
       kind: "track",
+      targetState: track.targetState ?? null,
     },
   });
   return { entity };
@@ -103,6 +136,10 @@ function updateTrackEntity(C: CesiumModule, set: TrackEntitySet, track: Track): 
   if (set.entity.label) {
     set.entity.label.text = new C.ConstantProperty(getTrackLabelText(track));
   }
+  if (set.entity.properties) {
+    set.entity.properties.targetState = new C.ConstantProperty(track.targetState ?? null);
+  }
+  applyTargetStateColor(C, set.entity, track);
 }
 
 function removeTrackEntity(viewer: CesiumViewer, set: TrackEntitySet): void {

@@ -107,6 +107,26 @@ function readDisposition(rec: Record<string, unknown>): ForceDisposition {
   return "hostile";
 }
 
+function readLastUpdate(rec: Record<string, unknown>): string {
+  const raw = rec.lastUpdate ?? rec.last_update ?? rec.updated_at ?? rec.timestamp;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const ms = raw > 1e12 ? raw : raw * 1000;
+    return new Date(ms).toISOString();
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    const s = raw.trim();
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const n = Number(s);
+      if (Number.isFinite(n)) {
+        const ms = n > 1e12 ? n : n * 1000;
+        return new Date(ms).toISOString();
+      }
+    }
+    return s;
+  }
+  return new Date().toISOString();
+}
+
 /**
  * 解析 NewTrackStruct 目标 ID：必须来自报文 targetID，禁止前端拼接。
  * 数据传递：后端报文 targetID → 此函数 → Track.targetID → 全局缓存 key
@@ -166,13 +186,25 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     (typeof rawUav === "string" && /^(1|true|yes|uav)$/i.test(rawUav.trim()));
 
   const isAirTrack = kind === "air";
+  const targetStateRaw = rec.targetState;
+  const targetState =
+    targetStateRaw != null && Number.isFinite(Number(targetStateRaw)) ? Number(targetStateRaw) : undefined;
 
   const externalTargetId = rec.external_target_id;
   const externalTargetIdStr =
     externalTargetId != null && String(externalTargetId).trim() !== "" ? String(externalTargetId).trim() : undefined;
 
-  const targetType = rec.target_type ?? rec.targetType ?? rec.name ?? rec.label;
+  const targetDescription = rec.targetDescription ?? rec.description;
+  const targetDescriptionStr = targetDescription != null ? String(targetDescription) : undefined;
+  const targetType = targetDescription ?? rec.target_type ?? rec.targetType ?? rec.name ?? rec.label;
   const targetTypeStr = targetType != null ? String(targetType) : undefined;
+  const trackTypeRaw = rec.trackType;
+  const trackType =
+    trackTypeRaw != null && Number.isFinite(Number(trackTypeRaw)) ? Number(trackTypeRaw) : undefined;
+  const trackCategoryName =
+    rec.trackCategoryName != null && String(rec.trackCategoryName).trim()
+      ? String(rec.trackCategoryName).trim()
+      : undefined;
 
   const azimuthRaw = rec.azimuth ?? rec.azimuth_deg;
   const azimuth = azimuthRaw != null && Number.isFinite(Number(azimuthRaw)) ? Number(azimuthRaw) : undefined;
@@ -226,16 +258,20 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     heading,
     speed: Number.isFinite(speed) ? speed : 0,
     sensor: sensorValue,
-    lastUpdate: String(rec.lastUpdate ?? rec.last_update ?? rec.updated_at ?? new Date().toISOString()),
+    lastUpdate: readLastUpdate(rec),
     starred: Boolean(rec.starred),
     ...(isAirTrack ? { isAirTrack: true } : {}),
+    ...(trackType != null ? { trackType } : {}),
+    ...(trackCategoryName ? { trackCategoryName } : {}),
     ...(targetTypeStr ? { targetType: targetTypeStr } : {}),
+    ...(targetDescriptionStr ? { targetDescription: targetDescriptionStr } : {}),
     ...(Number.isFinite(course) ? { course } : {}),
     ...(azimuth != null ? { azimuth } : {}),
     ...(distance != null ? { distance } : {}),
     ...(dataSourceIdStr ? { dataSourceId: dataSourceIdStr } : {}),
     ...(isVirtual ? { isVirtual: true } : {}),
     ...(isUav ? { isUav: true } : {}),
+    ...(targetState != null ? { targetState } : {}),
     ...(typeof alarmCount === "number" ? { alarmCount } : {}),
     ...(hasAlarm ? { hasAlarm: true } : {}),
     ...(alarms ? { alarms } : {}),

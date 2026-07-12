@@ -419,25 +419,7 @@ async def publish_destroy_event(http_request: Request, request: DestroyPublishRe
     """Publish destroy event."""
     raw_body = await http_request.json()
 
-    connected_clients = await destroy_grpc_service.publish_destroy_event(
-        {
-            "task_id": request.taskId,
-            "parent_task_id": request.parentTaskId,
-            "version_definition_version": request.version.definitionVersion,
-            "version_status_version": request.version.statusVersion,
-            "display_name": request.displayName,
-            "task_type": request.taskType,
-            "max_execution_time_ms": request.maxExecutionTimeMs,
-            "specification_at_type": request.specification.at_type,
-            "specification_type": request.specification.type,
-            "specification_id": request.specification.id,
-            "created_by_service_name": request.createdBy.system.serviceName,
-            "created_by_entity_id": request.createdBy.system.entityId,
-            "created_by_manages_own_scheduling": request.createdBy.system.managesOwnScheduling,
-            "created_by_priority": request.createdBy.system.priority,
-            "owner_entity_id": request.owner.entityId,
-        }
-    )
+    connected_clients = await destroy_grpc_service.publish_destroy_http_body(raw_body)
 
     temp_http_ok = True
     temp_http_status = 200

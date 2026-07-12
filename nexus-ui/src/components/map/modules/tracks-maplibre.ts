@@ -8,7 +8,7 @@ import {
   resolveTrackMarkerFill,
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
-import { getTrackRenderingConfig } from "@/lib/map-app-config";
+import { getTrackRenderingConfig, getTrackTargetStateColor } from "@/lib/map-app-config";
 import { useTrackAliasStore, resolveAliasKey } from "@/stores/track-alias-store";
 
 /** GeoJSON source id：航迹点、折线、高亮环、锁定圈共用 */
@@ -54,6 +54,18 @@ export function trackMapDrawHistoryTrails(tracks: ReadonlyArray<Track>): boolean
   return trackMapVertexEstimate(tracks) <= max;
 }
 
+function resolveTrackColor(
+  t: Track,
+  tr: ReturnType<typeof getTrackRenderingConfig>,
+  accent?: AssetDispositionIconAccent | null,
+): string {
+  const stateColor = getTrackTargetStateColor(t.targetState);
+  if (stateColor) return stateColor;
+  const ts = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
+  const friendlyFill = t.disposition === "friendly" ? ts.idColor : undefined;
+  return resolveTrackMarkerFill(t.disposition, accent ?? null, friendlyFill);
+}
+
 /**
  * `Track[]` → GeoJSON：**Point**（当前位置）始终输出；**LineString** 仅在 `trackMapDrawHistoryTrails(trackList)` 为真且存在 `historyTrail` 时输出。
  */
@@ -73,6 +85,7 @@ export function buildTrackGeoJSON(
         [t.lng, t.lat],
       ];
       if (coords.length >= 2) {
+        const lineColor = resolveTrackColor(t, tr, accent);
         features.push({
           type: "Feature",
           geometry: { type: "LineString", coordinates: coords },
@@ -80,14 +93,9 @@ export function buildTrackGeoJSON(
             id: t.id,
             targetID: t.targetID,
             external_target_id: t.external_target_id ?? null,
+            targetState: t.targetState ?? null,
             isAirTrack: t.isAirTrack ?? false,
-            lineColor: resolveTrackMarkerFill(
-              t.disposition,
-              accent ?? null,
-              t.disposition === "friendly"
-                ? (tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea).idColor
-                : undefined,
-            ),
+            lineColor,
           },
         });
       }
@@ -97,6 +105,8 @@ export function buildTrackGeoJSON(
     const v = t.isVirtual === true;
     const iconScale = Math.max(0.55, Math.min(1.5, ts.pointSize / 3.5));
     const friendlyFill = t.disposition === "friendly" ? ts.idColor : undefined;
+    const stateColor = getTrackTargetStateColor(t.targetState);
+    const markerFill = stateColor ?? resolveTrackMarkerFill(t.disposition, accent ?? null, friendlyFill);
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [t.lng, t.lat] as [number, number] },
@@ -104,6 +114,7 @@ export function buildTrackGeoJSON(
         id: t.id,
         targetID: t.targetID,
         external_target_id: t.external_target_id ?? null,
+        targetState: t.targetState ?? null,
         isAirTrack: t.isAirTrack ?? false,
         targetType: t.targetType ?? null,
         name: t.name,
@@ -115,9 +126,9 @@ export function buildTrackGeoJSON(
         heading: t.heading,
         course: t.course ?? null,
         altitude: t.altitude ?? null,
-        color: resolveTrackMarkerFill(t.disposition, accent ?? null, friendlyFill),
-        symbolId: getMarkerSymbolId(t.type, t.disposition, v, friendlyFill),
-        labelColor: ts.idColor,
+        color: markerFill,
+        symbolId: getMarkerSymbolId(t.type, t.disposition, v, stateColor ?? friendlyFill),
+        labelColor: stateColor ?? ts.idColor,
         labelTextSize: Math.max(6, Math.min(22, ts.idSize)),
         iconScale,
       },
@@ -184,6 +195,8 @@ function fnv1aTrackDataFingerprint(tracks: ReadonlyArray<Track>): number {
     h ^= t.isVirtual === true ? 1 : 0;
     h = Math.imul(h, 16777619) >>> 0;
     h ^= t.isUav === true ? 1 : 0;
+    h = Math.imul(h, 16777619) >>> 0;
+    h ^= t.targetState ?? 0x58a1f00d;
     h = Math.imul(h, 16777619) >>> 0;
   }
   return h >>> 0;

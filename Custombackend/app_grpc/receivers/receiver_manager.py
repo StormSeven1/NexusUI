@@ -3,7 +3,6 @@
 """
 import asyncio
 import json
-import time
 from typing import Dict, List, Optional, Any
 from loguru import logger
 
@@ -30,6 +29,7 @@ class ReceiverManager:
     
     def __init__(self, local_interface: str = "0.0.0.0"):
         self.local_interface = local_interface
+        self.event_loop: Optional[asyncio.AbstractEventLoop] = None
         
         # 接收器实例
         self.udp_receivers: Dict[str, UDPReceiver] = {}
@@ -43,7 +43,6 @@ class ReceiverManager:
         self._stats: Dict[str, Dict[str, int]] = {}
         self._latest_entities_result: Optional[Dict[str, Any]] = None
         self._latest_relationships_result: Optional[Dict[str, Any]] = None
-        self._last_grpc_status_emit_at: Dict[str, float] = {}
     
     def _init_stats(self, receiver_id: str):
         """初始化统计信息"""
@@ -66,6 +65,41 @@ class ReceiverManager:
             if entity_id:
                 lookup[entity_id] = item
         return lookup
+
+    def _enrich_eo_fusion_source_names(self, track_data: Dict[str, Any]) -> None:
+        fusion_sources = track_data.get("fusionSources")
+        if not isinstance(fusion_sources, list):
+            return
+
+        entity_lookup = self._entity_lookup()
+        if not entity_lookup:
+            return
+
+        changed = False
+        for source in fusion_sources:
+            if not isinstance(source, dict):
+                continue
+            if str(source.get("sourceType") or "").strip().lower() != "eo":
+                continue
+
+            entity_id = str(source.get("dataSourceId") or "").strip()
+            if not entity_id:
+                continue
+
+            entity = entity_lookup.get(entity_id)
+            if not isinstance(entity, dict):
+                continue
+
+            entity_name = str(entity.get("name") or "").strip()
+            if not entity_name:
+                continue
+
+            if source.get("sourceName") != entity_name:
+                source["sourceName"] = entity_name
+                changed = True
+
+        if changed:
+            track_data["reserved6"] = json.dumps(fusion_sources, ensure_ascii=False)
 
     def _emit_unified_entity_status(self, source: str) -> bool:
         if not self._latest_entities_result:
@@ -130,24 +164,6 @@ class ReceiverManager:
         )
         return True
 
-    def _grpc_status_emit_interval(self, client_id: str) -> float:
-        client = self.entity_grpc_clients.get(client_id)
-        if not client:
-            return 5.0
-        try:
-            return max(0.1, float(getattr(client, "poll_interval", 5.0)))
-        except (TypeError, ValueError):
-            return 5.0
-
-    def _should_emit_grpc_status_snapshot(self, client_id: str) -> bool:
-        now = time.monotonic()
-        interval = self._grpc_status_emit_interval(client_id)
-        last = self._last_grpc_status_emit_at.get(client_id, 0.0)
-        if now - last < interval:
-            return False
-        self._last_grpc_status_emit_at[client_id] = now
-        return True
-
     def _on_entity_grpc_entities(self, result: Dict[str, Any], client_id: str):
         """gRPC entity list callback."""
         self._init_stats(client_id)
@@ -209,6 +225,8 @@ class ReceiverManager:
                 "type": direct_type,
                 "data": direct_payload,
             })
+            # if(direct_type == "Camera"):
+            #     print("Camera:",direct_payload)
 
         entities_result = self._latest_entities_result
         if not entities_result:
@@ -240,8 +258,6 @@ class ReceiverManager:
             entities_result["total"] = len(entities)
         entities_result["timestamp"] = patch.get("timestamp") or entities_result.get("timestamp")
         self._stats[client_id]['parsed'] += 1
-        if self._should_emit_grpc_status_snapshot(client_id) and self._emit_unified_entity_status(client_id):
-            logger.debug(f"gRPC status snapshot emitted [{client_id}]")
 
     def _on_udp_data(self, data: bytes, addr: tuple, receiver_id: str):
         """UDP数据回调"""
@@ -295,6 +311,30 @@ class ReceiverManager:
             return
         
         # 解析数据
+        if data_format == 'Destroy':
+            try:
+                payload = json.loads(data.decode('utf-8-sig'))
+                if not isinstance(payload, dict):
+                    raise ValueError("destroy UDP payload must be a JSON object")
+
+                async def publish_destroy():
+                    from grpc_services.destroy.service import destroy_grpc_service
+
+                    connected = await destroy_grpc_service.publish_destroy_http_body(payload)
+                    logger.info(
+                        f"[destroy-udp] published destroy event [{receiver_id}] "
+                        f"from {addr}: task_id={payload.get('taskId', '')}, connected_clients={connected}"
+                    )
+
+                if self.event_loop is None:
+                    raise RuntimeError("receiver manager event loop is not initialized")
+                asyncio.run_coroutine_threadsafe(publish_destroy(), self.event_loop)
+                self._stats[receiver_id]['parsed'] += 1
+            except Exception as e:
+                logger.error(f"处理消灭UDP数据失败 [{receiver_id}] from {addr}: {e}")
+                self._stats[receiver_id]['failed'] += 1
+            return
+
         tracks = TrackParser.parse(data, data_format, receiver_id)
         if tracks:
             self._stats[receiver_id]['parsed'] += len(tracks)
@@ -367,6 +407,7 @@ class ReceiverManager:
                 
                 # 统一添加source_name字段
                 parsed_data['source_name'] = source_name
+                self._enrich_eo_fusion_source_names(parsed_data)
                 
                 # 根据 data_type 区分发送不同类型的消息
                 data_type = parsed_data.get('data_type', '')
@@ -385,7 +426,7 @@ class ReceiverManager:
                     #     })
                     if(parsed_data['entityId'] in ["camera_004","camera_001","camera-hs-001","camera-hs-002","camera-hs-003","camera-hs-004"]):
                         # print("*"*50)
-                        # print("解析相机状态:",parsed_data)
+                        print("解析相机状态:",parsed_data)
                         # print("*"*50)
                         # 相机状态数据，发送为 Camera 类型
                         ws_manager.queue_message({

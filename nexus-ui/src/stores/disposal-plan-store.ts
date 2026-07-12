@@ -11,7 +11,6 @@ import type {
 } from "@/lib/disposal/disposal-types";
 import {
   getExecutionTrackingKey,
-  primaryTargetIdFromNormalized,
   taskLooksLikeMunition,
 } from "@/lib/disposal/disposal-execution-utils";
 import { resolveTrackLngLatForTargetId } from "@/lib/asset-target-line";
@@ -60,13 +59,22 @@ function buildBlockSummary(source: DisposalPlanSource, taskId: string, itemCount
   return `${src} · 任务 ${taskId} · ${itemCount} 组方案`;
 }
 
-function blockPrimaryTargetId(b: DisposalPlanBlock): string {
-  const ip = b.items[0]?.inputParams;
-  return ip?.targetId != null ? String(ip.targetId).trim() : "";
+function normalizeStrictTargetId(targetId: unknown): string {
+  const tid = String(targetId ?? "").trim();
+  if (!tid || tid.toLowerCase() === "unknown") return "";
+  return tid;
 }
 
-function targetIdForAutoExecute(block: DisposalPlanBlock, row: DisposalPlanCardRow, scheme: MappedDisposalScheme): string {
-  return String(row.inputParams?.targetId ?? scheme.disposalTargetId ?? blockPrimaryTargetId(block) ?? "").trim();
+function rowTargetId(row: DisposalPlanCardRow): string {
+  return normalizeStrictTargetId(row.inputParams?.targetId);
+}
+
+function blockHasTargetId(block: DisposalPlanBlock, targetId: string): boolean {
+  return block.items.some((row) => rowTargetId(row) === targetId);
+}
+
+function targetIdForAutoExecute(row: DisposalPlanCardRow): string {
+  return normalizeStrictTargetId(row.inputParams?.targetId);
 }
 
 function disposalTargetExists(targetId: string): boolean {
@@ -74,12 +82,27 @@ function disposalTargetExists(targetId: string): boolean {
 }
 
 function targetExistsInRenderCache(targetId: string): boolean {
-  const tid = String(targetId ?? "").trim();
+  const tid = normalizeStrictTargetId(targetId);
   if (!tid) return false;
   for (const [, track] of getRenderCache()) {
     if (String(track.targetID ?? "").trim() === tid) return true;
   }
   return false;
+}
+
+function removeBlocksForTargetIds(blocks: DisposalPlanBlock[], targetIds: Set<string>): DisposalPlanBlock[] {
+  if (targetIds.size === 0) return blocks;
+  const next: DisposalPlanBlock[] = [];
+  for (const block of blocks) {
+    const items = block.items.filter((row) => !targetIds.has(rowTargetId(row)));
+    if (items.length === 0) continue;
+    next.push({
+      ...block,
+      items,
+      summary: buildBlockSummary(block.source, block.taskId, items.length),
+    });
+  }
+  return next;
 }
 
 const globalExecutedDisposalKeys = new Set<string>();
@@ -345,14 +368,11 @@ function releaseAllActivatedDevicesForTarget(targetId: string): string[] {
 function allowedWeaponDevicesByTarget(n: NormalizedDisposalPlans): Map<string, { lasers: Set<string>; tdoa: Set<string>; munitions: Set<string> }> {
   const out = new Map<string, { lasers: Set<string>; tdoa: Set<string>; munitions: Set<string> }>();
   for (const item of n.items || []) {
-    const fallbackTid = String(item.inputParams?.targetId ?? primaryTargetIdFromNormalized(n) ?? "").trim();
-    const itemTargetId = fallbackTid;
-    if (itemTargetId && !out.has(itemTargetId)) {
-      out.set(itemTargetId, { lasers: new Set<string>(), tdoa: new Set<string>(), munitions: new Set<string>() });
-    }
+    const itemTargetId = normalizeStrictTargetId(item.inputParams?.targetId);
+    if (!itemTargetId) continue;
+    if (!out.has(itemTargetId)) out.set(itemTargetId, { lasers: new Set<string>(), tdoa: new Set<string>(), munitions: new Set<string>() });
     for (const sch of item.mappedSchemes || []) {
-      const targetId = String(item.inputParams?.targetId ?? sch.disposalTargetId ?? fallbackTid ?? "").trim();
-      if (!targetId) continue;
+      const targetId = itemTargetId;
       let bucket = out.get(targetId);
       if (!bucket) {
         bucket = { lasers: new Set<string>(), tdoa: new Set<string>(), munitions: new Set<string>() };
@@ -440,7 +460,6 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
   appendFromNormalized: (n, source) => {
     const now = Date.now();
     const { blocks } = get();
-    const targetId = primaryTargetIdFromNormalized(n);
     const skippedTargetIds = new Set<string>();
 
     if (n.taskId && blocks.some((b) => b.taskId === n.taskId)) {
@@ -452,9 +471,17 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
 
     const items: DisposalPlanCardRow[] = [];
     for (const [idx, it] of (n.items || []).entries()) {
-      const tidForKeys = String(it.inputParams?.targetId ?? targetId ?? "").trim();
+      const tidForKeys = normalizeStrictTargetId(it.inputParams?.targetId);
+      if (!tidForKeys) {
+        console.warn("[DisposalPlanStore] skip plan item without strict inputParams.targetId:", {
+          source,
+          taskId: n.taskId,
+          schemeIds: (it.mappedSchemes || []).map((sch) => sch.schemeId),
+        });
+        continue;
+      }
       if (!targetExistsInRenderCache(tidForKeys)) {
-        if (tidForKeys) skippedTargetIds.add(tidForKeys);
+        skippedTargetIds.add(tidForKeys);
         console.warn("[DisposalPlanStore] skip plans for missing cached target:", {
           source,
           taskId: n.taskId,
@@ -497,7 +524,6 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
       console.warn("[DisposalPlanStore] all incoming plans skipped because target was not found in render cache:", {
         source,
         taskId: n.taskId,
-        primaryTargetId: targetId,
       });
       return;
     }
@@ -510,14 +536,64 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
       summary: buildBlockSummary(source, n.taskId, items.length),
       items,
     };
-    set({ blocks: [...blocks, block] });
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("current-disposal-plan-updated", { detail: { blockId: block.blockId } }));
+
+    let nextBlocks = blocks;
+    const affectedBlockIds = new Set<string>();
+    const incomingTargetIds = new Set(items.map((row) => rowTargetId(row)).filter(Boolean));
+
+    for (const targetId of incomingTargetIds) {
+      const existingBlock = nextBlocks.find((b) => blockHasTargetId(b, targetId));
+      if (!existingBlock) continue;
+      const incomingRow = items.find((row) => rowTargetId(row) === targetId);
+      if (!incomingRow) continue;
+      const existingRow = existingBlock.items.find((row) => rowTargetId(row) === targetId);
+      const nextRow: DisposalPlanCardRow = {
+        ...incomingRow,
+        cardInstanceId: existingRow?.cardInstanceId ?? incomingRow.cardInstanceId,
+        executedSchemeIds: [...new Set([...(existingRow?.executedSchemeIds ?? []), ...incomingRow.executedSchemeIds])],
+        executingSchemeIds: existingRow?.executingSchemeIds ?? [],
+        lastError: existingRow?.lastError ?? incomingRow.lastError,
+      };
+      nextBlocks = nextBlocks.map((b) => {
+        if (b.blockId !== existingBlock.blockId) return b;
+        const nextItems = b.items.map((row) => (rowTargetId(row) === targetId ? nextRow : row));
+        return {
+          ...b,
+          taskId: n.taskId,
+          source,
+          createdAt: now,
+          summary: buildBlockSummary(source, n.taskId, nextItems.length),
+          items: nextItems,
+        };
+      });
+      affectedBlockIds.add(existingBlock.blockId);
     }
-    void saveDisposalPlanHistoryBlock(block);
+
+    const newItems = items.filter((row) => !blocks.some((b) => blockHasTargetId(b, rowTargetId(row))));
+    if (newItems.length > 0) {
+      const newBlocks = newItems.map((row, idx) => ({
+        ...block,
+        blockId: idx === 0 ? block.blockId : `blk_${randomId()}`,
+        summary: buildBlockSummary(source, n.taskId, 1),
+        items: [row],
+      }));
+      nextBlocks = [...nextBlocks, ...newBlocks];
+      for (const newBlock of newBlocks) affectedBlockIds.add(newBlock.blockId);
+    }
+
+    set({ blocks: nextBlocks });
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("current-disposal-plan-updated", { detail: { blockId: [...affectedBlockIds][0] ?? "" } }));
+    }
+    const affectedBlocks = get().blocks.filter((b) => affectedBlockIds.has(b.blockId));
+    for (const affectedBlock of affectedBlocks) {
+      void saveDisposalPlanHistoryBlock(affectedBlock);
+    }
 
     if (get().runMode === "auto") {
-      void get().executeBestSchemesByTarget(block);
+      for (const affectedBlock of affectedBlocks) {
+        void get().executeBestSchemesByTarget(affectedBlock);
+      }
     }
   },
 
@@ -543,6 +619,14 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
     if (cleanupMissingTargetsInProgress) return;
     cleanupMissingTargetsInProgress = true;
     try {
+      const missingPlanTargetIds = new Set<string>();
+      for (const block of get().blocks) {
+        for (const row of block.items) {
+          const targetId = rowTargetId(row);
+          if (targetId && resolveTrackLngLatForTargetId(targetId) == null) missingPlanTargetIds.add(targetId);
+        }
+      }
+
       const progressTargets = useTaskProgressStore
         .getState()
         .entries
@@ -562,6 +646,10 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
       for (const targetId of missingTargetIds) {
         useTaskProgressStore.getState().endByTarget(targetId);
       }
+      const allMissingTargetIds = new Set([...missingTargetIds, ...missingPlanTargetIds]);
+      if (allMissingTargetIds.size > 0) {
+        set((st) => ({ blocks: removeBlocksForTargetIds(st.blocks, allMissingTargetIds) }));
+      }
     } finally {
       cleanupMissingTargetsInProgress = false;
     }
@@ -572,6 +660,7 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
     if (!tid) return [];
     const released = releaseAllActivatedDevicesForTarget(tid);
     if (released.length > 0) useTaskProgressStore.getState().endByTarget(tid);
+    set((st) => ({ blocks: removeBlocksForTargetIds(st.blocks, new Set([tid])) }));
     return released;
   },
 
@@ -612,7 +701,7 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
         alarmStore.show();
       }
       applySchemeSideEffects(scheme, row?.inputParams);
-      const tid = row ? targetIdForAutoExecute(block, row, scheme) : String(scheme.disposalTargetId ?? blockPrimaryTargetId(block) ?? "").trim();
+      const tid = row ? targetIdForAutoExecute(row) : "";
       const execKey = getExecutionTrackingKey(tid, scheme);
       if (execKey) globalExecutedDisposalKeys.add(execKey);
       if (tid) {
@@ -673,7 +762,7 @@ export const useDisposalPlanStore = create<DisposalPlanState>((set, get) => ({
         }
       }
       if (!best) continue;
-      const targetId = targetIdForAutoExecute(block, row, best);
+      const targetId = targetIdForAutoExecute(row);
       if (!disposalTargetExists(targetId)) continue;
       if (row.executedSchemeIds.includes(best.schemeId)) continue;
       if (row.executingSchemeIds.includes(best.schemeId)) continue;

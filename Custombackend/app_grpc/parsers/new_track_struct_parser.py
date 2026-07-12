@@ -357,6 +357,7 @@ def target_object_to_track(obj) -> Dict[str, Any]:
     """单个 TargetObject → 前端航迹 dict；类型名仅由 trackType(classified_type) 决定。"""
     track_type = int(obj.classified_type())
     track_category_name = _TRACK_TYPE_TO_CATEGORY_NAME.get(track_type, 'unknown')
+    target_state = int(obj.state())
 
     kin = obj.target_kinematics()
     pos = kin.position()
@@ -383,6 +384,8 @@ def target_object_to_track(obj) -> Dict[str, Any]:
         'timestamp': ts,
         'trackType': track_type,
         'trackCategoryName': track_category_name,
+        'targetState': target_state,
+        'targetDescription': str(obj.description()),
         'trackAlias': str(obj.name()),
         'confidence': float(obj.type_confidence()),
         'reality_type': _read_reality_type(obj),

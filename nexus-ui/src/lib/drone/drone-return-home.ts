@@ -34,6 +34,7 @@ export interface DroneReturnHomeTaskBody {
 export interface DroneReturnHomeTarget {
   entityId: string;
   deviceSn: string;
+  droneDeviceSn: string;
   displayName: string;
 }
 
@@ -99,6 +100,98 @@ function resolveDroneAssetByAnyId(id: string) {
   return null;
 }
 
+function readRelationshipNodeSn(node: { id?: string; deviceSn?: string; gatewaySn?: string } | null | undefined): string {
+  return norm(node?.deviceSn) || norm(node?.gatewaySn);
+}
+
+function readAssetSn(asset: { id: string; properties: Record<string, unknown> | null } | null | undefined): string {
+  if (!asset) return "";
+  const props = readDroneProps(asset);
+  return (
+    norm(props.deviceSn ?? props.device_sn) ||
+    norm(props.gatewaySn ?? props.gateway_sn) ||
+    norm(props.dockSn ?? props.dock_sn) ||
+    norm(asset.id)
+  );
+}
+
+function readParentAirportSnFromDroneProps(props: Record<string, unknown>): string {
+  return (
+    norm(props.airportSn ?? props.airport_sn) ||
+    norm(props.airportDeviceSn ?? props.airport_device_sn) ||
+    norm(props.dockSn ?? props.dock_sn) ||
+    norm(props.dockDeviceSn ?? props.dock_device_sn) ||
+    norm(props.gatewaySn ?? props.gateway_sn) ||
+    norm(props.parentDeviceSn ?? props.parent_device_sn)
+  );
+}
+
+function idMatchesAny(id: string, keys: Set<string>): boolean {
+  const raw = norm(id);
+  if (!raw) return false;
+  if (keys.has(raw)) return true;
+
+  const state = useAssetStore.getState();
+  const mappedSn = norm(state.entityIdToDeviceSn[raw]);
+  if (mappedSn && keys.has(mappedSn)) return true;
+  const mappedEntity = norm(state.deviceSnToEntityId[raw]);
+  return !!mappedEntity && keys.has(mappedEntity);
+}
+
+function airportSnFromId(id: string): string {
+  const raw = norm(id);
+  if (!raw) return "";
+
+  const state = useAssetStore.getState();
+  const relationships = state.relationships;
+  const mappedAirportId = norm(state.dockSnToEntityId[raw]);
+  if (mappedAirportId) return raw;
+
+  const node =
+    relationships?.nodes.find((item) => norm(item.id) === raw) ??
+    relationships?.nodes.find((item) => readRelationshipNodeSn(item) === raw);
+  const nodeSn = readRelationshipNodeSn(node);
+  if (nodeSn) return nodeSn;
+
+  const airport = state.assets.find((item) => {
+    if (item.asset_type !== "airport") return false;
+    if (item.id === raw || item.id === mappedAirportId) return true;
+    const props = readDroneProps(item);
+    return (
+      norm(props.deviceSn ?? props.device_sn) === raw ||
+      norm(props.gatewaySn ?? props.gateway_sn) === raw ||
+      norm(props.dockSn ?? props.dock_sn) === raw
+    );
+  });
+  const assetSn = readAssetSn(airport);
+  return assetSn || mappedAirportId || "";
+}
+
+function resolveParentAirportSn(
+  asset: { id: string; properties: Record<string, unknown> | null },
+  droneEntityId: string,
+  droneDeviceSn: string,
+): string {
+  const props = readDroneProps(asset);
+  const directParentSn = readParentAirportSnFromDroneProps(props);
+  if (directParentSn) return directParentSn;
+
+  const state = useAssetStore.getState();
+  const relationships = state.relationships;
+  const droneKeys = new Set(
+    [
+      norm(asset.id),
+      norm(droneEntityId),
+      norm(droneDeviceSn),
+      norm(props.entityId ?? props.entity_id),
+      norm(props.deviceSn ?? props.device_sn),
+    ].filter(Boolean),
+  );
+
+  const edge = relationships?.edges.find((item) => idMatchesAny(item.child, droneKeys));
+  return airportSnFromId(edge?.parent ?? "");
+}
+
 export function resolveDroneReturnHomeTarget(entityId: string): DroneReturnHomeTarget | null {
   const id = norm(entityId);
   if (!id) return null;
@@ -112,17 +205,20 @@ export function resolveDroneReturnHomeTarget(entityId: string): DroneReturnHomeT
     norm(props.entityId ?? props.entity_id) ||
     norm(state.deviceSnToEntityId[asset.id]) ||
     norm(asset.id);
-  const deviceSn =
+  const droneDeviceSn =
     norm(state.entityIdToDeviceSn[canonicalEntityId]) ||
     norm(state.entityIdToDeviceSn[id]) ||
     norm(props.deviceSn ?? props.device_sn) ||
     norm(asset.id);
+  const airportSn = resolveParentAirportSn(asset, canonicalEntityId, droneDeviceSn);
+  const deviceSn = airportSn;
 
   if (!canonicalEntityId || !deviceSn) return null;
 
   return {
     entityId: canonicalEntityId,
     deviceSn,
+    droneDeviceSn,
     displayName: norm(asset.name) || canonicalEntityId,
   };
 }
@@ -164,7 +260,7 @@ export async function sendDroneReturnHome(entityId: string): Promise<DroneReturn
       entityId: norm(entityId),
       deviceSn: "",
       displayName: norm(entityId) || "无人机",
-      message: "未找到无人机或 deviceSn",
+      message: "未找到无人机或所属机场 SN",
     };
   }
 

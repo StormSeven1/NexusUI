@@ -105,7 +105,7 @@ function DisposalCardBlock({
     <NxCard padding="sm" className="mb-2 border-sky-500/10">
       {block.items.map((row, rowIndex) => (
         <div key={`${row.cardInstanceId}:${rowIndex}`} className="mb-2 last:mb-0">
-          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-nexus-text-primary">
+          <div className="mb-2 flex items-center justify-center gap-1.5 text-center text-[14px] font-semibold text-nexus-text-primary">
             <span
               aria-hidden="true"
               className="h-3 w-3 shrink-0 bg-amber-400 opacity-90"
@@ -162,10 +162,14 @@ export function DisposalPlanFeed({
   const wsStatus = useDisposalPlanStore((s) => s.wsStatus);
   const executeScheme = useDisposalPlanStore((s) => s.executeScheme);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const previousBlockCountRef = useRef(blocks.length);
 
   // 新方案追加到底部时自动滚动
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (blocks.length > previousBlockCountRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+    previousBlockCountRef.current = blocks.length;
   }, [blocks.length]);
 
   if (blocks.length === 0) return null;
