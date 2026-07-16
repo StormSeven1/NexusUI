@@ -702,5 +702,20 @@ ENTITY_GRPC_CLIENTS: List[Dict[str, Any]] = [
     # },
 ]
 
+# TrackManager NewTrackStruct gRPC 长连接航迹订阅。
+# 服务端对应 TrackManager New/app 的 NewTrackStructStreamService/Subscribe，
+# 返回值是 TargetFull::TargetOutputSet 的 protobuf 等价结构。
+TRACK_GRPC_CLIENTS: List[Dict[str, Any]] = [
+    {
+        "id": "new_track_struct_grpc_client",
+        "name": "TrackManager NewTrackStruct gRPC 航迹",
+        "host": "192.168.18.141",
+        "port": 60055,
+        "enabled": True,
+        "method": "Subscribe",
+        "reconnect_interval": 2.0,
+    },
+]
+
 def get_settings() -> Settings:
     return Settings()

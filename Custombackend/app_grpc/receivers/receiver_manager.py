@@ -16,7 +16,9 @@ from receivers.network import (
 )
 from parsers import TrackParser
 from parsers.entity_parser import parse_entities_response, parse_relationships_response
+from parsers.new_track_struct_grpc_parser import parse_target_output_set
 from grpc_services.entity.client import EntityGrpcClient
+from grpc_services.new_track_struct.client import NewTrackStructGrpcClient
 from websocket_manager import ws_manager
 
 # DDS接收器（可选）- 使用动态DDS接收器服务
@@ -36,6 +38,7 @@ class ReceiverManager:
         self.tcp_clients: Dict[str, TCPClient] = {}
         self.http_pollers: Dict[str, HTTPPoller] = {}
         self.entity_grpc_clients: Dict[str, EntityGrpcClient] = {}
+        self.track_grpc_clients: Dict[str, NewTrackStructGrpcClient] = {}
         self.mqtt_receivers: Dict[str, MQTTReceiver] = {}
         self.dds_receivers: Dict[str, Any] = {}  # DDSReceiver实例
         
@@ -258,6 +261,43 @@ class ReceiverManager:
             entities_result["total"] = len(entities)
         entities_result["timestamp"] = patch.get("timestamp") or entities_result.get("timestamp")
         self._stats[client_id]['parsed'] += 1
+
+    @staticmethod
+    def _is_air_track(track: Dict[str, Any]) -> bool:
+        environment = track.get("environment")
+        try:
+            if int(environment) == 2:
+                return True
+        except (TypeError, ValueError):
+            pass
+        category = str(track.get("trackCategoryName") or "").strip().lower()
+        return category in {"bird", "uav", "drone", "helicopter", "aircraft", "missile"}
+
+    def _on_track_grpc_output_set(self, output_set: Any, client_id: str):
+        """gRPC NewTrackStruct TargetOutputSet callback."""
+        self._init_stats(client_id)
+        self._stats[client_id]['received'] += 1
+
+        try:
+            tracks = parse_target_output_set(output_set)
+        except Exception as exc:
+            logger.error(f"处理 NewTrackStruct gRPC 航迹失败 [{client_id}]: {exc}")
+            self._stats[client_id]['failed'] += 1
+            return
+
+        if not tracks:
+            self._stats[client_id]['failed'] += 1
+            return
+
+        client = self.track_grpc_clients.get(client_id)
+        source_name = client.name if client and client.name else "NewTrackStruct gRPC"
+        for track in tracks:
+            track["source_name"] = source_name
+            track["dataSourceId"] = client_id
+            track["is_air_track"] = self._is_air_track(track)
+            self._enrich_eo_fusion_source_names(track)
+            ws_manager.queue_track_data(track)
+        self._stats[client_id]['parsed'] += len(tracks)
 
     def _on_udp_data(self, data: bytes, addr: tuple, receiver_id: str):
         """UDP数据回调"""
@@ -723,6 +763,20 @@ class ReceiverManager:
             )
             self.entity_grpc_clients[client_id] = client
             await client.start()
+
+    async def start_track_grpc_clients(self, configs: List[Dict[str, Any]]):
+        """启动 NewTrackStruct gRPC 航迹客户端。"""
+        for config in configs:
+            if not config.get('enabled', False):
+                continue
+
+            client_id = config.get('id', '')
+            if not client_id or client_id in self.track_grpc_clients:
+                continue
+
+            client = NewTrackStructGrpcClient(config, self._on_track_grpc_output_set)
+            self.track_grpc_clients[client_id] = client
+            await client.start()
     
     def stop_all(self):
         """停止所有接收器"""
@@ -765,6 +819,12 @@ class ReceiverManager:
         for client in self.entity_grpc_clients.values():
             await client.stop()
         self.entity_grpc_clients.clear()
+
+    async def stop_track_grpc_clients(self):
+        """Stop NewTrackStruct gRPC track clients."""
+        for client in self.track_grpc_clients.values():
+            await client.stop()
+        self.track_grpc_clients.clear()
     
     def get_stats(self) -> Dict[str, Dict[str, int]]:
         """获取统计信息"""

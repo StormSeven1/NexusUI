@@ -44,7 +44,7 @@ export function shouldHideDroneEntityId(entityId: string): boolean {
  * - 这里只按 `area_name / group_name` 做白名单子串过滤
  * - 白名单为空时不过滤注册区域
  */
-export const ZONE_NAME_SUBSTRING_ALLOWLIST: readonly string[] = ["港外航道监控区"];
+export const ZONE_NAME_SUBSTRING_ALLOWLIST: readonly string[] = ["港口防卫告警区"];
 
 const zoneNameSubstringAllowSet =
   ZONE_NAME_SUBSTRING_ALLOWLIST.length > 0

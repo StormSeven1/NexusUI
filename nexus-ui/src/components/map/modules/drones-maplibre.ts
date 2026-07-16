@@ -753,7 +753,7 @@ function munitionQtyForRender(tele: DroneRenderable): number | null {
   if (
     typeof tele.munitionQuantity === "number" &&
     Number.isFinite(tele.munitionQuantity) &&
-    tele.munitionQuantity >= 0
+    tele.munitionQuantity > 0
   ) {
     return tele.munitionQuantity;
   }

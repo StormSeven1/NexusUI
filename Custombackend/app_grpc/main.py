@@ -19,6 +19,7 @@ from config import (
     HTTP_POLLERS,
     MQTT_RECEIVERS,
     TCP_CLIENTS,
+    TRACK_GRPC_CLIENTS,
     UDP_RECEIVERS,
     get_settings,
 )
@@ -131,6 +132,9 @@ async def lifespan(app: FastAPI):
     logger.info("Starting entity gRPC clients...")
     await receiver_manager.start_entity_grpc_clients(ENTITY_GRPC_CLIENTS)
 
+    logger.info("Starting track gRPC clients...")
+    await receiver_manager.start_track_grpc_clients(TRACK_GRPC_CLIENTS)
+
     logger.info("=" * 60)
     logger.info(f"Service started: http://{settings.HOST}:{settings.PORT}")
     logger.info(f"WebSocket endpoint: ws://{settings.HOST}:{settings.PORT}/ws")
@@ -144,6 +148,7 @@ async def lifespan(app: FastAPI):
     receiver_manager.stop_all()
     await receiver_manager.stop_http_pollers()
     await receiver_manager.stop_entity_grpc_clients()
+    await receiver_manager.stop_track_grpc_clients()
     ws_manager.stop_tasks()
     await destroy_grpc_service.stop()
 
