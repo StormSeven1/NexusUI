@@ -97,7 +97,7 @@ function mapMissileConfigDeviceRow(
     name: String(r.name ?? id),
     asset_type: assetType,
     status: String(r.status ?? "online"),
-    disposition: parseForceDisposition(r.disposition, "friendly"),
+    disposition: parseForceDisposition(r.disposition) ?? "friendly",
     lat,
     lng,
     range_km: rangeM > 0 ? rangeM / 1000 : null,
@@ -196,7 +196,7 @@ function buildMissileStaticGeoJSON(
           rowStatus,
           isVirtual,
           disp,
-          disp === "friendly" ? a.friendlyMapColor : undefined,
+          disp === "friendly" || disp === "own" ? a.friendlyMapColor : undefined,
         ),
         isVirtual: isVirtual ? 1 : 0,
         symbolOpacity: isVirtual ? VIRTUAL_MISSILE_SYMBOL_OPACITY : 1,
@@ -209,7 +209,7 @@ function buildMissileStaticGeoJSON(
     if (a.nameLabelVisible === false || !String(a.name ?? "").trim()) continue;
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
-    const friendlyOv = disp === "friendly" ? a.labelFontColor : undefined;
+    const friendlyOv = disp === "friendly" || disp === "own" ? a.labelFontColor : undefined;
     const labelColor = assetMapLabelTextColor(disp, st, accent ?? null, friendlyOv);
     features.push({
       type: "Feature",
@@ -362,7 +362,8 @@ export class MissileStaticMaplibre {
       const isVirtual = a.isVirtual === true || isVirtualFromProperties(props);
       const status = assetStatusFromLabel(a.status);
       const disposition = a.disposition ?? "friendly";
-      const friendlyFill = disposition === "friendly" ? a.friendlyMapColor : undefined;
+      const friendlyFill =
+        disposition === "friendly" || disposition === "own" ? a.friendlyMapColor : undefined;
       const symbolId = getAssetSymbolId("missile", status, isVirtual, disposition, friendlyFill);
       if (this.ensuredSymbolIds.has(symbolId)) continue;
       this.ensuredSymbolIds.add(symbolId);

@@ -57,7 +57,7 @@ export function adaptAssetsForMap(assets: AssetData[]): Asset[] {
       const disp = dispositionFromAssetData(a);
       let friendlyMapColor: string | undefined;
       let labelFontColor: string | undefined;
-      if (disp === "friendly") {
+      if (disp === "friendly" || disp === "own") {
         friendlyMapColor =
           assetFriendlyColorFromProperties(p ?? null) ??
           getAssetFriendlyColorForAssetType(t) ??

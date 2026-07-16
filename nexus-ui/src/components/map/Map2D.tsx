@@ -137,6 +137,10 @@ import { DroneContextMenu, type DroneMenuState } from "@/components/map/DroneCon
 const BASEMAP_CEILING = "basemap-ceiling";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 import { sendDroneReturnHome, toastDroneReturnHomeSummary } from "@/lib/drone/drone-return-home";
+import {
+  sendDroneReturnHomeCommand,
+  toastDroneCommandResult,
+} from "@/lib/drone/drone-command-client";
 
 /* 2D 地图：航迹 / 资产 / 限制区 + 测量与扇区工具 */
 
@@ -326,8 +330,14 @@ function adaptAssetToLaserDevice(a: Asset, previous?: LaserDevice): LaserDevice 
     openingDeg: a.fovAngle ?? geometryDefaults.openingDeg ?? 0,
     virtual: a.isVirtual,
     disposition: a.disposition,
-    friendlyMapColor: (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
-    labelFontColor: (a.disposition ?? "friendly") === "friendly" ? a.labelFontColor : undefined,
+    friendlyMapColor:
+      (a.disposition ?? "friendly") === "friendly" || (a.disposition ?? "friendly") === "own"
+        ? a.friendlyMapColor
+        : undefined,
+    labelFontColor:
+      (a.disposition ?? "friendly") === "friendly" || (a.disposition ?? "friendly") === "own"
+        ? a.labelFontColor
+        : undefined,
     centerNameVisible: a.nameLabelVisible,
     /* 激光中心图标由 LaserMaplibre 专题层独立管理，不受资产层 center_icon_visible 影响。
      * 资产数据中 center_icon_visible: false 是为了不让资产符号层画激光图标，
@@ -363,8 +373,14 @@ function adaptAssetToTdoaDevice(a: Asset, previous?: TdoaDevice): TdoaDevice {
     openingDeg: a.fovAngle ?? geometryDefaults.openingDeg ?? 0,
     virtual: a.isVirtual,
     disposition: a.disposition,
-    friendlyMapColor: (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
-    labelFontColor: (a.disposition ?? "friendly") === "friendly" ? a.labelFontColor : undefined,
+    friendlyMapColor:
+      (a.disposition ?? "friendly") === "friendly" || (a.disposition ?? "friendly") === "own"
+        ? a.friendlyMapColor
+        : undefined,
+    labelFontColor:
+      (a.disposition ?? "friendly") === "friendly" || (a.disposition ?? "friendly") === "own"
+        ? a.labelFontColor
+        : undefined,
     centerNameVisible: a.nameLabelVisible,
     /* TDOA 中心图标由 TdoaMaplibre 专题层独立管理，同激光 */
     centerIconVisible: undefined,
@@ -1241,6 +1257,12 @@ export function Map2D() {
         state={droneMenu}
         onClose={() => setDroneMenu(null)}
         onReturnHome={async (entityId) => {
+          if (entityId.trim().toLowerCase() === "uav-778") {
+            const result = await sendDroneReturnHomeCommand(entityId);
+            toastDroneCommandResult(result, "右键菜单");
+            return;
+          }
+
           const result = await sendDroneReturnHome(entityId);
           toastDroneReturnHomeSummary([result], "右键菜单");
         }}

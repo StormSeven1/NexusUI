@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, AlertTriangle, ArrowUpDown, Info, Send, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowUpDown, Crosshair, Info, Send, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAppStore } from "@/stores/app-store";
@@ -17,6 +17,8 @@ import { cn } from "@/lib/utils";
 import { runAlertDestroyHttp } from "@/lib/disposal/alert-destroy";
 import { toastDroneReturnHomeSummary } from "@/lib/drone/drone-return-home";
 import { postEngagementStartCommand, type EngagementKind } from "@/lib/engagement/engagement-finish";
+import { collectActiveDisposalForTrack } from "@/lib/disposal/disposal-active-devices";
+import { sendDroneActionCommand, toastDroneCommandResult } from "@/lib/drone/drone-command-client";
 
 type PanelAlertItem = {
   id: string;
@@ -140,7 +142,9 @@ export function AlertPanel() {
   const tracks = useTrackStore((s) => s.tracks);
   const assets = useAssetStore((s) => s.assets);
   const addDisposedTrack = useDisposedStore((s) => s.addDisposedTrack);
+  const disposalBlocks = useDisposalPlanStore((s) => s.blocks);
   const cleanupEffectsForMissingTargets = useDisposalPlanStore((s) => s.cleanupEffectsForMissingTargets);
+  const taskProgressEntries = useTaskProgressStore((s) => s.entries);
   const aliases = useTrackAliasStore((s) => s.aliases);
   const [sortMode, setSortMode] = useState<SortMode>("name");
   const [contextMenu, setContextMenu] = useState<AlertContextMenuState>(null);
@@ -218,7 +222,7 @@ export function AlertPanel() {
         const severity: SeverityKey =
           alarmLevel != null && alarmLevel >= 2 ? "critical" : alarmLevel === 1 ? "warning" : "info";
         const area = alarm.area && typeof alarm.area === "object" ? (alarm.area as Record<string, unknown>) : null;
-        const detail = typeof alarm.content === "string" ? alarm.content : undefined;
+        const detail = typeof alarm.content === "string" ? alarm.content.trim() || undefined : undefined;
 
         return {
           id: `${track.targetID}:${String(alarm.alarm_id)}`,
@@ -249,6 +253,13 @@ export function AlertPanel() {
   }, [tracks, alertImageMap, aliases, sortMode]);
 
   const criticalCount = allAlerts.filter((item) => item.severity === "critical").length;
+  const contextStrikeDroneIds = useMemo(() => {
+    void disposalBlocks;
+    void taskProgressEntries;
+    const targetId = String(contextMenu?.alert.targetID ?? "").trim();
+    if (!targetId) return [];
+    return collectActiveDisposalForTrack(targetId).droneEntityIds;
+  }, [contextMenu?.alert.targetID, disposalBlocks, taskProgressEntries]);
 
   return (
     <div className="flex h-full flex-col">
@@ -328,6 +339,11 @@ export function AlertPanel() {
                       </div>
                     )}
                   </div>
+                  {alert.detail && (
+                    <p className="mt-1 whitespace-pre-wrap break-words text-[10px] leading-snug text-nexus-text-secondary">
+                      {alert.detail}
+                    </p>
+                  )}
                   {alert.imageUrl && (
                     <div className="mt-1.5 overflow-hidden rounded border border-white/[0.06]">
                       <Image
@@ -406,6 +422,26 @@ export function AlertPanel() {
           <div className="border-b border-white/[0.06] px-2.5 py-1.5 text-[10px] font-medium text-nexus-text-muted">
             下发处置任务: {contextMenu.alert.targetID ?? "未知目标"}
           </div>
+          {contextStrikeDroneIds.length > 0 && (
+            <div className="border-b border-white/[0.06] py-1">
+              <div className="px-2.5 py-1 text-[10px] font-semibold text-nexus-text-secondary">打击无人机</div>
+              {contextStrikeDroneIds.map((entityId) => (
+                <button
+                  key={`strike-uav:${entityId}`}
+                  type="button"
+                  onClick={async () => {
+                    const result = await sendDroneActionCommand(entityId, "strike");
+                    toastDroneCommandResult(result, "告警右键");
+                    if (result.ok) setContextMenu(null);
+                  }}
+                  className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-[11px] text-red-300 transition-colors hover:bg-red-500/[0.12] hover:text-red-200"
+                >
+                  <span className="min-w-0 truncate">打击 {entityId}</span>
+                  <Crosshair size={10} className="shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
           {ENGAGEMENT_DEVICE_GROUPS.map((group) => {
             const devices = engagementDevices.filter((device) => device.kind === group.kind);
             return (

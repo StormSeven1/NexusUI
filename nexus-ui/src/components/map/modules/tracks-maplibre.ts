@@ -62,7 +62,7 @@ function resolveTrackColor(
   const stateColor = getTrackTargetStateColor(t.targetState);
   if (stateColor) return stateColor;
   const ts = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
-  const friendlyFill = t.disposition === "friendly" ? ts.idColor : undefined;
+  const friendlyFill = t.disposition === "friendly" || t.disposition === "own" ? ts.idColor : undefined;
   return resolveTrackMarkerFill(t.disposition, accent ?? null, friendlyFill);
 }
 
@@ -104,7 +104,7 @@ export function buildTrackGeoJSON(
     const ts = tr.trackTypeStyles[t.type] ?? tr.trackTypeStyles.sea;
     const v = t.isVirtual === true;
     const iconScale = Math.max(0.55, Math.min(1.5, ts.pointSize / 3.5));
-    const friendlyFill = t.disposition === "friendly" ? ts.idColor : undefined;
+    const friendlyFill = t.disposition === "friendly" || t.disposition === "own" ? ts.idColor : undefined;
     const stateColor = getTrackTargetStateColor(t.targetState);
     const markerFill = stateColor ?? resolveTrackMarkerFill(t.disposition, accent ?? null, friendlyFill);
     features.push({

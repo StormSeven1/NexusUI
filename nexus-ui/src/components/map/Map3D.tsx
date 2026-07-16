@@ -217,7 +217,8 @@ async function syncCesiumTrackBillboards(
     const trail = t.historyTrail;
     if (!trail || trail.length < 1) continue;
     const ts2 = trCfg.trackTypeStyles[t.type] ?? trCfg.trackTypeStyles.sea;
-    const friendlyFill2 = t.disposition === "friendly" ? ts2.idColor : undefined;
+    const friendlyFill2 =
+      t.disposition === "friendly" || t.disposition === "own" ? ts2.idColor : undefined;
     const stateColor = getTrackTargetStateColor(t.targetState);
     const positions = [...trail, [t.lng, t.lat] as [number, number]].map(([lng, lat]) =>
       Cesium.Cartesian3.fromDegrees(lng, lat, alt(t.altitude)),

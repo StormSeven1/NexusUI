@@ -355,7 +355,7 @@ export function mapRadarRowToAssetData(
     name: String(r.name ?? id),
     asset_type: "radar",
     status: String(r.status ?? "online"),
-    disposition: parseForceDisposition(r.disposition, "friendly"),
+    disposition: parseForceDisposition(r.disposition) ?? "friendly",
     lat,
     lng,
     range_km: maxRangeM / 1000,
@@ -456,11 +456,12 @@ export function buildRadarCoverageGeoJSON(
 
     const lng = row.lng;
     const lat = row.lat;
-    const disp = parseForceDisposition(row.disposition, "friendly");
+    const disp = parseForceDisposition(row.disposition) ?? "friendly";
     const rowStatus = rowAssetStatus(String(row.status ?? "online"));
-    /* 友方用 assetFriendlyColor，缺省用 ringLineFallbackColor；敌方/中立强制用 FORCE_COLORS */
+    /* 友方/我方用 assetFriendlyColor，缺省用 ringLineFallbackColor；敌方/中立/未知强制用 FORCE_COLORS */
     const baseRingColor = disp === "hostile" ? FORCE_COLORS.hostile
       : disp === "neutral" ? FORCE_COLORS.neutral
+      : disp === "unknown" ? FORCE_COLORS.unknown
       : typeof defaults.assetFriendlyColor === "string" ? String(defaults.assetFriendlyColor)
       : String(defaults.ringLineFallbackColor ?? "#FF0000");
     const ringColor = String(p.ring_color ?? baseRingColor);
@@ -604,7 +605,7 @@ export function buildRadarCoverageGeoJSON(
     if (nameVis) {
       const lb = asRecord(p.label_block) ?? asRecord(defaults.label) ?? {};
       const lbFontColor = typeof lb.fontColor === "string" && lb.fontColor.trim() ? lb.fontColor.trim() : undefined;
-      const friendlyOv = disp === "friendly" ? lbFontColor : undefined;
+      const friendlyOv = disp === "friendly" || disp === "own" ? lbFontColor : undefined;
       const fontColor = assetMapLabelTextColor(disp, rowStatus, accent ?? null, friendlyOv);
       features.push({
         type: "Feature",
@@ -685,7 +686,9 @@ export function buildRadarAssetIconGeoJSON(assetList: Asset[]): GeoJSON.FeatureC
             a.status,
             a.isVirtual ?? false,
             a.disposition ?? "friendly",
-            (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
+            (a.disposition ?? "friendly") === "friendly" || (a.disposition ?? "friendly") === "own"
+              ? a.friendlyMapColor
+              : undefined,
           ),
           symbolOpacity: 1,
         },

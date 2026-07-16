@@ -18,8 +18,10 @@ import type { Track } from "@/lib/map-entity-model";
 
 const DISPOSITION_ORDER: ForceDisposition[] = [
   "hostile",
-  "friendly",
+  "unknown",
   "neutral",
+  "own",
+  "friendly",
 ];
 
 type DomainTab = "all" | "air" | "sea";
@@ -163,7 +165,7 @@ export function TrackListPanel() {
             {tracks.map((track) => {
               const ts = trackRendering.trackTypeStyles[track.type] ?? trackRendering.trackTypeStyles.sea;
               const friendlyFill =
-                track.disposition === "friendly" ? ts.idColor : undefined;
+                track.disposition === "friendly" || track.disposition === "own" ? ts.idColor : undefined;
               const isVirtual = track.isVirtual === true;
               return (
               <button

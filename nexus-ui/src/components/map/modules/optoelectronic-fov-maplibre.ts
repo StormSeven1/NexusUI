@@ -117,7 +117,7 @@ function mapCameraDeviceRow(
     name: String(r.name ?? id),
     asset_type: assetType,
     status: String(r.status ?? "online"),
-    disposition: parseForceDisposition(r.disposition, "friendly"),
+    disposition: parseForceDisposition(r.disposition) ?? "friendly",
     lat,
     lng,
     range_km: rangeM > 0 ? rangeM / 1000 : null,
@@ -220,7 +220,7 @@ export function buildFovGeoJSON(assetList: Asset[], accent?: AssetDispositionIco
     if (!showName) continue;
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
-    const friendlyOv = disp === "friendly" ? a.labelFontColor : undefined;
+    const friendlyOv = disp === "friendly" || disp === "own" ? a.labelFontColor : undefined;
     const labelColor = assetMapLabelTextColor(disp, st, accent ?? null, friendlyOv);
     labelFeatures.push({
       type: "Feature",
@@ -262,7 +262,9 @@ export function buildOptoAssetIconGeoJSON(assetList: Asset[]): GeoJSON.FeatureCo
             a.status,
             a.isVirtual ?? false,
             a.disposition ?? "friendly",
-            (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
+            (a.disposition ?? "friendly") === "friendly" || (a.disposition ?? "friendly") === "own"
+              ? a.friendlyMapColor
+              : undefined,
           ),
           symbolOpacity: 1,
         },

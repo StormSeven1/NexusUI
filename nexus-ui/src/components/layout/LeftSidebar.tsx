@@ -28,7 +28,9 @@ const TABS = [
 
 export function LeftSidebar() {
   const { leftSidebarOpen, toggleLeftSidebar, leftPanelTab, setLeftPanelTab } = useAppStore();
-  const alertTotal = useTrackStore((s) => s.tracks.length);
+  const alertTotal = useTrackStore(
+    (s) => s.tracks.filter((track) => Array.isArray(track.alarms) && track.alarms.length > 0).length,
+  );
   const [simMenuOpen, setSimMenuOpen] = useState(false);
   const [simSending, setSimSending] = useState<"sea" | "air" | null>(null);
   const simMenuRef = useRef<HTMLDivElement | null>(null);

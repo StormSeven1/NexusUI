@@ -563,9 +563,10 @@ export class LaserMaplibre {
     const feats: GeoJSON.Feature[] = [];
     for (const d of this.devices.values()) {
       const disp = d.disposition ?? "friendly";
-      /* 友方用配置色（d.color / 根级 sectorFillDefault*），敌方/中立强制 FORCE_COLORS */
+      /* 友方/我方用配置色（d.color / 根级 sectorFillDefault*），敌方/中立/未知强制 FORCE_COLORS */
       const c = disp === "hostile" ? FORCE_COLORS.hostile
         : disp === "neutral" ? FORCE_COLORS.neutral
+        : disp === "unknown" ? FORCE_COLORS.unknown
         : (d.color ?? this._sectorFillDefaultColor);
       const baseOp = d.fillOpacity ?? this._sectorFillDefaultOpacity;
 
@@ -633,7 +634,7 @@ export class LaserMaplibre {
         }
       }
       if (d.centerIconVisible !== false) {
-        const fmc = disp === "friendly" ? d.friendlyMapColor : undefined;
+        const fmc = disp === "friendly" || disp === "own" ? d.friendlyMapColor : undefined;
         feats.push({
           type: "Feature",
           geometry: { type: "Point", coordinates: [d.lng, d.lat] },
@@ -649,7 +650,7 @@ export class LaserMaplibre {
       }
       if (d.name && d.centerNameVisible !== false) {
         const tc =
-          disp === "hostile" || disp === "neutral"
+          disp === "hostile" || disp === "neutral" || disp === "unknown"
             ? assetMapLabelTextColor(disp, "online", this._assetIconAccent)
             : assetMapLabelTextColor(disp, "online", this._assetIconAccent, d.labelFontColor ?? this._label.textColor);
         feats.push({

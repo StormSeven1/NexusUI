@@ -36,10 +36,11 @@ export type TrackType = Track["type"];
 export type AssetType = PublicMapAssetType;
 export type { PublicMapAssetType, AssetStatus };
 
-/** 根配置 `factory.assetIcons`：仅 **敌方 / 中立** 可覆盖默认 force 色；我方由各业务块 `label.fontColor` 等决定 */
+/** 根配置 `factory.assetIcons`：仅敌方 / 中立 / 未知颜色；友方 / 我方使用业务块传入的 `label.fontColor` / `idColor`。 */
 export type AssetDispositionIconAccent = {
   hostileIcon?: string;
   neutralIcon?: string;
+  unknownIcon?: string;
 };
 
 /** 写入 `AssetData.properties`，供地图友方图标/名称取色（由各 bundle 的 `label.fontColor` 等解析） */
@@ -90,7 +91,7 @@ export function assetLabelFontColorFromProperties(props: Record<string, unknown>
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
 
-/** 友方图标 id 后缀：`#ff0000` → `-mfff0000`（仅 disposition=friendly 时使用） */
+/** 友方/我方图标 id 后缀：`#ff0000` → `-mfff0000` */
 export function friendlyTintSuffix(tint: string | null | undefined): string {
   const s = String(tint ?? "").trim();
   if (!s) return "";
@@ -99,7 +100,7 @@ export function friendlyTintSuffix(tint: string | null | undefined): string {
 }
 
 /** 资产图标、激光/TDOA 扇区中心图标共用的敌我维度 */
-export const MAP_FORCE_DISPOSITIONS: ForceDisposition[] = ["friendly", "hostile", "neutral"];
+export const MAP_FORCE_DISPOSITIONS: ForceDisposition[] = ["friendly", "own", "hostile", "neutral", "unknown"];
 const VIRTUAL_SYMBOL_OPACITY = 0.6;
 
 type AssetSymbolBuildOptions = {
@@ -221,23 +222,25 @@ function plainGlyphMissilePublicInner(
   return { viewBox, inner: tintPublicAssetIconInner(iconBody, color, "missile") };
 }
 
-/** 航迹点/线填色：敌/中读 `factory.assetIcons`；我方读 `trackRendering.trackTypeStyles.*.idColor`（由调用方传入） */
+/** 航迹点/线填色：敌/中立/未知读 `factory.assetIcons`；友方/我方读 `trackRendering.trackTypeStyles.*.idColor`（由调用方传入）。 */
 export function resolveTrackMarkerFill(
   disposition: ForceDisposition,
   accent?: AssetDispositionIconAccent | null,
   friendlyFill?: string | null,
 ): string {
   const o = friendlyFill?.trim();
-  if (o) return o;
+  if ((disposition === "friendly" || disposition === "own") && o) return o;
   if (disposition === "hostile") return accent?.hostileIcon ?? FORCE_COLORS.hostile;
   if (disposition === "neutral") return accent?.neutralIcon ?? FORCE_COLORS.neutral;
+  if (disposition === "unknown") return accent?.unknownIcon ?? FORCE_COLORS.unknown;
+  if (disposition === "own") return FORCE_COLORS.own;
   return FORCE_COLORS.friendly;
 }
 
 /**
  * 生成用于 2D/3D 的目标图标 SVG（64x64），无底板圆形，直接渲染目标轮廓。
  *
- * 颜色随态势（敌/友/中立）动态注入，黑色投影保证在浅色地图上的可见性。
+ * 颜色随态势（敌/友/我/中立/未知）动态注入，黑色投影保证在浅色地图上的可见性。
  * 约定：图标默认朝"正北/向上"，旋转由地图层/引擎根据 heading 处理。
  */
 export function buildMarkerSymbolSvg(
@@ -307,7 +310,7 @@ type TrackStylesForPrereg = {
   targetStateStyles?: Record<string | number, { color?: string } | undefined>;
 };
 
-/** 友方航迹符号：为每种 `trackTypeStyles.*.idColor` 预注册一套 tint（另含无 tint 的默认友方色） */
+/** 友方/我方航迹符号：为每种 `trackTypeStyles.*.idColor` 预注册一套 tint（另含无 tint 的默认色） */
 export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPrereg | null): Array<{
   id: string;
   type: TrackType;
@@ -316,7 +319,7 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
   friendlyFill?: string;
 }> {
   const types: TrackType[] = ["air", "sea", "underwater"];
-  const dispositions: ForceDisposition[] = ["hostile", "friendly", "neutral"];
+  const dispositions: ForceDisposition[] = ["hostile", "friendly", "own", "neutral", "unknown"];
   const friendlyTints = new Set<string>();
   friendlyTints.add("");
   if (trackRendering?.trackTypeStyles) {
@@ -345,7 +348,8 @@ export function getAllMarkerSymbolKeysForPrereg(trackRendering: TrackStylesForPr
   for (const type of types) {
     for (const disposition of dispositions) {
       for (const virtual of [false, true]) {
-        if (disposition !== "friendly") {
+        const usesBusinessTint = disposition === "friendly" || disposition === "own";
+        if (!usesBusinessTint) {
           out.push({
             id: getMarkerSymbolId(type, disposition, virtual),
             type,
@@ -466,12 +470,14 @@ function resolveAssetIconAccentFill(
 ): string {
   if (disposition === "hostile") return accent?.hostileIcon ?? FORCE_COLORS.hostile;
   if (disposition === "neutral") return accent?.neutralIcon ?? FORCE_COLORS.neutral;
+  if (disposition === "unknown") return accent?.unknownIcon ?? FORCE_COLORS.unknown;
   const o = friendlyOverride?.trim();
-  if (o) return o;
+  if ((disposition === "friendly" || disposition === "own") && o) return o;
+  if (disposition === "own") return FORCE_COLORS.own;
   return FORCE_COLORS.friendly;
 }
 
-/** 地图名称标注字色：敌/中由 `factory.assetIcons`；我方由各块 `label.fontColor`（经 `map_label_font_color` 或显式传入） */
+/** 地图名称标注字色：敌/中立/未知由 `factory.assetIcons`；友方/我方由各块 `label.fontColor`（经 `map_label_font_color` 或显式传入） */
 export function assetMapLabelTextColor(
   disposition: ForceDisposition,
   status: AssetStatus,
@@ -581,7 +587,7 @@ export const DRONE_MAP_ICON_SOURCE: DroneMapIconSource = "generated";
  */
 export const STATIC_DRONE_MAP_ICON_ALERT_SNS: readonly string[] = ['1581F6Q8D249300GJ0DJ', '1581F6Q8D244300C47RP'];
 
-/** 实时机队贴图 id（`generated` 模式）：友方 4 态 + 敌方 2 态 + 中立 2 态 */
+/** 实时机队贴图 id（`generated` 模式）：友方 4 态 + 敌方 2 态 + 中立 2 态 + 未知 2 态 */
 export const DRONE_FLEET_MAP_IMAGE_FRIENDLY = "nexus-drone-fleet-friendly";
 export const DRONE_FLEET_MAP_IMAGE_FRIENDLY_DASH = "nexus-drone-fleet-friendly-dash";
 export const DRONE_FLEET_MAP_IMAGE_FRIENDLY_ALERT = "nexus-drone-fleet-friendly-alert";
@@ -590,6 +596,8 @@ export const DRONE_FLEET_MAP_IMAGE_HOSTILE = "nexus-drone-fleet-hostile";
 export const DRONE_FLEET_MAP_IMAGE_HOSTILE_DASH = "nexus-drone-fleet-hostile-dash";
 export const DRONE_FLEET_MAP_IMAGE_NEUTRAL = "nexus-drone-fleet-neutral";
 export const DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH = "nexus-drone-fleet-neutral-dash";
+export const DRONE_FLEET_MAP_IMAGE_UNKNOWN = "nexus-drone-fleet-unknown";
+export const DRONE_FLEET_MAP_IMAGE_UNKNOWN_DASH = "nexus-drone-fleet-unknown-dash";
 
 /** V2 `DroneRenderer.loadDroneIcon`：向上三角 + 白描边，虚兵为虚线描边 */
 export function buildDroneTriangleDataUrl(fillColor: string, dashedStroke: boolean): string {
@@ -633,8 +641,8 @@ type MapImageSink = {
   addImage(id: string, image: HTMLImageElement, options?: { pixelRatio?: number }): void;
 };
 
-/** 注册机队三角形贴图（友方 4 态 + 敌方 2 态 + 中立 2 态 = 8 张）
- *  友方：普通用配置色，告警用蓝色；敌/中立：强制用对应 force 色（告警不单独变色）
+/** 注册机队三角形贴图（友方 4 态 + 敌方 2 态 + 中立 2 态 + 未知 2 态 = 10 张）
+ *  友方/我方：普通用配置色，告警用蓝色；敌/中立/未知：强制用对应 force 色（告警不单独变色）
  */
 export async function registerDroneFleetTriangleImages(
   map: MapImageSink,
@@ -644,6 +652,7 @@ export async function registerDroneFleetTriangleImages(
     alertColor?: string;
     hostileColor?: string;
     neutralColor?: string;
+    unknownColor?: string;
   },
 ): Promise<void> {
   const pr = options?.pixelRatio ?? 2;
@@ -651,6 +660,7 @@ export async function registerDroneFleetTriangleImages(
   const alertColor = options?.alertColor ?? "#2196F3";
   const hostileColor = options?.hostileColor ?? FORCE_COLORS.hostile;
   const neutralColor = options?.neutralColor ?? FORCE_COLORS.neutral;
+  const unknownColor = options?.unknownColor ?? FORCE_COLORS.unknown;
   const defs: [string, string, boolean][] = [
     [DRONE_FLEET_MAP_IMAGE_FRIENDLY, friendlyColor, false],
     [DRONE_FLEET_MAP_IMAGE_FRIENDLY_DASH, friendlyColor, true],
@@ -660,6 +670,8 @@ export async function registerDroneFleetTriangleImages(
     [DRONE_FLEET_MAP_IMAGE_HOSTILE_DASH, hostileColor, true],
     [DRONE_FLEET_MAP_IMAGE_NEUTRAL, neutralColor, false],
     [DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH, neutralColor, true],
+    [DRONE_FLEET_MAP_IMAGE_UNKNOWN, unknownColor, false],
+    [DRONE_FLEET_MAP_IMAGE_UNKNOWN_DASH, unknownColor, true],
   ];
   for (const [id, fill, dash] of defs) {
     if (map.hasImage(id)) continue;
@@ -844,7 +856,7 @@ export function buildFramedPublicGlyphSvgDataUrl(
   )}`;
 }
 
-/** 激光/TDOA 中心点：敌/中读 factory；我方读扇区 bundle 的 `label.fontColor`（由调用方传入） */
+/** 激光/TDOA 中心点：敌/中立/未知读 factory；友方/我方读扇区 bundle 的 `label.fontColor`（由调用方传入） */
 export function sectorCenterGlyphColor(
   disposition: ForceDisposition,
   accent?: AssetDispositionIconAccent | null,
@@ -889,7 +901,7 @@ export function getAssetSymbolId(
   friendlyTint?: string | null,
 ): string {
   const base = `asset-${type}-${disposition}-${status}-${virtual ? "v" : "r"}`;
-  if (disposition !== "friendly") return base;
+  if (disposition !== "friendly" && disposition !== "own") return base;
   const suf = friendlyTintSuffix(friendlyTint);
   return suf ? `${base}${suf}` : base;
 }
@@ -961,7 +973,7 @@ function uniqueFriendlyTintsFromConfigAssets(
 }
 
 /**
- * 友方 `asset-*-friendly-*` 的 `addImage` 预注册键。
+ * 友方/我方 `asset-*-friendly|own-*` 的 `addImage` 预注册键。
  *
  * `Map2D.adaptAssets` 友方着色：`properties.map_friendly_color` 缺省时会用各根键 **`assetFriendlyColor`**
  *（`getAssetFriendlyColorForAssetType`）。若仅扫第一个参数里的资产行（如 **`drones.devices` 为空**），
@@ -994,7 +1006,8 @@ export function getAllAssetSymbolKeysForPrereg(
     for (const status of statuses) {
       for (const disposition of MAP_FORCE_DISPOSITIONS) {
         for (const virtual of [false, true]) {
-          if (disposition !== "friendly") {
+          const usesBusinessTint = disposition === "friendly" || disposition === "own";
+          if (!usesBusinessTint) {
             out.push({
               id: getAssetSymbolId(type, status, virtual, disposition),
               type,
@@ -1006,7 +1019,7 @@ export function getAllAssetSymbolKeysForPrereg(
           }
           for (const tint of tints) {
             out.push({
-              id: getAssetSymbolId(type, status, virtual, "friendly", tint || undefined),
+              id: getAssetSymbolId(type, status, virtual, disposition, tint || undefined),
               type,
               status,
               virtual,

@@ -6,7 +6,7 @@
 import type { AssetData } from "@/stores/asset-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { isVirtualFromProperties, normalizeAssetType } from "@/lib/map-entity-model";
-import type { ForceDisposition } from "@/lib/theme-colors";
+import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 
 const STRIKE_STATE_LABEL: Record<number, string> = {
   0: "空闲",
@@ -16,11 +16,16 @@ const STRIKE_STATE_LABEL: Record<number, string> = {
   4: "错误",
 };
 
-function dispositionFromPayload(d: Record<string, unknown>): ForceDisposition {
-  const n = Number(d.dispositionType ?? d.disposition_type);
-  if (n === 1) return "hostile";
-  if (n === 2) return "neutral";
-  return "friendly";
+function dispositionFromPayload(d: Record<string, unknown>): ForceDisposition | undefined {
+  return parseForceDisposition(
+    d.disposition ??
+      d.forceDisposition ??
+      d.friend_foe ??
+      d.friendFoe ??
+      d.friendFoeType ??
+      d.dispositionType ??
+      d.disposition_type,
+  );
 }
 
 function usvLatLngFromPayload(d: Record<string, unknown>): { lat: number; lng: number } | null {
@@ -112,13 +117,13 @@ export function applyUsvWsPayload(d: Record<string, unknown>): void {
     lat: row.lat,
     lng: row.lng,
     status: row.status,
-    disposition: row.disposition,
     assigned_target_id: row.assigned_target_id,
     properties: {
       ...prevProps,
       ...row.properties,
     },
   };
+  if (row.disposition !== undefined) patch.disposition = row.disposition;
   if (row.heading != null) patch.heading = row.heading;
   store.mergeAssetFields(entityId, patch);
 }

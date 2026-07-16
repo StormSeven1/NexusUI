@@ -83,7 +83,7 @@ function mapAirportConfigDeviceRow(
     name: String(r.name ?? id),
     asset_type: assetType,
     status: String(r.status ?? "online"),
-    disposition: parseForceDisposition(r.disposition, "friendly"),
+    disposition: parseForceDisposition(r.disposition) ?? "friendly",
     lat,
     lng,
     range_km: rangeM > 0 ? rangeM / 1000 : null,
@@ -163,7 +163,9 @@ function buildAirportStaticGeoJSON(
           a.status,
           a.isVirtual ?? false,
           a.disposition ?? "friendly",
-          (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
+          (a.disposition ?? "friendly") === "friendly" || (a.disposition ?? "friendly") === "own"
+            ? a.friendlyMapColor
+            : undefined,
         ),
         symbolOpacity: 1,
       },
@@ -174,7 +176,7 @@ function buildAirportStaticGeoJSON(
     if (a.nameLabelVisible === false || !String(a.name ?? "").trim()) continue;
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
-    const friendlyOv = disp === "friendly" ? a.labelFontColor : undefined;
+    const friendlyOv = disp === "friendly" || disp === "own" ? a.labelFontColor : undefined;
     const labelColor = assetMapLabelTextColor(disp, st, accent ?? null, friendlyOv);
     features.push({
       type: "Feature",

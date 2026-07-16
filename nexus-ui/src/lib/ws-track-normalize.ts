@@ -97,14 +97,21 @@ function kindDefaultCourse(kind: Track["type"]): number {
   return 0;
 }
 
-function readDisposition(rec: Record<string, unknown>): ForceDisposition {
-  const top = rec.disposition ?? rec.affiliation ?? rec.forceDisposition ?? rec.敌我;
-  if (typeof top === "string") return parseForceDisposition(top, "hostile");
+function dispositionFromFriendFoe(raw: unknown): ForceDisposition | undefined {
+  return parseForceDisposition(raw);
+}
+
+function readDisposition(rec: Record<string, unknown>): ForceDisposition | undefined {
+  const top = rec.friend_foe ?? rec.friendFoe ?? rec.friendFoeType ?? rec.disposition;
+  const topFriendFoe = dispositionFromFriendFoe(top);
+  if (topFriendFoe) return topFriendFoe;
   const p = asRecord(rec.properties);
   if (p) {
-    return parseForceDisposition(p.disposition ?? p.affiliation ?? p.forceDisposition, "hostile");
+    const propDisposition = p.friend_foe ?? p.friendFoe ?? p.friendFoeType ?? p.disposition;
+    const propDispositionFriendFoe = dispositionFromFriendFoe(propDisposition);
+    if (propDispositionFriendFoe) return propDispositionFriendFoe;
   }
-  return "hostile";
+  return undefined;
 }
 
 function readLastUpdate(rec: Record<string, unknown>): string {
@@ -167,6 +174,7 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const course = readCourseDeg(rec, kind);
   const heading = trackIconHeadingDeg(kind, course);
   const disposition = readDisposition(rec);
+  if (!disposition) return null;
 
   const speed = Number(rec.speed ?? rec.speed_ms ?? 0);
   // console.log("speed",speed)

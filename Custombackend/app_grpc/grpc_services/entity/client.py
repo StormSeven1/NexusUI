@@ -626,6 +626,8 @@ class EntityGrpcClient:
         raw = _normalize_keys(_message_to_dict(message, status_stream=True))
         base = raw.get("base") or {}
         entity_id = str(base.get("entityId") or "").strip()
+        # if(field == "high_freq_real_time_status"):
+            # print("_status_response_to_patch:",response)
         if not entity_id:
             return None
         position = base.get("position") or {}
@@ -689,7 +691,9 @@ class EntityGrpcClient:
                 "deviceSn": drone_patch.get("drone_sn"),
                 "trackId": drone_patch.get("track_id"),
             })
+            print("==================drone_real_time_status",entity_id,patch["lat"],patch["lng"])
         elif field == "drone_task_real_time_status":
+            # print("==================drone_task_real_time_status",entity_id)
             patch.update({"assetType": "drone", **_drone_task_to_dds_shape(raw, base_fields)})
         elif field == "high_freq_real_time_status":
             high_freq_patch = _high_freq_to_dds_shape(raw, base_fields)
@@ -702,6 +706,7 @@ class EntityGrpcClient:
                 "heading": _first_present(high_freq_patch.get("attitude_head"), patch.get("heading")),
                 "deviceSn": high_freq_patch.get("drone_sn"),
             })
+            print("==================high_freq_real_time_status",entity_id,patch["lat"],patch["lng"])
         elif field == "usv_real_time_status":
             usv_patch = _usv_status_to_dds_shape(raw, base_fields)
             patch.update({

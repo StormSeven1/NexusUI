@@ -918,7 +918,6 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
        (r.properties && typeof r.properties === "object"
          ? (r.properties as Record<string, unknown>).disposition
          : undefined),
-     "friendly",
    );
 
    /* 设备状态不由 entity_status 写入，由 camera / dock_status / drone_status 等实时消息维护 */
@@ -1059,12 +1058,12 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
  /** 从 `AssetData` 行解析敌我：优先顶栏 `disposition`，否则 `properties.disposition` / `forceDisposition`。 */
  export function dispositionFromAssetData(a: AssetData): ForceDisposition {
    if (a.disposition != null && String(a.disposition).trim() !== "") {
-     return parseForceDisposition(a.disposition, "friendly");
+     return parseForceDisposition(a.disposition) ?? "friendly";
    }
    const p = a.properties;
    if (p && typeof p === "object") {
      const o = p as Record<string, unknown>;
-     return parseForceDisposition(o.disposition ?? o.forceDisposition, "friendly");
+     return parseForceDisposition(o.disposition ?? o.forceDisposition) ?? "friendly";
    }
    return "friendly";
  }
@@ -1133,7 +1132,7 @@ export function mapOneEntityRow(r: Record<string, unknown>): AssetData | null {
    /** 为 false 时不绘制扇区（光电/机场/无人机用）；激光/TDOA 由 activationEnabled 控制 */
    showSector?: boolean;
    virtualTroop?: boolean;
-   /** 敌我：friendly / hostile / neutral（及中文别名），默认友方 */
+   /** 敌我：friendly / hostile / own / neutral / unknown（及中文别名），默认友方 */
    disposition?: string;
    /** 中心名称；显式 boolean 覆盖根 `visibility.centerNameVisible`，不写则继承根级 */
    centerNameVisible?: boolean;
@@ -1280,7 +1279,7 @@ export type AppConfigSectorBundle = {
    };
  }
 
- /** 按 `sea` / `air` / `underwater` 控制 `tracks-maplibre` 里符号缩放与名称标签颜色/字号（友方符号填充参考 `idColor`；敌/中见 `factory.assetIcons`） */
+ /** 按 `sea` / `air` / `underwater` 控制 `tracks-maplibre` 里符号缩放与名称标签颜色/字号（友方/我方符号填充参考 `idColor`；敌/中立/未知见 `factory.assetIcons`） */
  export type AppConfigTrackTypeStyle = {
    idColor: string;
    pointSize: number;
@@ -2016,7 +2015,7 @@ export function getStandaloneEngagementConfig(): AppConfigStandaloneEngagement {
    unmannedShips: AppConfigSectorBundle | null;
    /** 根键 `missiles`：与 `airports` 同形；静态 `devices` 并入 `configAssetBase` */
    missiles: AppConfigSectorBundle | null;
-   /** 根键 `factory.assetIcons`：仅 **敌方 / 中立** 覆盖默认 force 色 */
+   /** 根键 `factory.assetIcons`：仅敌方 / 中立 / 未知颜色 */
    assetDispositionIconAccent: AssetDispositionIconAccent;
    /** 根键 `trackRendering`（或 V2 根级 `trackTypeStyles` / `trackDisplay` / `trackTimeout`）：见文件头表格 */
    trackRendering: AppConfigTrackRendering;
@@ -2039,15 +2038,16 @@ export function getStandaloneEngagementConfig(): AppConfigStandaloneEngagement {
  }
 
  function parseAssetDispositionIconAccent(root: Record<string, unknown>): AssetDispositionIconAccent {
-   const factory = asRecord(root.factory);
-   const ai = factory ? asRecord(factory.assetIcons) : null;
-   return {
-     hostileIcon: typeof ai?.hostile === "string" ? ai.hostile : undefined,
-     neutralIcon: typeof ai?.neutral === "string" ? ai.neutral : undefined,
-   };
- }
+    const factory = asRecord(root.factory);
+    const ai = factory ? asRecord(factory.assetIcons) : null;
+    return {
+      hostileIcon: typeof ai?.hostile === "string" ? ai.hostile : undefined,
+      neutralIcon: typeof ai?.neutral === "string" ? ai.neutral : undefined,
+      unknownIcon: typeof ai?.unknown === "string" ? ai.unknown : undefined,
+    };
+  }
 
- /** 我方各资产类型默认着色（非敌/中时优先于主题默认红）；来自各根键 `assetFriendlyColor`，见 `applyFriendlyColorsFromAssetSections` */
+ /** 友方/我方各资产类型默认着色（非敌/中立/未知时优先于主题默认红）；来自各根键 `assetFriendlyColor`，见 `applyFriendlyColorsFromAssetSections` */
  let resolvedAssetFriendlyColorsByAssetType: Partial<Record<PublicMapAssetType, string>> = {};
  /** 各资产名称默认字色：来自根键 `*.label.fontColor` */
  let resolvedAssetLabelColorsByAssetType: Partial<Record<PublicMapAssetType, string>> = {};
@@ -2191,10 +2191,7 @@ function shouldPreservePrevCoords(
           fov_angle: mergeNullableNumericPreferLive(w.fov_angle, prev.fov_angle),
           range_km: mergeNullableNumericPreferLive(w.range_km, prev.range_km),
          properties: mergeProperties(prev.properties, mergeProperties(w.properties, { data_source: "live" as const })),
-         disposition:
-           w.disposition !== undefined && w.disposition !== null
-             ? parseForceDisposition(w.disposition, prev.disposition ?? "friendly")
-             : prev.disposition ?? "friendly",
+         disposition: parseForceDisposition(w.disposition) ?? prev.disposition,
          updated_at: w.updated_at,
        });
      } else {
@@ -2202,14 +2199,12 @@ function shouldPreservePrevCoords(
          ...w,
          properties: mergeProperties(w.properties, { data_source: "live" as const }),
          disposition:
-           w.disposition !== undefined && w.disposition !== null
-             ? parseForceDisposition(w.disposition, "friendly")
-             : parseForceDisposition(
-                 w.properties && typeof w.properties === "object"
-                   ? (w.properties as Record<string, unknown>).disposition
-                   : undefined,
-                 "friendly",
-               ),
+           parseForceDisposition(w.disposition) ??
+           parseForceDisposition(
+             w.properties && typeof w.properties === "object"
+               ? (w.properties as Record<string, unknown>).disposition
+               : undefined,
+           ),
        });
      }
    }
@@ -2586,7 +2581,7 @@ export function sectorBundleToTdoaLayerVis(b: AppConfigSectorBundle | null): Par
      color: typeof d.color === "string" ? d.color : undefined,
      fillOpacity: typeof d.opacity === "number" ? d.opacity : undefined,
      virtual: !!d.virtualTroop,
-     disposition: parseForceDisposition(d.disposition, "friendly"),
+     disposition: parseForceDisposition(d.disposition) ?? "friendly",
      friendlyMapColor: sectorBundleFriendlyTint(bundle),
      centerNameVisible: mergeRootAndDeviceVisible(bundle?.visibility?.centerNameVisible, d.centerNameVisible),
      centerIconVisible: mergeRootAndDeviceVisible(bundle?.visibility?.centerIconVisible, d.centerIconVisible),

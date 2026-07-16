@@ -50,6 +50,7 @@ type PlacardAlarm = {
   alarm_id: string;
   categories: unknown[];
   level: number;
+  content?: string;
   area?: {
     name?: string;
   };
@@ -119,8 +120,10 @@ function readHeadingDegrees(asset: AssetData | null | undefined, properties: Rec
 function DispositionBadge({ d }: { d: ForceDisposition }) {
   const label: Record<ForceDisposition, string> = {
     friendly: "友方",
+    own: "我方",
     neutral: "中立",
     hostile: "敌方",
+    unknown: "未知",
   };
   const color = FORCE_COLORS[d] ?? "#a1a1aa";
   return (
@@ -199,10 +202,12 @@ function toPlacardAlarm(value: unknown): PlacardAlarm | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const rec = value as Record<string, unknown>;
   if (typeof rec.alarm_id !== "string" || !rec.alarm_id.trim()) return null;
+  const content = typeof rec.content === "string" ? rec.content.trim() : "";
   return {
     alarm_id: rec.alarm_id,
     categories: Array.isArray(rec.categories) ? rec.categories : [],
     level: Number(rec.level ?? -1),
+    content: content || undefined,
     area:
       rec.area && typeof rec.area === "object" && !Array.isArray(rec.area)
         ? { name: typeof (rec.area as Record<string, unknown>).name === "string" ? String((rec.area as Record<string, unknown>).name) : undefined }
@@ -306,7 +311,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
     let cancelled = false;
     const tr = getTrackRenderingConfig();
     const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
-    const friendlyFill = track.disposition === "friendly" ? ts.idColor : undefined;
+    const friendlyFill =
+      track.disposition === "friendly" || track.disposition === "own" ? ts.idColor : undefined;
     const build = () =>
       buildMarkerSymbolDataUrl(track.type, track.disposition, undefined, track.isVirtual === true, friendlyFill);
     void preloadTrackIconFragments().then(() => {
@@ -379,7 +385,7 @@ export function TargetPlacard(props: TargetPlacardProps) {
   const headerColor =
     kind === "track"
       ? track
-        ? (FORCE_COLORS[track.disposition] ?? "#a1a1aa")
+        ? (getTrackRenderingConfig().trackTypeStyles[track.type] ?? getTrackRenderingConfig().trackTypeStyles.sea).idColor
         : "#a1a1aa"
       : assetFriendlyColorFromProperties(asset?.properties as Record<string, unknown> | null) ??
         (asset?.asset_type ? getAssetFriendlyColorForAssetType(normalizeAssetType(asset.asset_type)) : null) ??
@@ -497,15 +503,22 @@ export function TargetPlacard(props: TargetPlacardProps) {
                     return (
                       <div
                         key={alarm.alarm_id}
-                        className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-1.5 py-1 text-[9px]"
+                        className="rounded border border-white/10 bg-white/5 px-1.5 py-1 text-[9px]"
                       >
-                        {sevLabel && <span className={cn("font-bold", sevColor)}>{sevLabel}</span>}
-                        <span className="text-nexus-text-muted">{category}</span>
-                        {Number.isFinite(alarm.level) && (
-                          <span className="text-nexus-text-muted">Lv.{alarm.level}</span>
-                        )}
-                        {alarm.area?.name && (
-                          <span className="truncate text-nexus-text-muted">{alarm.area.name}</span>
+                        <div className="flex items-center gap-1">
+                          {sevLabel && <span className={cn("font-bold", sevColor)}>{sevLabel}</span>}
+                          <span className="text-nexus-text-muted">{category}</span>
+                          {Number.isFinite(alarm.level) && (
+                            <span className="text-nexus-text-muted">Lv.{alarm.level}</span>
+                          )}
+                          {alarm.area?.name && (
+                            <span className="truncate text-nexus-text-muted">{alarm.area.name}</span>
+                          )}
+                        </div>
+                        {alarm.content && (
+                          <div className="mt-0.5 whitespace-pre-wrap break-words text-nexus-text-secondary">
+                            {alarm.content}
+                          </div>
                         )}
                       </div>
                     );

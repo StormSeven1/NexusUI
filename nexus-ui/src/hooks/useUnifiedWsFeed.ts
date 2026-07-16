@@ -366,7 +366,7 @@ function buildRelationshipGraphFromWs(msg: Record<string, unknown>): AssetRelati
       deviceSn: String(row.deviceSn ?? row.device_sn ?? "").trim() || undefined,
       gatewaySn: String(row.gatewaySn ?? row.gateway_sn ?? "").trim() || undefined,
       virtualTroop: readVirtualTroop(row),
-      disposition: parseForceDisposition(row.disposition, undefined),
+      disposition: parseForceDisposition(row.disposition),
     });
   }
 
@@ -384,7 +384,7 @@ function buildRelationshipGraphFromWs(msg: Record<string, unknown>): AssetRelati
       deviceSn: String(row.deviceSn ?? row.device_sn ?? "").trim() || undefined,
       gatewaySn: String(row.gatewaySn ?? row.gateway_sn ?? "").trim() || undefined,
       virtualTroop: readVirtualTroop(row),
-      disposition: parseForceDisposition(row.disposition, undefined),
+      disposition: parseForceDisposition(row.disposition),
     });
   }
 
@@ -520,6 +520,22 @@ function relationshipNodeById(
   return relationships?.nodes.find((node) => node.id === id) ?? null;
 }
 
+function isUsableRuntimeLatLng(lat: number, lng: number): boolean {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return false;
+  return !(Math.abs(lat) < 1e-9 && Math.abs(lng) < 1e-9);
+}
+
+function hasRuntimePositionFields(data: Record<string, unknown>): boolean {
+  return (
+    data.lat != null ||
+    data.lng != null ||
+    data.lon != null ||
+    data.latitude != null ||
+    data.longitude != null
+  );
+}
+
 function readLatLngFromRuntimePayload(data: Record<string, unknown>): { lat: number; lng: number } | null {
   /**
    * Live payloads are not fully consistent on field naming.
@@ -528,7 +544,7 @@ function readLatLngFromRuntimePayload(data: Record<string, unknown>): { lat: num
    */
   const lat = Number(data.latitude ?? data.lat);
   const lng = Number(data.longitude ?? data.lng ?? data.lon);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  if (isUsableRuntimeLatLng(lat, lng)) return { lat, lng };
   return null;
 }
 
@@ -613,6 +629,18 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
+function sanitizeDroneHistoryTrail(raw: unknown): Array<[number, number]> {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      if (!Array.isArray(item) || item.length < 2) return null;
+      const lng = Number(item[0]);
+      const lat = Number(item[1]);
+      return isUsableRuntimeLatLng(lat, lng) ? ([lng, lat] as [number, number]) : null;
+    })
+    .filter((item): item is [number, number] => item != null);
+}
+
 function appendDroneHistoryTrail(
   entityId: string,
   prevProps: Record<string, unknown>,
@@ -627,28 +655,31 @@ function appendDroneHistoryTrail(
    *
    * The 1-meter dedupe threshold prevents very noisy high-frequency packets from
    * exploding the trail length without adding visible value.
-  */
+   */
   const cfg = getDroneMapRenderingConfig();
-  if (!cfg.showHistoryTrail) return [];
+  if (!cfg.showHistoryTrail) {
+    droneHistoryTrailCache.delete(entityId);
+    return [];
+  }
   const rawTrail = droneHistoryTrailCache.get(entityId) ?? (Array.isArray(prevProps.history_trail) ? prevProps.history_trail : []);
-  const trail: Array<[number, number]> = rawTrail
-    .map((item) =>
-      Array.isArray(item) && item.length >= 2 && Number.isFinite(Number(item[0])) && Number.isFinite(Number(item[1]))
-        ? [Number(item[0]), Number(item[1])] as [number, number]
-        : null,
-    )
-    .filter((item): item is [number, number] => item != null);
+  const trail = sanitizeDroneHistoryTrail(rawTrail);
+  if (!isUsableRuntimeLatLng(lat, lng)) {
+    droneHistoryTrailCache.set(entityId, trail);
+    return trail;
+  }
   const last = trail[trail.length - 1];
   if (last) {
     const [prevLng, prevLat] = last;
     const distanceM = haversineMeters(prevLat, prevLng, lat, lng);
     if (distanceM < 1) {
+      droneHistoryTrailCache.set(entityId, trail);
       return trail;
     }
   }
   trail.push([lng, lat]);
   const max = Math.max(2, Math.floor(cfg.maxHistoryPoints));
   while (trail.length > max) trail.shift();
+  droneHistoryTrailCache.set(entityId, trail);
   return trail;
 }
 
@@ -1742,6 +1773,7 @@ function dispatchWsMessage(raw: string) {
               const prevProps = readDroneRuntimeOverlayProps(droneEntityId);
               const statusPayload = { ...d };
               const pos = readLatLngFromRuntimePayload(statusPayload);
+              const statusHasPositionFields = hasRuntimePositionFields(statusPayload);
               const now = Date.now();
               const highFreqFresh = isHighFreqFresh(droneEntityId, now);
               const statusTakeoffGate = pos
@@ -1749,11 +1781,11 @@ function dispatchWsMessage(raw: string) {
                 : { discard: false, farDistanceMeters: null };
               const discardStatus = statusTakeoffGate.discard;
               const acceptedStatusPos = pos && !discardStatus ? pos : null;
-              const storedStatusPayload = discardStatus
+              const storedStatusPayload = statusHasPositionFields && !acceptedStatusPos
                 ? omitRuntimePositionFields(statusPayload)
                 : statusPayload;
               const acceptedStatusAt =
-                pos && !discardStatus ? now : readDroneRuntimeMeta(droneEntityId).lastStatusAcceptedAt;
+                acceptedStatusPos ? now : readDroneRuntimeMeta(droneEntityId).lastStatusAcceptedAt;
               const heading = Number(
                 statusPayload.heading ??
                 statusPayload.attitude_head ??
@@ -1785,13 +1817,13 @@ function dispatchWsMessage(raw: string) {
               //   raw: statusPayload,
               // });
               const nextHistoryTrail =
-                pos && !discardStatus && !highFreqFresh
-                  ? appendDroneHistoryTrail(droneEntityId, prevProps, pos.lat, pos.lng)
-                  : (Array.isArray(prevProps.history_trail) ? prevProps.history_trail : []);
+                acceptedStatusPos && !highFreqFresh
+                  ? appendDroneHistoryTrail(droneEntityId, prevProps, acceptedStatusPos.lat, acceptedStatusPos.lng)
+                  : sanitizeDroneHistoryTrail(prevProps.history_trail);
              
               patchDroneRuntimeOverlay(droneEntityId, {
                 status: assetStatusFromDeviceState(d.deviceState),
-                ...(!discardStatus && pos && !highFreqFresh ? { lat: pos.lat, lng: pos.lng } : {}),
+                ...(acceptedStatusPos && !highFreqFresh ? { lat: acceptedStatusPos.lat, lng: acceptedStatusPos.lng } : {}),
                 ...(Number.isFinite(heading) && !highFreqFresh ? { heading } : {}),
                 properties: {
                   ...prevProps,
@@ -1888,19 +1920,20 @@ function dispatchWsMessage(raw: string) {
               const prevProps = readDroneRuntimeOverlayProps(droneEntityId);
               const lat = Number(d.latitude ?? d.lat);
               const lng = Number(d.longitude ?? d.lng ?? d.lon);
-              const posValid = Number.isFinite(lat) && Number.isFinite(lng);
+              const posValid = isUsableRuntimeLatLng(lat, lng);
+              const highFreqHasPositionFields = hasRuntimePositionFields(d);
+              const now = Date.now();
               const highFreqTakeoffGate = posValid
                 ? shouldDiscardByTakeoff(droneEntityId, lng, lat)
                 : { discard: false, farDistanceMeters: null };
               const discardHighFreq = highFreqTakeoffGate.discard;
               const acceptedHighFreqPos = posValid && !discardHighFreq ? { lat, lng } : null;
-              const prevTrail =
-                Array.isArray(prevProps.history_trail) ? prevProps.history_trail : [];
+              const prevTrail = sanitizeDroneHistoryTrail(prevProps.history_trail);
               const acceptedHighFreqAt =
-                posValid && !discardHighFreq ? Date.now() : readDroneRuntimeMeta(droneEntityId).lastHighFreqAcceptedAt;
+                acceptedHighFreqPos ? now : readDroneRuntimeMeta(droneEntityId).lastHighFreqAcceptedAt;
               const nextHistoryTrail =
-                posValid && !discardHighFreq
-                  ? appendDroneHistoryTrail(droneEntityId, prevProps, lat, lng)
+                acceptedHighFreqPos
+                  ? appendDroneHistoryTrail(droneEntityId, prevProps, acceptedHighFreqPos.lat, acceptedHighFreqPos.lng)
                   : prevTrail;
               const heading = Number(
                 d.attitude_head ??
@@ -1922,7 +1955,6 @@ function dispatchWsMessage(raw: string) {
                 speed_V: d.speed_V,
                 raw: d,
               });
-              const now = Date.now();
               const highFreqPayload = Number.isFinite(heading)
                 ? {
                     ...d,
@@ -1931,12 +1963,11 @@ function dispatchWsMessage(raw: string) {
                     attitude_head: d.attitude_head ?? heading,
                   }
                 : d;
-              const storedHighFreqPayload = discardHighFreq
+              const storedHighFreqPayload = highFreqHasPositionFields && !acceptedHighFreqPos
                 ? omitRuntimePositionFields(highFreqPayload)
                 : highFreqPayload;
               patchDroneRuntimeOverlay(droneEntityId, {
-                ...(!discardHighFreq && Number.isFinite(lat) ? { lat } : {}),
-                ...(!discardHighFreq && Number.isFinite(lng) ? { lng } : {}),
+                ...(acceptedHighFreqPos ? { lat: acceptedHighFreqPos.lat, lng: acceptedHighFreqPos.lng } : {}),
                 ...(!discardHighFreq && Number.isFinite(heading) ? { heading } : {}),
                 properties: {
                   ...prevProps,

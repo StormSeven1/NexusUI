@@ -32,11 +32,33 @@ _TRACK_TYPE_TO_CATEGORY_NAME: Dict[int, str] = {
     12: 'other',
 }
 
+_FRIEND_FOE_TO_DISPOSITION: Dict[int, str] = {
+    0: 'friendly',  # FRIEND
+    1: 'hostile',   # FOE
+    2: 'own',       # OWN
+    3: 'neutral',   # NEUTRAL
+    4: 'unknown',   # UNKNOWN
+}
+
 
 def _safe_str(value: Any) -> str:
     if value is None:
         return ''
     return str(value).strip()
+
+
+def _to_int(value: Any) -> Any:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _friend_foe_to_disposition(value: Any) -> Optional[str]:
+    try:
+        return _FRIEND_FOE_TO_DISPOSITION.get(int(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _call_str(obj: Any, method: str) -> str:
@@ -358,6 +380,7 @@ def target_object_to_track(obj) -> Dict[str, Any]:
     track_type = int(obj.classified_type())
     track_category_name = _TRACK_TYPE_TO_CATEGORY_NAME.get(track_type, 'unknown')
     target_state = int(obj.state())
+    friend_foe = _to_int(obj.friend_foe()) if hasattr(obj, 'friend_foe') else None
 
     kin = obj.target_kinematics()
     pos = kin.position()
@@ -388,6 +411,10 @@ def target_object_to_track(obj) -> Dict[str, Any]:
         'targetDescription': str(obj.description()),
         'trackAlias': str(obj.name()),
         'confidence': float(obj.type_confidence()),
+        'friend_foe': friend_foe,
+        'friendFoe': friend_foe,
+        'friendFoeType': friend_foe,
+        'disposition': _friend_foe_to_disposition(friend_foe),
         'reality_type': _read_reality_type(obj),
         'source': 'DDS',
         'data_type': 'fusion_track',

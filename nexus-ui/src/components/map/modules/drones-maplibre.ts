@@ -64,6 +64,8 @@ import {
   DRONE_FLEET_MAP_IMAGE_HOSTILE_DASH,
   DRONE_FLEET_MAP_IMAGE_NEUTRAL,
   DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH,
+  DRONE_FLEET_MAP_IMAGE_UNKNOWN,
+  DRONE_FLEET_MAP_IMAGE_UNKNOWN_DASH,
   droneFleetIconUsesGeneratedMode,
   droneSnIsMapIconAlert,
   geoCircleCoords,
@@ -138,14 +140,21 @@ function isoNow() {
   return new Date().toISOString();
 }
 
+function isUsableLngLat(lng: number, lat: number): boolean {
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return false;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return false;
+  return !(Math.abs(lat) < 1e-9 && Math.abs(lng) < 1e-9);
+}
+
 function readHistoryTrail(raw: unknown): Array<[number, number]> {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((item) =>
-      Array.isArray(item) && item.length >= 2 && Number.isFinite(Number(item[0])) && Number.isFinite(Number(item[1]))
-        ? [Number(item[0]), Number(item[1])] as [number, number]
-        : null,
-    )
+    .map((item) => {
+      if (!Array.isArray(item) || item.length < 2) return null;
+      const lng = Number(item[0]);
+      const lat = Number(item[1]);
+      return isUsableLngLat(lng, lat) ? ([lng, lat] as [number, number]) : null;
+    })
     .filter((item): item is [number, number] => item != null);
 }
 
@@ -199,6 +208,9 @@ export function collectDroneRenderablesFromAssets(
   for (const asset of assets) {
     if (asset.asset_type !== "drone") continue;
     const props = asRecord(asset.properties) ?? {};
+    const assetLat = Number(asset.lat);
+    const assetLng = Number(asset.lng);
+    const hasUsableAssetPosition = isUsableLngLat(assetLng, assetLat);
     const dockId = findDockParentByDrone(asset.id, relationships);
     const dockAsset = dockId ? assetById.get(dockId) : undefined;
     const dockBattery = dockBatteryPercentFromAsset(dockAsset);
@@ -212,8 +224,8 @@ export function collectDroneRenderablesFromAssets(
       status: asRecord(props.drone_status),
       flightPath: asRecord(props.drone_flight_path),
       highFreq: asRecord(props.high_freq),
-      lat: Number.isFinite(asset.lat) ? asset.lat : null,
-      lng: Number.isFinite(asset.lng) ? asset.lng : null,
+      lat: hasUsableAssetPosition ? assetLat : null,
+      lng: hasUsableAssetPosition ? assetLng : null,
       headingDeg: Number.isFinite(Number(asset.heading)) ? Number(asset.heading) : null,
       updatedAt: asset.updated_at ?? isoNow(),
       highFreqReceivedAt: Number.isFinite(Number(props.high_freq_received_at_ms)) ? Number(props.high_freq_received_at_ms) : null,
@@ -287,7 +299,7 @@ function mapDroneConfigDeviceRow(
     name: String(r.name ?? id),
     asset_type: assetType,
     status: String(r.status ?? "online"),
-    disposition: parseForceDisposition(r.disposition, "friendly"),
+    disposition: parseForceDisposition(r.disposition) ?? "friendly",
     lat,
     lng,
     range_km: rangeM > 0 ? rangeM / 1000 : null,
@@ -405,7 +417,9 @@ export function buildStaticDroneSitesGeoJSON(
           a.status,
           a.isVirtual ?? false,
           a.disposition ?? "friendly",
-          (a.disposition ?? "friendly") === "friendly" ? a.friendlyMapColor : undefined,
+          (a.disposition ?? "friendly") === "friendly" || (a.disposition ?? "friendly") === "own"
+            ? a.friendlyMapColor
+            : undefined,
         ),
         symbolOpacity: 1,
       },
@@ -421,7 +435,7 @@ export function buildStaticDroneSitesGeoJSON(
     const disp = a.disposition ?? "friendly";
     const st = assetStatusFromLabel(a.status);
     /* 友方无人机站名：只认 `drones.label.fontColor`（与 `applyDronesSectorLabelStyle` 一致），不用 `friendlyMapColor` 染字 */
-    const friendlyOv = disp === "friendly"
+    const friendlyOv = disp === "friendly" || disp === "own"
       ? (a.labelFontColor?.trim() || getDroneMapRenderingConfig().labelFontColor?.trim() || "#FFFFFF")
       : undefined;
     const labelColor = assetMapLabelTextColor(disp, st, accent ?? null, friendlyOv);
@@ -442,7 +456,7 @@ export function buildStaticDroneSitesGeoJSON(
 function readLatLng(d: Record<string, unknown>): { lat: number; lng: number } | null {
   const lat = Number(d.latitude ?? d.lat);
   const lng = Number(d.longitude ?? d.lng ?? d.lon);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  if (isUsableLngLat(lng, lat)) return { lat, lng };
   return null;
 }
 
@@ -749,15 +763,19 @@ function registerAmmoBadgeImages(map: maplibregl.Map) {
   }
 }
 
+function normalizeMunitionQtyForRender(value: unknown): number | null {
+  const qty = Math.trunc(Number(value));
+  return Number.isFinite(qty) && qty >= 1 ? qty : null;
+}
+
 function munitionQtyForRender(tele: DroneRenderable): number | null {
   if (
     typeof tele.munitionQuantity === "number" &&
-    Number.isFinite(tele.munitionQuantity) &&
-    tele.munitionQuantity > 0
+    Number.isFinite(tele.munitionQuantity)
   ) {
-    return tele.munitionQuantity;
+    return normalizeMunitionQtyForRender(tele.munitionQuantity);
   }
-  return readMunitionQuantityFromPayload(tele.flightPath);
+  return normalizeMunitionQtyForRender(readMunitionQuantityFromPayload(tele.flightPath));
 }
 
 function syncAmmoBadgeImages(map: maplibregl.Map, drones: Record<string, DroneRenderable>) {
@@ -821,7 +839,8 @@ function buildDroneGeoJSON(drones: Record<string, DroneRenderable>): GeoJSON.Fea
     });
     if (cfg.showSnLabel) {
       const dn = tele.displayName || tele.entityId;
-      const friendlyOv = disp === "friendly" ? (cfg.labelFontColor?.trim() || "#FFFFFF") : undefined;
+      const friendlyOv =
+        disp === "friendly" || disp === "own" ? (cfg.labelFontColor?.trim() || "#FFFFFF") : undefined;
       const labelColor = assetMapLabelTextColor(disp, "online", null, friendlyOv);
       features.push({
         type: "Feature",
@@ -906,6 +925,9 @@ export class DronesMaplibre {
       const fc = getAssetFriendlyColorForAssetType("drone");
       await registerDroneFleetTriangleImages(m, {
         friendlyColor: fc || undefined,
+        hostileColor: accent.hostileIcon,
+        neutralColor: accent.neutralIcon,
+        unknownColor: accent.unknownIcon,
       });
     } else {
       await loadDroneImgSvgMode(false, DRONE_MAP_IMAGE_REAL);
@@ -1042,6 +1064,13 @@ export class DronesMaplibre {
                     ["==", ["get", "virt"], 1],
                     DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH,
                     DRONE_FLEET_MAP_IMAGE_NEUTRAL,
+                  ],
+                  ["==", ["get", "disp"], "unknown"],
+                  [
+                    "case",
+                    ["==", ["get", "virt"], 1],
+                    DRONE_FLEET_MAP_IMAGE_UNKNOWN_DASH,
+                    DRONE_FLEET_MAP_IMAGE_UNKNOWN,
                   ],
                   /* friendly */
                   [
@@ -1424,6 +1453,8 @@ export class DronesMaplibre {
           DRONE_FLEET_MAP_IMAGE_HOSTILE_DASH,
           DRONE_FLEET_MAP_IMAGE_NEUTRAL,
           DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH,
+          DRONE_FLEET_MAP_IMAGE_UNKNOWN,
+          DRONE_FLEET_MAP_IMAGE_UNKNOWN_DASH,
         ]
       : [DRONE_MAP_IMAGE_REAL, DRONE_MAP_IMAGE_VIRT];
     for (const id of fleetImageIds) {

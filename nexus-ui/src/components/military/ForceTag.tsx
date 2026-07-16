@@ -6,13 +6,17 @@ import { FORCE_LABELS, type ForceDisposition } from "@/lib/theme-colors";
 const TAG_STYLES: Record<ForceDisposition, string> = {
   hostile: "bg-blue-500/15 text-blue-400 border-blue-500/30",
   friendly: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  own: "bg-orange-500/15 text-orange-300 border-orange-500/30",
   neutral: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
+  unknown: "bg-slate-500/15 text-slate-300 border-slate-500/30",
 };
 
 const TAG_DOT: Record<ForceDisposition, string> = {
   hostile: "bg-blue-400",
   friendly: "bg-orange-400",
+  own: "bg-orange-300",
   neutral: "bg-zinc-400",
+  unknown: "bg-slate-300",
 };
 
 interface ForceTagProps {

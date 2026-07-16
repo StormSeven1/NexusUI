@@ -1,0 +1,2 @@
+"""NewTrackStruct gRPC subscriber."""
+
