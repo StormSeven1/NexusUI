@@ -33,6 +33,31 @@ function taskLooksLikeDrone(task: MappedDisposalTask): boolean {
   );
 }
 
+function deviceLooksLikeDrone(deviceId: string, deviceName?: string): boolean {
+  const raw = norm(deviceId);
+  const low = raw.toLowerCase();
+  const name = norm(deviceName).toLowerCase();
+  if (low.includes("uav") || low.includes("drone") || name.includes("无人机") || name.includes("uav") || name.includes("drone")) {
+    return true;
+  }
+
+  const state = useAssetStore.getState();
+  if (state.assets.some((item) => item.asset_type === "drone" && item.id.toLowerCase() === low)) return true;
+  if (state.deviceSnToEntityId[raw] || state.entityIdToDeviceSn[raw]) return true;
+
+  return state.assets.some((asset) => {
+    if (asset.asset_type !== "drone") return false;
+    const props =
+      asset.properties && typeof asset.properties === "object"
+        ? (asset.properties as Record<string, unknown>)
+        : null;
+    if (!props) return false;
+    const entityId = norm(props.entity_id ?? props.entityId).toLowerCase();
+    const deviceSn = norm(props.deviceSn ?? props.device_sn).toLowerCase();
+    return entityId === low || deviceSn === low;
+  });
+}
+
 function resolveDroneEntityId(deviceId: string): string {
   const raw = norm(deviceId);
   if (!raw) return "";
@@ -84,9 +109,11 @@ export function collectActiveDisposalForTrack(targetID: string): ActiveDisposalF
 
   const pushDevice = (id: string, isDroneTask = false) => {
     const deviceId = norm(id);
-    if (!deviceId || deviceSeen.has(deviceId)) return;
-    deviceSeen.add(deviceId);
-    deviceEntityIds.push(deviceId);
+    if (!deviceId) return;
+    if (!deviceSeen.has(deviceId)) {
+      deviceSeen.add(deviceId);
+      deviceEntityIds.push(deviceId);
+    }
     if (isDroneTask) {
       const droneEntityId = resolveDroneEntityId(deviceId);
       const droneKey = norm(droneEntityId);
@@ -101,7 +128,7 @@ export function collectActiveDisposalForTrack(targetID: string): ActiveDisposalF
 
   for (const entry of useTaskProgressStore.getState().entries) {
     if (entry.targetId === tid && entry.status === "executing") {
-      pushDevice(entry.deviceId);
+      pushDevice(entry.deviceId, deviceLooksLikeDrone(entry.deviceId, entry.deviceName));
     }
   }
 

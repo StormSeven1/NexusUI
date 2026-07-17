@@ -26,6 +26,7 @@ import type maplibregl from "maplibre-gl";
 import { getMapModules } from "./map-module-registry";
 import { useAssetStore } from "@/stores/asset-store";
 import { getRenderCache, useTrackStore } from "@/stores/track-store";
+import type { TaskProgressEntry } from "@/stores/task-progress-store";
 import type { Track } from "@/lib/map-entity-model";
 import { getAssetTargetLineConfig } from "@/lib/map-app-config";
 
@@ -328,6 +329,20 @@ export function syncConnectionLines(connections: AssetTargetConnection[]): strin
   }
 
   return added;
+}
+
+export function syncExecutingTaskProgressLines(
+  entries: readonly Pick<TaskProgressEntry, "deviceId" | "targetId" | "status">[],
+): void {
+  syncConnectionLines(
+    entries
+      .filter((entry) => entry.status === "executing")
+      .map((entry) => ({
+        assetEntityId: String(entry.deviceId ?? "").trim(),
+        targetId: String(entry.targetId ?? "").trim(),
+      }))
+      .filter((conn) => conn.assetEntityId && conn.targetId),
+  );
 }
 
 /** 仅追加/更新若干条连线，不删除其它已存在的连线（多资产处置同一目标） */

@@ -536,9 +536,9 @@ message ESMObservedTargetProfile {
   RealityType reported_reality_type = 12;
   string platform_inference = 13;
   double platform_inference_confidence = 14;
-  bool has_tdoa_value = 15;
+  bool tdoa_value_present = 15;
   double tdoa_value_ns = 16;
-  bool has_fdoa_value = 17;
+  bool fdoa_value_present = 17;
   double fdoa_value_hz = 18;
   GeoPosition tdoa_position_estimate = 19;
   repeated KeyValuePair attributes = 20;
@@ -608,11 +608,11 @@ message ESMSourceProfile {
 }
 
 message SourceProfile {
-  bool has_radar_source = 1;
-  bool has_eo_source = 2;
-  bool has_esm_source = 3;
-  bool has_ais_source = 4;
-  bool has_self_reported_source = 5;
+  bool radar_source_present = 1;
+  bool eo_source_present = 2;
+  bool esm_source_present = 3;
+  bool ais_source_present = 4;
+  bool self_reported_source_present = 5;
   RadarSourceProfile radar_source = 6;
   EOSourceProfile eo_source = 7;
   ESMSourceProfile esm_source = 8;
@@ -789,17 +789,17 @@ enum AlarmLocationType {
 
 message AlarmSpatialInfo {
   AlarmLocationType location_type = 1;
-  bool has_point_position = 2;
+  bool point_position_present = 2;
   GeoPosition point_position = 3;
-  bool has_reference_position = 4;
+  bool reference_position_present = 4;
   GeoPosition reference_position = 5;
   double bearing_deg = 6;
   double bearing_sigma_deg = 7;
-  bool has_range_estimate = 8;
+  bool range_estimate_present = 8;
   Measurement range_estimate_m = 9;
-  bool has_range_min_m = 10;
+  bool range_min_present = 10;
   Measurement range_min_m = 11;
-  bool has_range_max_m = 12;
+  bool range_max_present = 12;
   Measurement range_max_m = 13;
   double sector_start_deg = 14;
   double sector_end_deg = 15;
@@ -825,7 +825,7 @@ message TargetAlarmItem {
   string resolved_by = 15;
   string resolution_details = 16;
   repeated string rule_ids = 17;
-  bool has_detection_box = 18;
+  bool detection_box_present = 18;
   EODetectionBox detection_box = 19;
 }
 

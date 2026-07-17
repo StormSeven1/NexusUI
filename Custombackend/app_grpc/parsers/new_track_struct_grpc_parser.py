@@ -74,7 +74,7 @@ def _name_from_hardware_profile(hw: Any) -> Optional[str]:
 
 
 def _fusion_source_name_from_radar(sp: Any, entity_id: str) -> Optional[str]:
-    if not getattr(sp, "has_radar_source", False):
+    if not getattr(sp, "radar_source_present", False):
         return None
     try:
         rtp = sp.radar_source.target_profile
@@ -93,7 +93,7 @@ def _fusion_source_name_from_profile(sp: Any, entity_id: str) -> Tuple[Optional[
     eid = _safe_str(entity_id)
     eid_lower = eid.lower()
 
-    if getattr(sp, "has_radar_source", False):
+    if getattr(sp, "radar_source_present", False):
         name = _fusion_source_name_from_radar(sp, eid)
         if not name:
             rs = sp.radar_source
@@ -103,7 +103,7 @@ def _fusion_source_name_from_profile(sp: Any, entity_id: str) -> Tuple[Optional[
             )
         return (name or eid or "雷达", "radar")
 
-    if getattr(sp, "has_eo_source", False):
+    if getattr(sp, "eo_source_present", False):
         eo = sp.eo_source
         name = _first_nonempty(
             _name_from_hardware_profile(eo.hardware_profile),
@@ -111,7 +111,7 @@ def _fusion_source_name_from_profile(sp: Any, entity_id: str) -> Tuple[Optional[
         )
         return (name or eid or "光电", "eo")
 
-    if getattr(sp, "has_esm_source", False):
+    if getattr(sp, "esm_source_present", False):
         es = sp.esm_source
         tp = es.target_profile
         name = _first_nonempty(
@@ -121,14 +121,14 @@ def _fusion_source_name_from_profile(sp: Any, entity_id: str) -> Tuple[Optional[
         )
         return (name or eid or "电侦", "esm")
 
-    if getattr(sp, "has_ais_source", False):
+    if getattr(sp, "ais_source_present", False):
         ap = sp.ais_target_profile
         name = _first_nonempty(ap.vessel_name, ap.mmsi, ap.call_sign)
         if eid_lower == "ais" and not name:
             name = "AIS"
         return (name or eid or "AIS", "ais")
 
-    if getattr(sp, "has_self_reported_source", False):
+    if getattr(sp, "self_reported_source_present", False):
         sr = sp.self_reported_target_profile
         name = _first_nonempty(
             sr.device_name,
@@ -187,17 +187,17 @@ def _detection_box_to_dict(box: Any) -> Dict[str, Any]:
 def _alarm_spatial_info_to_dict(spatial: Any) -> Dict[str, Any]:
     return {
         "location_type": int(spatial.location_type),
-        "has_point_position": bool(spatial.has_point_position),
+        "has_point_position": bool(spatial.point_position_present),
         "point_position": _geo_position_to_dict(spatial.point_position),
-        "has_reference_position": bool(spatial.has_reference_position),
+        "has_reference_position": bool(spatial.reference_position_present),
         "reference_position": _geo_position_to_dict(spatial.reference_position),
         "bearing_deg": float(spatial.bearing_deg),
         "bearing_sigma_deg": float(spatial.bearing_sigma_deg),
-        "has_range_estimate": bool(spatial.has_range_estimate),
+        "has_range_estimate": bool(spatial.range_estimate_present),
         "range_estimate_m": _measurement_to_dict(spatial.range_estimate_m),
-        "has_range_min_m": bool(spatial.has_range_min_m),
+        "has_range_min_m": bool(spatial.range_min_present),
         "range_min_m": _measurement_to_dict(spatial.range_min_m),
-        "has_range_max_m": bool(spatial.has_range_max_m),
+        "has_range_max_m": bool(spatial.range_max_present),
         "range_max_m": _measurement_to_dict(spatial.range_max_m),
         "sector_start_deg": float(spatial.sector_start_deg),
         "sector_end_deg": float(spatial.sector_end_deg),
@@ -232,7 +232,7 @@ def _extract_alarms(target: Any) -> List[Dict[str, Any]]:
                     "resolved_by": _safe_str(alarm.resolved_by),
                     "resolution_details": _safe_str(alarm.resolution_details),
                     "rule_ids": [_safe_str(item) for item in alarm.rule_ids],
-                    "has_detection_box": bool(alarm.has_detection_box),
+                    "has_detection_box": bool(alarm.detection_box_present),
                     "detection_box": _detection_box_to_dict(alarm.detection_box),
                 }
             )

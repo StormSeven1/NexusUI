@@ -133,9 +133,14 @@ import {
 import { AreaDrawSaveDialog } from "@/components/map/AreaDrawDialogs";
 import { AreaDbContextMenu, type AreaDbMenuState } from "@/components/map/AreaDbContextMenu";
 import { DroneContextMenu, type DroneMenuState } from "@/components/map/DroneContextMenu";
+import {
+  destroyConnectionLines,
+  syncExecutingTaskProgressLines,
+} from "@/lib/asset-target-line";
 /** 底图天花板：不可见标记图层，所有底图（矢量+瓦片）在其下方，所有数据/资产图层在其上方 */
 const BASEMAP_CEILING = "basemap-ceiling";
 import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
+import { useTaskProgressStore } from "@/stores/task-progress-store";
 import { sendDroneReturnHome, toastDroneReturnHomeSummary } from "@/lib/drone/drone-return-home";
 import {
   sendDroneReturnHomeCommand,
@@ -724,6 +729,7 @@ export function Map2D() {
 
         /* 注册专题模块到全局注册表，供地图外部逻辑读取当前专题层状态 */
         registerMapModules({ laser, tdoa, drones: dronesRef.current!, map });
+        syncExecutingTaskProgressLines(useTaskProgressStore.getState().entries);
 
         /* 从 factory.iconSize 配置覆盖所有资产中心图标的 zoom→size 插值 */
         if (appCfg.iconSizeStops) {
@@ -946,6 +952,7 @@ export function Map2D() {
       }
       dbAreaDrawRef.current?.destroy();
       dbAreaDrawRef.current = null;
+      destroyConnectionLines();
       unregisterMapModules();
       registerMapMeasureHandlers(null);
       radarCovRef.current?.dispose();
@@ -969,6 +976,16 @@ export function Map2D() {
       mapRef.current = null;
     };
   }, [setZoomLevel]);
+
+  useEffect(() => {
+    const unsub = useTaskProgressStore.subscribe((state) => {
+      syncExecutingTaskProgressLines(state.entries);
+    });
+    return () => {
+      unsub();
+      destroyConnectionLines();
+    };
+  }, []);
 
   /* flyTo 订阅 */
   useEffect(() => {

@@ -1,9 +1,11 @@
 ﻿"""HTTP API service."""
+import json
+import socket
 from pathlib import Path
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 import aiohttp
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -21,6 +23,7 @@ latest_entity_records = {}
 
 TEMP_FILTER_TARGET_URL = "http://192.168.18.103:8888/api/v1/publishTask/examples/filterTargetOrForce"
 TEMP_FILTER_TARGET_API_KEY = "toksim_default_key"
+DRONE_COMMAND_ACTION_TYPES = {"poweron", "poweroff", "trace", "strike", "back", "reset"}
 
 
 # API handler
@@ -73,6 +76,57 @@ def _safe_capture_file_name(value: str, fallback_ext: str) -> str:
     if not cleaned:
         return f"capture_{int(datetime.now().timestamp() * 1000)}.{fallback_ext}"
     return cleaned
+
+
+def _as_dict(value: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(value, dict):
+        return value
+    return None
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_drone_command_payload(
+    body: Dict[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], int]:
+    raw_payload = _as_dict(body.get("payload")) or body
+    task_id = _text(raw_payload.get("taskId"))
+    params = _as_dict(raw_payload.get("params"))
+
+    if not task_id:
+        return None, "missing taskId", 400
+    if params is None:
+        return None, "missing params", 400
+
+    entity_id = _text(params.get("entityId"))
+    action_type = _text(params.get("type"))
+
+    if action_type:
+        if action_type not in DRONE_COMMAND_ACTION_TYPES:
+            return None, "invalid params.type", 400
+        return {"taskId": task_id, "params": {"type": action_type, "entityId": entity_id}}, None, 200
+
+    if not entity_id:
+        return None, "missing params.entityId", 400
+    return {"taskId": task_id, "params": {"entityId": entity_id}}, None, 200
+
+
+def _drone_command_udp_target() -> Tuple[str, int]:
+    host = _text(settings.UAV_COMMAND_UDP_HOST)
+    port = int(settings.UAV_COMMAND_UDP_PORT)
+    if not host:
+        raise ValueError("missing UAV_COMMAND_UDP_HOST")
+    if port < 1 or port > 65535:
+        raise ValueError("invalid UAV_COMMAND_UDP_PORT")
+    return host, port
+
+
+def _send_udp_json(host: str, port: int, payload: Dict[str, Any]) -> int:
+    message = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
+        return udp_socket.sendto(message, (host, port))
 
 
 @router.post('/eo-video/capture/save')
@@ -139,6 +193,46 @@ async def test():
             "message": "服务运行正常",
             "timestamp": datetime.now().isoformat()
         }
+    )
+
+
+@router.post('/drone/udp-command')
+async def send_drone_udp_command(request: Request):
+    """Receive frontend-built drone command JSON and send it through UDP."""
+    try:
+        body = _as_dict(await request.json())
+    except Exception:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid json"})
+
+    if body is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid json object"})
+
+    payload, error, status_code = _normalize_drone_command_payload(body)
+    if error or payload is None:
+        return JSONResponse(status_code=status_code, content={"ok": False, "error": error})
+
+    try:
+        host, port = _drone_command_udp_target()
+        bytes_sent = _send_udp_json(host, port, payload)
+    except ValueError as exc:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+    except Exception as exc:
+        logger.error(f"无人机 UDP 指令发送失败: {exc}")
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
+
+    logger.info(
+        f"已发送无人机 UDP 指令: taskId={payload.get('taskId')}, target={host}:{port}, bytes={bytes_sent}"
+    )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "taskId": payload.get("taskId"),
+            "host": host,
+            "port": port,
+            "bytes": bytes_sent,
+            "payload": payload,
+        },
     )
 
 

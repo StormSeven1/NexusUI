@@ -12,6 +12,9 @@ import "entity/radar.proto";
 import "entity/frame.proto";
 import "entity/dock.proto";
 import "entity/system.proto";
+import "entity/ais.proto";
+import "entity/vaisala.proto";
+import "entity/buoy.proto";
 
 message Entity {  
   oneof entity {
@@ -25,6 +28,9 @@ message Entity {
     framePkg.FrameEntity frame_entity = 8;
     dockPkg.DockEntity dock_entity = 9;
     systemPkg.SystemEntity system_entity = 10;
+    aisPkg.AisEntity ais_entity = 11;
+    vaisalaPkg.VaisalaEntity vaisala_entity = 12;
+    buoyPkg.BuoyEntity buoy_entity = 13;
   }
 }
 
@@ -90,6 +96,19 @@ message DeleteEntityResponse{
 	string message = 2;
 }
 
+// 批量删除实体请求
+message MultiDeleteEntityRequest{
+  repeated string entityIds = 1;
+}
+
+// 批量删除实体响应
+message MultiDeleteEntityResponse{
+	uint64 code = 1;
+	string message = 2;
+	repeated string successList = 3;
+	repeated string failList = 4;
+}
+
 // 实体类型查询请求
 message GetEntityTypeRequest{
   string entityId = 1;
@@ -113,11 +132,12 @@ message GetEntityRelationshipResponse{
 
 // 实体服务定义
 service EntityService {
-  rpc SingleRegisterEntity(SingleRegisterEntityRequest) returns (SingleRegisterEntityResponse);	//实体单次注册
-  rpc MultiRegisterEntity(MultiRegisterEntityRequest) returns (MultiRegisterEntityResponse);	//实体批量注册
-  rpc SingleQueryEntity(SingleQueryEntityRequest) returns (SingleQueryEntityResponse);		//实体单次查询
-  rpc MultiQueryEntity(MultiQueryEntityRequest) returns (MultiQueryEntityResponse);			//实体批量查询
-  rpc DeleteEntity(DeleteEntityRequest) returns (DeleteEntityResponse);						//实体删除
-  rpc GetEntityType(GetEntityTypeRequest) returns (GetEntityTypeResponse);					//实体类型查询
-  rpc GetEntityRelationship(GetEntityRelationshipRequest) returns (GetEntityRelationshipResponse);	//实体关系查询
+  rpc SingleRegisterEntity(SingleRegisterEntityRequest) returns (SingleRegisterEntityResponse);			//实体单次注册
+  rpc MultiRegisterEntity(MultiRegisterEntityRequest) returns (MultiRegisterEntityResponse);			//实体批量注册
+  rpc SingleQueryEntity(SingleQueryEntityRequest) returns (SingleQueryEntityResponse);					//实体单次查询
+  rpc MultiQueryEntity(MultiQueryEntityRequest) returns (MultiQueryEntityResponse);						//实体批量查询
+  rpc DeleteEntity(DeleteEntityRequest) returns (DeleteEntityResponse);									//实体删除
+  rpc MultiDeleteEntity(MultiDeleteEntityRequest) returns (MultiDeleteEntityResponse);					//实体批量删除
+  rpc GetEntityType(GetEntityTypeRequest) returns (GetEntityTypeResponse);								//实体类型查询
+  rpc GetEntityRelationship(GetEntityRelationshipRequest) returns (GetEntityRelationshipResponse);		//实体关系查询
 }

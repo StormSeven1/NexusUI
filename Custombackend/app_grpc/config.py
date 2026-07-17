@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # 所以 destroy 订阅流不能和 REST 共用同一个 PORT。
     DESTROY_GRPC_PORT: int = 60051
     
+    # 打击无人机UAV command UDP sender target.
+    UAV_COMMAND_UDP_HOST: str = "127.0.0.1"
+    UAV_COMMAND_UDP_PORT: int = 8400
+
     # WebSocket配置
     HEARTBEAT_INTERVAL: int = 10
     BROADCAST_INTERVAL: int = 100  # 毫秒
@@ -208,25 +212,25 @@ MQTT_RECEIVERS: List[Dict[str, Any]] = [
 #          multicast_ip, multicast_port, dds_module_path, structure_type, 
 #          data_class_name, pubsub_type_class_name, type_name
 DDS_RECEIVERS: List[Dict[str, Any]] = [
-    {
-        "id": "dds_camera_status",
-        "name": "DDS相机实时状态",
-        "enabled": False,
-        "domain_id": 200,
-        "topic_name": "CameraRealTimeStatusTopic",
-        "profile_name": "camera_subscriber_client",
-        "discovery_server_ip": "192.168.18.141",
-        "discovery_server_port": 11611,
-        "multicast_ip": "239.255.0.1",
-        "multicast_port": 12359,
-        "dds_module_path": "./DDSReferences/EntityRealTimeStatus/build",
-        "dds_module_name": "EntityRealTimeStatus",
-        "structure_type": "camera_status",
-        "data_class_name": "CameraRealTimeStatus",
-        "pubsub_type_class_name": "CameraRealTimeStatusPubSubType",
-        "type_name": "casia::device::status::CameraStatus::CameraRealTimeStatus",
-        "use_default_xml": False
-    },
+    # {
+    #     "id": "dds_camera_status",
+    #     "name": "DDS相机实时状态",
+    #     "enabled": False,
+    #     "domain_id": 200,
+    #     "topic_name": "CameraRealTimeStatusTopic",
+    #     "profile_name": "camera_subscriber_client",
+    #     "discovery_server_ip": "192.168.18.141",
+    #     "discovery_server_port": 11611,
+    #     "multicast_ip": "239.255.0.1",
+    #     "multicast_port": 12359,
+    #     "dds_module_path": "./DDSReferences/EntityRealTimeStatus/build",
+    #     "dds_module_name": "EntityRealTimeStatus",
+    #     "structure_type": "camera_status",
+    #     "data_class_name": "CameraRealTimeStatus",
+    #     "pubsub_type_class_name": "CameraRealTimeStatusPubSubType",
+    #     "type_name": "casia::device::status::CameraStatus::CameraRealTimeStatus",
+    #     "use_default_xml": False
+    # },
     {
         "id": "dds_shore_multi_detection",
         "name": "DDS岸基相机多目标检测框",
@@ -264,25 +268,25 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "use_default_xml": False
     },
    # === TrackManager 转发的融合航迹（NewStruct TargetOutputSet） ===
-    {
-        "id": "dds_forward_fuse_track",
-        "name": "融合航迹",
-        "enabled": True,
-        "domain_id": 141,
-        "topic_name": "TrackTopic_NewStruct_FuseTrack",
-        "profile_name": "track_subscriber_newstruct",
-        "discovery_server_ip": "192.168.18.141",
-        "discovery_server_port": 11611,
-        "multicast_ip": "239.255.0.1",
-        "multicast_port": 12370,
-        "dds_module_path": "./DDSReferences/NewTrackStruct/build",
-        "structure_type": "new_track_struct",
-        "dds_module_name": "NewTrackRealTimeStatus",
-        "data_class_name": "TargetOutputSet",
-        "pubsub_type_class_name": "TargetOutputSetPubSubType",
-        "type_name": "TargetMinimal::TargetOutputSet",
-        "use_default_xml": False
-    },
+    # {
+    #     "id": "dds_forward_fuse_track",
+    #     "name": "融合航迹",
+    #     "enabled": True,
+    #     "domain_id": 141,
+    #     "topic_name": "TrackTopic_NewStruct_FuseTrack",
+    #     "profile_name": "track_subscriber_newstruct",
+    #     "discovery_server_ip": "192.168.18.141",
+    #     "discovery_server_port": 11611,
+    #     "multicast_ip": "239.255.0.1",
+    #     "multicast_port": 12370,
+    #     "dds_module_path": "./DDSReferences/NewTrackStruct/build",
+    #     "structure_type": "new_track_struct",
+    #     "dds_module_name": "NewTrackRealTimeStatus",
+    #     "data_class_name": "TargetOutputSet",
+    #     "pubsub_type_class_name": "TargetOutputSetPubSubType",
+    #     "type_name": "TargetMinimal::TargetOutputSet",
+    #     "use_default_xml": False
+    # },
     # {
     #     "id": "dds_forward_radar_track2",
     #     "name": "靖子头航迹",
@@ -355,25 +359,25 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     #     "type_name": "TrackDataClass",
     #     "use_default_xml": False
     # },
-    {
-        "id": "dds_forward_fuse_bird_radar_track",
-        "name": "对空融合航迹",
-        "enabled": True,
-        "domain_id": 141,
-        "topic_name": "TrackTopic_NewStruct_FuseBirdTrack",
-        "profile_name": "track_subscriber_newstruct",
-        "discovery_server_ip": "192.168.18.141",
-        "discovery_server_port": 11611,
-        "multicast_ip": "239.255.0.1",
-        "multicast_port": 12370,
-        "dds_module_path": "./DDSReferences/NewTrackStruct/build",
-        "structure_type": "new_track_struct",
-        "dds_module_name": "NewTrackRealTimeStatus",
-        "data_class_name": "TargetOutputSet",
-        "pubsub_type_class_name": "TargetOutputSetPubSubType",
-        "type_name": "TargetMinimal::TargetOutputSet",
-        "use_default_xml": False
-    },
+    # {
+    #     "id": "dds_forward_fuse_bird_radar_track",
+    #     "name": "对空融合航迹",
+    #     "enabled": True,
+    #     "domain_id": 141,
+    #     "topic_name": "TrackTopic_NewStruct_FuseBirdTrack",
+    #     "profile_name": "track_subscriber_newstruct",
+    #     "discovery_server_ip": "192.168.18.141",
+    #     "discovery_server_port": 11611,
+    #     "multicast_ip": "239.255.0.1",
+    #     "multicast_port": 12370,
+    #     "dds_module_path": "./DDSReferences/NewTrackStruct/build",
+    #     "structure_type": "new_track_struct",
+    #     "dds_module_name": "NewTrackRealTimeStatus",
+    #     "data_class_name": "TargetOutputSet",
+    #     "pubsub_type_class_name": "TargetOutputSetPubSubType",
+    #     "type_name": "TargetMinimal::TargetOutputSet",
+    #     "use_default_xml": False
+    # },
     # {
     #     "id": "dds_forward_uav_pose_track",
     #     "name": "自报位航迹",
@@ -701,7 +705,6 @@ ENTITY_GRPC_CLIENTS: List[Dict[str, Any]] = [
     #     "timeout": 10.0,
     # },
 ]
-
 # TrackManager NewTrackStruct gRPC 长连接航迹订阅。
 # 服务端对应 TrackManager New/app 的 NewTrackStructStreamService/Subscribe，
 # 返回值是 TargetFull::TargetOutputSet 的 protobuf 等价结构。
@@ -716,6 +719,5 @@ TRACK_GRPC_CLIENTS: List[Dict[str, Any]] = [
         "reconnect_interval": 2.0,
     },
 ]
-
 def get_settings() -> Settings:
     return Settings()

@@ -31,6 +31,9 @@ message EntityStatusResponse {
         LaserRealTimeStatus laser_real_time_status = 10;
         MunitionRealTimeStatus munition_real_time_status = 11;
         WeaponRealTimeStatus weapon_real_time_status = 12;
+        AISRealTimeStatus ais_real_time_status = 13;
+        VaisalaRealTimeStatus vaisala_real_time_status = 14;
+        BuoyRealTimeStatus buoy_real_time_status = 15;
     }
 }
 
@@ -1506,4 +1509,125 @@ message WeaponRealTimeStatus {
 	int32 strike_counts = 9;
 
     reserved 10 to 15;
+}
+
+// AIS实时状态
+message AISRealTimeStatus {
+  BaseDeviceStatus base = 1;
+  string mmsi = 2;                              // 海上移动业务标识
+  uint32 msg_type = 3;                          // AIS 消息类型
+  string vessel_name = 4;                       // 船名
+  string call_sign = 5;                         // 呼号
+  string imo_number = 6;                        // IMO 编号
+  double heading_deg = 7;                       // 航向
+  double speed_knots = 8;                       // 对地航速
+  double turn_rate_deg_per_min = 9;             // 转向率
+  double course_over_ground_deg = 10;           // 对地航向
+  string navigation_status = 11;                // 航行状态
+  string vessel_type = 12;                      // 船型
+  double length_m = 13;                         // 船长
+  double beam_m = 14;                           // 船宽
+  string flag_country = 15;                     // 船旗国
+  string destination = 16;                      // 目的港
+  double draught_m = 17;                        // 吃水深度
+  int32 maneuver = 18;                          // 机动指示（0=不可用，1=机动中，2=不机动）
+  int32 accuracy = 19;                          // 定位精度（0=低，1=高）
+  int32 raim = 20;                              // RAIM指示（0=不可用，1=可用）
+  int32 radio = 21;                             // 无线电状态
+    
+}
+
+// vaisala实时状态
+message VaisalaRealTimeStatus {
+  BaseDeviceStatus base = 1;
+  // 气压相关
+  double pressure_inhg = 2;                     // 气压（英寸汞柱）
+  double pressure_bar = 3;                      // 气压（巴）
+  double pressure_hpa = 4;                      // 气压（百帕/hPa）
+  double static_pressure_bar = 5;               // 静态气压（巴）
+
+  // 温度相关
+  double air_temp_c = 6;                        // 气温（摄氏度）
+  double water_temp_c = 7;                      // 水温（摄氏度）
+  double rel_humidity_pct = 8;                  // 相对湿度（百分比）
+  double dew_point_c = 9;                       // 露点温度（摄氏度）
+  double heat_index_c = 10;                     // 酷热指数/体感温度（摄氏度）
+  double wind_chill_temp_c = 11;                // 风寒温度（摄氏度）
+
+  // 风速风向
+  double wind_dir_deg = 12;                     // 风向（角度，0-360度）
+  string wind_ref = 13;                         // 风向参考系（T=真北，R=相对，M=磁北）
+  double wind_speed_knots = 14;                 // 风速（节）
+  double wind_speed_ms = 15;                    // 风速（米/秒）
+  double wind_chill_rate_c = 16;                // 风寒速率（摄氏度）
+
+  // 降雨相关
+  double rain_accumulation_mm = 17;             // 累计降雨量（毫米）
+  double rain_duration_s = 18;                  // 降雨持续时间（秒）
+  double rain_intensity_mm_per_h = 19;          // 降雨强度（毫米/小时）
+  double rain_peak_intensity_mm_per_h = 20;     // 峰值降雨强度（毫米/小时）
+
+  // 冰雹相关
+  double hail_accumulation_mm = 21;             // 累计冰雹量（毫米）
+  double hail_duration_s = 22;                  // 冰雹持续时间（秒）
+  double hail_intensity_mm_per_h = 23;          // 冰雹强度（毫米/小时）
+  double hail_peak_intensity_mm_per_h = 24;     // 峰值冰雹强度（毫米/小时）
+
+  // 系统状态
+  double supply_voltage_v = 25;                 // 供电电压（伏特）
+  double heater_status = 26;                    // 加热器状态
+    
+}
+
+// buoy实时状态
+message BuoyRealTimeStatus {
+  BaseDeviceStatus base = 1;
+  
+  // 基础信息
+  string station_name = 2;                      // 站位名称
+  string timestamp = 3;                         // 时间戳
+  double longitude = 4;                         // 经度
+  double latitude = 5;                          // 纬度
+
+  // 电子仓信息
+  double cabin_temp = 6;                        // 电子仓温度
+  double voltage = 7;                           // 电压
+  double cabin_humidity = 8;                    // 电子仓湿度
+
+  // 仪器信息
+  double water_temp = 9;                        // 水温
+  double conductivity = 10;                     // 电导
+  double depth = 11;                            // 深度
+
+  // 波浪信息
+  double max_wave_height = 12;                  // 最大波高
+  double max_wave_period = 13;                  // 最大波周期
+  double tenth_wave_height = 14;                // 十分一波高
+  double tenth_wave_period = 15;                // 十分之一波周期
+  double third_wave_height = 16;                // 三分之一波高
+  double third_wave_period = 17;                // 三分之一波周期
+  double avg_wave_height = 18;                  // 平均波高
+  double avg_wave_period = 19;                  // 平均波周期
+  double main_wave_direction = 20;              // 主波向
+
+  // 风速信息
+  double min_wind_speed = 21;                   // 最小风速
+  double avg_wind_speed = 22;                   // 平均风速
+  double max_wind_speed = 23;                   // 最大风速
+  double min_wind_direction = 24;               // 最小风向
+  double avg_wind_direction = 25;               // 平均风向
+  double max_wind_direction = 26;               // 最大风向
+
+  // 气象信息
+  double air_humidity = 27;                     // 空气湿度
+  double relative_humidity = 28;                // 相对湿度
+  double pressure = 29;                         // 气压
+  double rainfall = 30;                         // 雨量
+
+  // ADCP数据（repeated 对应 C++ 的 vector）
+  repeated double horizontal_speed = 31;        // 水平流速
+  repeated double direction = 32;               // 流向
+  repeated double north_speed = 33;             // 北向流速
+  repeated double east_speed = 34;              // 东向流速
+  repeated double vertical_speed = 35;          // 垂向流速
 }

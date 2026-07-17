@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package vaisalaParametersPkg;
+
+message VaisalaParameters {
+  // 气压相关
+  double pressure_inhg = 1;           // 气压（英寸汞柱）
+  double pressure_bar = 2;            // 气压（巴）
+  double pressure_hpa = 3;            // 气压（百帕/hPa）
+  double static_pressure_bar = 4;     // 静态气压（巴）
+
+  // 温度相关
+  double air_temp_c = 5;              // 气温（摄氏度）
+  double water_temp_c = 6;            // 水温（摄氏度）
+  double rel_humidity_pct = 7;        // 相对湿度（百分比）
+  double dew_point_c = 8;             // 露点温度（摄氏度）
+  double heat_index_c = 9;            // 酷热指数/体感温度（摄氏度）
+  double wind_chill_temp_c = 10;      // 风寒温度（摄氏度）
+
+  // 风速风向
+  double wind_dir_deg = 11;           // 风向（角度，0-360度）
+  string wind_ref = 12;               // 风向参考系（T=真北，R=相对，M=磁北）
+  double wind_speed_knots = 13;       // 风速（节）
+  double wind_speed_ms = 14;          // 风速（米/秒）
+  double wind_chill_rate_c = 15;      // 风寒速率（摄氏度）
+
+  // 降雨相关
+  double rain_accumulation_mm = 16;   // 累计降雨量（毫米）
+  double rain_duration_s = 17;        // 降雨持续时间（秒）
+  double rain_intensity_mm_per_h = 18;        // 降雨强度（毫米/小时）
+  double rain_peak_intensity_mm_per_h = 19;   // 峰值降雨强度（毫米/小时）
+
+  // 冰雹相关
+  double hail_accumulation_mm = 20;   // 累计冰雹量（毫米）
+  double hail_duration_s = 21;        // 冰雹持续时间（秒）
+  double hail_intensity_mm_per_h = 22;        // 冰雹强度（毫米/小时）
+  double hail_peak_intensity_mm_per_h = 23;   // 峰值冰雹强度（毫米/小时）
+
+  // 系统状态
+  double supply_voltage_v = 24;       // 供电电压（伏特）
+  double heater_status = 25;          // 加热器状态
+}

@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package aisParametersPkg;
+
+message AISParameters {
+  string mmsi = 1;                              // 海上移动业务标识
+  uint32 msg_type = 2;                          // AIS 消息类型
+  string vessel_name = 3;                       // 船名
+  string call_sign = 4;                         // 呼号
+  string imo_number = 5;                        // IMO 编号
+  double heading_deg = 6;                       // 航向
+  double speed_knots = 7;                       // 对地航速
+  double turn_rate_deg_per_min = 8;             // 转向率
+  double course_over_ground_deg = 9;            // 对地航向
+  string navigation_status = 10;                // 航行状态
+  string vessel_type = 11;                      // 船型
+  double length_m = 12;                         // 船长
+  double beam_m = 13;                           // 船宽
+  string flag_country = 14;                     // 船旗国
+  string destination = 15;                      // 目的港
+  double draught_m = 16;                        // 吃水深度
+  int32 maneuver = 17;                          // 机动指示（0=不可用，1=机动中，2=不机动）
+  int32 accuracy = 18;                          // 定位精度（0=低，1=高）
+  int32 raim = 19;                              // RAIM指示（0=不可用，1=可用）
+  int32 radio = 20;                             // 无线电状态
+}

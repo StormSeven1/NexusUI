@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package buoyParametersPkg;
+
+message BuoyParameters {
+  // 基础信息
+  string station_name = 1;            // 站位名称
+  string timestamp = 2;               // 时间戳
+  double longitude = 3;               // 经度
+  double latitude = 4;                // 纬度
+
+  // 电子仓信息
+  double cabin_temp = 5;              // 电子仓温度
+  double voltage = 6;                 // 电压
+  double cabin_humidity = 7;          // 电子仓湿度
+
+  // 仪器信息
+  double water_temp = 8;              // 水温
+  double conductivity = 9;            // 电导
+  double depth = 10;                  // 深度
+
+  // 波浪信息
+  double max_wave_height = 11;        // 最大波高
+  double max_wave_period = 12;        // 最大波周期
+  double tenth_wave_height = 13;      // 十分一波高
+  double tenth_wave_period = 14;      // 十分之一波周期
+  double third_wave_height = 15;      // 三分之一波高
+  double third_wave_period = 16;      // 三分之一波周期
+  double avg_wave_height = 17;        // 平均波高
+  double avg_wave_period = 18;        // 平均波周期
+  double main_wave_direction = 19;    // 主波向
+
+  // 风速信息
+  double min_wind_speed = 20;         // 最小风速
+  double avg_wind_speed = 21;         // 平均风速
+  double max_wind_speed = 22;         // 最大风速
+  double min_wind_direction = 23;     // 最小风向
+  double avg_wind_direction = 24;     // 平均风向
+  double max_wind_direction = 25;     // 最大风向
+
+  // 气象信息
+  double air_humidity = 26;           // 空气湿度
+  double relative_humidity = 27;      // 相对湿度
+  double pressure = 28;               // 气压
+  double rainfall = 29;               // 雨量
+
+  // ADCP数据（repeated 对应 C++ 的 vector）
+  repeated double horizontal_speed = 30;  // 水平流速
+  repeated double direction = 31;         // 流向
+  repeated double north_speed = 32;       // 北向流速
+  repeated double east_speed = 33;        // 东向流速
+  repeated double vertical_speed = 34;    // 垂向流速
+}
