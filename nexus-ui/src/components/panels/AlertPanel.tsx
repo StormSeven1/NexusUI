@@ -87,6 +87,30 @@ function alarmKindLabel(alert: AlertData): "威胁" | "告警" {
   return isVerifiedAlarmItem(alert) ? "告警" : "威胁";
 }
 
+/** 列表时间：优先首次发现，避免 updateTime 每秒刷新跳动 */
+function formatAlertDisplayTime(alert: AlertData): string {
+  const ms = alert.firstSeenTime;
+  if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) {
+    const d = new Date(ms);
+    if (!Number.isNaN(d.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+  }
+  const raw = alert.timestamp?.trim() ?? "";
+  if (!raw) return "";
+  // ISO → 本地可读
+  if (raw.includes("T")) {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+  }
+  // 已是 "yyyy-MM-dd hh:mm:ss(.zzz)" 则去掉毫秒，减少视觉抖动观感
+  return raw.replace(/\.\d{1,3}$/, "");
+}
+
 /** 航迹告警目标 ID 前的对海/对空小标（与目标档案面板一致） */
 function AlertTrackFuseIcon({ fuseType }: { fuseType: 0 | 1 }) {
   const cls = "inline size-[11px] shrink-0 align-[-1px] opacity-95";
@@ -267,7 +291,7 @@ export function AlertPanel() {
                         </span>
                       )}
                       <span className="truncate font-mono text-[10px] text-nexus-text-muted">
-                        {alert.timestamp}
+                        {formatAlertDisplayTime(alert)}
                       </span>
                     </div>
                     {isTrackAlarmItem(alert) && (

@@ -84,13 +84,14 @@ export interface AlertData {
 const ALARM_STALE_MS = 25_000;
 const MAX_ALERTS = 200;
 
-/** 合并同航迹告警：NewTrackStruct 主要带证据链，勿覆盖 AlarmEvent 的严重度 */
+/** 合并同航迹告警：NewTrackStruct 主要带证据链，勿覆盖 AlarmEvent 的严重度/时间 */
 function mergeAlertFields(existing: AlertData, incoming: AlertData): AlertData {
   const incomingFromNewTrack = incoming.source === "NewTrackStruct";
   const existingFromAlarmEvent = existing.source !== "NewTrackStruct";
 
+  let merged: AlertData;
   if (incomingFromNewTrack && existingFromAlarmEvent) {
-    return {
+    merged = {
       ...existing,
       ...incoming,
       // 保留 AlarmEvent 的等级展示，避免严重/警告来回跳
@@ -102,17 +103,19 @@ function mergeAlertFields(existing: AlertData, incoming: AlertData): AlertData {
       // 证据链以 NewTrackStruct.content 为准
       content: incoming.content?.trim() ? incoming.content : existing.content,
     };
-  }
-
-  if (!incomingFromNewTrack && existing.source === "NewTrackStruct") {
-    return {
+  } else if (!incomingFromNewTrack && existing.source === "NewTrackStruct") {
+    merged = {
       ...existing,
       ...incoming,
       content: existing.content?.trim() ? existing.content : incoming.content,
     };
+  } else {
+    merged = { ...existing, ...incoming };
   }
 
-  return { ...existing, ...incoming };
+  // 列表展示时间锁定首次出现，避免每秒 updateTime / 双源格式切换导致跳动
+  merged.timestamp = existing.timestamp || incoming.timestamp;
+  return merged;
 }
 
 /** 从告警条目提取业务 trackId */
