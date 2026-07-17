@@ -44,3 +44,11 @@ certificates
 
 # 开发 HTTPS（scripts/next-dev-https.sh 生成，含局域网 IP SAN）
 /.certs/
+
+# 误把 Windows 绝对路径/UNC 当相对路径提交会导致跨平台 checkout 失败（路径含 : \）
+# 运行时截图、camconf 等应落盘到外部目录，不要进仓库
+C\:*
+\\*
+watch_data/
+record_pic/
+store_200T/
