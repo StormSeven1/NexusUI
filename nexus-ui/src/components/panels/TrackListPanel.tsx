@@ -9,7 +9,12 @@ import { Search, Star, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore, getTrackDispositionForRendering, isTrackAlarmLinked } from "@/stores/track-store";
-import { getFusionTrackMarkerFill, resolveTrackPointFill, isAirTrackBirdGlyph } from "@/lib/map-icons";
+import {
+  getFusionTrackMarkerFill,
+  resolveTrackPointFill,
+  isSeaTrackBuoyGlyph,
+  isSeaTrackReefGlyph,
+} from "@/lib/map-icons";
 import { resolveVerifiedTrackPointFill, shouldApplyVerifiedTrackYellow } from "@/lib/verified-track-color";
 import { ForceTag } from "@/components/military/ForceTag";
 import { MilSymbol } from "@/components/military/MilSymbol";
@@ -86,6 +91,16 @@ function TrackListRow({
           disposition={disp}
           virtual={isTrackVirtualTroop(track)}
           seaFuse={resolveTrackLayerKey(track) === "fuse_sea" && track.type === "sea"}
+          seaBuoy={
+            resolveTrackLayerKey(track) === "fuse_sea" &&
+            track.type === "sea" &&
+            isSeaTrackBuoyGlyph(track)
+          }
+          seaReef={
+            resolveTrackLayerKey(track) === "fuse_sea" &&
+            track.type === "sea" &&
+            isSeaTrackReefGlyph(track)
+          }
           neutralFusionFill={disp === "neutral" ? getFusionTrackMarkerFill(track) : undefined}
           opticallyVerified={shouldApplyVerifiedTrackYellow(track)}
           size="sm"

@@ -66,6 +66,8 @@ export interface AlertData {
   areaJudge?: string;
   /** 详细描述 */
   detail?: string;
+  /** 证据链 / 告警原因（NewTrackStruct TargetAlarmItem.content） */
+  content?: string;
   /** uniqueID（与 track-store showID 对应） */
   uniqueID?: string;
   /** 0=对海融合，1=对空融合（AlarmSys 规则 / DDS track.trackType） */
@@ -81,6 +83,37 @@ export interface AlertData {
 /** 告警过期时间（对齐 V2 ALARM_STALE_MS = 25s） */
 const ALARM_STALE_MS = 25_000;
 const MAX_ALERTS = 200;
+
+/** 合并同航迹告警：NewTrackStruct 主要带证据链，勿覆盖 AlarmEvent 的严重度 */
+function mergeAlertFields(existing: AlertData, incoming: AlertData): AlertData {
+  const incomingFromNewTrack = incoming.source === "NewTrackStruct";
+  const existingFromAlarmEvent = existing.source !== "NewTrackStruct";
+
+  if (incomingFromNewTrack && existingFromAlarmEvent) {
+    return {
+      ...existing,
+      ...incoming,
+      // 保留 AlarmEvent 的等级展示，避免严重/警告来回跳
+      severity: existing.severity,
+      alarmLevel: existing.alarmLevel ?? incoming.alarmLevel,
+      threatScore: existing.threatScore ?? incoming.threatScore,
+      message: existing.message || incoming.message,
+      source: existing.source,
+      // 证据链以 NewTrackStruct.content 为准
+      content: incoming.content?.trim() ? incoming.content : existing.content,
+    };
+  }
+
+  if (!incomingFromNewTrack && existing.source === "NewTrackStruct") {
+    return {
+      ...existing,
+      ...incoming,
+      content: existing.content?.trim() ? existing.content : incoming.content,
+    };
+  }
+
+  return { ...existing, ...incoming };
+}
 
 /** 从告警条目提取业务 trackId */
 function getAlarmTrackId(item: AlertData): string | null {
@@ -146,8 +179,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
           const existing = s.alerts[idx];
           next = [...s.alerts];
           next[idx] = {
-            ...existing,
-            ...alarm,
+            ...mergeAlertFields(existing, alarm),
             alarmType: "alert",
             firstSeenTime: existing.firstSeenTime ?? now,
             lastUpdateTime: now,
@@ -159,7 +191,11 @@ export const useAlertStore = create<AlertState>((set, get) => ({
         const idx = s.alerts.findIndex((a) => a.id === alarm.id);
         if (idx !== -1) {
           next = [...s.alerts];
-          next[idx] = { ...s.alerts[idx], ...alarm, alarmType: "alert", lastUpdateTime: now };
+          next[idx] = {
+            ...mergeAlertFields(s.alerts[idx], alarm),
+            alarmType: "alert",
+            lastUpdateTime: now,
+          };
         } else {
           next = [{ ...alarm, alarmType: "alert", firstSeenTime: now, lastUpdateTime: now }, ...s.alerts];
         }
@@ -181,8 +217,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
           const existing = s.alerts[idx];
           next = [...s.alerts];
           next[idx] = {
-            ...existing,
-            ...threat,
+            ...mergeAlertFields(existing, threat),
             alarmType: existing.alarmType,
             firstSeenTime: existing.firstSeenTime ?? now,
             lastUpdateTime: now,

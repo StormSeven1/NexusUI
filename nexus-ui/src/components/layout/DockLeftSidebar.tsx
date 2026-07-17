@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Circle, ExternalLink, PanelLeftClose } from "lucide-react";
 import { useDockStore } from "@/stores/dock-store";
 import type { PanelId } from "@/stores/dock-store";
@@ -18,7 +18,17 @@ import { EoVideoSmartWindowToggle } from "@/components/eo-video/EoVideoSmartWind
 /** Keep original 4 tools; EO appears only when docked back. */
 const LEFT_TOOLS = LEFT_DOCK_TOOL_IDS;
 
-export function DockLeftSidebar() {
+export interface DockLeftSidebarProps {
+  /** 经典布局：仅显示左侧工具图标，不显示光电分区 */
+  toolsOnly?: boolean;
+  /** 经典布局：隐藏「弹出为独立窗口」 */
+  disablePopout?: boolean;
+  /** 经典布局：悬浮覆盖工作区，不挤压地图与右侧栏宽度 */
+  overlayMode?: boolean;
+}
+
+export function DockLeftSidebar(props: DockLeftSidebarProps = {}) {
+  const { toolsOnly = false, disablePopout = false, overlayMode = false } = props;
   const MIN_LEFT_WIDTH = 260;
   const MAX_LEFT_WIDTH = 560;
   const leftSidebarOpen = useDockStore((s) => s.leftSidebarOpen);
@@ -40,7 +50,19 @@ export function DockLeftSidebar() {
 
   const modeOf = (id: PanelId) => panels.find((p) => p.id === id)?.mode;
 
-  const sortedPartitions = [...leftPartitions].sort((a, b) => a.index - b.index);
+  const sortedPartitions = [...leftPartitions]
+    .sort((a, b) => a.index - b.index)
+    .filter((p) => !toolsOnly || p.id === "left-0" || p.id === "left-default");
+
+  /** 经典布局只显示 left-0 时，须把 heightRatio 归一化到 1，否则面板只占半高、过早出现滚动条 */
+  const layoutPartitions = useMemo(() => {
+    const total = sortedPartitions.reduce((sum, p) => sum + Math.max(0.08, p.heightRatio), 0);
+    const denom = total > 0 ? total : 1;
+    return sortedPartitions.map((p) => ({
+      ...p,
+      layoutHeightRatio: Math.max(0.08, p.heightRatio) / denom,
+    }));
+  }, [sortedPartitions]);
   const activeDockedIds = new Set(
     sortedPartitions
       .map((p) => p.currentPanelId)
@@ -73,12 +95,12 @@ export function DockLeftSidebar() {
       const rect = container.getBoundingClientRect();
       if (rect.height <= 0) return;
 
-      const idx = sortedPartitions.findIndex((p) => p.id === draggingDividerFor);
-      if (idx < 0 || idx >= sortedPartitions.length - 1) return;
+      const idx = layoutPartitions.findIndex((p) => p.id === draggingDividerFor);
+      if (idx < 0 || idx >= layoutPartitions.length - 1) return;
 
-      const sumBefore = sortedPartitions
+      const sumBefore = layoutPartitions
         .slice(0, idx)
-        .reduce((acc, p) => acc + p.heightRatio, 0);
+        .reduce((acc, p) => acc + p.layoutHeightRatio, 0);
       const cursorRatio = (e.clientY - rect.top) / rect.height;
       const newRatio = cursorRatio - sumBefore;
       adjustPartitionHeight(draggingDividerFor, newRatio);
@@ -91,7 +113,7 @@ export function DockLeftSidebar() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
-  }, [adjustPartitionHeight, draggingDividerFor, sortedPartitions]);
+  }, [adjustPartitionHeight, draggingDividerFor, layoutPartitions]);
 
   useEffect(() => {
     if (!isResizingSidebar) return;
@@ -118,6 +140,10 @@ export function DockLeftSidebar() {
     const leftLocation =
       panel?.location && panel.location.startsWith("left") ? panel.location : "left-0";
     if (activeDockedIds.has(tabId) && leftSidebarOpen && mode === "docked") {
+      if (disablePopout) {
+        toggleLeftSidebar();
+        return;
+      }
       handlePanelClick(tabId);
       return;
     }
@@ -125,7 +151,7 @@ export function DockLeftSidebar() {
     useDockStore.setState({ leftSidebarOpen: true });
   };
 
-  const hasVisiblePartition = sortedPartitions.some((p) => {
+  const hasVisiblePartition = layoutPartitions.some((p) => {
     const cid = p.currentPanelId;
     if (cid && panelRegistry[cid]?.component) return true;
     return dockedPanelsInPartition(panels, p.id).some((row) => !!panelRegistry[row.id]?.component);
@@ -136,6 +162,7 @@ export function DockLeftSidebar() {
       className={cn(
         "relative flex h-full shrink-0 border-r border-nexus-border transition-all duration-300",
         leftSidebarOpen ? "" : "w-12",
+        overlayMode && "absolute left-0 top-0 z-40 shadow-[4px_0_24px_rgba(0,0,0,0.35)]",
       )}
       style={leftSidebarOpen ? { width: `${leftSidebarWidth}px`, backgroundColor: "#19191D" } : { backgroundColor: "#19191D" }}
     >
@@ -144,8 +171,8 @@ export function DockLeftSidebar() {
         style={{ backgroundColor: "#19191D" }}
       >
         <div className="flex h-full w-full flex-col">
-          {sortedPartitions.map((partition) => {
-            const ratio = Math.max(0.08, partition.heightRatio);
+          {layoutPartitions.map((partition) => {
+            const ratio = partition.layoutHeightRatio;
             const partitionKey = partition.id;
             if (partitionKey === "left-0" || partitionKey === "left-default") {
               const dockedHere = dockedPanelsInPartition(panels, partitionKey);
@@ -268,8 +295,8 @@ export function DockLeftSidebar() {
       </div>
 
       {leftSidebarOpen && hasVisiblePartition ? (
-        <div ref={contentRef} className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {sortedPartitions.map((partition, idx) => {
+        <div ref={contentRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {layoutPartitions.map((partition, idx) => {
             const panelId = partition.currentPanelId as PanelId | null;
             const PanelComp =
               panelId && panelRegistry[panelId]?.component
@@ -281,8 +308,12 @@ export function DockLeftSidebar() {
                 className={cn(
                   "flex min-h-0 min-w-0 flex-col overflow-hidden",
                   idx > 0 && "border-t border-nexus-border",
+                  layoutPartitions.length === 1 && "flex-1",
                 )}
-                style={{ flexBasis: `${Math.max(0.08, partition.heightRatio) * 100}%`, flexGrow: 0, flexShrink: 0 }}
+                style={{
+                  flex: `${partition.layoutHeightRatio} 1 0`,
+                  minHeight: 0,
+                }}
               >
                 <div
                   className="flex shrink-0 items-center justify-between gap-2 border-b border-nexus-border px-2 py-1.5"
@@ -309,18 +340,20 @@ export function DockLeftSidebar() {
                       {isElectroOpticalDockPanel(panelId) ? (
                         <EoVideoSmartWindowToggle panelId={panelId} />
                       ) : null}
-                      <button
-                        type="button"
-                        className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-nexus-accent hover:bg-nexus-bg-elevated"
-                        title="弹出为独立窗口"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePanelClick(panelId);
-                        }}
-                        aria-label="弹出为独立窗口"
-                      >
-                        <ExternalLink size={14} />
-                      </button>
+                      {!disablePopout ? (
+                        <button
+                          type="button"
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-nexus-accent hover:bg-nexus-bg-elevated"
+                          title="弹出为独立窗口"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePanelClick(panelId);
+                          }}
+                          aria-label="弹出为独立窗口"
+                        >
+                          <ExternalLink size={14} />
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -338,7 +371,7 @@ export function DockLeftSidebar() {
                     </div>
                   )}
                 </div>
-                {idx < sortedPartitions.length - 1 ? (
+                {idx < layoutPartitions.length - 1 ? (
                   <div
                     role="separator"
                     aria-label="Resize partitions"

@@ -7,11 +7,14 @@ import {
   buildMarkerSymbolDataUrl,
   getFusionTrackMarkerFill,
   isAirTrackBirdGlyph,
+  isSeaTrackBuoyGlyph,
+  isSeaTrackReefGlyph,
 } from "@/lib/map-icons";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import { getTrackDispositionForRendering } from "@/stores/track-store";
 import { isTrackVirtualTroop } from "@/lib/track-reality-type";
+import { isTrackCoasting } from "@/lib/track-target-state";
 import { shouldApplyVerifiedTrackYellow } from "@/lib/verified-track-color";
 import { shouldApplySuspiciousTrackGreen } from "@/lib/track-map-highlight-color";
 
@@ -23,6 +26,7 @@ export function useTrackMarkerSymbolUrl(track: Track | null | undefined): string
     const ts = tr.trackTypeStyles[track.type] ?? tr.trackTypeStyles.sea;
     const eff = getTrackDispositionForRendering(track);
     const friendlyFill = eff === "friendly" ? ts.idColor : undefined;
+    const seaFuse = resolveTrackLayerKey(track) === "fuse_sea" && track.type === "sea";
     return buildMarkerSymbolDataUrl(
       track.type,
       eff,
@@ -33,8 +37,11 @@ export function useTrackMarkerSymbolUrl(track: Track | null | undefined): string
       isAirTrackBirdGlyph(track),
       resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
       shouldApplyVerifiedTrackYellow(track),
-      resolveTrackLayerKey(track) === "fuse_sea" && track.type === "sea",
+      seaFuse,
+      seaFuse && isSeaTrackBuoyGlyph(track),
+      seaFuse && isSeaTrackReefGlyph(track),
       shouldApplySuspiciousTrackGreen(track),
+      isTrackCoasting(track),
     );
   }, [track]);
 }

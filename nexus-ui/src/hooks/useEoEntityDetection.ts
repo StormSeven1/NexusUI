@@ -38,6 +38,8 @@ import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 
 const RENDER_MS = 40;
 const DETECTION_ENTRY_STALE_MS = 2000;
+/** WS 无新可绘制框超过此时长则强制清屏（不影响短 tick hold / 单多互斥） */
+const DETECTION_DISPLAY_STALE_MS = 3000;
 /** 对齐 Qt `m_nNoneSingleTagTick`：连续 N 次 processAt 无新 singleRect 才清框 */
 const SINGLE_NONE_RECT_MAX_TICKS = 5;
 /** DDS 跟踪结束后禁止 WS 残留 singleRect 再次 latch 单目标层 */
@@ -335,6 +337,28 @@ function isRecentDrawableSingle(
   return now - entry!.receivedAt <= maxAgeMs;
 }
 
+/**
+ * 缓冲内是否存在仍在有效期内的可绘制检测包（用于「几秒无新框则清屏」计时）。
+ * 单目标层 engaged 时只计 singleRect，避免 boat 分包把计时器续命导致单框该清不清。
+ */
+function hasFreshDrawableFeedInBuffers(
+  singleBuf: BufferedDetectionEntry[],
+  boatBuf: BufferedDetectionEntry[],
+  planeBuf: BufferedDetectionEntry[],
+  now: number,
+  ignoreSingleWs: boolean,
+  singleEngaged: boolean,
+): boolean {
+  if (!ignoreSingleWs) {
+    const single = pickFreshestDrawable(singleBuf, now);
+    if (isRecentDrawableSingle(single, now)) return true;
+  }
+  if (singleEngaged) return false;
+  if (pickFreshestDrawable(boatBuf, now)) return true;
+  if (pickFreshestDrawable(planeBuf, now)) return true;
+  return false;
+}
+
 function createDetectionMatchState(): MatchState {
   return { lastSuccess: null, failureCount: 0, maxFailures: MAX_HEADER_MISS, isActive: false };
 }
@@ -566,6 +590,8 @@ export function useEoEntityDetection({
   const singleDdsMissTicksRef = useRef(0);
   const singleIgnoreWsUntilRef = useRef(0);
   const displayLayerRef = useRef<"single" | "multi" | null>(null);
+  /** 最近一次 WS 缓冲内仍有可绘制框的时间；超时后强制清屏 */
+  const lastFreshDetectionFeedAtRef = useRef(0);
 
   const onDiagnosticRef = useRef(onDiagnostic);
   const onPresentFrameRef = useRef(onPresentFrame);
@@ -637,6 +663,7 @@ export function useEoEntityDetection({
     singleEngageCooldownUntilRef.current = 0;
     singleDdsMissTicksRef.current = 0;
     singleIgnoreWsUntilRef.current = 0;
+    lastFreshDetectionFeedAtRef.current = 0;
     clearEoSingleTrackUserLatch(id);
     setBoxes([]);
     setDiag("");
@@ -713,6 +740,8 @@ export function useEoEntityDetection({
       let presentationClk = "int";
       let explicitClearDisplay = false;
       let singleTargetLost = false;
+      /** 仅 stale-clear / 显式清除 / 多目标 hold 耗尽时清 canvas，避免短时空帧闪灭 */
+      let forceClearCanvas = false;
       let ddsSingleTrackActive = false;
       let displayLayer: "single" | "multi" = "multi";
       let userSingleLatch = false;
@@ -783,6 +812,19 @@ export function useEoEntityDetection({
         } else {
           singleEngagedRef.current = false;
           singleDdsMissTicksRef.current = 0;
+        }
+
+        if (
+          hasFreshDrawableFeedInBuffers(
+            singleBuf.current,
+            boatBuf.current,
+            planeBuf.current,
+            now,
+            ignoreSingleWs,
+            singleEngagedRef.current,
+          )
+        ) {
+          lastFreshDetectionFeedAtRef.current = now;
         }
 
         const singleExplicitlyCleared =
@@ -1269,6 +1311,7 @@ export function useEoEntityDetection({
             } else {
               lastMultiBoxesRef.current = [];
               syncMode = "multi-miss-clear";
+              forceClearCanvas = true;
             }
           }
         }
@@ -1278,6 +1321,15 @@ export function useEoEntityDetection({
           displayLayer === "single"
             ? next.filter((b) => b.variant === "singleTrack")
             : next.filter((b) => b.variant !== "singleTrack");
+
+        if (
+          lastFreshDetectionFeedAtRef.current > 0 &&
+          now - lastFreshDetectionFeedAtRef.current > DETECTION_DISPLAY_STALE_MS
+        ) {
+          out = [];
+          forceClearCanvas = true;
+          syncMode = syncMode ? `${syncMode}→stale-clear` : "stale-clear";
+        }
       } catch (drawErr) {
         out = [];
         syncMode = "draw-err";
@@ -1321,7 +1373,7 @@ export function useEoEntityDetection({
             setBoxes(out);
           }
           onPresentFrameRef.current?.(out);
-        } else if (explicitClearDisplay || singleTargetLost) {
+        } else if (forceClearCanvas || explicitClearDisplay || singleTargetLost) {
           if (lastBoxesRef.current.length > 0) {
             lastBoxesRef.current = [];
             setBoxes([]);

@@ -9,28 +9,100 @@ import {
 } from "@/lib/langgraph-chat-http-log";
 import { extractVerifyEntityIdsFromInterrupt } from "@/lib/langgraph-interrupt-verify-entity";
 
+function pushUnique(out: string[], text: string) {
+  const t = text.trim();
+  if (!t) return;
+  if (out[out.length - 1] === t) return;
+  if (out.includes(t)) return;
+  out.push(t);
+}
+
+function collectDisplayStringsFromRecord(d: Record<string, unknown>, out: string[], depth = 0) {
+  if (depth > 3) return;
+  for (const k of [
+    "message",
+    "text",
+    "answer",
+    "delta",
+    "content",
+    "chunk",
+    "error",
+    "description",
+    "title",
+    "detail",
+    "summary",
+  ]) {
+    const v = d[k];
+    if (typeof v === "string") pushUnique(out, v);
+  }
+  // chat_notification.details 里也可能有中文说明
+  const details = d.details;
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    collectDisplayStringsFromRecord(details as Record<string, unknown>, out, depth + 1);
+  }
+}
+
+/**
+ * 从任意 LangGraph SSE 事件提取应写入智能助手气泡的中文/可读文案。
+ * 覆盖：workflow_update / message_chunk / chat_notification 等。
+ */
 export function extractLangGraphDisplayChunks(obj: Record<string, unknown>): string[] {
   const out: string[] = [];
   const event = String(obj.event ?? "");
   if (event === "tool_call" || event === "interrupt") return out;
-  /** Qt 端不在流式阶段把 workflow 进度文案写入对话；避免「命令执行成功流程监控完成…」类噪声 */
-  if (event === "workflow_update") return out;
 
-  if (typeof obj.content === "string" && obj.content.trim()) {
-    out.push(obj.content.trim());
-  }
+  if (typeof obj.content === "string") pushUnique(out, obj.content);
 
   const data = obj.data;
-  if (!data || typeof data !== "object") return out;
+  if (data && typeof data === "object") {
+    const d = data as Record<string, unknown>;
 
-  const d = data as Record<string, unknown>;
-  const msg = typeof d.message === "string" ? d.message : "";
-  if (msg.trim()) out.push(msg.trim());
-  for (const k of ["text", "answer", "delta", "content"]) {
-    const v = d[k];
-    if (typeof v === "string" && v.trim()) out.push(v.trim());
+    if (event === "workflow_update") {
+      const err = typeof d.error === "string" ? d.error.trim() : "";
+      const msg = typeof d.message === "string" ? d.message.trim() : "";
+      const status = typeof d.status === "string" ? d.status.trim() : "";
+      const node =
+        (typeof d.node === "string" && d.node.trim()) ||
+        (typeof d.node_name === "string" && d.node_name.trim()) ||
+        "";
+
+      if (err) {
+        pushUnique(out, `${status.toLowerCase() === "failed" ? "❌ " : ""}${err}`);
+      } else if (msg) {
+        pushUnique(out, msg);
+      } else if (
+        status &&
+        !["running", "workflow_running", "started", "workflow_started"].includes(status.toLowerCase())
+      ) {
+        pushUnique(out, node ? `[${node}] ${status}` : status);
+      }
+      // workflow_started 仍有 message「开始工作流执行」时上面已取 msg
+      return out;
+    }
+
+    collectDisplayStringsFromRecord(d, out);
   }
+
   return out;
+}
+
+/** @deprecated 使用 extractLangGraphDisplayChunks（已覆盖 workflow_update） */
+export function extractLangGraphWorkflowUpdateMessage(obj: Record<string, unknown>): string | null {
+  if (String(obj.event ?? "") !== "workflow_update") return null;
+  const chunks = extractLangGraphDisplayChunks(obj);
+  return chunks[0] ?? null;
+}
+
+/** 是否应在文案前加换行（进度/通知类）；message_chunk 为流式片段不加 */
+export function shouldPrefixedNewlineForLangGraphEvent(event: string): boolean {
+  const ev = event.toLowerCase();
+  return (
+    ev === "workflow_update" ||
+    ev === "chat_notification" ||
+    ev === "workflow_start" ||
+    ev === "workflow_started" ||
+    ev === "error"
+  );
 }
 
 /** 从缓冲区拆出完整行（\n），返回 { lines, rest } */
@@ -137,7 +209,7 @@ export type ConsumeLangGraphSseOptions = {
   kind?: LangGraphChatHttpLogKind;
   /** 与 logLangGraphChatRequest 返回的序号一致 */
   logSeq?: number;
-  /** 距上次收到数据超过该毫秒则结束流（防止 isStreaming 一直 true） */
+  /** 距上次收到数据超过该毫秒则结束流；≤0 表示禁用空闲超时 */
   idleTimeoutMs?: number;
   signal?: AbortSignal;
 };
@@ -152,7 +224,9 @@ export async function consumeLangGraphSseStream(
   opts?: ConsumeLangGraphSseOptions,
 ): Promise<LangGraphSseConsumeResult> {
   const dec = new TextDecoder();
+  /** ≤0 表示不启用空闲超时（工作流中断恢复后节点间隔可能很长） */
   const idleMs = opts?.idleTimeoutMs ?? 8_000;
+  const idleEnabled = idleMs > 0;
   const logSeq = opts?.logSeq;
   let buf = "";
   let eventCount = 0;
@@ -168,6 +242,7 @@ export async function consumeLangGraphSseStream(
   };
 
   const armIdle = () => {
+    if (!idleEnabled) return;
     clearIdle();
     idleTimer = setTimeout(() => {
       cancelledByIdle = true;
@@ -184,7 +259,7 @@ export async function consumeLangGraphSseStream(
     }
   };
 
-  armIdle();
+  if (idleEnabled) armIdle();
   try {
     if (opts?.signal?.aborted) {
       stopReason = "cancelled";
@@ -197,7 +272,20 @@ export async function consumeLangGraphSseStream(
         break;
       }
 
-      const { done, value } = await reader.read();
+      let done = false;
+      let value: Uint8Array | undefined;
+      try {
+        const chunk = await reader.read();
+        done = chunk.done;
+        value = chunk.value;
+      } catch {
+        if (cancelledByIdle || opts?.signal?.aborted) {
+          stopReason = cancelledByIdle ? "idle_timeout" : "cancelled";
+          break;
+        }
+        throw new Error("SSE read failed");
+      }
+
       if (done) {
         if (cancelledByIdle) {
           stopReason = "idle_timeout";
@@ -232,7 +320,9 @@ export async function consumeLangGraphSseStream(
           await onParsed(parsed);
           stopReason = "interrupt";
           clearIdle();
-          await cancelReader();
+          // 不要 reader.cancel()：强制掐断会让任务管理丢掉等待中的 interrupt 状态，
+          // 随后 interrupt_feedback 会一直挂起、无 SSE（与 Qt 保持原连接不同）。
+          // 由调用方在恢复成功后再 abort 原 AbortController。
           return { reason: stopReason, eventCount };
         }
 

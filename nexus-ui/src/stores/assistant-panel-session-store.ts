@@ -8,15 +8,15 @@ export type AssistantPanelSessionId = "chat" | "knowledge-base";
 
 export type AssistantPanelSession = {
   messages: UIMessage[];
-  /** 知识库查询多轮 `conv_uid` */
-  convUid: string;
+  /** 知识库问答多轮 `thread_id`（融控任务管理协议） */
+  threadId: string;
   /** 智能助手 LangGraph `thread_id` */
   langGraphThreadId: string;
 };
 
 const emptySession = (): AssistantPanelSession => ({
   messages: [],
-  convUid: "",
+  threadId: "",
   langGraphThreadId: "",
 });
 
@@ -25,7 +25,7 @@ type MessagesUpdater = UIMessage[] | ((prev: UIMessage[]) => UIMessage[]);
 type State = {
   sessions: Record<AssistantPanelSessionId, AssistantPanelSession>;
   patchMessages: (id: AssistantPanelSessionId, updater: MessagesUpdater) => void;
-  setConvUid: (convUid: string) => void;
+  setThreadId: (threadId: string) => void;
   setLangGraphThreadId: (threadId: string) => void;
   clearSession: (id: AssistantPanelSessionId) => void;
 };
@@ -49,11 +49,11 @@ export const useAssistantPanelSessionStore = create<State>((set, get) => ({
     });
   },
 
-  setConvUid: (convUid) => {
+  setThreadId: (threadId) => {
     set((s) => ({
       sessions: {
         ...s.sessions,
-        "knowledge-base": { ...s.sessions["knowledge-base"], convUid },
+        "knowledge-base": { ...s.sessions["knowledge-base"], threadId },
       },
     }));
   },
@@ -85,8 +85,8 @@ export function useAssistantPanelMessages(panelId: AssistantPanelSessionId) {
   return [messages, setMessages] as const;
 }
 
-export function getAssistantConvUid(): string {
-  return useAssistantPanelSessionStore.getState().sessions["knowledge-base"].convUid.trim();
+export function getKnowledgeBaseThreadId(): string {
+  return useAssistantPanelSessionStore.getState().sessions["knowledge-base"].threadId.trim();
 }
 
 export { getAssistantLangGraphThreadId } from "@/stores/assistant-chat-tabs-store";

@@ -12,10 +12,19 @@ import {
 import { DroneSettingsDialog, type DroneSettingsPanelAnchor } from "@/components/layout/DroneSettingsDialog";
 import { stopAllPtzCameraTasks } from "@/lib/stop-all-ptz-camera-tasks";
 import { useAppConfigStore } from "@/stores/app-config-store";
+import { useEoVideoStreamSelectionSyncStore } from "@/stores/eo-video-stream-selection-sync-store";
 import { toast } from "sonner";
 
-export function openElectroOpticalDockPopup() {
-  if (typeof window === "undefined") return;
+export type OpenElectroOpticalDockPopupOptions = {
+  /** 新建后切主画面流（如 `uav:{entityId}`） */
+  mainStreamId?: string;
+};
+
+/** 新建光电 popup；可选指定主画面流。返回面板 id，窗口已满时返回 null。 */
+export function openElectroOpticalDockPopup(
+  options?: OpenElectroOpticalDockPopupOptions,
+): string | null {
+  if (typeof window === "undefined") return null;
   const dock = useDockStore.getState();
   const w = window.innerWidth;
   const h = window.innerHeight;
@@ -30,7 +39,7 @@ export function openElectroOpticalDockPopup() {
     toast.message("光电窗口已满", {
       description: `最多同时打开 ${EO_ELECTRO_OPTICAL_INSTANCE_COUNT} 个光电窗口，请先关闭其中一个再新建`,
     });
-    return;
+    return null;
   }
 
   const slotIndex = Math.max(0, EO_ELECTRO_OPTICAL_PANEL_IDS.indexOf(targetPanelId));
@@ -44,6 +53,12 @@ export function openElectroOpticalDockPopup() {
     size: { width: pw, height: ph },
   });
   dock.bringToFront(targetPanelId);
+
+  const streamId = options?.mainStreamId?.trim();
+  if (streamId) {
+    useEoVideoStreamSelectionSyncStore.getState().setMainFromPanel(targetPanelId, streamId);
+  }
+  return targetPanelId;
 }
 
 function systemFnBtnClass(active?: boolean) {

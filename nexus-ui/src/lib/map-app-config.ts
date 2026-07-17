@@ -722,8 +722,12 @@ export const DEFAULT_TRACK_RENDERING: AppConfigTrackRendering = {
   },
   trackDisplay: {
     showTrackId: true,
-    maxViewportPoints: 2000,
-    maxHistoryPointsPerTrack: 400,
+    maxViewportPoints: 8000,
+    /**
+     * 须 ≥ 面板「尾迹长度」换算点数上限（1800s / 2s ≈ 900），否则拉长滑块无效果。
+     * 长跑内存靠就地追加尾迹 + 停用查证图 base64 轮询控制，勿再随意压低本值。
+     */
+    maxHistoryPointsPerTrack: 900,
   },
   trackTimeout: {
     enabled: true,

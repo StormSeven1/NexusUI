@@ -33,6 +33,8 @@ export interface UseWebRtcPlayerOptions {
    * 仅无人机等需对齐 C++ `uavReconnectTimer` 的场景传入（通常 6000）。
    */
   stallWatchIntervalMs?: number;
+  /** 递增时强制重建 WebRTC（如私有云 start 推流后需重连 ZLM） */
+  webRtcKickEpoch?: number;
   /** 停帧恢复前先调用（如 poke 推流）；随后自动 WebRTC restart */
   onStallRecover?: () => void;
 }
@@ -108,6 +110,7 @@ export function useWebRtcPlayer({
   forceVideoPassthrough = false,
   stallWatchIntervalMs,
   onStallRecover,
+  webRtcKickEpoch = 0,
 }: UseWebRtcPlayerOptions): UseWebRtcPlayerResult {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const detachEncodedRef = useRef<(() => void) | null>(null);
@@ -345,7 +348,7 @@ export function useWebRtcPlayer({
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- videoRef 稳定；iceServers 用序列化键
-  }, [signalingUrl, enabled, iceKey, forceVideoPassthrough, start, cleanup]);
+  }, [signalingUrl, enabled, iceKey, forceVideoPassthrough, webRtcKickEpoch, start, cleanup]);
 
   useEffect(() => {
     const intervalMs = stallWatchIntervalMs ?? 0;

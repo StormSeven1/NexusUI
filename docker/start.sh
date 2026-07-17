@@ -122,12 +122,8 @@ ensure_grpc_deps() {
     python3 -c "import grpc" 2>/dev/null && echo "✅ grpcio 已就绪"
 }
 
-start_custombackend() {
-    echo "启动 Custombackend（端口 ${BACKEND_PORT}）..."
+_custombackend_prepare_deps() {
     cd /workspace/Custombackend
-    if [[ "${NEXUS_DOCKER_NO_KILL:-0}" != "1" ]]; then
-        free_tcp_port "${BACKEND_PORT}" || true
-    fi
     PIP_PID=""
     if [[ "${NEXUS_PY_SKIP_INSTALL:-0}" == "1" ]]; then
         echo "跳过 pip install（NEXUS_PY_SKIP_INSTALL=1）"
@@ -141,7 +137,6 @@ start_custombackend() {
         python3 -m pip install -q -r requirements.txt &
         PIP_PID=$!
     fi
-    cd /workspace/Custombackend/app
     if [[ -n "${PIP_PID:-}" ]]; then
         if [[ "${NEXUS_PY_BLOCK_UVICORN:-0}" == "1" ]]; then
             echo "等待 Custombackend 依赖安装完成（pip install，阻塞 uvicorn）..."
@@ -153,6 +148,9 @@ start_custombackend() {
             ( wait "${PIP_PID}" && echo "✅ Custombackend pip install 完成" || echo "⚠️ pip install 失败，system-eval 等 gRPC 功能可能不可用" ) &
         fi
     fi
+}
+
+_custombackend_export_fastdds_env() {
     if [[ -d /usr/local/eprosima/fastdds_python/lib/python3.10/site-packages ]]; then
       export PYTHONPATH="/opt/fastdds_python_ws/src/Fast-DDS-python/install/fastdds_python_examples/lib/python3.10/site-packages:/opt/fastdds_python_ws/src/Fast-DDS-python/install/fastdds_python/lib/python3.10/site-packages:/usr/local/eprosima/fastdds_python_examples/lib/python3.10/site-packages:/usr/local/eprosima/fastdds_python/lib/python3.10/site-packages${PYTHONPATH:+:$PYTHONPATH}"
       export LD_LIBRARY_PATH="/opt/fastdds_python_ws/src/Fast-DDS-python/install/fastdds_python_examples/lib:/usr/local/eprosima/fastdds/lib:/usr/local/eprosima/fastdds_python_examples/lib:/usr/local/eprosima/fastcdr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -160,8 +158,52 @@ start_custombackend() {
     fi
     # 勿将 NewTrackStruct/build 内 libfastdds 3.2 prepend 到 LD_LIBRARY_PATH：
     # Python fastdds 绑定链的是 3.1，混用会导致 domain 141 航迹 discovery 异常。
-    python3 -m uvicorn main:app --host 0.0.0.0 --port "${BACKEND_PORT}" &
-    echo "✅ Custombackend 已后台启动"
+}
+
+_custombackend_kill_stale() {
+    pkill -f "python3 -m uvicorn main:app.*--port ${BACKEND_PORT}" 2>/dev/null || true
+    sleep 0.3
+    # uvicorn 崩溃后 DDS 航迹 multiprocessing 子进程可能变成孤儿，重启前清理
+    pkill -f "python3 -c from multiprocessing.spawn import spawn_main" 2>/dev/null || true
+    sleep 0.2
+    if [[ "${NEXUS_DOCKER_NO_KILL:-0}" != "1" ]]; then
+        free_tcp_port "${BACKEND_PORT}" || true
+    fi
+}
+
+_custombackend_watchdog_loop() {
+    local delay="${NEXUS_BACKEND_RESTART_DELAY_SEC:-5}"
+    while true; do
+        _custombackend_kill_stale
+        echo "[custombackend-watchdog] 启动 uvicorn :${BACKEND_PORT} ..."
+        cd /workspace/Custombackend/app
+        python3 -m uvicorn main:app --host 0.0.0.0 --port "${BACKEND_PORT}" &
+        local pid=$!
+        wait "$pid" 2>/dev/null || true
+        local ec=$?
+        echo "[custombackend-watchdog] uvicorn 退出 (pid=${pid}, code=${ec})"
+        pkill -P "$pid" 2>/dev/null || true
+        sleep 0.5
+        pkill -P "$pid" -KILL 2>/dev/null || true
+        _custombackend_kill_stale
+        echo "[custombackend-watchdog] ${delay}s 后重启..."
+        sleep "$delay"
+    done
+}
+
+start_custombackend() {
+    echo "启动 Custombackend（端口 ${BACKEND_PORT}）..."
+    _custombackend_prepare_deps
+    _custombackend_export_fastdds_env
+    if [[ "${NEXUS_BACKEND_NO_WATCHDOG:-0}" == "1" ]]; then
+        _custombackend_kill_stale
+        cd /workspace/Custombackend/app
+        python3 -m uvicorn main:app --host 0.0.0.0 --port "${BACKEND_PORT}" &
+        echo "✅ Custombackend 已后台启动（NEXUS_BACKEND_NO_WATCHDOG=1，无守护）"
+    else
+        _custombackend_watchdog_loop &
+        echo "✅ Custombackend 守护已启动（端口 ${BACKEND_PORT}，崩溃后自动重启）"
+    fi
 }
 
 if [[ "${BACKEND_ONLY:-0}" == "1" ]]; then

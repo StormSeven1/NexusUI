@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildAvcCFromKeyFrame } from "@/lib/eo-video/h264AvcConfig";
 import type { EncodedFrameData } from "@/lib/eo-video/eoWebrtcEncodedSync";
+import { isEoVideoWebCodecsLogEnabled } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 
 /** 环缓冲上限：多路流/PTZ 运动时避免挤掉参考帧；与开解阈值分离以控制首帧延迟 */
 const MAX_FRAME_BUFFER = 30;
@@ -142,7 +143,9 @@ export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
 
     const resetDecoderState = (reason: string) => {
       if (closed) return;
-      console.warn(`[WebCodecs] reset: ${reason}`);
+      if (isEoVideoWebCodecsLogEnabled()) {
+        console.warn(`[WebCodecs] reset: ${reason}`);
+      }
       firstKeyFrameRef.current = false;
       decoderConfiguredRef.current = false;
       avcDescriptionRef.current = null;
@@ -194,9 +197,11 @@ export function useWebCodecsCanvas(): WebCodecsCanvasHandle {
             decoderConfiguredRef.current = true;
             setWebCodecsActive(true);
             setDecodePath(hw === "prefer-hardware" ? "hardware" : "software");
-            console.info(
-              `[WebCodecs] decoder ready codec=${codec} acceleration=${hw}${avcC ? " avcC" : ""}`,
-            );
+            if (isEoVideoWebCodecsLogEnabled()) {
+              console.info(
+                `[WebCodecs] decoder ready codec=${codec} acceleration=${hw}${avcC ? " avcC" : ""}`,
+              );
+            }
             return true;
           } catch {
             continue;

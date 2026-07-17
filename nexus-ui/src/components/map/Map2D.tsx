@@ -721,7 +721,7 @@ export function Map2D() {
         /* `map.addImage` 预注册各图层 `layout["icon-image"]` 用到的位图；`hasImage` 为真则跳过。并行加载以缩短首帧等待 */
         await Promise.all([
           /* 航迹点符号：空/海/潜 × 敌我中（`getAllMarkerSymbolKeys`），供 `TRACK_SYMBOL` 等 */
-          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill, airBird, airFuse, seaFuse, opticallyVerified }) => {
+          ...getAllMarkerSymbolKeysForPrereg(appCfg.trackRendering).map(async ({ id, type, disposition, virtual, friendlyFill, neutralFusionFill, airBird, airFuse, seaFuse, seaBuoy, seaReef, opticallyVerified }) => {
             if (!map.hasImage(id)) {
               map.addImage(
                 id,
@@ -737,6 +737,8 @@ export function Map2D() {
                     airFuse === true,
                     opticallyVerified === true,
                     seaFuse === true,
+                    seaBuoy === true,
+                    seaReef === true,
                   ),
                   64,
                 ),
@@ -1145,7 +1147,20 @@ export function Map2D() {
     });
 
     mapRef.current = map;
+
+    const containerEl = mapContainer.current;
+    const resizeObserver =
+      containerEl && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            map.resize();
+          })
+        : null;
+    if (containerEl && resizeObserver) {
+      resizeObserver.observe(containerEl);
+    }
+
     return () => {
+      resizeObserver?.disconnect();
       const tools = measureToolRefs.current;
       if (tools) {
         tools.dist.destroy();

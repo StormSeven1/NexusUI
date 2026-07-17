@@ -1,23 +1,123 @@
 import type { Track } from "@/lib/map-entity-model";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { destinationLngLat } from "@/lib/geo-destination";
-import { TRACK_TRAIL_SAMPLE_INTERVAL_SEC } from "@/stores/track-display-store";
+import { haversineMeters } from "@/lib/entity-publish-time";
+import {
+  MAX_TRAIL_LENGTH_SECONDS,
+  TRACK_TRAIL_SAMPLE_INTERVAL_SEC,
+} from "@/stores/track-display-store";
 
-/** 单条航迹尾迹在地图上最多绘制的点数（受配置上限与面板「尾迹长度」共同约束） */
+/** 相邻尾迹点步长硬上限（米）：融合重算常见跳变，超过则断开尾迹 */
+export const TRAIL_TELEPORT_MAX_METERS = 200;
+
+/** 缺速时假定地速（m/s），对海/融合慢目标为主 */
+const TRAIL_STEP_FALLBACK_SPEED_MS = 8;
+
+/** 相对 speed×间隔 的放宽系数（GPS 抖动 / 报文时间不齐） */
+const TRAIL_STEP_SLACK_FACTOR = 1.4;
+
+/** 低速/静止时最小允许步长（米），避免微抖误断 */
+const TRAIL_STEP_MIN_METERS = 35;
+
+/** 固定余量（米） */
+const TRAIL_STEP_BASE_SLACK_METERS = 25;
+
+/** 单条航迹尾迹在地图上最多绘制的点数（无时间戳时的回退：假定高频 ~5Hz） */
 export function maxDisplayedTrailPointCount(trailLengthSeconds: number): number {
-  const cfg = getTrackRenderingConfig().trackDisplay.maxHistoryPointsPerTrack;
-  const fromUi = Math.max(1, Math.ceil(trailLengthSeconds / TRACK_TRAIL_SAMPLE_INTERVAL_SEC));
-  return Math.min(cfg, fromUi);
+  const sec = Math.max(0, Math.min(MAX_TRAIL_LENGTH_SECONDS, trailLengthSeconds));
+  /** 无 `historyTrailAtMs` 时不再用 2s/点（会让 1s≈1 点但仍可能拉一根很旧的长线段） */
+  const assumedSampleSec = Math.min(TRACK_TRAIL_SAMPLE_INTERVAL_SEC, 0.2);
+  return Math.max(1, Math.ceil(sec / assumedSampleSec));
 }
 
+/** 相邻尾迹点允许的最大地面步长（米）：约 speed×采样间隔 + 余量，硬顶 200m */
+export function maxTrailStepMeters(speedMs: number | undefined): number {
+  const spd =
+    typeof speedMs === "number" && Number.isFinite(speedMs) && speedMs > 0
+      ? speedMs
+      : TRAIL_STEP_FALLBACK_SPEED_MS;
+  const expected =
+    spd * TRACK_TRAIL_SAMPLE_INTERVAL_SEC * TRAIL_STEP_SLACK_FACTOR + TRAIL_STEP_BASE_SLACK_METERS;
+  return Math.min(
+    TRAIL_TELEPORT_MAX_METERS,
+    Math.max(TRAIL_STEP_MIN_METERS, expected),
+  );
+}
+
+export function isTrailSegmentTeleport(
+  from: [number, number],
+  to: [number, number],
+  speedMs?: number,
+): boolean {
+  const stepM = haversineMeters(from[1], from[0], to[1], to[0]);
+  if (!(stepM > 0)) return false;
+  return stepM > maxTrailStepMeters(speedMs);
+}
+
+/**
+ * 过滤 historyTrail 内部的融合瞬移：只保留**最后一次**跳变之后的连续后缀。
+ * 同一 showID 位置跳变时，旧段不参与绘制，避免跨洋/跨区长线。
+ */
+export function filterHistoryTrailTeleports(
+  trail: [number, number][],
+  speedMs?: number,
+): [number, number][] {
+  if (trail.length <= 1) return trail;
+  let segmentStart = 0;
+  for (let i = 1; i < trail.length; i++) {
+    if (isTrailSegmentTeleport(trail[i - 1], trail[i], speedMs)) {
+      segmentStart = i;
+    }
+  }
+  return trail.slice(segmentStart);
+}
+
+/**
+ * 面板「尾迹长度」语义：请求的**最长显示时长（秒）**。
+ * - 内存里只有约 40s 历史时，拉到 40 / 100 / 1000 都应画满这 40s（`min(请求, 已有)`）。
+ * - 有 `historyTrailAtMs` 时按墙上时间裁；没有时用点数估算做上限，点数超过请求则截末段，否则画**全部已有点**。
+ */
 export function trimHistoryTrailForDisplay(
   trail: [number, number][] | undefined,
   trailLengthSeconds: number,
+  speedMs?: number,
+  currentLngLat?: [number, number],
+  trailAtMs?: number[],
 ): [number, number][] | undefined {
   if (!trail?.length) return trail;
-  const maxPts = maxDisplayedTrailPointCount(trailLengthSeconds);
-  if (trail.length <= maxPts) return trail;
-  return trail.slice(-maxPts);
+
+  let pts: [number, number][];
+  const sec = Math.max(0, Math.min(MAX_TRAIL_LENGTH_SECONDS, trailLengthSeconds));
+  if (trailAtMs && trailAtMs.length === trail.length && sec > 0) {
+    const cutoff = Date.now() - sec * 1000;
+    let start = 0;
+    while (start < trail.length && (trailAtMs[start] ?? 0) < cutoff) start += 1;
+    if (start >= trail.length) return undefined;
+    /** 时间窗内有多少画多少，不再二次按点数砍断（否则大秒数与「内存最长」不一致） */
+    pts = start === 0 ? trail : trail.slice(start);
+  } else {
+    const maxPts = maxDisplayedTrailPointCount(trailLengthSeconds);
+    /** 请求点数 ≥ 内存点数 → 画满内存；否则只留末段 */
+    pts = trail.length <= maxPts ? trail : trail.slice(-maxPts);
+  }
+
+  pts = filterHistoryTrailTeleports(pts, speedMs);
+  if (!pts.length) return undefined;
+  if (currentLngLat && isTrailSegmentTeleport(pts[pts.length - 1], currentLngLat, speedMs)) {
+    return undefined;
+  }
+  return pts;
+}
+
+/** store 摄入：相邻更新步长过大时整段尾迹作废（与展示层瞬移判定一致） */
+export function shouldResetHistoryTrailOnStep(
+  fromLng: number,
+  fromLat: number,
+  toLng: number,
+  toLat: number,
+  speedMs?: number,
+): boolean {
+  return isTrailSegmentTeleport([fromLng, fromLat], [toLng, toLat], speedMs);
 }
 
 /** 缺速时用假定地速（m/s）画示意矢量，避免滑块无效 */

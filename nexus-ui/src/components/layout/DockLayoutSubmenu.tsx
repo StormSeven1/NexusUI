@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { ChevronRight } from "lucide-react";
@@ -15,6 +15,8 @@ import {
   useDockLayoutPresetsStore,
 } from "@/stores/dock-layout-presets-store";
 import { DockLayoutNameDialog } from "@/components/layout/DockLayoutNameDialog";
+import { setWorkspaceLayoutMode } from "@/lib/layout/workspace-layout-mode";
+import { useDockStore } from "@/stores/dock-store";
 
 type FlyoutKind = "save" | "restore" | null;
 
@@ -68,6 +70,8 @@ export function useDockLayoutSubmenu() {
   const presets = useDockLayoutPresetsStore((s) => s.presets);
   const canAddPreset = useDockLayoutPresetsStore((s) => s.canAddPreset);
   const upsertPreset = useDockLayoutPresetsStore((s) => s.upsertPreset);
+  const layoutMode = useDockStore((s) => s.layoutMode);
+  const isFreeLayout = layoutMode === "free";
 
   const closeLayoutFlyouts = useCallback(() => {
     setLayoutFlyoutOpen(false);
@@ -75,6 +79,13 @@ export function useDockLayoutSubmenu() {
     setFlyout(null);
     setFlyoutAnchor(null);
   }, []);
+
+  useEffect(() => {
+    if (!isFreeLayout) {
+      setFlyout(null);
+      setFlyoutAnchor(null);
+    }
+  }, [isFreeLayout]);
 
   const openLayoutFlyout = () => {
     const el = layoutRowRef.current;
@@ -84,6 +95,7 @@ export function useDockLayoutSubmenu() {
   };
 
   const openNestedFlyout = (kind: FlyoutKind, rowEl: HTMLButtonElement | null) => {
+    if (!isFreeLayout && (kind === "save" || kind === "restore")) return;
     if (!rowEl) return;
     setFlyout(kind);
     setFlyoutAnchor(rowEl.getBoundingClientRect());
@@ -100,6 +112,10 @@ export function useDockLayoutSubmenu() {
   };
 
   const persistLayout = (name: string, overwriteId?: string) => {
+    if (!isFreeLayout) {
+      toast.message("请在自由布局模式下保存布局");
+      return;
+    }
     const snapshot = captureDockLayoutSnapshot();
     const result = upsertPreset(name, snapshot, overwriteId);
     if (!result.ok) {
@@ -112,6 +128,10 @@ export function useDockLayoutSubmenu() {
   };
 
   const onRestoreDefault = () => {
+    if (!isFreeLayout) {
+      toast.message("请在自由布局模式下恢复布局");
+      return;
+    }
     applyDockLayoutSnapshot(getDefaultDockLayoutSnapshot());
     toast.success("已恢复默认布局");
     closeLayoutFlyouts();
@@ -121,6 +141,10 @@ export function useDockLayoutSubmenu() {
     presetName: string,
     snapshot: Parameters<typeof applyDockLayoutSnapshot>[0],
   ) => {
+    if (!isFreeLayout) {
+      toast.message("请在自由布局模式下恢复布局");
+      return;
+    }
     applyDockLayoutSnapshot(snapshot);
     toast.success("布局已恢复", { description: presetName });
     closeLayoutFlyouts();
@@ -145,43 +169,83 @@ export function useDockLayoutSubmenu() {
       >
         <li role="none">
           <button
-            ref={saveRowRef}
             type="button"
-            role="menuitem"
-            aria-haspopup="menu"
+            role="menuitemradio"
+            aria-checked={layoutMode === "classic"}
             className={cn(
-              "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10",
-              flyout === "save" && "bg-white/5",
+              "flex w-full px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10",
+              layoutMode === "classic" && "bg-white/5 text-nexus-accent",
             )}
-            onMouseEnter={() => openNestedFlyout("save", saveRowRef.current)}
-            onFocus={() => openNestedFlyout("save", saveRowRef.current)}
+            onClick={() => {
+              setWorkspaceLayoutMode("classic");
+              closeLayoutFlyouts();
+            }}
           >
-            <span>保存布局</span>
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-70" />
+            经典布局
           </button>
         </li>
         <li role="none">
           <button
-            ref={restoreRowRef}
             type="button"
-            role="menuitem"
-            aria-haspopup="menu"
+            role="menuitemradio"
+            aria-checked={layoutMode === "free"}
             className={cn(
-              "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10",
-              flyout === "restore" && "bg-white/5",
+              "flex w-full px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10",
+              layoutMode === "free" && "bg-white/5 text-nexus-accent",
             )}
-            onMouseEnter={() => openNestedFlyout("restore", restoreRowRef.current)}
-            onFocus={() => openNestedFlyout("restore", restoreRowRef.current)}
+            onClick={() => {
+              setWorkspaceLayoutMode("free");
+              closeLayoutFlyouts();
+            }}
           >
-            <span>恢复布局</span>
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-70" />
+            自由布局
           </button>
         </li>
+        {isFreeLayout ? (
+          <>
+            <li className="my-1 border-t border-nexus-border" role="separator" />
+            <li role="none">
+              <button
+                ref={saveRowRef}
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10",
+                  flyout === "save" && "bg-white/5",
+                )}
+                onMouseEnter={() => openNestedFlyout("save", saveRowRef.current)}
+                onFocus={() => openNestedFlyout("save", saveRowRef.current)}
+              >
+                <span>保存布局</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-70" />
+              </button>
+            </li>
+            <li role="none">
+              <button
+                ref={restoreRowRef}
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10",
+                  flyout === "restore" && "bg-white/5",
+                )}
+                onMouseEnter={() => openNestedFlyout("restore", restoreRowRef.current)}
+                onFocus={() => openNestedFlyout("restore", restoreRowRef.current)}
+              >
+                <span>恢复布局</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-70" />
+              </button>
+            </li>
+          </>
+        ) : null}
       </ul>,
       document.body,
     );
 
   const saveFlyout =
+    isFreeLayout &&
     flyout === "save" &&
     flyoutAnchor &&
     LayoutMenuFlyout({
@@ -250,6 +314,7 @@ export function useDockLayoutSubmenu() {
     });
 
   const restoreFlyout =
+    isFreeLayout &&
     flyout === "restore" &&
     flyoutAnchor &&
     LayoutMenuFlyout({

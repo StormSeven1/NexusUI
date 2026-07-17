@@ -22,6 +22,7 @@ import { useDockStore } from "@/stores/dock-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import { resolveTrackForDroneSelfReport } from "@/lib/resolve-track-for-drone-self-report";
 import { resolveCamServerSelfPosMapId } from "@/lib/map-gis-camera-task";
+import { dispatchAimTrackCollectMapDblClick } from "@/lib/eo-aim-collect/dispatchAimTrackCollectMapDblClick";
 
 /**
  * 告警 trackId → 航迹 showID（与 AlertPanel / 地图选中一致）。
@@ -132,7 +133,7 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
     course: track.course ?? track.heading,
   });
   console.log(
-    "[map-track-dblclick] 分路说明：① ThirdPartyCamPosTask=第三方高速相机 POS（targetId=uniqueID）；② TargetCollectionIMChildTask=光电 PTZ 主相机（hasPtz、无 parent、非第三方）",
+    "[map-track-dblclick] 分路说明：① ThirdPartyCamPosTask=第三方高速相机 POS（targetId=uniqueID）；② TargetCollectionIMChildTask=光电 PTZ 主相机（hasPtz、无 parent、非第三方）；③ 对准采集 StreamTrack triggerType=3",
   );
   console.log("[map-track-dblclick] ② IM 任务 targetcollection 预览", target);
 
@@ -147,27 +148,32 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
     posPromise = Promise.resolve();
   }
 
-  const cm = cfg.cameraManagement;
-  if (!cm) {
-    console.warn("[map-track-dblclick] ② cameraManagement 未配置，未发送 TargetCollectionIMChildTask");
-    await posPromise;
-    console.groupEnd();
-    return;
-  }
   try {
     await ensureEntitiesTrackTaskCache();
   } catch (err: unknown) {
-    console.error("[map-track-dblclick] ② 实体快照加载失败，未发送 IM 任务", err);
+    console.error("[map-track-dblclick] 实体快照加载失败，②③ 均未发送", err);
     await posPromise;
     console.groupEnd();
     return;
   }
+
   const owners = listTrackTaskOwnerEntityIds();
+  const aimCollectPromise = dispatchAimTrackCollectMapDblClick(track).catch((err: unknown) => {
+    console.warn("[map-track-dblclick] ③ 对准采集 triggerType=3 异常", err);
+  });
+
+  const cm = cfg.cameraManagement;
+  if (!cm) {
+    console.warn("[map-track-dblclick] ② cameraManagement 未配置，未发送 TargetCollectionIMChildTask");
+    await Promise.all([posPromise, aimCollectPromise]);
+    console.groupEnd();
+    return;
+  }
   if (owners.length === 0) {
     console.warn(
       "[map-track-dblclick] ② 无可用光电 PTZ 主相机（需 hasPtz、无 parent、非第三方），未发送 IM 任务",
     );
-    await posPromise;
+    await Promise.all([posPromise, aimCollectPromise]);
     console.groupEnd();
     return;
   }
@@ -175,7 +181,7 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
   const client = CameraManagementClient.fromConfig(cm);
   if (!client) {
     console.warn("[map-track-dblclick] ② CameraManagementClient 初始化失败");
-    await posPromise;
+    await Promise.all([posPromise, aimCollectPromise]);
     console.groupEnd();
     return;
   }
@@ -210,6 +216,6 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
     });
   }
 
-  await posPromise;
+  await Promise.all([posPromise, aimCollectPromise]);
   console.groupEnd();
 }

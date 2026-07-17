@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAppStore } from "@/stores/app-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
@@ -18,6 +19,9 @@ import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
 import { useDroneDeviceLayerStore } from "@/stores/drone-device-layer-store";
 import { useDroneStore } from "@/stores/drone-store";
+import { useEoDroneDdsStatusStore } from "@/stores/eo-drone-dds-status-store";
+import { formatEoDdsDroneTaskLine } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import { openElectroOpticalDockPopup } from "@/components/eo-video/EoVideoTopLauncher";
 import { countDbAreaPanelUiRows, countVisibleDbAreaLeaves } from "@/lib/db-area-panel-helpers";
 import { countOptoDevicePanelUiRows, countVisibleOptoDeviceLeaves } from "@/lib/opto-device-layer-visibility";
 import {
@@ -55,11 +59,54 @@ import {
   Pentagon,
   Ruler,
   DraftingCompass,
+  Plane,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QuickWorkflowModal } from "@/components/layout/QuickWorkflowModal";
 
-type StatRow = { label: string; value: string; icon: LucideIcon; color: string };
+type StatRow = {
+  label: string;
+  value: string;
+  icon: LucideIcon;
+  color: string;
+  /** 态势「活跃无人机」：可点击弹出列表 */
+  interactive?: "active-drones";
+};
+
+type ActiveDroneListItem = {
+  entityId: string;
+  name: string;
+  taskLine: string;
+};
+
+function resolveDroneDisplayName(entityId: string): string {
+  const ds = useDroneStore.getState();
+  const sn = ds.entityIdToDeviceSn[entityId]?.trim();
+  if (sn) {
+    const name = ds.drones[sn]?.displayName?.trim();
+    if (name) return name;
+  }
+  const direct = ds.drones[entityId]?.displayName?.trim();
+  if (direct) return direct;
+  return entityId;
+}
+
+function collectActiveDroneListItems(
+  byEntityId: Record<string, { droneTaskAction?: unknown }>,
+): ActiveDroneListItem[] {
+  const items: ActiveDroneListItem[] = [];
+  for (const [entityId, row] of Object.entries(byEntityId)) {
+    const taskLine = formatEoDdsDroneTaskLine(row);
+    if (taskLine === "空闲中") continue;
+    items.push({
+      entityId,
+      name: resolveDroneDisplayName(entityId),
+      taskLine,
+    });
+  }
+  items.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  return items;
+}
 
 /**
  * 图层面板「已开启」项数量（与 `LayerPanel` 的 enabledCount 一致）：
@@ -310,13 +357,74 @@ export function WorkspaceDetails() {
 
   /** 快捷工作流弹窗状态 */
   const [quickWorkflowOpen, setQuickWorkflowOpen] = useState(false);
+  const [activeDronesOpen, setActiveDronesOpen] = useState(false);
+  const activeDronesBtnRef = useRef<HTMLButtonElement>(null);
+  const activeDronesMenuRef = useRef<HTMLDivElement>(null);
+  const [activeDronesAnchor, setActiveDronesAnchor] = useState<{
+    left: number;
+    top: number;
+    width: number;
+  } | null>(null);
+
+  const droneTaskByEntityId = useEoDroneDdsStatusStore((s) => s.byEntityId);
+  const activeDroneItems = useMemo(
+    () => collectActiveDroneListItems(droneTaskByEntityId),
+    [droneTaskByEntityId, droneStoreDrones, droneToAirport],
+  );
+
+  useEffect(() => {
+    if (!activeDronesOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (activeDronesBtnRef.current?.contains(t)) return;
+      if (activeDronesMenuRef.current?.contains(t)) return;
+      setActiveDronesOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setActiveDronesOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [activeDronesOpen]);
+
+  useEffect(() => {
+    if (!activeDronesOpen) return;
+    const el = activeDronesBtnRef.current;
+    if (!el) return;
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      setActiveDronesAnchor({
+        left: Math.max(8, r.left),
+        top: r.bottom + 4,
+        width: Math.max(240, r.width),
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [activeDronesOpen]);
 
   const situationLiveStats = useMemo((): StatRow[] => {
     return [
       { label: "跟踪航迹", value: String(tracks.length), icon: Route, color: "text-green-400" },
       { label: "告警事件", value: String(alerts.length), icon: BarChart3, color: "text-orange-400" },
+      {
+        label: "活跃无人机",
+        value: String(activeDroneItems.length),
+        icon: Plane,
+        color: "text-cyan-400",
+        interactive: "active-drones",
+      },
     ];
-  }, [tracks, alerts]);
+  }, [tracks, alerts, activeDroneItems]);
 
   const assetsLiveStats = useMemo((): StatRow[] => {
     const total = assets.length;
@@ -432,6 +540,28 @@ export function WorkspaceDetails() {
         <div className="flex items-center gap-6">
           {statistics.map((stat, index) => {
             const Icon = stat.icon;
+            if (stat.interactive === "active-drones") {
+              return (
+                <button
+                  key={index}
+                  ref={activeDronesBtnRef}
+                  type="button"
+                  title="查看当前活跃无人机并打开光电窗口"
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-1.5 py-0.5 transition-colors",
+                    "hover:bg-nexus-bg-elevated",
+                    activeDronesOpen && "bg-nexus-accent-glow/15",
+                  )}
+                  onClick={() => setActiveDronesOpen((v) => !v)}
+                >
+                  <Icon size={16} className={stat.color} />
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-medium text-nexus-text-primary">{stat.label}</span>
+                    <span className="text-xs font-bold">{stat.value}</span>
+                  </div>
+                </button>
+              );
+            }
             return (
               <div key={index} className="flex items-center gap-2">
                 <Icon size={16} className={stat.color} />
@@ -445,7 +575,6 @@ export function WorkspaceDetails() {
         </div>
       </div>
 
-      {/* 右侧：操作工具栏（态势页：区域 / 距离 / 角度 与地图 Map2D 联动） */}
       <div className="flex flex-wrap items-center gap-2">
         {topTab === "situation" && (
           <>
@@ -507,7 +636,9 @@ export function WorkspaceDetails() {
               <DraftingCompass size={14} />
               角度
             </button>
-            <span className="hidden h-4 w-px bg-white/10 sm:inline-block" aria-hidden />
+            {config.tools.length > 0 ? (
+              <span className="hidden h-4 w-px bg-white/10 sm:inline-block" aria-hidden />
+            ) : null}
           </>
         )}
         {config.tools.map((tool) => (
@@ -528,8 +659,46 @@ export function WorkspaceDetails() {
         ))}
       </div>
 
-      {/* 快捷工作流弹窗：任务→规划 点击时弹出 */}
       <QuickWorkflowModal open={quickWorkflowOpen} onClose={() => setQuickWorkflowOpen(false)} />
+
+      {activeDronesOpen &&
+        activeDronesAnchor &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={activeDronesMenuRef}
+            role="listbox"
+            aria-label="活跃无人机"
+            className="fixed z-[10050] max-h-72 overflow-y-auto rounded-md border border-nexus-border bg-[#212126] shadow-xl"
+            style={{
+              left: activeDronesAnchor.left,
+              top: activeDronesAnchor.top,
+              minWidth: activeDronesAnchor.width,
+              maxWidth: 360,
+            }}
+          >
+            {activeDroneItems.length === 0 ? (
+              <div className="px-3 py-3 text-xs text-nexus-text-muted">暂无活跃无人机</div>
+            ) : (
+              activeDroneItems.map((item) => (
+                <button
+                  key={item.entityId}
+                  type="button"
+                  role="option"
+                  className="flex w-full flex-col gap-0.5 border-b border-nexus-border/60 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-nexus-accent-glow/10"
+                  onClick={() => {
+                    setActiveDronesOpen(false);
+                    openElectroOpticalDockPopup({ mainStreamId: `uav:${item.entityId}` });
+                  }}
+                >
+                  <span className="text-xs font-medium text-nexus-text-primary">{item.name}</span>
+                  <span className="text-[11px] text-cyan-400/90">{item.taskLine}</span>
+                </button>
+              ))
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

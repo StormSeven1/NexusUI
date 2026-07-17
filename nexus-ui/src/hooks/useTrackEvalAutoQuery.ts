@@ -15,6 +15,8 @@ export function useTrackEvalAutoQuery() {
   const runScheduledQuery = useTrackEvaluationStore((s) => s.runScheduledQuery);
 
   useEffect(() => {
+    // gRPC 模式不依赖 C++ :12600；避免 HTTPS 页反复报 wss-track-eval 502 干扰主 WS 排查
+    if (isTrackEvalGrpcEnabled()) return;
     connectWs();
   }, [connectWs]);
 

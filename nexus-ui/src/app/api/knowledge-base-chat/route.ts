@@ -1,23 +1,13 @@
 import { NextResponse } from "next/server";
+import { normalizeKnowledgeBaseUpstreamBody } from "@/lib/knowledge-base-chat-request";
+import { resolveKnowledgeBaseChatStreamUrl } from "@/lib/knowledge-base-chat-url";
 
 export const runtime = "nodejs";
 
-function dbQaUpstreamBase(): string {
-  const ip =
-    process.env.WatchSystemDbQaIp?.trim() ||
-    process.env.WATCHSYSTEM_DB_QA_IP?.trim() ||
-    "192.168.18.103";
-  const portRaw =
-    process.env.WatchSystemDbQaPort?.trim() ||
-    process.env.WATCHSYSTEM_DB_QA_PORT?.trim() ||
-    "5670";
-  const port = /^\d+$/.test(portRaw) ? portRaw : "5670";
-  return `http://${ip}:${port}`;
-}
-
 /**
- * 代理 watchsystem 数据库问答 → `POST {upstream}/api/v1/chat/react-agent`
- * 地址由 WatchSystemDbQaIp / WatchSystemDbQaPort（或 WATCHSYSTEM_DB_QA_*）配置。
+ * 代理融控知识库问答 → `POST {upstream}/api/v1/chat/stream`
+ * 请求体：`messages` / `thread_id` / `user_context` / `debug`（融控任务管理协议）
+ * 地址：`NEXT_PUBLIC_NEXUS_KNOWLEDGE_BASE_URL` 或 `WatchSystemDbQaIp`+`WatchSystemDbQaPort`，默认 192.168.18.103:21914。
  */
 export async function POST(req: Request) {
   let bodyText: string;
@@ -27,7 +17,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
 
-  const upstreamUrl = `${dbQaUpstreamBase()}/api/v1/chat/react-agent`;
+  const upstreamBody = normalizeKnowledgeBaseUpstreamBody(bodyText);
+  const upstreamUrl = resolveKnowledgeBaseChatStreamUrl();
   let upstream: Response;
   try {
     upstream = await fetch(upstreamUrl, {
@@ -36,12 +27,30 @@ export async function POST(req: Request) {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
       },
-      body: bodyText,
+      body: upstreamBody,
       cache: "no-store",
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: "upstream fetch failed", detail: msg }, { status: 502 });
+  }
+
+  const ct = upstream.headers.get("content-type") ?? "";
+  if (ct.includes("application/json")) {
+    const errText = await upstream.text().catch(() => "");
+    let detail = errText.slice(0, 2000);
+    try {
+      const j = JSON.parse(errText) as { err_msg?: string; error?: string; success?: boolean };
+      if (j.success === false || j.err_msg) {
+        detail = (j.err_msg ?? j.error ?? detail).trim();
+      }
+    } catch {
+      /* keep raw */
+    }
+    return NextResponse.json(
+      { error: "upstream error", detail: detail || "upstream returned JSON error" },
+      { status: upstream.ok ? 502 : upstream.status >= 400 ? upstream.status : 502 },
+    );
   }
 
   if (!upstream.ok || !upstream.body) {
@@ -52,11 +61,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const ct = upstream.headers.get("content-type") ?? "text/event-stream";
+  const streamCt = upstream.headers.get("content-type") ?? "text/event-stream";
   return new Response(upstream.body, {
     status: upstream.status,
     headers: {
-      "Content-Type": ct.includes("application/json") ? "text/event-stream" : ct,
+      "Content-Type": streamCt.includes("application/json") ? "text/event-stream" : streamCt,
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
     },

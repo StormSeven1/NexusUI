@@ -1,6 +1,6 @@
 /**
- * 右侧知识库查询：watchsystem 数据库问答，布局与智能助手一致。
- * POST `/api/knowledge-base-chat` → 服务端代理 DB-GPT `react-agent` 流式接口。
+ * 右侧知识库查询：自然语言问答 + 地图/相机指令。
+ * POST `/api/knowledge-base-chat` → 服务端代理 `POST …/api/v1/chat/stream`（融控任务管理 SSE）。
  */
 
 "use client";
@@ -11,9 +11,13 @@ import type { UIMessage } from "ai";
 import { NxIconButton } from "@/components/nexus";
 import { ChatMessageList } from "@/components/chat/ChatMessageList";
 import { ChatInput, type ChatInputHandle } from "@/components/chat/ChatInput";
-import { forEachDbQaSseLine } from "@/lib/knowledge-base-chat-sse";
+import { buildKnowledgeBaseChatRequestBody } from "@/lib/knowledge-base-chat-context";
+import { forEachKnowledgeBaseSseEvent } from "@/lib/knowledge-base-chat-sse";
 import {
-  getAssistantConvUid,
+  executeTaskManagerMapCommand,
+  formatMapCommandFeedback,
+} from "@/lib/task-manager-map-command-adapter";
+import {
   useAssistantPanelMessages,
   useAssistantPanelSessionStore,
 } from "@/stores/assistant-panel-session-store";
@@ -23,8 +27,9 @@ import { cn } from "@/lib/utils";
 
 const QUICK_PROMPTS: readonly string[] = [
   "现在有哪些告警？",
-  "当前高风险告警有多少条？",
-  "最近24小时新增了多少条航迹？",
+  "显示无人机图层",
+  "查询可用底图列表",
+  "10海里内有多少目标",
   "watchsystem 库中有哪些表？",
 ];
 
@@ -73,7 +78,7 @@ function appendAssistantTextById(
 export function KnowledgeBasePanel() {
   const [messages, setMessages] = useAssistantPanelMessages("knowledge-base");
   const clearSession = useAssistantPanelSessionStore((s) => s.clearSession);
-  const setConvUid = useAssistantPanelSessionStore((s) => s.setConvUid);
+  const setThreadId = useAssistantPanelSessionStore((s) => s.setThreadId);
   const [isStreaming, setIsStreaming] = useState(false);
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -102,7 +107,7 @@ export function KnowledgeBasePanel() {
     clearSession("knowledge-base");
   }, [stop, clearSession]);
 
-  const runDbQaStream = useCallback(async (userText: string) => {
+  const runKnowledgeBaseStream = useCallback(async (userText: string) => {
     const ac = new AbortController();
     abortRef.current = ac;
     setIsStreaming(true);
@@ -115,15 +120,9 @@ export function KnowledgeBasePanel() {
       { id: asstId, role: "assistant", parts: [{ type: "text", text: "" }] },
     ]);
 
-    const body: Record<string, unknown> = {
-      question: userText,
-      stream: true,
-    };
-    const existingConv = getAssistantConvUid();
-    if (existingConv) body.conv_uid = existingConv;
-
-    let stepBuffer = "";
-    let gotFinal = false;
+    const body = buildKnowledgeBaseChatRequestBody(userText);
+    let answerBuffer = "";
+    let gotAnswer = false;
 
     try {
       const res = await fetch("/api/knowledge-base-chat", {
@@ -148,24 +147,78 @@ export function KnowledgeBasePanel() {
       const reader = res.body?.getReader();
       if (!reader) throw new Error("无响应体");
 
-      await forEachDbQaSseLine(reader, async (ev) => {
+      await forEachKnowledgeBaseSseEvent(reader, async (ev) => {
+        if (ev.type === "chat_answer") {
+          gotAnswer = true;
+          if (ev.threadId) setThreadId(ev.threadId);
+          if (ev.text) {
+            answerBuffer = ev.text;
+            setAssistantTextById(setMessages, asstId, answerBuffer);
+          }
+          return;
+        }
+
+        if (ev.type === "answer_delta") {
+          gotAnswer = true;
+          answerBuffer += ev.content;
+          setAssistantTextById(setMessages, asstId, answerBuffer);
+          return;
+        }
+
+        if (ev.type === "answer_done") {
+          gotAnswer = true;
+          if (answerBuffer.trim()) {
+            setAssistantTextById(setMessages, asstId, answerBuffer);
+          }
+          return;
+        }
+
+        if (ev.type === "step_chunk") {
+          if (!answerBuffer.trim()) {
+            setAssistantTextById(setMessages, asstId, ev.content);
+          }
+          return;
+        }
+
+        if (ev.type === "map_command") {
+          const result = executeTaskManagerMapCommand(ev.command);
+          const feedback = formatMapCommandFeedback(ev.command, result);
+          if (ev.command.expects_result && result.message) {
+            appendAssistantTextById(
+              setMessages,
+              asstId,
+              (answerBuffer ? "\n\n" : "") + feedback,
+            );
+            answerBuffer = answerBuffer ? `${answerBuffer}\n\n${feedback}` : feedback;
+          } else if (!ev.command.expects_result && !result.ok) {
+            appendAssistantTextById(setMessages, asstId, `\n\n${feedback}`);
+          }
+          return;
+        }
+
         if (ev.type === "step") {
-          stepBuffer += (stepBuffer ? "\n" : "") + ev.content;
-          setAssistantTextById(setMessages, asstId, stepBuffer);
+          answerBuffer += (answerBuffer ? "\n" : "") + ev.content;
+          setAssistantTextById(setMessages, asstId, answerBuffer);
           return;
         }
+
         if (ev.type === "final") {
-          gotFinal = true;
-          if (ev.convUid) setConvUid(ev.convUid);
-          const answer = ev.content.trim() || stepBuffer;
+          gotAnswer = true;
+          if (ev.convUid) setThreadId(ev.convUid);
+          const answer = ev.content.trim() || answerBuffer;
           setAssistantTextById(setMessages, asstId, answer || "（无回答内容）");
-          stepBuffer = "";
+          answerBuffer = answer || answerBuffer;
           return;
         }
-        if (ev.type === "done" && !gotFinal && stepBuffer.trim()) {
-          setAssistantTextById(setMessages, asstId, stepBuffer);
+
+        if (ev.type === "done" && !gotAnswer && answerBuffer.trim()) {
+          setAssistantTextById(setMessages, asstId, answerBuffer);
         }
       });
+
+      if (!gotAnswer && !answerBuffer.trim()) {
+        setAssistantTextById(setMessages, asstId, "（无回答内容）");
+      }
     } catch (e) {
       if ((e as Error).name === "AbortError") {
         appendAssistantTextById(setMessages, asstId, "\n\n[已停止]");
@@ -178,7 +231,7 @@ export function KnowledgeBasePanel() {
       abortRef.current = null;
       setIsStreaming(false);
     }
-  }, []);
+  }, [setMessages, setThreadId]);
 
   const handleQuickPromptSelect = useCallback((label: string) => {
     setQuickMenuOpen(false);
@@ -189,9 +242,9 @@ export function KnowledgeBasePanel() {
     (text: string) => {
       const t = text.trim();
       if (!t || isStreaming) return;
-      void runDbQaStream(t);
+      void runKnowledgeBaseStream(t);
     },
-    [isStreaming, runDbQaStream],
+    [isStreaming, runKnowledgeBaseStream],
   );
 
   const leadingToolbar = (
@@ -254,13 +307,12 @@ export function KnowledgeBasePanel() {
                       <h3 className="text-sm font-semibold tracking-tight text-nexus-text-primary">
                         知识库查询
                       </h3>
-                      <p className="mt-0.5 text-[10px] text-nexus-text-muted">watchsystem · 自然语言查库</p>
+                      <p className="mt-0.5 text-[10px] text-nexus-text-muted">
+                        数据库问答 · 地图指令 · 相机指令
+                      </p>
                     </div>
                     <p className="text-[11px] leading-[1.65] text-nexus-text-secondary">
-                      针对 watchsystem 数据库进行自然语言问答，自动生成并执行 SQL 后返回结论。简单问题约
-                      10–15 秒，复杂问题可能 30–90 秒。点击
-                      <span className="mx-0.5 text-nexus-text-primary">快捷问题</span>
-                      会填入底部输入框，可修改后再发送。
+                      对接任务管理 `/api/v1/chat/stream`：支持数据库问答、相机指令与地图图层控制。
                     </p>
                   </div>
                 </div>

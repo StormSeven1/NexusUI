@@ -69,19 +69,80 @@ function newAlertId(): string {
   return `al_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** V2 `alert_type` / 通用 `severity` / V2 `alarmLevel`（数字 0-4）→ store 用的三档 */
+/** V2 `alert_type` / 通用 `severity` / 告警等级 → store 用的三档
+ *
+ * 注意两套数值语义：
+ * - ThreatLevel 枚举（NewTrackStruct）：0=LOW / 1=MEDIUM / 2=HIGH
+ * - 威胁分 threatScore（AlarmEvent DDS）：约 0~100
+ * 旧逻辑把数字统一按「≥3 严重」，导致枚举 HIGH(2) 变成「警告」，
+ * 与 DDS 威胁分（常≥20→严重）交替覆盖同一航迹，界面严重/警告闪烁。
+ */
 export function wsAlertTypeToSeverity(
   raw: string | number | undefined | null,
 ): "critical" | "warning" | "info" {
-  if (typeof raw === "number") {
-    if (raw >= 3) return "critical";
-    if (raw >= 1) return "warning";
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const n = Math.trunc(raw);
+    // ThreatLevel 枚举（仅 0/1/2）— NewTrackStruct / gRPC
+    if (n === 0) return "info";
+    if (n === 1) return "warning";
+    if (n === 2) return "critical";
+    // 威胁分（AlarmEvent DDS alarmLevel=threatScore）：沿用原阈值，≥3 即严重
+    if (n >= 3) return "critical";
     return "info";
   }
   const t = String(raw ?? "info").trim().toLowerCase();
-  if (t === "critical") return "critical";
-  if (t === "error" || t === "severe" || t === "fatal") return "warning";
-  if (t === "warning" || t === "warn") return "warning";
+  if (t === "critical" || t === "high" || t === "severe" || t === "fatal") return "critical";
+  if (t === "error" || t === "warning" || t === "warn" || t === "medium") return "warning";
+  if (t === "low" || t === "info") return "info";
+  return "info";
+}
+
+/** 从原始告警对象解析严重度：优先显式 severity 字符串，再 threatScore / alarmLevel */
+function resolveSeverityFromRaw(o: Record<string, unknown>): "critical" | "warning" | "info" {
+  const strRaw =
+    (typeof o.severity === "string" && o.severity.trim()) ||
+    (typeof o.alert_type === "string" && o.alert_type.trim()) ||
+    (typeof o.alertType === "string" && o.alertType.trim()) ||
+    "";
+  if (strRaw) {
+    const mapped = wsAlertTypeToSeverity(strRaw);
+    // 显式 critical/warning/info/high/medium/low 直接采用
+    const t = strRaw.toLowerCase();
+    if (
+      t === "critical" || t === "high" || t === "severe" || t === "fatal" ||
+      t === "warning" || t === "warn" || t === "medium" || t === "error" ||
+      t === "low" || t === "info"
+    ) {
+      return mapped;
+    }
+  }
+
+  const threatScoreRaw = o.threatScore ?? o.threat_score;
+  const threatScore =
+    typeof threatScoreRaw === "number" && Number.isFinite(threatScoreRaw)
+      ? threatScoreRaw
+      : typeof threatScoreRaw === "string" && threatScoreRaw.trim()
+        ? Number(threatScoreRaw.trim())
+        : undefined;
+
+  const alarmLevelRaw = o.alarmLevel ?? o.alarm_level ?? o.level;
+  const alarmLevel =
+    typeof alarmLevelRaw === "number" && Number.isFinite(alarmLevelRaw)
+      ? alarmLevelRaw
+      : typeof alarmLevelRaw === "string" && /^-?\d+$/.test(alarmLevelRaw.trim())
+        ? Number(alarmLevelRaw.trim())
+        : undefined;
+
+  // threatScore>2 → AlarmEvent 威胁分；否则 alarmLevel/threatScore 按 ThreatLevel 枚举
+  if (threatScore != null && Number.isFinite(threatScore) && threatScore > 2) {
+    return wsAlertTypeToSeverity(threatScore);
+  }
+  if (alarmLevel != null && Number.isFinite(alarmLevel)) {
+    return wsAlertTypeToSeverity(alarmLevel);
+  }
+  if (threatScore != null && Number.isFinite(threatScore)) {
+    return wsAlertTypeToSeverity(threatScore);
+  }
   return "info";
 }
 
@@ -91,28 +152,17 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
   const o = raw as Record<string, unknown>;
 
   const title = typeof o.title === "string" ? o.title.trim() : "";
+  const evidenceContent =
+    typeof o.content === "string" && o.content.trim() ? o.content.trim() : undefined;
   const body =
     (typeof o.message === "string" && o.message) ||
     (typeof o.alarmContent === "string" && o.alarmContent) ||
     (typeof o.alarmMessage === "string" && o.alarmMessage) ||
-    (typeof o.content === "string" && o.content) ||
     (typeof o.body === "string" && o.body) ||
     (typeof o.text === "string" && o.text) ||
     "";
-  const message =
-    title && body ? `${title}: ${body}` : title || body || (typeof o.msg === "string" ? o.msg : "");
-  if (!message) return null;
 
-  const alertTypeRaw =
-    (typeof o.severity === "string" && o.severity) ||
-    (typeof o.alert_type === "string" && o.alert_type) ||
-    (typeof o.alertType === "string" && o.alertType) ||
-    (typeof o.level === "string" && o.level) ||
-    (typeof o.alarmLevel === "number" ? o.alarmLevel : undefined) ||
-    (typeof o.alarmLevel === "string" ? o.alarmLevel : undefined) ||
-    "info";
-
-  const severity = wsAlertTypeToSeverity(alertTypeRaw);
+  const severity = resolveSeverityFromRaw(o);
 
   const idRaw = o.id ?? o.alarmId ?? o.alert_id ?? o.alertId ?? o.eventId;
   const id =
@@ -162,6 +212,15 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     if (typeof tid === "string" && tid.trim()) trackId = tid.trim();
     else if (typeof tid === "number" && Number.isFinite(tid) && tid > 0) trackId = String(tid);
   }
+
+  const message =
+    title && body
+      ? `${title}: ${body}`
+      : title ||
+        body ||
+        (typeof o.msg === "string" ? o.msg : "") ||
+        (trackId ? "航迹告警" : "");
+  if (!message && !evidenceContent) return null;
 
   let lat: number | undefined;
   let lng: number | undefined;
@@ -327,6 +386,7 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     ...(uniqueID ? { uniqueID } : {}),
     ...(fuseType === 0 || fuseType === 1 ? { fuseType } : {}),
     ...(detail ? { detail } : {}),
+    ...(evidenceContent ? { content: evidenceContent } : {}),
     ...(distanceNm != null ? { distanceNm } : {}),
     ...(bearingDeg != null ? { bearingDeg } : {}),
   };

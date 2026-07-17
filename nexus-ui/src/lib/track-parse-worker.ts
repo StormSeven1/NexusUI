@@ -15,6 +15,7 @@ import {
   readClassifiedTypeFromRecord,
   resolveAirTrackIsUav,
 } from "./track-category-id-parse";
+import { readTargetStateFromRecord } from "./track-target-state";
 import { readRealityTypeFromRecord, resolveTrackIsVirtual } from "./track-reality-type";
 import { resolveTrackLastUpdateString } from "./track-last-update-resolve";
 
@@ -33,6 +34,7 @@ type FusionSourceItem = {
   sourceName?: string;
   dataSourceId?: string | number;
   trackId?: string | number;
+  externalTrackId?: string | number;
 };
 
 function _parseFusionSourcesFromRec(rec: Record<string, unknown>): FusionSourceItem[] | undefined {
@@ -45,11 +47,13 @@ function _parseFusionSourcesFromRec(rec: Record<string, unknown>): FusionSourceI
     const sourceName = String(s.sourceName ?? s.source_name ?? "").trim();
     const dataSourceId = s.dataSourceId ?? s.data_source_id;
     const trackId = s.trackId ?? s.track_id;
-    if (!sourceName && dataSourceId == null && trackId == null) continue;
+    const externalTrackId = s.externalTrackId ?? s.external_track_id;
+    if (!sourceName && dataSourceId == null && trackId == null && externalTrackId == null) continue;
     out.push({
       ...(sourceName ? { sourceName } : {}),
       ...(dataSourceId != null ? { dataSourceId: dataSourceId as string | number } : {}),
       ...(trackId != null ? { trackId: trackId as string | number } : {}),
+      ...(externalTrackId != null ? { externalTrackId: externalTrackId as string | number } : {}),
     });
   }
   return out.length > 0 ? out : undefined;
@@ -108,7 +112,7 @@ export interface TrackWorkerConfig {
 
 interface WorkerTrack {
   id: string; showID: string; uniqueID: string;
-  trackId?: string; trackAlias?: string; name: string; type: TrackKind; disposition: ForceDisposition;
+  trackId?: string; externalTargetId?: string; trackAlias?: string; name: string; type: TrackKind; disposition: ForceDisposition;
   lat: number; lng: number; altitude?: number; heading: number; course?: number;
   speed: number; sensor: string; lastUpdate: string; starred: boolean;
   isAirTrack?: true; targetType?: string; azimuth?: number; distance?: number;
@@ -117,6 +121,7 @@ interface WorkerTrack {
   trackCategoryId?: number;
   classifiedType?: number;
   realityType?: number;
+  targetState?: "STABLE" | "COASTING" | "LOST" | "MERGED" | "SPLIT";
 }
 
 export interface TrackWorkerResult {
@@ -301,12 +306,18 @@ function _normalize(raw: unknown): WorkerTrack | null {
 
   const trackId    = rec.trackId ?? rec.track_id ?? rec.tracnID;
   const trackIdStr = trackId != null && String(trackId).trim() ? String(trackId).trim() : undefined;
+  const externalTargetRaw = rec.externalTargetId ?? rec.external_target_id;
+  const externalTargetIdStr =
+    externalTargetRaw != null && String(externalTargetRaw).trim()
+      ? String(externalTargetRaw).trim()
+      : undefined;
 
   const aliasRaw     = rec.trackAlias ?? rec.track_alias;
   const trackAliasStr =
     aliasRaw != null && String(aliasRaw).trim() ? String(aliasRaw).trim() : undefined;
 
-  const targetType    = rec.target_type ?? rec.targetType ?? rec.name ?? rec.label;
+  const targetType =
+    rec.target_type ?? rec.targetType ?? rec.trackCategoryName ?? rec.track_category_name ?? rec.name ?? rec.label;
   const targetTypeStr = targetType != null ? String(targetType) : undefined;
 
   const azimuthRaw = rec.azimuth ?? rec.azimuth_deg;
@@ -322,7 +333,9 @@ function _normalize(raw: unknown): WorkerTrack | null {
     sensor = fusions.map((src: unknown) => {
       const s = src as Record<string, unknown>;
       const sn  = String(s.sourceName ?? s.source_name ?? "").trim();
-      const tid = s.trackId ?? s.track_id;
+      // 标牌括号：雷达批号 externalTrackId；无则才用 source_track_id
+      const radarBatch = s.externalTrackId ?? s.external_track_id;
+      const tid = radarBatch != null ? radarBatch : (s.trackId ?? s.track_id);
       const ts  = tid != null ? String(tid) : "";
       return sn && ts ? `${sn}(${ts})` : sn || ts;
     }).filter(Boolean).join(", ");
@@ -337,10 +350,12 @@ function _normalize(raw: unknown): WorkerTrack | null {
   const tlkPayload = _readTrackLayerKeyFromRec(rec);
   const tlkFromDds = _layerKeyFromDds(ddsStr);
   const resolvedLayerKey = tlkFromDds ?? tlkPayload;
+  const targetState = readTargetStateFromRecord(rec);
 
   return {
     id: showID, showID, uniqueID,
     ...(trackIdStr  ? { trackId: trackIdStr }   : {}),
+    ...(externalTargetIdStr ? { externalTargetId: externalTargetIdStr } : {}),
     ...(trackAliasStr ? { trackAlias: trackAliasStr } : {}),
     name: String(rec.name ?? rec.label ?? showID),
     type: kind, disposition: disp, lat, lng,
@@ -372,6 +387,7 @@ function _normalize(raw: unknown): WorkerTrack | null {
     ...(isUav ? { isUav: true as const } : {}),
     ...(trackCategoryId !== undefined ? { trackCategoryId } : {}),
     ...(classifiedType !== undefined ? { classifiedType } : {}),
+    ...(targetState ? { targetState } : {}),
   };
 }
 

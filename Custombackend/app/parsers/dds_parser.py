@@ -232,6 +232,7 @@ def _parse_alarm_event(dds_object) -> Optional[Dict]:
                     'status': alarm.status() if hasattr(alarm, 'status') else None,
                     'taskStatus': alarm.taskStatus() if hasattr(alarm, 'taskStatus') else None,
                     'alarmContent': alarm.alarmContent() if hasattr(alarm, 'alarmContent') else None,
+                    'content': alarm.content() if hasattr(alarm, 'content') else None,
                     'alarmLevel': alarm.alarmLevel() if hasattr(alarm, 'alarmLevel') else None,
                     'areaId': alarm.areaId() if hasattr(alarm, 'areaId') else None,
                     'areaName': alarm.areaName() if hasattr(alarm, 'areaName') else None,

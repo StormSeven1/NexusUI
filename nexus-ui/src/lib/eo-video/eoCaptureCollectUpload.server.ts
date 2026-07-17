@@ -32,7 +32,7 @@ const PROJECT_IDS: Record<EoCollectUploadType, string> = {
 };
 
 function loadUploadConfig() {
-  const baseUrl = (process.env.EO_CAPTURE_UPLOAD_BASE_URL ?? "http://192.168.18.103:8566").replace(/\/$/, "");
+  const baseUrl = (process.env.EO_CAPTURE_UPLOAD_BASE_URL ?? "http://192.168.18.103:21918").replace(/\/$/, "");
   const username = process.env.EO_CAPTURE_UPLOAD_USERNAME ?? "lp";
   const password = process.env.EO_CAPTURE_UPLOAD_PASSWORD ?? "casia123";
   return { baseUrl, username, password };

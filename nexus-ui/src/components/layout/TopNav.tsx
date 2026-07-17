@@ -457,8 +457,8 @@ export function TopNav() {
 
       <TopNavCategoryMenu />
 
-      {/* 右侧功能区 */}
-      <div className="flex h-full shrink-0 items-center justify-end gap-4 border-l border-nexus-border px-2 sm:px-3">
+      {/* 右侧功能区：窄屏时可横向滚动，避免快捷按钮被裁切 */}
+      <div className="flex h-full min-w-0 shrink items-center justify-end gap-3 overflow-x-auto border-l border-nexus-border px-2 sm:gap-4 sm:px-3">
         <TopNavQuickActions />
         <div className="hidden h-4 w-px shrink-0 bg-nexus-border md:block" aria-hidden />
         <label className="flex min-w-0 items-center gap-2 text-[11px] whitespace-nowrap">

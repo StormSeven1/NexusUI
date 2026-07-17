@@ -115,14 +115,14 @@ function appendHistoryTrail(
   const cfg = getDroneMapRenderingConfig();
   if (!cfg.showHistoryTrail) return [];
   const max = Math.max(2, Math.floor(cfg.maxHistoryPoints));
-  const trail: Array<[number, number]> = [...prev.historyTrail];
+  const trail = prev.historyTrail;
   const last = trail[trail.length - 1];
   if (last) {
     const [plng, plat] = last;
     if (haversineM(plat, plng, lat, lng) < 1) return trail;
   }
   trail.push([lng, lat]);
-  while (trail.length > max) trail.shift();
+  if (trail.length > max) trail.splice(0, trail.length - max);
   return trail;
 }
 
@@ -513,7 +513,35 @@ function resolveDroneSn(data: Record<string, unknown>): string | null {
     const nestedSn = String(d.deviceSn ?? d.drone_sn ?? d.sn ?? d.device_sn ?? "").trim();
     if (nestedSn && useDroneStore.getState().drones[nestedSn]) return nestedSn;
   }
+  /* gRPC 蓝方等未注册实体：用 entityId / drone_sn 直接索引 */
+  if (String(data.source ?? "").toLowerCase() === "grpc") {
+    if (directSn) return directSn;
+    if (eid) return eid;
+  }
   return null;
+}
+
+/** gRPC 专有无人机（如蓝方）未在 entity_status 登记时自动建 telemetry 行 */
+function ensureGrpcDroneRegistered(
+  sn: string,
+  data: Record<string, unknown>,
+  get: () => DroneFleetState,
+  set: (fn: (s: DroneFleetState) => Partial<DroneFleetState> | DroneFleetState) => void,
+) {
+  if (!sn || sn in get().drones) return;
+  if (String(data.source ?? "").toLowerCase() !== "grpc") return;
+  const displayName = String(data.displayName ?? data.entityId ?? data.entity_id ?? sn).trim() || sn;
+  const hostile = Number(data.disposition_type) === 1;
+  set((s) => ({
+    drones: {
+      ...s.drones,
+      [sn]: {
+        ...baseTelemetry(sn),
+        displayName,
+        virtualTroop: hostile,
+      },
+    },
+  }));
 }
 
 export const useDroneStore = create<DroneFleetState>((set, get) => ({
@@ -592,6 +620,7 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
   setDroneStatus: (data) => {
     const sn = resolveDroneSn(data);
     if (!sn) return;
+    ensureGrpcDroneRegistered(sn, data, get, set);
     const s = get();
     if (!(sn in s.drones)) return;
     const ts = Date.now();
@@ -654,6 +683,7 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
   setDroneFlightPath: (data) => {
     const sn = resolveDroneSn(data);
     if (!sn) return;
+    ensureGrpcDroneRegistered(sn, data, get, set);
     const s = get();
     if (!(sn in s.drones)) return;
     const ts = Date.now();
@@ -698,6 +728,7 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
   setHighFreq: (data) => {
     const sn = resolveDroneSn(data);
     if (!sn) return;
+    ensureGrpcDroneRegistered(sn, data, get, set);
     const s = get();
     if (!(sn in s.drones)) return;
     const ts = Date.now();

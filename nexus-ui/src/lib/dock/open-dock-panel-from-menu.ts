@@ -2,10 +2,29 @@ import type { PanelId } from "@/stores/dock-store";
 import { getDockInitialLayoutSnapshot, useDockStore } from "@/stores/dock-store";
 import { useAppStore } from "@/stores/app-store";
 import { getWindowConfig } from "@/components/dock/windowRegistry";
+import { LEFT_DOCK_TOOL_IDS } from "@/components/layout/dock-sidebar-utils";
 
 /** 面板是否处于打开状态（停靠或弹出） */
 export function isDockPanelOpen(panelId: PanelId): boolean {
-  const panel = useDockStore.getState().panels.find((p) => p.id === panelId);
+  const state = useDockStore.getState();
+  if (state.layoutMode === "classic") {
+    if (panelId === "target-profile" || panelId === "chat") return true;
+    if (panelId.startsWith("electro-optical")) {
+      return (
+        panelId === "electro-optical-1" ||
+        panelId === "electro-optical-2" ||
+        panelId === "electro-optical-3" ||
+        panelId === "electro-optical-4"
+      );
+    }
+    if ((LEFT_DOCK_TOOL_IDS as readonly string[]).includes(panelId)) {
+      const open = state.leftSidebarOpen;
+      const current = state.leftPartitions.find((p) => p.id === "left-0")?.currentPanelId;
+      return open && current === panelId;
+    }
+    return false;
+  }
+  const panel = state.panels.find((p) => p.id === panelId);
   return panel?.mode === "docked" || panel?.mode === "popup";
 }
 
@@ -39,6 +58,22 @@ function resolvePartitionId(panelId: PanelId): string {
 /** 从顶栏菜单打开/聚焦 dock 面板 */
 export function openDockPanelFromMenu(panelId: PanelId): void {
   const state = useDockStore.getState();
+
+  if (state.layoutMode === "classic") {
+    if (
+      panelId === "target-profile" ||
+      panelId === "chat" ||
+      panelId.startsWith("electro-optical")
+    ) {
+      return;
+    }
+    if ((LEFT_DOCK_TOOL_IDS as readonly string[]).includes(panelId)) {
+      state.assignPanelToPartition(panelId, "left-0");
+      useDockStore.setState({ leftSidebarOpen: true });
+    }
+    return;
+  }
+
   const panel = state.panels.find((p) => p.id === panelId);
   if (!panel) return;
 

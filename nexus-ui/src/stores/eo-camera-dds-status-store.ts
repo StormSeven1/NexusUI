@@ -66,6 +66,10 @@ export interface EoCameraDdsStatusRow {
   originPtzZoom?: number;
   /** 全景方位补偿（°），与地图 `parseCameraBearingDeg` 中 panoOffset 一致 */
   panoOffsetDeg?: number;
+  /** 水平视场角（°），DDS `fov.horizontal` / `fov.hs` */
+  fovHsDeg?: number;
+  /** 垂直视场角（°），DDS `fov.vertical` / `fov.vs` */
+  fovVsDeg?: number;
   executionTimeMs?: unknown;
   updatedAt: number;
 }
@@ -168,6 +172,16 @@ export const useEoCameraDdsStatusStore = create<EoCameraDdsStatusState>((set, ge
       ? parseFiniteNumber(originPtzRec.zoom ?? originPtzRec.z)
       : undefined;
     const panoMerged = parseFiniteNumber(d.panoOffset);
+    const fovRec = asRecord(d.fov);
+    /** 当前视场优先 `ptz.hs/vs`（随变倍变）；其次 DDS `fov`；勿用 sensor min/max 冒充 */
+    const fovHsMerged =
+      (ptzRec ? parseFiniteNumber(ptzRec.hs ?? ptzRec.horizontal) : undefined) ??
+      (fovRec ? parseFiniteNumber(fovRec.horizontal ?? fovRec.hs) : undefined) ??
+      parseFiniteNumber(d.horizontalFov ?? d.horizontal_fov ?? d.hs);
+    const fovVsMerged =
+      (ptzRec ? parseFiniteNumber(ptzRec.vs ?? ptzRec.vertical) : undefined) ??
+      (fovRec ? parseFiniteNumber(fovRec.vertical ?? fovRec.vs) : undefined) ??
+      parseFiniteNumber(d.verticalFov ?? d.vertical_fov ?? d.vs);
     const next: EoCameraDdsStatusRow = {
       taskType: d.taskType !== undefined ? d.taskType : d.task_type !== undefined ? d.task_type : prev?.taskType,
       executionState: execIn !== undefined ? execIn : prev?.executionState,
@@ -193,6 +207,10 @@ export const useEoCameraDdsStatusStore = create<EoCameraDdsStatusState>((set, ge
       ptzZoom: zoomMerged !== undefined ? zoomMerged : prev?.ptzZoom,
       originPtzZoom: zoomFromOriginPtz !== undefined ? zoomFromOriginPtz : prev?.originPtzZoom,
       panoOffsetDeg: panoMerged !== undefined ? panoMerged : prev?.panoOffsetDeg,
+      fovHsDeg:
+        fovHsMerged !== undefined && fovHsMerged > 0 ? fovHsMerged : prev?.fovHsDeg,
+      fovVsDeg:
+        fovVsMerged !== undefined && fovVsMerged > 0 ? fovVsMerged : prev?.fovVsDeg,
       executionTimeMs: d.executionTimeMs !== undefined ? d.executionTimeMs : prev?.executionTimeMs,
       updatedAt: Date.now(),
     };

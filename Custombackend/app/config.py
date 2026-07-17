@@ -40,13 +40,30 @@ class Settings(BaseSettings):
     # DDS 无人机状态/任务/高频等落盘到 app/data/drone_logs（jsonl）
     ENABLE_DRONE_DATA_STORAGE: bool = False
 
+    # 对空融合航迹解析自报位+探鸟雷达批号，写入雷达训练真值表
+    ENABLE_RADAR_TRAIN_LABEL_COLLECT: bool = True
+    RADAR_TRAIN_LABEL_TTL_SEC: int = 7200
+    RADAR_TRAIN_LABEL_PERSIST: bool = True
+    # 采集校验 / is_uav：仅认 last_seen 在此秒数内的「自报位+探鸟」真值（当前仍在刷）
+    BIRD_RADAR_QUALIFYING_FRESH_SEC: float = 20.0
+    # 命中真值后自动采 10s 探鸟 UDP 点迹 → tracks_*.csv（已由顶栏手动采集取代）
+    ENABLE_RADAR_TRAIN_AUTO_CAPTURE: bool = False
+    RADAR_TRAIN_CAPTURE_DURATION_SEC: float = 10.0
+    BIRD_RADAR_CAPTURE_IDLE_SEC: int = 60
+
     # 相机实时状态 DDS 订阅：legacy=domain149 | entity=domain200 | both=双路（见 NEXUS_DDS_CAMERA_STATUS_MODE）
     NEXUS_DDS_CAMERA_STATUS_MODE: str = "legacy"
+
+    # 无人机状态/任务/高频：dds | grpc（见 NEXUS_DRONE_STATUS_TRANSPORT）
+    NEXUS_DRONE_STATUS_TRANSPORT: str = "dds"
+    NEXUS_DRONE_ENTITY_GRPC_URL: str = "192.168.18.103:51070"
+    NEXUS_DRONE_HOSTILE_GRPC_URL: str = "192.168.18.141:50065"
     
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=True
+        case_sensitive=True,
+        extra="ignore",
     )
     
     @property
@@ -56,6 +73,18 @@ class Settings(BaseSettings):
 
 # UDP接收配置
 UDP_RECEIVERS: List[Dict[str, Any]] = [
+    {
+        "id": "udp_bird_radar_ml",
+        "name": "探鸟雷达ML原始点迹(UDP)",
+        "type": "unicast",
+        "host": "0.0.0.0",
+        "port": 8001,
+        # 关闭 bind：8001 由现场 start.py（分类推理）占用。
+        # 探鸟采集改走 AF_PACKET 旁路嗅探（radar_train/udp_sniffer.py）。
+        "enabled": False,
+        "data_format": "BirdRadarMLPacket",
+        "buffer_size": 81920,
+    },
     # # 虚兵：航迹（DroneStatus + HighFreq），二进制格式见 parsers/virtual_unit_udp.py
     # {
     #     "id": "udp_virtual_unit_track",
@@ -640,6 +669,8 @@ def apply_dds_camera_status_mode(receivers: List[Dict[str, Any]], mode: str | No
 
 DDS_CAMERA_STATUS_MODE = apply_dds_camera_status_mode(DDS_RECEIVERS)
 
+_DRONE_DDS_RECEIVER_IDS = ("dds_drone_status", "dds_drone_task", "dds_high_freq")
+
 # 系统工作模式 DDS 发布（供前端 TopNav 下拉框调用 /api/system/work-mode）
 # 需先在 DDSReferences/WorkMode 下编译出 libWorkModeStatus.so 与 _WorkModeStatusWrapper.so
 WORK_MODE_DDS_PUBLISHER: Dict[str, Any] = {
@@ -683,3 +714,79 @@ HTTP_POLLERS: List[Dict[str, Any]] = [
 
 def get_settings() -> Settings:
     return Settings()
+
+
+def _split_host_port(url: str, default_host: str, default_port: int) -> tuple[str, int]:
+    raw = (url or "").strip()
+    if not raw:
+        return default_host, default_port
+    if "://" in raw:
+        raw = raw.split("://", 1)[1]
+    if ":" in raw:
+        host, port_s = raw.rsplit(":", 1)
+        try:
+            return host.strip() or default_host, int(port_s.strip())
+        except ValueError:
+            return raw.strip() or default_host, default_port
+    return raw, default_port
+
+
+def resolve_drone_status_transport(raw: str | None = None) -> str:
+    """归一化无人机状态通道：dds | grpc"""
+    mode = (
+        raw
+        if raw is not None
+        else os.environ.get("NEXUS_DRONE_STATUS_TRANSPORT", "dds")
+    ).strip().lower()
+    if mode in ("grpc", "entity_status_grpc", "entity_status"):
+        return "grpc"
+    return "dds"
+
+
+def build_drone_status_grpc_receivers(settings: Settings | None = None) -> List[Dict[str, Any]]:
+    """无人机 EntityStatus gRPC 订阅源（地址来自环境变量）。"""
+    s = settings or get_settings()
+    entity_host, entity_port = _split_host_port(
+        s.NEXUS_DRONE_ENTITY_GRPC_URL, "192.168.18.103", 51070
+    )
+    hostile_host, hostile_port = _split_host_port(
+        s.NEXUS_DRONE_HOSTILE_GRPC_URL, "192.168.18.141", 50065
+    )
+    return [
+        {
+            "id": "grpc_drone_entity",
+            "name": "实体无人机 EntityStatus gRPC",
+            "host": entity_host,
+            "port": entity_port,
+            "enabled": True,
+        },
+        {
+            "id": "grpc_drone_hostile",
+            "name": "蓝方无人机 EntityStatus gRPC",
+            "host": hostile_host,
+            "port": hostile_port,
+            "enabled": True,
+        },
+    ]
+
+
+def apply_drone_status_transport(
+    dds_receivers: List[Dict[str, Any]],
+    grpc_receivers: List[Dict[str, Any]],
+    mode: str | None = None,
+) -> str:
+    """按 NEXUS_DRONE_STATUS_TRANSPORT 启用 DDS 或 gRPC 无人机订阅。"""
+    resolved = resolve_drone_status_transport(mode)
+    use_grpc = resolved == "grpc"
+    for rec in dds_receivers:
+        if rec.get("id") in _DRONE_DDS_RECEIVER_IDS:
+            rec["enabled"] = not use_grpc
+    for rec in grpc_receivers:
+        rec["enabled"] = use_grpc
+    return resolved
+
+
+DRONE_STATUS_GRPC_RECEIVERS = build_drone_status_grpc_receivers()
+DRONE_STATUS_TRANSPORT = apply_drone_status_transport(
+    DDS_RECEIVERS, DRONE_STATUS_GRPC_RECEIVERS
+)

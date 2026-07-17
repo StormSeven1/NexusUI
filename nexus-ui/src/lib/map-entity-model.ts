@@ -1,4 +1,5 @@
 import type { ForceDisposition } from "./theme-colors";
+import type { TargetState } from "./track-target-state";
 
 /** 与后端 `track_layer_key`、DDS 来源一一对应 */
 export type TrackLayerKey =
@@ -45,7 +46,10 @@ export function isVirtualFromProperties(properties: Record<string, unknown> | nu
 export type TrackFusionSourceItem = {
   sourceName?: string;
   dataSourceId?: string | number;
+  /** DDS source_track_id（融合侧关联键，常等于融合 target_id，不是 external_target_id） */
   trackId?: string | number;
+  /** 雷达分量 external_target_id（来自 RadarObservedTargetProfile.track_id） */
+  externalTrackId?: string | number;
 };
 
 export interface Track {
@@ -57,6 +61,8 @@ export interface Track {
   uniqueID: string;
   /** 业务 track_id（NewTrack external_target_id）；无人机跟踪等 legacy 系统使用，与 uniqueID(target_id) 分离 */
   trackId?: string;
+  /** 融合目标独立 external_target_id（有值时与 trackId 可能相同；无值时 trackId 可能 fallback 到 target_id） */
+  externalTargetId?: string;
   name: string;
   type: "air" | "underwater" | "sea";
   disposition: ForceDisposition;
@@ -101,20 +107,32 @@ export interface Track {
    */
   trackCategoryId?: number;
   /**
-   * NewTrackStruct `classified_type` / WS `trackType`（UnitType 枚举）：**1 = DRONE** 为无人机，其余对空为鸟。
+   * NewTrackStruct `classified_type` / WS `trackType`（UnitType 枚举）：
+   * **1 = DRONE** 无人机；对海 **6 = BUOY** 浮标、**7 = SURFACE_SHIP** 船、**12 = OTHER** 等。
    */
   classifiedType?: number;
+  /**
+   * 右键手动设置的对海目标类型（ship/buoy/other）；WS 高频包粘性保留，优先于 `classifiedType` 选军标。
+   */
+  manualTargetType?: "ship" | "buoy" | "other";
   /**
    * 前端在相邻 WS 报文之间累积的**历史采样点** `[lng, lat]`（不含当前 `lng/lat`），存在 **`useTrackStore` 每条 `Track` 上**。
    * 条数上限由 `trackRendering.trackDisplay.maxHistoryPointsPerTrack` 控制；地图在 `maxViewportPoints` 全图顶点预算内才画折线，超预算时**仅不绘制**折线，**不**从本字段删除数据。
    */
   historyTrail?: [number, number][];
+  /**
+   * 与 `historyTrail` 等长的采样墙上时钟（ms）。用于面板「尾迹长度（秒）」按真实时间裁剪；
+   * 缺省时回退为点数估算（见 `trimHistoryTrailForDisplay`）。
+   */
+  historyTrailAtMs?: number[];
   /** 查证图片 data URL（由 image polling 写入） */
   verificationImage?: string;
   /** 航迹别名（报文 trackAlias / track_alias；有则优先作标题） */
   trackAlias?: string;
   /** 融合航迹多源（DDS reserved6 / NewTrackStruct sources）；用于自报位判定等 */
   fusionSources?: TrackFusionSourceItem[];
+  /** DDS TargetObject.state：STABLE / COASTING / LOST / MERGED / SPLIT */
+  targetState?: TargetState;
 }
 
 /** GIS 地图标牌 / 列表主显示 ID：NewTrack `target_id`（`uniqueID` / `showID`） */

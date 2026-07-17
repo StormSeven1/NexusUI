@@ -80,6 +80,7 @@ import {
   resolveTrackLayerKey,
 } from "@/lib/track-layer-visibility";
 import { isTrackVirtualTroop } from "@/lib/track-reality-type";
+import { isTrackCoasting } from "@/lib/track-target-state";
 import {
   assetMapLabelTextColor,
   buildMarkerSymbolDataUrl,
@@ -90,6 +91,8 @@ import {
   geoRadarSweepCoords,
   resolveTrackPointFill,
   isAirTrackBirdGlyph,
+  isSeaTrackBuoyGlyph,
+  isSeaTrackReefGlyph,
 } from "@/lib/map-icons";
 import { resolveTrackMapHighlightFill } from "@/lib/track-map-highlight-color";
 import { adaptAssetsForMap } from "@/lib/map-asset-adapter";
@@ -109,10 +112,33 @@ type MotionEvent = import("cesium").ScreenSpaceEventHandler.MotionEvent;
  */
 type RGBA = [number, number, number, number];
 
-function trackBillboardRotationRad(track: Pick<Track, "heading" | "trackLayerKey" | "ddsSourceId" | "dataSourceId" | "sensor" | "targetType" | "name" | "isAirTrack" | "type" | "trackCategoryId" | "isUav">, Cesium: CesiumModule): number {
+function trackBillboardRotationRad(
+  track: Pick<
+    Track,
+    | "heading"
+    | "trackLayerKey"
+    | "ddsSourceId"
+    | "dataSourceId"
+    | "sensor"
+    | "targetType"
+    | "trackAlias"
+    | "name"
+    | "isAirTrack"
+    | "type"
+    | "trackCategoryId"
+    | "classifiedType"
+    | "isUav"
+  >,
+  Cesium: CesiumModule,
+): number {
   const noRotateBirdOnFuseAir =
     resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track);
   if (noRotateBirdOnFuseAir) return 0;
+  const noRotateSeaBuoy =
+    resolveTrackLayerKey(track) === "fuse_sea" && isSeaTrackBuoyGlyph(track);
+  const noRotateSeaReef =
+    resolveTrackLayerKey(track) === "fuse_sea" && isSeaTrackReefGlyph(track);
+  if (noRotateSeaBuoy || noRotateSeaReef) return 0;
   return -Cesium.Math.toRadians(track.heading ?? 0);
 }
 
@@ -507,6 +533,10 @@ async function syncCesiumTrackBillboards(
               resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
               opticallyVerified,
               resolveTrackLayerKey(track) === "fuse_sea" && track.type === "sea",
+              resolveTrackLayerKey(track) === "fuse_sea" && isSeaTrackBuoyGlyph(track),
+              resolveTrackLayerKey(track) === "fuse_sea" && isSeaTrackReefGlyph(track),
+              false,
+              isTrackCoasting(track),
             ),
             scale: 0.90,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
@@ -553,6 +583,10 @@ async function syncCesiumTrackBillboards(
         resolveTrackLayerKey(t) === "fuse_air" && isAirTrackBirdGlyph(t),
         opticallyVerified,
         resolveTrackLayerKey(t) === "fuse_sea" && t.type === "sea",
+        resolveTrackLayerKey(t) === "fuse_sea" && isSeaTrackBuoyGlyph(t),
+        resolveTrackLayerKey(t) === "fuse_sea" && isSeaTrackReefGlyph(t),
+        false,
+        isTrackCoasting(t),
       );
       ent.billboard.image = new Cesium.ConstantProperty(image);
       ent.billboard.rotation = new Cesium.ConstantProperty(trackBillboardRotationRad(t, Cesium));

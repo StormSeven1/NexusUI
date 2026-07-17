@@ -257,12 +257,11 @@ export function AreaDrawSaveDialog() {
     setError(null);
     const areaName = name.trim() || defaultName;
     try {
-      const isCircle = pending.shape === "circle";
       const circleLineCss = parseAreaLineColor(CIRCLE_AREA_LINE_COLOR, "#ffff00");
       const body: Record<string, unknown> = {
         area_name: areaName,
         ...geometry,
-        line_color: isCircle ? CIRCLE_AREA_LINE_COLOR : "#3b82f6",
+        line_color: CIRCLE_AREA_LINE_COLOR,
         line_width: 2,
       };
       if (session.isNewGroup) body.new_group_name = session.groupName;
@@ -296,7 +295,7 @@ export function AreaDrawSaveDialog() {
           name: areaName,
           shape: pending.shape,
           points: pending.points,
-          lineColor: isCircle ? circleLineCss : "#3b82f6",
+          lineColor: circleLineCss,
           lineWidth: 2,
         });
         toastEntityPublishResult(pub, entityKind);

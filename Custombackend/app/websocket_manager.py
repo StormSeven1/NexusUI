@@ -149,11 +149,18 @@ class WebSocketManager:
     
     def queue_track_data(self, track_data: Dict[str, Any]):
         """将航迹数据加入广播队列"""
+        embedded_alarms = track_data.pop('embedded_alarms', None)
         # 统一添加is_air_track字段
         if 'is_air_track' not in track_data:
             track_data['is_air_track'] = self._determine_air_track(track_data)
         # DDS 的 source_name 常不含「对空」→ 上面会全判对海；按接收器写入的 layer / dds id 校正
         self._sync_is_air_track_from_dds_layer(track_data)
+
+        try:
+            from radar_train.service import process_fuse_air_track
+            process_fuse_air_track(track_data)
+        except Exception as e:
+            logger.debug("雷达训练真值采集跳过: {}", e)
 
         message = {
             "type": "Track",
@@ -161,6 +168,16 @@ class WebSocketManager:
             "data": track_data
         }
         self.broadcast_queue.append(message)
+
+        if embedded_alarms:
+            for alarm_item in embedded_alarms:
+                if not isinstance(alarm_item, dict):
+                    continue
+                self.queue_message({
+                    "type": "Alarm",
+                    "timestamp": datetime.now().isoformat(),
+                    "data": alarm_item,
+                })
     
     def _determine_air_track(self, track_data: Dict[str, Any]) -> bool:
         """

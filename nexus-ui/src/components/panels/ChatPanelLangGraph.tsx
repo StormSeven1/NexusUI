@@ -19,6 +19,7 @@ import { useVlmChatInjectStore } from "@/stores/vlm-chat-inject-store";
 import {
   consumeLangGraphSseStream,
   extractLangGraphDisplayChunks,
+  shouldPrefixedNewlineForLangGraphEvent,
   parseLangGraphInterruptEvent,
   type LangGraphInterruptUiPayload,
 } from "@/lib/langgraph-chat-sse";
@@ -30,6 +31,8 @@ import {
   extractLangGraphTaskIds,
   extractChatNotificationThreadId,
   extractChatNotificationAlertArea,
+  extractLangGraphWorkflowName,
+  isBirdRadarAcquisitionWorkflow,
   isLangGraphToolCallEvent,
   shouldRouteToWorkflowSessionTab,
 } from "@/lib/langgraph-workflow-task-id";
@@ -39,6 +42,10 @@ import {
   registerWorkflowVerifyThreadId,
 } from "@/lib/task-status-verify-chat-ingest";
 import {
+  postWorkflowStopCapture,
+  postWorkflowTerminate,
+} from "@/lib/quick-workflow-client";
+import {
   AI_CHAT_TAB_ID,
   DUTY_CHAT_TAB_ID,
   isAssistantChatLikeTab,
@@ -46,7 +53,7 @@ import {
   useAssistantChatTabsStore,
   type AssistantChatTab,
 } from "@/stores/assistant-chat-tabs-store";
-import { Bot, ChevronRight, Eraser, MessageSquare, Plus, Trash2, Zap } from "lucide-react";
+import { Bot, ChevronRight, Eraser, MessageSquare, Plus, Square, Trash2, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useDbAreaStore } from "@/stores/db-area-store";
@@ -63,8 +70,38 @@ const QUICK_PROMPTS: readonly string[] = [
   "10海里内有多少目标",
   "使用无人机对搜索区1和搜索区2进行搜索",
   "无人机返航",
+  "启动探鸟雷达自动采集, 目标区域是探鸟雷达分类数据采集区, 航线类型为多点, 无人机ID列表为uav-006, uav-007",
 ];
 
+function resolveBusinessWorkflowThreadId(tab: AssistantChatTab | undefined): string {
+  if (!tab) return "";
+  if (tab.businessWorkflowThreadId.trim()) return tab.businessWorkflowThreadId.trim();
+  for (const id of tab.taskIds) {
+    const t = id.trim();
+    if (!t) continue;
+    if (/tanniao_radar|_workflow_/i.test(t)) return t;
+  }
+  return "";
+}
+
+function tabLooksLikeBirdRadarWorkflow(tab: AssistantChatTab | undefined): boolean {
+  if (!tab || tab.kind !== "workflow") return false;
+  const hint = tab.messages
+    .filter((m) => m.role === "user")
+    .map((m) =>
+      m.parts
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join(""),
+    )
+    .join("\n");
+  return isBirdRadarAcquisitionWorkflow({
+    workflowName: tab.workflowName,
+    businessWorkflowThreadId: tab.businessWorkflowThreadId,
+    title: tab.title,
+    hintText: hint,
+  });
+}
 type StreamResponseMode = "pending" | "toolcall" | "workflow";
 
 function appendToLastAssistantText(
@@ -89,6 +126,51 @@ function appendToLastAssistantText(
     }
     return msgs;
   });
+}
+
+/** 工作流 SSE 始终写入本轮固定的助手气泡（避免查证等后续气泡抢「最后一条 assistant」） */
+function appendToAssistantTextById(
+  patchMessages: (updater: (prev: UIMessage[]) => UIMessage[]) => void,
+  messageId: string | null | undefined,
+  chunk: string,
+) {
+  if (!chunk) return;
+  let applied = false;
+  patchMessages((msgs) => {
+    if (messageId) {
+      const idx = msgs.findIndex((m) => m.id === messageId && m.role === "assistant");
+      if (idx >= 0) {
+        applied = true;
+        const next = [...msgs];
+        const parts = [...next[idx].parts];
+        const ti = parts.findIndex((p) => p.type === "text");
+        if (ti >= 0) {
+          const p = parts[ti] as { type: "text"; text: string };
+          parts[ti] = { type: "text", text: (p.text ?? "") + chunk };
+        } else {
+          parts.push({ type: "text", text: chunk });
+        }
+        next[idx] = { ...next[idx], parts };
+        return next;
+      }
+    }
+    return msgs;
+  });
+  if (!applied) {
+    appendToLastAssistantText(patchMessages, chunk);
+  }
+}
+
+function appendToStreamAssistantText(
+  patchMessages: (updater: (prev: UIMessage[]) => UIMessage[]) => void,
+  messageId: string | null | undefined,
+  chunk: string,
+) {
+  if (messageId) {
+    appendToAssistantTextById(patchMessages, messageId, chunk);
+    return;
+  }
+  appendToLastAssistantText(patchMessages, chunk);
 }
 
 function isMeaningfulNonToolCallEvent(parsed: Record<string, unknown>): boolean {
@@ -264,6 +346,8 @@ export function ChatPanelLangGraph() {
   const clearTabContent = useAssistantChatTabsStore((s) => s.clearTabContent);
   const deleteTab = useAssistantChatTabsStore((s) => s.deleteTab);
   const setTabLangGraphThreadId = useAssistantChatTabsStore((s) => s.setTabLangGraphThreadId);
+  const setTabBusinessWorkflowThreadId = useAssistantChatTabsStore((s) => s.setTabBusinessWorkflowThreadId);
+  const setTabWorkflowName = useAssistantChatTabsStore((s) => s.setTabWorkflowName);
   const registerTaskIdsForTab = useAssistantChatTabsStore((s) => s.registerTaskIdsForTab);
   const registerVerifyEntityIdsForTab = useAssistantChatTabsStore((s) => s.registerVerifyEntityIdsForTab);
   const setActiveWorkflowVerifyTabId = useAssistantChatTabsStore((s) => s.setActiveWorkflowVerifyTabId);
@@ -277,10 +361,13 @@ export function ChatPanelLangGraph() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  /** interrupt 后暂不 abort 的原 SSE 连接，恢复成功后再关掉（避免任务管理丢掉 interrupt 状态） */
+  const pendingInterruptAbortRef = useRef<AbortController | null>(null);
   const chatInputRef = useRef<ChatInputHandle>(null);
   const leadingToolbarRef = useRef<HTMLDivElement | null>(null);
   const vlmInjectSeq = useVlmChatInjectStore((s) => s.injectSeq);
   const [interruptPrompt, setInterruptPrompt] = useState<LangGraphInterruptUiPayload | null>(null);
+  const [workflowActionBusy, setWorkflowActionBusy] = useState<"terminate" | "stop-capture" | null>(null);
 
   const streamTabIdRef = useRef(activeTabId);
   const sourceTabIdForStreamRef = useRef(activeTabId);
@@ -288,6 +375,8 @@ export function ChatPanelLangGraph() {
   /** 本轮 SSE 是否已为本工作流新建「会话N」（每次发消息重置，禁止复用旧 workflow Tab） */
   const workflowStreamPromotedRef = useRef(false);
   const pendingPairRef = useRef<{ userId: string; asstId: string } | null>(null);
+  /** 本轮 LangGraph 流式回复绑定的助手消息 id（中断恢复后仍写回同一条） */
+  const streamAssistantMsgIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!quickMenuOpen) return;
@@ -329,6 +418,8 @@ export function ChatPanelLangGraph() {
   }, [vlmInjectSeq, patchTabMessages, setActiveTabId]);
 
   const stop = useCallback(() => {
+    pendingInterruptAbortRef.current?.abort();
+    pendingInterruptAbortRef.current = null;
     abortRef.current?.abort();
     abortRef.current = null;
     setIsStreaming(false);
@@ -419,9 +510,22 @@ export function ChatPanelLangGraph() {
         });
       }
       patchTabMessages(newTabId, (msgs) => [...msgs, ...moved]);
+
+      if (pair?.asstId) {
+        streamAssistantMsgIdRef.current = pair.asstId;
+      }
+
+      const userHint =
+        userMsg?.parts
+          .filter((p): p is { type: "text"; text: string } => p.type === "text")
+          .map((p) => p.text)
+          .join("") ?? "";
+      if (isBirdRadarAcquisitionWorkflow({ hintText: userHint })) {
+        setTabWorkflowName(newTabId, "探鸟雷达");
+      }
     }
     return newTabId;
-  }, [createWorkflowTab, patchTabMessages, setActiveWorkflowVerifyTabId]);
+  }, [createWorkflowTab, patchTabMessages, setActiveWorkflowVerifyTabId, setTabWorkflowName]);
 
   const processLangGraphParsedLine = useCallback(
     async (parsed: Record<string, unknown>) => {
@@ -451,6 +555,17 @@ export function ChatPanelLangGraph() {
       if (notifyThreadId && !isDailyVerificationParentTaskId(notifyThreadId)) {
         tabId = ensureWorkflowTabForStream();
         registerWorkflowVerifyThreadId(notifyThreadId, tabId);
+        setTabBusinessWorkflowThreadId(tabId, notifyThreadId);
+        registerTaskIdsForTab(tabId, [notifyThreadId]);
+      }
+
+      const wfName = extractLangGraphWorkflowName(parsed);
+      if (wfName) {
+        if (isBirdRadarAcquisitionWorkflow({ workflowName: wfName, businessWorkflowThreadId: notifyThreadId })) {
+          setTabWorkflowName(tabId, wfName.includes("探鸟雷达") ? wfName : "探鸟雷达");
+        } else {
+          setTabWorkflowName(tabId, wfName);
+        }
       }
 
       const alertArea = extractChatNotificationAlertArea(parsed);
@@ -479,6 +594,9 @@ export function ChatPanelLangGraph() {
       const patchForStream = (updater: (prev: UIMessage[]) => UIMessage[]) => {
         patchTabMessages(tabId, updater);
       };
+      const appendStream = (chunk: string) => {
+        appendToStreamAssistantText(patchForStream, streamAssistantMsgIdRef.current, chunk);
+      };
 
       const intr = parseLangGraphInterruptEvent(parsed);
       if (intr) {
@@ -490,24 +608,37 @@ export function ChatPanelLangGraph() {
         if (intr.verifyEntityIds.length > 0) {
           registerVerifyEntityIdsForTab(tabId, intr.verifyEntityIds);
         }
-        appendToLastAssistantText(
-          patchForStream,
-          "\n\n—— 任务流已暂停，请在弹窗中确认后继续 ——\n",
-        );
+        if (intr.threadId && /tanniao_radar|_workflow_/i.test(intr.threadId)) {
+          setTabBusinessWorkflowThreadId(tabId, intr.threadId);
+        }
+        appendStream("\n\n—— 任务流已暂停，请在弹窗中确认后继续 ——\n");
         return;
       }
 
       const ev = String(parsed.event ?? "");
       if (ev === "tool_call" && parsed.data != null && typeof parsed.data === "object") {
         const reply = await executeLangGraphToolCallFromData(parsed.data as Record<string, unknown>);
-        if (reply) appendToLastAssistantText(patchForStream, reply);
+        if (reply) appendStream(reply);
         return;
       }
-      for (const c of extractLangGraphDisplayChunks(parsed)) {
-        appendToLastAssistantText(patchForStream, c);
+
+      const chunks = extractLangGraphDisplayChunks(parsed);
+      const useNewline = shouldPrefixedNewlineForLangGraphEvent(ev);
+      for (const c of chunks) {
+        appendStream(useNewline ? `\n\n${c}` : c);
       }
     },
-    [ensureWorkflowTabForStream, patchTabMessages, registerTaskIdsForTab, registerVerifyEntityIdsForTab, revertMistakenWorkflowTab, setActiveWorkflowVerifyTabId, setTabLangGraphThreadId],
+    [
+      ensureWorkflowTabForStream,
+      patchTabMessages,
+      registerTaskIdsForTab,
+      registerVerifyEntityIdsForTab,
+      revertMistakenWorkflowTab,
+      setActiveWorkflowVerifyTabId,
+      setTabBusinessWorkflowThreadId,
+      setTabLangGraphThreadId,
+      setTabWorkflowName,
+    ],
   );
 
   const resumeLangGraphInterrupt = useCallback(
@@ -521,10 +652,24 @@ export function ChatPanelLangGraph() {
       if (resumeTab?.kind === "workflow") {
         setActiveWorkflowVerifyTabId(tabId);
       }
+      const resumeThreadId = (p.threadId || resumeTab?.langGraphThreadId || "").trim();
+      if (!resumeThreadId) {
+        toast.error("无法恢复任务流", { description: "缺少 thread_id，请重新发起工作流" });
+        setIsStreaming(false);
+        return;
+      }
+      const patchForStream = (updater: (prev: UIMessage[]) => UIMessage[]) => {
+        patchTabMessages(tabId, updater);
+      };
+      appendToStreamAssistantText(
+        patchForStream,
+        streamAssistantMsgIdRef.current,
+        "\n\n—— 已继续执行 ——\n",
+      );
       const body: Record<string, unknown> = {
         interrupt_feedback: { [p.interruptId]: feedbackValue },
         interrupt_id: p.mainInterruptId,
-        thread_id: p.threadId,
+        thread_id: resumeThreadId,
       };
       const chatUrl = "/api/langgraph-chat";
       const chatHeaders = { "Content-Type": "application/json", Accept: "text/event-stream" };
@@ -537,6 +682,16 @@ export function ChatPanelLangGraph() {
         body,
         userTextPreview: `[interrupt] ${p.mainInterruptId}`,
       });
+      // 等响应头超时提示（fetch 在收到 headers 前会一直挂起）
+      const headerWaitTimer = window.setTimeout(() => {
+        console.warn(
+          `[智能助手 HTTP] #${seq} 中断恢复仍在等待 HTTP 响应头…`,
+          { elapsedMs: Math.round(performance.now() - reqStarted), threadId: resumeThreadId },
+        );
+        toast.message("正在等待任务管理响应", {
+          description: "若长时间无反应，请检查 Network 中 langgraph-chat 是否一直 pending",
+        });
+      }, 8_000);
       try {
         const res = await fetch(chatUrl, {
           method: "POST",
@@ -544,6 +699,11 @@ export function ChatPanelLangGraph() {
           body: JSON.stringify(body),
           signal: ac.signal,
         });
+        window.clearTimeout(headerWaitTimer);
+        // 恢复请求已拿到响应：可以安全关掉原先 interrupt 那条挂起的 SSE
+        pendingInterruptAbortRef.current?.abort();
+        pendingInterruptAbortRef.current = null;
+
         if (!res.ok) {
           const raw = await res.text();
           let detail = "";
@@ -581,6 +741,7 @@ export function ChatPanelLangGraph() {
           kind: "interrupt_resume",
           logSeq: seq,
           signal: ac.signal,
+          idleTimeoutMs: 0,
         });
         logLangGraphChatStreamEnd({
           kind: "interrupt_resume",
@@ -589,16 +750,33 @@ export function ChatPanelLangGraph() {
           eventCount: streamResult.eventCount,
           durationMs: Math.round(performance.now() - streamStarted),
         });
+        if (streamResult.reason === "idle_timeout") {
+          appendToStreamAssistantText(
+            patchForStream,
+            streamAssistantMsgIdRef.current,
+            "\n\n—— 助手连接已空闲断开，任务流可能仍在后台执行，请查看会话进度或查证消息 ——\n",
+          );
+        } else if (streamResult.reason === "cancelled") {
+          appendToStreamAssistantText(
+            patchForStream,
+            streamAssistantMsgIdRef.current,
+            "\n\n[已停止]\n",
+          );
+        }
+        if (streamResult.reason !== "interrupt") {
+          streamAssistantMsgIdRef.current = null;
+        }
       } catch (e) {
-        const patchForStream = (updater: (prev: UIMessage[]) => UIMessage[]) => {
+        window.clearTimeout(headerWaitTimer);
+        const patchForErr = (updater: (prev: UIMessage[]) => UIMessage[]) => {
           patchTabMessages(tabId, updater);
         };
         if ((e as Error).name === "AbortError") {
-          appendToLastAssistantText(patchForStream, "\n\n[已停止]");
+          appendToStreamAssistantText(patchForErr, streamAssistantMsgIdRef.current, "\n\n[已停止]\n");
         } else {
           const msg = e instanceof Error ? e.message : String(e);
           toast.error("中断反馈请求失败", { description: msg });
-          appendToLastAssistantText(patchForStream, `\n\n❌ ${msg}`);
+          appendToStreamAssistantText(patchForErr, streamAssistantMsgIdRef.current, `\n\n❌ ${msg}`);
         }
       } finally {
         abortRef.current = null;
@@ -618,6 +796,7 @@ export function ChatPanelLangGraph() {
       const userId = generateId();
       const asstId = generateId();
       pendingPairRef.current = { userId, asstId };
+      streamAssistantMsgIdRef.current = asstId;
       responseModeRef.current = "pending";
       workflowStreamPromotedRef.current = false;
       sourceTabIdForStreamRef.current = sourceTabId;
@@ -699,6 +878,7 @@ export function ChatPanelLangGraph() {
           kind: "chat",
           logSeq: seq,
           signal: ac.signal,
+          idleTimeoutMs: 0,
         });
         logLangGraphChatStreamEnd({
           kind: "chat",
@@ -707,20 +887,43 @@ export function ChatPanelLangGraph() {
           eventCount: streamResult.eventCount,
           durationMs: Math.round(performance.now() - streamStarted),
         });
+        if (streamResult.reason === "idle_timeout") {
+          const tabId = streamTabIdRef.current;
+          const patchForStream = (updater: (prev: UIMessage[]) => UIMessage[]) => {
+            patchTabMessages(tabId, updater);
+          };
+          appendToStreamAssistantText(
+            patchForStream,
+            streamAssistantMsgIdRef.current,
+            "\n\n—— 助手连接已空闲断开，任务流可能仍在后台执行 ——\n",
+          );
+        }
+        if (streamResult.reason === "interrupt") {
+          // 保留原 SSE 连接，等用户确认后再 abort
+          pendingInterruptAbortRef.current = ac;
+        } else {
+          streamAssistantMsgIdRef.current = null;
+        }
       } catch (e) {
         const tabId = streamTabIdRef.current;
         const patchForStream = (updater: (prev: UIMessage[]) => UIMessage[]) => {
           patchTabMessages(tabId, updater);
         };
         if ((e as Error).name === "AbortError") {
-          appendToLastAssistantText(patchForStream, "\n\n[已停止]");
+          appendToStreamAssistantText(patchForStream, streamAssistantMsgIdRef.current, "\n\n[已停止]");
         } else {
           const msg = e instanceof Error ? e.message : String(e);
           toast.error("助手服务请求失败", { description: msg });
-          appendToLastAssistantText(patchForStream, `\n\n❌ ${msg}`);
+          appendToStreamAssistantText(patchForStream, streamAssistantMsgIdRef.current, `\n\n❌ ${msg}`);
         }
+        streamAssistantMsgIdRef.current = null;
       } finally {
-        abortRef.current = null;
+        // interrupt 时把 AbortController 挪到 pendingInterruptAbortRef，此处勿 abort
+        if (abortRef.current === ac && !pendingInterruptAbortRef.current) {
+          abortRef.current = null;
+        } else if (abortRef.current === ac) {
+          abortRef.current = null;
+        }
         setIsStreaming(false);
         pendingPairRef.current = null;
         finishStreamWorkflowVerifyRouting();
@@ -781,6 +984,66 @@ export function ChatPanelLangGraph() {
     [activeTabId, interruptPrompt, isStreaming, runLangGraphStream],
   );
 
+  const handleTerminateWorkflow = useCallback(async () => {
+    if (activeTab?.kind !== "workflow") return;
+    const tid = resolveBusinessWorkflowThreadId(activeTab);
+    if (!tid) {
+      toast.message("尚无业务工作流 ID", {
+        description: "等待任务管理 SSE 的 chat_notification 后再试",
+      });
+      return;
+    }
+    if (workflowActionBusy) return;
+    setWorkflowActionBusy("terminate");
+    try {
+      const ret = await postWorkflowTerminate(tid);
+      if (!ret.ok) {
+        toast.error("停止工作流失败", { description: ret.detail || ret.error });
+        return;
+      }
+      stop();
+      toast.success("已请求停止工作流", { description: tid });
+      appendToStreamAssistantText(
+        (updater) => patchTabMessages(activeTabId, updater),
+        streamAssistantMsgIdRef.current,
+        "\n\n—— 已请求停止工作流（终止后将跳过上传）——\n",
+      );
+    } finally {
+      setWorkflowActionBusy(null);
+    }
+  }, [activeTab, activeTabId, patchTabMessages, stop, workflowActionBusy]);
+
+  const handleStopCapture = useCallback(async () => {
+    if (activeTab?.kind !== "workflow") return;
+    if (!tabLooksLikeBirdRadarWorkflow(activeTab)) return;
+    const tid = resolveBusinessWorkflowThreadId(activeTab);
+    if (!tid) {
+      toast.message("尚无业务工作流 ID", {
+        description: "等待任务管理 SSE 的 chat_notification 后再试",
+      });
+      return;
+    }
+    if (workflowActionBusy) return;
+    setWorkflowActionBusy("stop-capture");
+    try {
+      const ret = await postWorkflowStopCapture(tid);
+      if (!ret.ok) {
+        toast.error("停止采集失败", { description: ret.detail || ret.error });
+        return;
+      }
+      toast.success("已请求停止采集", {
+        description: ret.message || "等待轮询周期结束后仍会提示是否上传",
+      });
+      appendToStreamAssistantText(
+        (updater) => patchTabMessages(activeTabId, updater),
+        streamAssistantMsgIdRef.current,
+        "\n\n—— 已请求停止采集，结束后仍可选择是否上传 ——\n",
+      );
+    } finally {
+      setWorkflowActionBusy(null);
+    }
+  }, [activeTab, activeTabId, patchTabMessages, workflowActionBusy]);
+
   const showChatLikeEmpty = chatLikeActive && messages.length === 0;
   const showDutyEmpty = activeTabId === DUTY_CHAT_TAB_ID && messages.length === 0;
   const emptyStateTitle = activeTab?.title ?? "AI助手";
@@ -790,6 +1053,9 @@ export function ChatPanelLangGraph() {
   const canUseQuickPrompts =
     chatLikeActive || activeTab?.kind === "workflow" || activeTab?.kind === "duty";
   const assistantLabel = activeTab?.title ?? "AI助手";
+  const showWorkflowControls = activeTab?.kind === "workflow";
+  const showBirdRadarStopCapture = tabLooksLikeBirdRadarWorkflow(activeTab);
+  const hasBusinessWorkflowId = !!resolveBusinessWorkflowThreadId(activeTab);
 
   const leadingToolbar = (
     <div ref={leadingToolbarRef} className="flex shrink-0 items-center gap-1">
@@ -865,6 +1131,47 @@ export function ChatPanelLangGraph() {
               />
             )}
           </div>
+          {showWorkflowControls ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-nexus-border/80 bg-nexus-bg-base/50 px-2.5 py-1.5">
+              <button
+                type="button"
+                disabled={!!workflowActionBusy || !hasBusinessWorkflowId}
+                onClick={() => void handleTerminateWorkflow()}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-medium transition-colors",
+                  "border-red-500/35 bg-red-500/10 text-red-300 hover:bg-red-500/20",
+                  "disabled:cursor-not-allowed disabled:opacity-40",
+                )}
+                title={
+                  hasBusinessWorkflowId
+                    ? "终止整条工作流（探鸟采集将跳过上传）"
+                    : "等待业务工作流 ID（SSE chat_notification）"
+                }
+              >
+                <Square size={11} strokeWidth={2.5} className="opacity-80" />
+                {workflowActionBusy === "terminate" ? "停止中…" : "停止工作流"}
+              </button>
+              {showBirdRadarStopCapture ? (
+                <button
+                  type="button"
+                  disabled={!!workflowActionBusy || !hasBusinessWorkflowId}
+                  onClick={() => void handleStopCapture()}
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] font-medium transition-colors",
+                    "border-amber-500/35 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20",
+                    "disabled:cursor-not-allowed disabled:opacity-40",
+                  )}
+                  title={
+                    hasBusinessWorkflowId
+                      ? "停止采集；结束后仍会提示是否上传 CSV"
+                      : "等待业务工作流 ID（SSE chat_notification）"
+                  }
+                >
+                  {workflowActionBusy === "stop-capture" ? "停止采集中…" : "停止采集"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <ChatInput
             ref={chatInputRef}
             onSend={handleSend}
@@ -882,6 +1189,8 @@ export function ChatPanelLangGraph() {
         onDismiss={() => {
           if (isStreaming) return;
           setInterruptPrompt(null);
+          pendingInterruptAbortRef.current?.abort();
+          pendingInterruptAbortRef.current = null;
         }}
         onConfirm={() => {
           if (!interruptPrompt || isStreaming) return;

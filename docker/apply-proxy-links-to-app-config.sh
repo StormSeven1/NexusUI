@@ -46,7 +46,8 @@ base = json.loads(pathlib.Path(base_path).read_text(encoding="utf-8"))
 out = json.loads(pathlib.Path(out_path).read_text(encoding="utf-8"))
 daily_links = base.get("softwareCompositionLinks") or []
 
-proxy_by_id: dict[str, dict] = {}
+# 勿用 dict[str, ...]：宿主机可能是 Python 3.8（PEP 585 需 3.9+）
+proxy_by_id = {}
 for line in pathlib.Path(svc_path).read_text(encoding="utf-8").splitlines():
     line = line.strip()
     if not line or line.startswith("#"):
@@ -61,7 +62,7 @@ for line in pathlib.Path(svc_path).read_text(encoding="utf-8").splitlines():
     proxy_by_id.setdefault(sid, {})
     proxy_by_id[sid][key] = val
 
-label_map: dict[str, dict] = {}
+label_map = {}
 for sid, cfg in proxy_by_id.items():
     if cfg.get("TYPE") == "gateway":
         continue

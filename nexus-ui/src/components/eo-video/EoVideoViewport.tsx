@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { isEoVideoDebugUiEnabled } from "@/lib/eo-video/eoVideoDebugUi";
+import { isEoVideoWebCodecsLogEnabled } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 import type { EoWebCodecsPresentation } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 import { isEoVideoHardwarePassthroughEnabled } from "@/lib/eo-video/eoVideoHardwarePassthrough";
 import { isEoVideoWebCodecsCanvasEnabled } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
@@ -28,6 +29,8 @@ export interface EoVideoViewportProps {
   stallWatchIntervalMs?: number;
   /** 停帧恢复前回调（如 poke 推流） */
   onStallRecover?: () => void;
+  /** 递增时强制重建 WebRTC（私有云 start 推流后重连 ZLM） */
+  webRtcKickEpoch?: number;
   /**
    * WebCodecs Canvas 模式：每次解码输出尺寸或 canvas 变化时更新，供叠层 letterbox / 截图。
    * `active` 为 false 时表示当前未使用或未就绪。
@@ -63,6 +66,7 @@ export function EoVideoViewport({
   webCodecsPresentationRef,
   stallWatchIntervalMs,
   onStallRecover,
+  webRtcKickEpoch,
 }: EoVideoViewportProps) {
   const useCanvas =
     isEoVideoWebCodecsCanvasEnabled() && Boolean(encodedSyncHub && signalingUrl && enabled);
@@ -83,6 +87,7 @@ export function EoVideoViewport({
         webCodecsPresentationRef={webCodecsPresentationRef}
         stallWatchIntervalMs={stallWatchIntervalMs}
         onStallRecover={onStallRecover}
+        webRtcKickEpoch={webRtcKickEpoch}
       />
     );
   }
@@ -102,6 +107,7 @@ export function EoVideoViewport({
       webCodecsPresentationRef={webCodecsPresentationRef}
       stallWatchIntervalMs={stallWatchIntervalMs}
       onStallRecover={onStallRecover}
+      webRtcKickEpoch={webRtcKickEpoch}
     />
   );
 }
@@ -129,6 +135,7 @@ function EoVideoViewportHardware({
   webCodecsPresentationRef,
   stallWatchIntervalMs,
   onStallRecover,
+  webRtcKickEpoch,
 }: EoVideoViewportProps) {
   const showDebugOverlay = isEoVideoDebugUiEnabled();
   useEffect(() => {
@@ -164,6 +171,7 @@ function EoVideoViewportHardware({
     videoReceiverRef,
     stallWatchIntervalMs,
     onStallRecover,
+    webRtcKickEpoch,
   });
 
   return (
@@ -212,6 +220,7 @@ function EoVideoViewportWebCodecs({
   webCodecsPresentationRef,
   stallWatchIntervalMs,
   onStallRecover,
+  webRtcKickEpoch,
 }: EoVideoViewportProps) {
   const showDebugOverlay = isEoVideoDebugUiEnabled();
   const {
@@ -271,6 +280,7 @@ function EoVideoViewportWebCodecs({
     forceVideoPassthrough: videoFallback,
     stallWatchIntervalMs,
     onStallRecover,
+    webRtcKickEpoch,
   });
 
   /** 硬解 + 软解均无法初始化 → 立即回退 `<video>` */
@@ -286,7 +296,9 @@ function EoVideoViewportWebCodecs({
     if (hasRenderedFrame) return;
     const tid = window.setTimeout(() => {
       if (!hasRenderedFrame) {
-        console.warn("[WebCodecs] no frame rendered, falling back to <video>");
+        if (isEoVideoWebCodecsLogEnabled()) {
+          console.warn("[WebCodecs] no frame rendered, falling back to <video>");
+        }
         setVideoFallback(true);
       }
     }, WEBCODECS_NO_FRAME_FALLBACK_MS);
@@ -302,7 +314,9 @@ function EoVideoViewportWebCodecs({
     bumpPresentationEpoch("videoFallback");
     if (fallbackRestartedRef.current) return;
     fallbackRestartedRef.current = true;
-    console.info("[WebCodecs] video fallback active, restarting WebRTC with passthrough");
+    if (isEoVideoWebCodecsLogEnabled()) {
+      console.info("[WebCodecs] video fallback active, restarting WebRTC with passthrough");
+    }
     restart();
   }, [videoFallback, restart]);
 
@@ -324,9 +338,11 @@ function EoVideoViewportWebCodecs({
         return;
       }
       if (now - lastCanvasRtpChangeAtRef.current >= WEBCODECS_CANVAS_STALL_FALLBACK_MS) {
-        console.warn(
-          `[WebCodecs] canvas stall ${now - lastCanvasRtpChangeAtRef.current}ms, falling back to <video>`,
-        );
+        if (isEoVideoWebCodecsLogEnabled()) {
+          console.warn(
+            `[WebCodecs] canvas stall ${now - lastCanvasRtpChangeAtRef.current}ms, falling back to <video>`,
+          );
+        }
         setVideoFallback(true);
       }
     }, WEBCODECS_CANVAS_STALL_CHECK_MS);

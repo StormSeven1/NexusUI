@@ -42,6 +42,12 @@ import { useDroneStore } from "@/stores/drone-store";
 import { useTrackStore } from "@/stores/track-store";
 import { resolveUniqueIdFromTrack, sendAlarmConfirmRequest } from "@/lib/alarm-confirm-api";
 import { dismissAlarmForTrack, resolveAlarmFilterTargetId } from "@/lib/dismiss-alarm-for-track";
+import {
+  SEA_MANUAL_TARGET_TYPE_OPTIONS,
+  seaManualTargetTypeToClassifiedType,
+  sendUpdateTargetTypeRequest,
+  type SeaManualTargetType,
+} from "@/lib/target-type-api";
 import { useAppConfigStore } from "@/stores/app-config-store";
 
 export type MapGisMenuState = {
@@ -121,7 +127,7 @@ async function uavTrackFollowOnTrack(track: Track, airportSN: string) {
 
 /** 与子菜单 open 配套的触发项矩形（viewport） */
 type SubCascade = null | {
-  key: "cam-map" | "uav-map" | "cam-trk" | "uav-trk" | "aff";
+  key: "cam-map" | "uav-map" | "cam-trk" | "uav-trk" | "aff" | "sea-type";
   anchor: DOMRectReadOnly;
 };
 
@@ -471,6 +477,43 @@ export function MapGisContextMenu({
     );
   }
 
+  function SeaTargetTypeSubItems({ tr }: { tr: Track }) {
+    return (
+      <>
+        {SEA_MANUAL_TARGET_TYPE_OPTIONS.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            className={itemCls}
+            onClick={() => {
+              const uniqueId = resolveUniqueIdFromTrack(tr);
+              if (uniqueId == null) {
+                toast.error("设置失败：航迹缺少有效 uniqueId");
+                onClose();
+                return;
+              }
+              void (async () => {
+                const result = await sendUpdateTargetTypeRequest(tr, value);
+                if (!result.ok) {
+                  toast.error("目标类型更新失败", { description: result.message ?? "TrackManager 无响应" });
+                  return;
+                }
+                const applied = (result.targetType ?? value) as SeaManualTargetType;
+                useTrackStore
+                  .getState()
+                  .applyManualSeaTargetType(tr.showID, applied, seaManualTargetTypeToClassifiedType(applied));
+                toast.success(`已设目标类型：${label}`, { description: `target_id ${uniqueId}` });
+              })();
+              onClose();
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </>
+    );
+  }
+
   let cascadeBody: React.ReactNode = null;
   if (cascade) {
     if (cascade.key === "cam-map") cascadeBody = <CameraSubItems variant="lookAt" track={null} />;
@@ -489,6 +532,7 @@ export function MapGisContextMenu({
         />
       );
     else if (cascade.key === "aff" && track) cascadeBody = <AffiliationSubItems tr={track} />;
+    else if (cascade.key === "sea-type" && track) cascadeBody = <SeaTargetTypeSubItems tr={track} />;
     else cascadeBody = null;
   }
 
@@ -585,6 +629,17 @@ export function MapGisContextMenu({
           <span className="min-w-0 flex-1">设置敌我属性</span>
           <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
         </button>
+
+        {track.type === "sea" ? (
+          <button
+            type="button"
+            className={cn(subTriggerCls, cascade?.key === "sea-type" ? "bg-white/10" : "")}
+            onClick={(e) => toggleCascade("sea-type", e.currentTarget)}
+          >
+            <span className="min-w-0 flex-1">设置目标类型</span>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
+          </button>
+        ) : null}
       </>
     ) : (
       <div className="px-2 py-1.5 text-xs text-nexus-text-muted opacity-60">未找到航迹数据</div>

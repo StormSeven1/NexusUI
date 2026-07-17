@@ -40,6 +40,15 @@ export type AssistantChatTab = {
 
   langGraphThreadId: string;
 
+  /**
+   * 业务工作流 ID（chat_notification.details.thread_id），
+   * 用于 terminate / stop-capture；与 LangGraph 对话 thread_id 不同。
+   */
+  businessWorkflowThreadId: string;
+
+  /** 工作流显示/内部名称（用于匹配如「探鸟雷达」） */
+  workflowName: string;
+
   /** 工作流会话登记的业务 taskId（查证 SSE 路由） */
 
   taskIds: string[];
@@ -66,7 +75,17 @@ function emptyTab(
 
 ): AssistantChatTab {
 
-  return { id, title, kind, messages: [], langGraphThreadId: "", taskIds: [], verifyEntityIds: [] };
+  return {
+    id,
+    title,
+    kind,
+    messages: [],
+    langGraphThreadId: "",
+    businessWorkflowThreadId: "",
+    workflowName: "",
+    taskIds: [],
+    verifyEntityIds: [],
+  };
 
 }
 
@@ -90,6 +109,10 @@ type State = {
   setActiveTabId: (tabId: string) => void;
 
   setTabLangGraphThreadId: (tabId: string, threadId: string) => void;
+
+  setTabBusinessWorkflowThreadId: (tabId: string, threadId: string) => void;
+
+  setTabWorkflowName: (tabId: string, name: string) => void;
 
   registerTaskIdsForTab: (tabId: string, taskIds: string[]) => void;
 
@@ -184,6 +207,10 @@ function mergePersistedTabs(
 
         langGraphThreadId: t.langGraphThreadId ?? "",
 
+        businessWorkflowThreadId: t.businessWorkflowThreadId ?? "",
+
+        workflowName: t.workflowName ?? "",
+
         taskIds: Array.isArray(t.taskIds) ? t.taskIds : [],
 
         verifyEntityIds: Array.isArray(t.verifyEntityIds) ? t.verifyEntityIds : [],
@@ -199,6 +226,10 @@ function mergePersistedTabs(
         messages: Array.isArray(t.messages) ? t.messages : [],
 
         langGraphThreadId: t.langGraphThreadId ?? "",
+
+        businessWorkflowThreadId: t.businessWorkflowThreadId ?? "",
+
+        workflowName: t.workflowName ?? "",
 
         taskIds: Array.isArray(t.taskIds) ? t.taskIds : [],
 
@@ -340,7 +371,28 @@ export const useAssistantChatTabsStore = create<State>()(
 
       },
 
+      setTabBusinessWorkflowThreadId: (tabId, threadId) => {
+        const tid = threadId.trim();
+        if (!tid) return;
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === tabId ? { ...t, businessWorkflowThreadId: tid } : t,
+          ),
+        }));
+      },
 
+      setTabWorkflowName: (tabId, name) => {
+        const n = name.trim();
+        if (!n) return;
+        set((s) => ({
+          tabs: s.tabs.map((t) => {
+            if (t.id !== tabId) return t;
+            // 已有更具体中文名时不降级覆盖；仍允许补齐
+            if (t.workflowName.includes("探鸟雷达") && !n.includes("探鸟雷达")) return t;
+            return { ...t, workflowName: n };
+          }),
+        }));
+      },
 
       registerTaskIdsForTab: (tabId, taskIds) => {
 

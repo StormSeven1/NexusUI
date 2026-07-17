@@ -101,7 +101,7 @@ export function registerWorkflowVerifyThreadId(threadId: string, tabId: string):
   if (!tid || !tabId) return;
   const store = useAssistantChatTabsStore.getState();
   store.registerTaskIdsForTab(tabId, [tid]);
-  store.setTabLangGraphThreadId(tabId, tid);
+  store.setTabBusinessWorkflowThreadId(tabId, tid);
   const pending = pendingVerifyByParentTaskId.get(tid);
   if (pending?.length) {
     pendingVerifyByParentTaskId.delete(tid);
@@ -302,9 +302,8 @@ export function ingestTaskStatusChatPayload(raw: TaskStatusChatPayload): void {
 
     if (sessionKey && ts === 4) {
       const reuseId = tabVerify.verifySessionByKey.get(sessionKey);
-      const fromTargetInfo = reuseId ? tabVerify.verifyFourBubbleIds.has(reuseId) : false;
-
-      if (reuseId && !fromTargetInfo) {
+      /** 同一 sessionKey 重复 status 4：复用气泡并更新图片，不新建 */
+      if (reuseId) {
         tabVerify.verifyFourBubbleIds.add(reuseId);
         const report = buildReportForBubble(tabVerify, reuseId, payload);
         rewriteVerifyAssistantBubble(tabId, reuseId, report);

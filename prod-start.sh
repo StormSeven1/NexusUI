@@ -113,9 +113,13 @@ fi
 
 # 从 nexus-ui/.env.local 读取 NEXUS_DDS_CAMERA_STATUS_MODE（legacy | entity | both），注入 Custombackend 容器
 NEXUS_DDS_CAMERA_STATUS_MODE="${NEXUS_DDS_CAMERA_STATUS_MODE:-legacy}"
+NEXUS_DRONE_STATUS_TRANSPORT="${NEXUS_DRONE_STATUS_TRANSPORT:-dds}"
+NEXUS_DRONE_ENTITY_GRPC_URL="${NEXUS_DRONE_ENTITY_GRPC_URL:-192.168.18.103:51070}"
+NEXUS_DRONE_HOSTILE_GRPC_URL="${NEXUS_DRONE_HOSTILE_GRPC_URL:-192.168.18.141:50065}"
 NEXUS_EO_CALC_RECORD_CAM_CONF_DIR="${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR:-/mnt/nfs_200T/camconf}"
 NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT="${NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT:-\\\\192.168.18.142\\store_200T\\camconf}"
 NEXUS_EO_AIM_PARAM_GRPC_ADDR="${NEXUS_EO_AIM_PARAM_GRPC_ADDR:-192.168.18.108:50052}"
+NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR="${NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR:-192.168.18.108:50055}"
 if [[ -f "$ROOT/nexus-ui/.env.local" ]]; then
   _cam_dds_mode="$(grep -E '^[[:space:]]*NEXUS_DDS_CAMERA_STATUS_MODE=' "$ROOT/nexus-ui/.env.local" | tail -1 | cut -d= -f2- | xargs)"
   _cam_dds_mode="${_cam_dds_mode//$'\r'/}"
@@ -125,13 +129,19 @@ if [[ -f "$ROOT/nexus-ui/.env.local" ]]; then
 
   _read_env_local() {
     local key="$1"
-    grep -E "^[[:space:]]*${key}=" "$ROOT/nexus-ui/.env.local" | tail -1 | cut -d= -f2- | xargs
+    grep -E "^[[:space:]]*${key}=" "$ROOT/nexus-ui/.env.local" 2>/dev/null | tail -1 | cut -d= -f2- | xargs || true
   }
   _v="$(_read_env_local NEXUS_EO_CALC_RECORD_CAM_CONF_DIR)"; [[ -n "$_v" ]] && NEXUS_EO_CALC_RECORD_CAM_CONF_DIR="$_v"
   _v="$(_read_env_local NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT)"; [[ -n "$_v" ]] && NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT="$_v"
   _v="$(_read_env_local NEXUS_EO_AIM_PARAM_GRPC_ADDR)"; [[ -n "$_v" ]] && NEXUS_EO_AIM_PARAM_GRPC_ADDR="$_v"
+  _v="$(_read_env_local NEXUS_EO_AIM_TRACK_COLLECT_URL)"; [[ -n "$_v" ]] && NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR="$_v"
+  _v="$(_read_env_local NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR)"; [[ -n "$_v" ]] && NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR="$_v"
+  _v="$(_read_env_local NEXUS_DRONE_STATUS_TRANSPORT)"; [[ -n "$_v" ]] && NEXUS_DRONE_STATUS_TRANSPORT="$_v"
+  _v="$(_read_env_local NEXUS_DRONE_ENTITY_GRPC_URL)"; [[ -n "$_v" ]] && NEXUS_DRONE_ENTITY_GRPC_URL="$_v"
+  _v="$(_read_env_local NEXUS_DRONE_HOSTILE_GRPC_URL)"; [[ -n "$_v" ]] && NEXUS_DRONE_HOSTILE_GRPC_URL="$_v"
 fi
 echo "NEXUS_DDS_CAMERA_STATUS_MODE=${NEXUS_DDS_CAMERA_STATUS_MODE}（相机 PTZ DDS：legacy=149 / entity=200）"
+echo "NEXUS_DRONE_STATUS_TRANSPORT=${NEXUS_DRONE_STATUS_TRANSPORT}（无人机：dds | grpc）"
 echo "NEXUS_EO_CALC_RECORD_CAM_CONF_DIR=${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR}（跟踪采集 camConf 写入）"
 
 # 必须挂载整棵 /mnt/nfs_200T：仅 bind camconf 子目录时，容器内 read/write 易在 NFS 上卡死
@@ -160,8 +170,13 @@ docker run -d \
   -e "BACKEND_URL=${BU}" \
   -e "BACKEND_ONLY=${BACKEND_ONLY:-0}" \
   -e "NEXUS_DDS_CAMERA_STATUS_MODE=${NEXUS_DDS_CAMERA_STATUS_MODE}" \
+  -e "NEXUS_DRONE_STATUS_TRANSPORT=${NEXUS_DRONE_STATUS_TRANSPORT}" \
+  -e "NEXUS_DRONE_ENTITY_GRPC_URL=${NEXUS_DRONE_ENTITY_GRPC_URL}" \
+  -e "NEXUS_DRONE_HOSTILE_GRPC_URL=${NEXUS_DRONE_HOSTILE_GRPC_URL}" \
   -e "NEXUS_EO_CALC_RECORD_CAM_CONF_DIR=${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR}" \
   -e "NEXUS_EO_AIM_PARAM_GRPC_ADDR=${NEXUS_EO_AIM_PARAM_GRPC_ADDR}" \
+  -e "NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR=${NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR}" \
+  -e "NEXUS_EO_AIM_TRACK_COLLECT_URL=${NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR}" \
   -e "NEXUS_DOCKER_NO_KILL=${NEXUS_DOCKER_NO_KILL:-0}" \
   -e "NEXUS_UI_CLEAN_NEXT=${DO_REBUILD}" \
   -e "NEXUS_UI_SKIP_BUILD=${NEXUS_UI_SKIP_BUILD:-$(( DO_REBUILD == 0 ? 1 : 0 ))}" \

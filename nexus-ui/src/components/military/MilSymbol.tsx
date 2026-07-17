@@ -14,6 +14,10 @@ interface MilSymbolProps {
   airBird?: boolean;
   /** 对海融合：水上目标符号（与地图 `fuse_sea` 一致） */
   seaFuse?: boolean;
+  /** 对海融合：浮标（UnitType BUOY） */
+  seaBuoy?: boolean;
+  /** 对海融合：礁石（非 ship/buoy） */
+  seaReef?: boolean;
   /** 中立融合航迹填色（见 `getFusionTrackMarkerFill`），仅 disposition=neutral 时传入 */
   neutralFusionFill?: string | null;
   /** 光电查证完成：军标整体黄色 */
@@ -32,6 +36,8 @@ export function MilSymbol({
   virtual = false,
   airBird = false,
   seaFuse = false,
+  seaBuoy = false,
+  seaReef = false,
   neutralFusionFill,
   opticallyVerified = false,
   size = "md",
@@ -54,6 +60,8 @@ export function MilSymbol({
     false,
     opticallyVerified,
     seaFuse,
+    seaBuoy,
+    seaReef,
   );
 
   return (

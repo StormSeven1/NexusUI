@@ -460,7 +460,23 @@ export const SNAP_SIDEBAR_THRESHOLD = 120;
  * 扩展的 Dock Store 接口（包含侧边栏控制）
  * 结合基础 dock 功能和侧边栏显示控制
  */
+/** @see `@/lib/layout/classic-layout-config` */
+export type { WorkspaceLayoutMode, ClassicSplitRatios } from "@/lib/layout/classic-layout-config";
+
 export interface DockStoreWithSidebar extends DockStore {
+  /** 工作区布局：自由 dock / 经典固定 */
+  layoutMode: import("@/lib/layout/classic-layout-config").WorkspaceLayoutMode;
+  /** 切到经典布局前保存的自由布局快照 */
+  freeLayoutSnapshot: import("@/lib/dock/dock-layout-snapshot").DockLayoutSnapshot | null;
+  /** 经典布局内各区域比例 */
+  classicSplitRatios: import("@/lib/layout/classic-layout-config").ClassicSplitRatios;
+  /** 设置经典布局某比例键 */
+  setClassicSplitRatio: (
+    key: keyof import("@/lib/layout/classic-layout-config").ClassicSplitRatios,
+    value: number,
+  ) => void;
+  /** 调整经典布局三个小光电窗口之间的分隔 */
+  adjustClassicEoSubHeight: (dividerIndex: 0 | 1, newLeadingRatio: number) => void;
   /** 面板注册表 */
   panelRegistry: PanelRegistry;
   /** 左侧边栏是否打开 */
@@ -485,8 +501,11 @@ export interface DockStoreWithSidebar extends DockStore {
   setRightSidebarSplitRatio: (ratio: number) => void;
   /** 设置左侧栏宽度 */
   setLeftSidebarWidth: (width: number) => void;
-  /** 设置右侧栏宽度 */
-  setRightSidebarWidth: (width: number) => void;
+  /** 设置右侧栏宽度；经典布局可传 containerWidth（地图+右侧行宽） */
+  setRightSidebarWidth: (width: number, opts?: { containerWidth?: number }) => void;
+  /** 经典布局：右侧栏占工作区行宽比例（默认 0.5 = 态势/光电各一半） */
+  classicRightWidthRatio: number;
+  setClassicRightWidthRatio: (ratio: number) => void;
   /** 高亮的面板ID（用于菜单点击反馈） */
   highlightedPanelId: PanelId | null;
   /** 设置高亮面板ID */

@@ -37,6 +37,7 @@ import { refreshAlarmTrackMapDebugSnapshot } from "@/lib/alarm-track-map-debug";
 import { isTrackMatchedByAlarmKeys } from "@/lib/alarm-track-match";
 import { maxStoredTrailPointsPerTrack, mergeIncomingTrackWithStickyAirClassification } from "@/lib/ws-track-normalize";
 import { getTrackRenderingConfig, getTrackStaleTimeoutMs } from "@/lib/map-app-config";
+import { shouldResetHistoryTrailOnStep } from "@/lib/track-display-trail";
 import { useDisposedStore } from "@/stores/disposed-store";
 
 /** 模块级渲染缓存 — 避免每次调用从 tracks 数组重建 Map */
@@ -119,6 +120,14 @@ interface TrackState {
    * @returns true 表示图片有变化并已触发渲染更新
    */
   updateTrackImage: (showID: string, imageUrl: string | null) => boolean;
+  /**
+   * 右键手动设置对海目标类型：写入手动字段 + classifiedType/targetType，并刷新军标。
+   */
+  applyManualSeaTargetType: (
+    showID: string,
+    targetType: "ship" | "buoy" | "other",
+    classifiedType: number,
+  ) => boolean;
   clearAllTracks: () => void;
 
   /** showID → 右键手动属性 */
@@ -176,18 +185,38 @@ export const useTrackStore = create<TrackState>((set, get) => ({
       // 已处置航迹跳过
       if (disposedStore.isTrackDisposed(t.showID)) continue;
 
+      const prevIngestMs = _lastIngestMsByShowId.get(t.showID);
       _lastIngestMsByShowId.set(t.showID, Date.now());
 
       const inRender = _renderCache.get(t.showID);
       const inShadow = shadow.get(t.showID);
       const holder = inRender ?? inShadow;
-      let historyTrail = holder?.historyTrail ? [...holder.historyTrail] : [];
+      /** 就地追加尾迹，避免每次 WS 点都 `[...trail]` 全量复制；同步维护 `historyTrailAtMs` 供按秒裁剪 */
+      let historyTrail = holder?.historyTrail;
+      let historyTrailAtMs = holder?.historyTrailAtMs;
       const moved = holder ? (holder.lat !== t.lat || holder.lng !== t.lng) : false;
       if (moved && holder) {
-        historyTrail.push([holder.lng, holder.lat] as [number, number]);
-        if (historyTrail.length > trailCap) historyTrail = historyTrail.slice(-trailCap);
+        if (shouldResetHistoryTrailOnStep(holder.lng, holder.lat, t.lng, t.lat, t.speed)) {
+          historyTrail = [];
+          historyTrailAtMs = [];
+        } else {
+          if (!historyTrail) historyTrail = [];
+          if (!historyTrailAtMs || historyTrailAtMs.length !== historyTrail.length) {
+            historyTrailAtMs = new Array(historyTrail.length).fill(prevIngestMs ?? Date.now());
+          }
+          historyTrail.push([holder.lng, holder.lat] as [number, number]);
+          historyTrailAtMs.push(prevIngestMs ?? Date.now());
+          if (historyTrail.length > trailCap) {
+            const drop = historyTrail.length - trailCap;
+            historyTrail.splice(0, drop);
+            historyTrailAtMs.splice(0, drop);
+          }
+        }
       }
-      const nextTrack = historyTrail.length ? { ...t, historyTrail } : { ...t };
+      const nextTrack =
+        historyTrail?.length
+          ? { ...t, historyTrail, historyTrailAtMs: historyTrailAtMs?.length ? historyTrailAtMs : undefined }
+          : { ...t };
 
       if (inRender) {
         // 已在渲染层 → 更新坐标并累积 historyTrail，不动影子
@@ -292,14 +321,46 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     return changed;
   },
 
-  /** 更新指定航迹的查证图片 */
+  /**
+   * 更新指定航迹的查证图片。
+   * 注意：勿刷新 `_lastIngestMsByShowId`（否则仅靠轮询图片会阻止超时 prune）。
+   * 全局 image polling 已停用；保留 API 供显式调用。
+   */
   updateTrackImage: (showID, imageUrl) => {
     const track = _renderCache.get(showID);
     if (!track) return false;
     if (track.verificationImage === imageUrl) return false;
-    _lastIngestMsByShowId.set(showID, Date.now());
     _renderCache.set(showID, { ...track, verificationImage: imageUrl ?? undefined });
     set({ tracks: buildDisplayTracks(get().shadowTracks) });
+    return true;
+  },
+
+  applyManualSeaTargetType: (showID, targetType, classifiedType) => {
+    const id = String(showID ?? "").trim();
+    if (!id) return false;
+    const patch = (t: Track): Track => ({
+      ...t,
+      manualTargetType: targetType,
+      classifiedType,
+      targetType,
+    });
+    let touched = false;
+    const inRender = _renderCache.get(id);
+    if (inRender) {
+      _renderCache.set(id, patch(inRender));
+      touched = true;
+    }
+    const shadow = get().shadowTracks;
+    const inShadow = shadow.get(id);
+    if (inShadow) {
+      shadow.set(id, patch(inShadow));
+      touched = true;
+    }
+    if (!touched) return false;
+    set((s) => ({
+      tracks: buildDisplayTracks(s.shadowTracks),
+      mapManualAffiliationRev: s.mapManualAffiliationRev + 1,
+    }));
     return true;
   },
 

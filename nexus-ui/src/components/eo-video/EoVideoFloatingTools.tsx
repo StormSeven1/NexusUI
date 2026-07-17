@@ -14,6 +14,9 @@ import {
   Gamepad2,
   PictureInPicture2,
   Radar,
+  RefreshCw,
+  SlidersHorizontal,
+  SquareCheck,
   SunMedium,
   Video,
   Volume2,
@@ -32,6 +35,8 @@ export interface EoVideoFloatingToolsProps {
   /** 无人机：底部罗盘/状态/控制台是否展开（与相机 PTZ 开关同类交互） */
   uavDockExpanded?: boolean;
   onToggleUavDock?: () => void;
+  /** 经典主窗：锁定控制台常显，隐藏收起按钮 */
+  lockUavDockExpanded?: boolean;
   /** 画中画小窗是否打开 */
   pipOpen?: boolean;
   onTogglePip?: () => void;
@@ -80,6 +85,18 @@ export interface EoVideoFloatingToolsProps {
   /** 相机跟踪标定采集（对齐 Qt CalcRecord） */
   calcRecordSupported?: boolean;
   onOpenCalcRecord?: () => void;
+  /** 相机对准采集（TrackRequest 上报） */
+  aimCollectSupported?: boolean;
+  aimCollectChecked?: boolean;
+  aimCollectBusy?: boolean;
+  onToggleAimCollect?: () => void;
+  /** 主 PTZ 且无 parent / 非第三方：更新对准参数到 camServer 测试 ini */
+  aimUpdateSupported?: boolean;
+  aimUpdateBusy?: boolean;
+  onAimUpdate?: () => void;
+  /** 主 PTZ：打开 PID 参数对话框（读/写 camServer） */
+  pidSettingsSupported?: boolean;
+  onOpenPidSettings?: () => void;
   /** 无人机放大：底部 DRC / MQTT 调试面板 */
   showUavExpandedDebugToggle?: boolean;
   uavExpandedDebugOpen?: boolean;
@@ -118,6 +135,7 @@ export function EoVideoFloatingTools({
   onTogglePtzPanel,
   uavDockExpanded = true,
   onToggleUavDock,
+  lockUavDockExpanded = false,
   pipOpen = false,
   onTogglePip,
   pipThirdPartySubCamsAvailable = false,
@@ -146,6 +164,15 @@ export function EoVideoFloatingTools({
   onToggleCameraExpandedDebug,
   calcRecordSupported = false,
   onOpenCalcRecord,
+  aimCollectSupported = false,
+  aimCollectChecked = false,
+  aimCollectBusy = false,
+  onToggleAimCollect,
+  aimUpdateSupported = false,
+  aimUpdateBusy = false,
+  onAimUpdate,
+  pidSettingsSupported = false,
+  onOpenPidSettings,
   showUavExpandedDebugToggle = false,
   uavExpandedDebugOpen = false,
   onToggleUavExpandedDebug,
@@ -511,6 +538,20 @@ export function EoVideoFloatingTools({
         <Camera className="size-3.5" />
       </Button>
 
+      {variant === "camera" && pidSettingsSupported ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          title="PID 参数设置（读/写 camServer ConfigPID.ini）"
+          aria-label="PID 参数设置"
+          className="border border-amber-400/40 bg-amber-950/35 text-amber-100 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-amber-900/45 hover:text-amber-50"
+          onClick={() => onOpenPidSettings?.()}
+        >
+          <SlidersHorizontal className="size-3.5" />
+        </Button>
+      ) : null}
+
       {variant === "camera" && calcRecordSupported ? (
         <Button
           type="button"
@@ -522,6 +563,54 @@ export function EoVideoFloatingTools({
           onClick={() => onOpenCalcRecord?.()}
         >
           <ClipboardList className="size-3.5" />
+        </Button>
+      ) : null}
+
+      {variant === "camera" && aimCollectSupported ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          disabled={aimCollectBusy}
+          title={
+            aimCollectChecked
+              ? "采集中（点击结束采集）"
+              : "对准采集：勾选后开始采集"
+          }
+          aria-label="对准采集"
+          aria-pressed={aimCollectChecked}
+          className={cn(
+            "border border-white/25 bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white disabled:opacity-50",
+            aimCollectChecked
+              ? "border-emerald-400/55 bg-emerald-950/45 text-emerald-200"
+              : "text-white/85",
+          )}
+          onClick={() => onToggleAimCollect?.()}
+        >
+          {aimCollectBusy ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <SquareCheck className="size-3.5" />
+          )}
+        </Button>
+      ) : null}
+
+      {variant === "camera" && aimUpdateSupported ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          disabled={aimUpdateBusy}
+          title="更新对准参数（写入 camServer aimConf/ConfigAIM{N}_test.ini）"
+          aria-label="更新对准参数"
+          className="border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white disabled:opacity-50"
+          onClick={() => onAimUpdate?.()}
+        >
+          {aimUpdateBusy ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <RefreshCw className="size-3.5" />
+          )}
         </Button>
       ) : null}
 
@@ -607,7 +696,7 @@ export function EoVideoFloatingTools({
 
       {pipButton}
 
-      {variant === "uav" && expandedMode ? (
+      {variant === "uav" && expandedMode && !lockUavDockExpanded ? (
         <>
           <Button
             type="button"

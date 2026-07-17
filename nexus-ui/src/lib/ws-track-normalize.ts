@@ -13,7 +13,7 @@
  *   - `trackId` — 业务 trackId（告警匹配用，与 alert-store AlertData.trackId 对应）
  *   - `isAirTrack` — 对空标记（影响航迹图标旋转角度、ID 显示截断逻辑）
  *   - `targetType` — 目标类型（如 "对空融合航迹"、"drone"）
- *   - `sensor` — 传感器/来源信息（有 fusionSources 时组装为 "源名(trackId)" 格式）
+ *   - `sensor` — 传感器/来源信息（有 fusionSources 时组装为 "源名(雷达批号)"；批号优先 externalTrackId）
  *   - `course` — 原始航向（对海=正北顺时针；对空=服务端航向）
  *   - `heading` — 图标渲染航向（对海融合=course；对空=course + airIconHeadingOffsetDeg）
  *
@@ -23,11 +23,26 @@
  *   - distinguishSeaAir 模式下：对海用 uniqueID，对空用 trackId 做告警匹配
  */
 
-import { isVirtualFromProperties, type Track, type TrackFusionSourceItem } from "@/lib/map-entity-model";
+import { isVirtualFromProperties, type Track, type TrackFusionSourceItem, type TrackLayerKey } from "@/lib/map-entity-model";
 import { readRealityTypeFromRecord, resolveTrackIsVirtual } from "@/lib/track-reality-type";
+import { readTargetStateFromRecord } from "@/lib/track-target-state";
 import { parseForceDisposition, type ForceDisposition } from "@/lib/theme-colors";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
-import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
+import { resolveTrackLayerKey, TRACK_LAYER_KEY_BY_DDS_SOURCE_ID } from "@/lib/track-layer-visibility";
+import {
+  MAX_TRAIL_LENGTH_SECONDS,
+  TRACK_TRAIL_SAMPLE_INTERVAL_SEC,
+} from "@/stores/track-display-store";
+import {
+  readTrackCategoryFromRecord,
+  readClassifiedTypeFromRecord,
+  resolveAirTrackIsUav,
+  UNIT_TYPE_BUOY,
+  UNIT_TYPE_OTHER,
+  UNIT_TYPE_SURFACE_SHIP,
+} from "@/lib/track-category-id-parse";
+import { transformCoordinate } from "@/lib/coordinate-transform";
+import { resolveTrackLastUpdateString } from "@/lib/track-last-update-resolve";
 
 function parseFusionSourcesFromRecord(rec: Record<string, unknown>): TrackFusionSourceItem[] | undefined {
   const raw = rec.fusionSources;
@@ -39,25 +54,17 @@ function parseFusionSourcesFromRecord(rec: Record<string, unknown>): TrackFusion
     const sourceName = String(s.sourceName ?? s.source_name ?? "").trim();
     const dataSourceId = s.dataSourceId ?? s.data_source_id;
     const trackId = s.trackId ?? s.track_id;
-    if (!sourceName && dataSourceId == null && trackId == null) continue;
+    const externalTrackId = s.externalTrackId ?? s.external_track_id;
+    if (!sourceName && dataSourceId == null && trackId == null && externalTrackId == null) continue;
     out.push({
       ...(sourceName ? { sourceName } : {}),
       ...(dataSourceId != null ? { dataSourceId: dataSourceId as string | number } : {}),
       ...(trackId != null ? { trackId: trackId as string | number } : {}),
+      ...(externalTrackId != null ? { externalTrackId: externalTrackId as string | number } : {}),
     });
   }
   return out.length > 0 ? out : undefined;
 }
-import { transformCoordinate } from "@/lib/coordinate-transform";
-import {
-  readTrackCategoryFromRecord,
-  readClassifiedTypeFromRecord,
-  resolveAirTrackIsUav,
-} from "@/lib/track-category-id-parse";
-import type { TrackLayerKey } from "@/lib/map-entity-model";
-import { TRACK_LAYER_KEY_BY_DDS_SOURCE_ID } from "@/lib/track-layer-visibility";
-import { resolveTrackLastUpdateString } from "@/lib/track-last-update-resolve";
-
 const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
   "fuse_sea",
   "fuse_air",
@@ -174,6 +181,18 @@ export function mergeIncomingTrackWithStickyAirClassification(incoming: Track, p
   if (prev != null && out.classifiedType === undefined && prev.classifiedType !== undefined) {
     out = { ...out, classifiedType: prev.classifiedType };
   }
+  /** 右键手动对海类型：粘性保留，并覆盖本帧图标分类字段 */
+  if (prev?.manualTargetType) {
+    const mt = prev.manualTargetType;
+    const classified =
+      mt === "buoy" ? UNIT_TYPE_BUOY : mt === "ship" ? UNIT_TYPE_SURFACE_SHIP : UNIT_TYPE_OTHER;
+    out = {
+      ...out,
+      manualTargetType: mt,
+      classifiedType: classified,
+      targetType: mt,
+    };
+  }
   if (prev != null && out.trackLayerKey === undefined && prev.trackLayerKey !== undefined) {
     out = { ...out, trackLayerKey: prev.trackLayerKey };
   }
@@ -182,6 +201,9 @@ export function mergeIncomingTrackWithStickyAirClassification(incoming: Track, p
   }
   if (prev != null && out.realityType === undefined && prev.realityType !== undefined) {
     out = { ...out, realityType: prev.realityType };
+  }
+  if (prev != null && out.targetState === undefined && prev.targetState !== undefined) {
+    out = { ...out, targetState: prev.targetState };
   }
   if (prev != null && out.isVirtual === undefined && prev.isVirtual === true) {
     out = { ...out, isVirtual: true };
@@ -366,12 +388,18 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
 
   const trackId = rec.trackId ?? rec.track_id ?? rec.tracnID;
   const trackIdStr = trackId != null && String(trackId).trim() !== "" ? String(trackId).trim() : undefined;
+  const externalTargetRaw = rec.externalTargetId ?? rec.external_target_id;
+  const externalTargetIdStr =
+    externalTargetRaw != null && String(externalTargetRaw).trim() !== ""
+      ? String(externalTargetRaw).trim()
+      : undefined;
 
   const aliasRaw = rec.trackAlias ?? rec.track_alias;
   const trackAliasStr =
     aliasRaw != null && String(aliasRaw).trim() !== "" ? String(aliasRaw).trim() : undefined;
 
-  const targetType = rec.target_type ?? rec.targetType ?? rec.name ?? rec.label;
+  const targetType =
+    rec.target_type ?? rec.targetType ?? rec.trackCategoryName ?? rec.track_category_name ?? rec.name ?? rec.label;
   const targetTypeStr = targetType != null ? String(targetType) : undefined;
 
   const azimuthRaw = rec.azimuth ?? rec.azimuth_deg;
@@ -380,19 +408,18 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const distanceRaw = rec.range ?? rec.distance;
   const distance = distanceRaw != null && Number.isFinite(Number(distanceRaw)) ? Number(distanceRaw) : undefined;
 
-  // 解析 fusionSources：融合航迹的多源信息，组装为 "源名(trackId)" 格式
-  // 例：[{ sourceName: "探鸟雷达", trackId: 5744 }] → sensor = "探鸟雷达(5744)"
-  // 如果有 fusionSources，优先用它组装 sensor；否则回退到 rec.sensor / rec.source
+  // 解析 fusionSources：组装为 "源名(雷达批号)"；批号用 externalTrackId（RadarObservedTargetProfile.track_id），
+  // 勿用 trackId/source_track_id（融合关联键，常与批号不同，如 637 vs 1454）
   const fusionSources = Array.isArray(rec.fusionSources) ? rec.fusionSources : null;
   const fusionSourcesParsed = parseFusionSourcesFromRecord(rec);
   let sensorValue: string;
   if (fusionSources && fusionSources.length > 0) {
-    // 从每个融合源提取 sourceName + trackId，组装成 "源名(trackId)" 格式，逗号分隔
     sensorValue = fusionSources
       .map((src: unknown) => {
         const s = src as Record<string, unknown>;
         const sn = String(s.sourceName ?? s.source_name ?? "").trim();
-        const tid = s.trackId ?? s.track_id;
+        const radarBatch = s.externalTrackId ?? s.external_track_id;
+        const tid = radarBatch != null ? radarBatch : (s.trackId ?? s.track_id);
         const tidStr = tid != null ? String(tid) : "";
         return sn && tidStr ? `${sn}(${tidStr})` : sn || tidStr;
       })
@@ -414,6 +441,8 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
   const tlkFromDds = ddsLower && TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[ddsLower] ? TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[ddsLower] : undefined;
   const resolvedTrackLayerKey = tlkFromDds ?? tlkPayload;
 
+  const targetState = readTargetStateFromRecord(rec);
+
   const heading = trackIconHeadingDeg(
     kind,
     course,
@@ -430,6 +459,7 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     showID,
     uniqueID,
     ...(trackIdStr ? { trackId: trackIdStr } : {}),
+    ...(externalTargetIdStr ? { externalTargetId: externalTargetIdStr } : {}),
     ...(trackAliasStr ? { trackAlias: trackAliasStr } : {}),
     name: String(rec.name ?? rec.label ?? showID),
     type: kind,
@@ -456,6 +486,7 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     ...(isUav ? { isUav: true } : {}),
     ...(trackCategoryId !== undefined ? { trackCategoryId } : {}),
     ...(classifiedType !== undefined ? { classifiedType } : {}),
+    ...(targetState ? { targetState } : {}),
   };
 }
 
@@ -470,10 +501,15 @@ export function normalizeIncomingTrackList(list: unknown): Track[] {
   return out;
 }
 
-/** 与 `trackRendering.trackDisplay.maxHistoryPointsPerTrack` 对齐：单条航迹在 store 内最多保留的历史点数 */
+/**
+ * 与 `trackRendering.trackDisplay.maxHistoryPointsPerTrack` 对齐：单条航迹在 store 内最多保留的历史点数。
+ * 配置为上限（不再用 `Math.max(cfg, 900)` 抬高，否则现场无法靠配置压内存）。
+ * `uiCap` 仅作配置缺失时的默认（= 面板尾迹长度上限 / 假定采样间隔）。
+ */
 export function maxStoredTrailPointsPerTrack(): number {
   const max = getTrackRenderingConfig().trackDisplay.maxHistoryPointsPerTrack;
-  if (!Number.isFinite(max) || max < 2) return 2;
-  return Math.max(2, Math.min(4000, Math.floor(max)));
+  const uiCap = Math.ceil(MAX_TRAIL_LENGTH_SECONDS / TRACK_TRAIL_SAMPLE_INTERVAL_SEC);
+  const fromCfg = Number.isFinite(max) && max >= 2 ? Math.floor(max) : uiCap;
+  return Math.max(2, Math.min(4000, fromCfg));
 }
 

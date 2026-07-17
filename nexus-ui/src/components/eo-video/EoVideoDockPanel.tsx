@@ -9,16 +9,32 @@ import { EoVideoPanel } from "./EoVideoPanel";
 export interface EoVideoDockPanelProps {
   className?: string;
   panelId?: string;
+  entityId?: string;
+  expandedMode?: boolean;
+  /** 经典布局：隐藏放大/弹出，禁止独立放大窗 */
+  disableExpand?: boolean;
+  /** 经典布局主窗：固定放大态，可直接键盘手控无人机 */
+  classicFixedExpanded?: boolean;
 }
 
-export function EoVideoDockPanel({ className, panelId = "electro-optical" }: EoVideoDockPanelProps) {
+export function EoVideoDockPanel({
+  className,
+  panelId = "electro-optical",
+  entityId = "camera_004",
+  expandedMode = false,
+  disableExpand = false,
+  classicFixedExpanded = false,
+}: EoVideoDockPanelProps) {
   return (
     <div className={cn("h-full min-h-0 w-full overflow-hidden bg-black", className)}>
       <EoVideoPanel
         className="h-full min-h-0 rounded-none border-0 shadow-none"
-        entityId="camera_004"
+        entityId={entityId}
         streamPersistKey={panelId}
         dockPanelId={panelId}
+        expandedMode={expandedMode}
+        disableExpand={disableExpand}
+        classicFixedExpanded={classicFixedExpanded}
       />
     </div>
   );

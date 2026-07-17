@@ -22,3 +22,12 @@ export type EoWebCodecsPresentation = {
   /** 呈现恢复/切换时递增，供检测层重置 sync 对齐状态 */
   presentationEpoch: number;
 };
+
+/** `NEXT_PUBLIC_EO_VIDEO_WEBCODECS_LOG=true` 时输出 reset/decoder ready 等例行日志（默认关闭） */
+export function isEoVideoWebCodecsLogEnabled(): boolean {
+  const raw =
+    typeof process !== "undefined" && process.env.NEXT_PUBLIC_EO_VIDEO_WEBCODECS_LOG != null
+      ? String(process.env.NEXT_PUBLIC_EO_VIDEO_WEBCODECS_LOG).trim().toLowerCase()
+      : "";
+  return raw === "true" || raw === "1" || raw === "yes" || raw === "on";
+}

@@ -22,6 +22,10 @@ export interface EoCameraWsPayload {
   p?: number | null;
   t?: number | null;
   z?: number | null;
+  /** 单目标跟踪时：按 AimConfig 解算的应对准目标理论 PTZ */
+  calcP?: number | null;
+  calcT?: number | null;
+  calcZ?: number | null;
   hs?: number | null;
   vs?: number | null;
   boatRect?: EoRectLayerPayload | null;

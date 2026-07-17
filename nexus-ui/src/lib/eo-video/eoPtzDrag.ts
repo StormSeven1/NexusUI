@@ -1,4 +1,4 @@
-/** 与 EoVideoPlayStage / camera-task 共用的拖拽 PTZ 方向（含 8 向） */
+/** 与 EoVideoPlayStage / camera-task 共用的拖拽 PTZ 方向（含 8 向；滚轮变倍仍用） */
 export type EoPtzDragDirection =
   | "UP"
   | "DOWN"
@@ -14,34 +14,131 @@ export type EoPtzMoveSpeed = {
   tilt: number;
 };
 
+/** 按下后超过该像素才发绝对定位（过滤点击） */
+export const PTZ_ABS_DRAG_MIN_PX = 6;
+
 export const PTZ_DRAG_TRIGGER_PX = 14;
-/** 快甩方向判定略低，避免极短箭头无 move */
 const PTZ_FLICK_TRIGGER_PX = 10;
 
-/** 按住未超过该时长松手 → 快甩（仅松手发 pulse）；超过 → 长按缓升 */
+/** @deprecated 长按已移除 */
 export const PTZ_SLOW_DRAG_ENTER_MS = 3000;
 
-/** Pelco-D 速度字节上限 63，camServer 计算 int(64*speed) */
 export const PTZ_QUICK_SPEED = 63 / 64;
-/** 快甩速度/脉冲随箭头长度变化（幅度 ∝ 长度，整体偏小） */
 export const PTZ_FLICK_SPEED_MIN = 0.18;
 export const PTZ_FLICK_SPEED_MAX = 0.44;
-/** 箭头长度达到该像素视为「满幅度」参考 */
 export const PTZ_QUICK_FLICK_DIST_REF_PX = 120;
 export const PTZ_FLICK_PULSE_GAP_MS = 100;
-
-/** 长按：超过 ENTER 后按按住时长缓升 */
 export const PTZ_HOLD_RAMP_MS = 4000;
 export const PTZ_HOLD_SPEED_MIN = 0.15;
 export const PTZ_HOLD_SPEED_MAX = 0.55;
 
-/** 箭头长度 → [0,1]，14px 起算 */
+const PTZ_DRAG_DIAGONAL_MIN_AXIS_PX = 7;
+const PTZ_DRAG_DIAGONAL_MIN_RATIO = 0.35;
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
+}
+
+export function normalizePanDeg360(panDeg: number): number {
+  let p = panDeg % 360;
+  if (p < 0) p += 360;
+  return p;
+}
+
+/**
+ * DDS `ptz.tilt`（= `m_calcT`）→ 几何俯仰角 °。
+ * 对齐 `PtzMainWidget::ShowPTZ` 非 11hw：`originT * 90`。
+ * 例：GPL 水平时常 calcT≈±180 → 几何约 0°；勿把 calcT 当 AbsolutePosition 的 tilt。
+ */
+export function calcTToGeometricTiltDeg(calcT: number): number {
+  const originT = calcT <= 0 ? -calcT / 180 - 1 : 1 - calcT / 180;
+  return originT * 90;
+}
+
+/** 合理当前视场（°）；拒绝 0 / NaN / 把 90 俯仰量程误当 FOV */
+export function isPlausibleFovDeg(deg: number): boolean {
+  return Number.isFinite(deg) && deg > 0.05 && deg <= 90;
+}
+
+/**
+ * 对齐 `PtzMainWidget::mouseReleaseEvent` 非 11hw：
+ * 把按下点画面内容挪到松手点。
+ *
+ * `x_offset = (press - release) / size * FOV`（归一化后即 `(pressNorm - releaseNorm) * FOV`）；
+ * `index==0` 时水平 FOV 乘 2。
+ * 返回 HTTP `PTZAbsolutePositionTask` 用的物理量：pan 0–360°、tilt 几何 °。
+ */
+export function resolvePtzAbsoluteFromDrag(params: {
+  /** 按下点在视频内容区内的归一化坐标 [0,1] */
+  pressNormX: number;
+  pressNormY: number;
+  releaseNormX: number;
+  releaseNormY: number;
+  /** DDS / 实体 `ptz.pan` = m_calcP，度 0–360 */
+  panDeg: number;
+  /** DDS / 实体 `ptz.tilt` = m_calcT（编码角，非几何） */
+  tiltCalc: number;
+  /** 当前水平视场 °（`ptz.hs` / `fov.hs`） */
+  hsDeg: number;
+  /** 当前垂直视场 °（`ptz.vs` / `fov.vs`） */
+  vsDeg: number;
+  /** 相机序号：`camera_000`→0，仅 0 号水平 FOV×2 */
+  cameraIndex: number;
+}): { panDeg: number; tiltDeg: number; xOffsetDeg: number; yOffsetDeg: number } | null {
+  const {
+    pressNormX,
+    pressNormY,
+    releaseNormX,
+    releaseNormY,
+    panDeg,
+    tiltCalc,
+    hsDeg,
+    vsDeg,
+    cameraIndex,
+  } = params;
+
+  if (!isPlausibleFovDeg(hsDeg) || !isPlausibleFovDeg(vsDeg)) return null;
+  if (
+    ![pressNormX, pressNormY, releaseNormX, releaseNormY, panDeg, tiltCalc].every((n) =>
+      Number.isFinite(n),
+    )
+  ) {
+    return null;
+  }
+  if (
+    pressNormX < 0 ||
+    pressNormX > 1 ||
+    pressNormY < 0 ||
+    pressNormY > 1 ||
+    releaseNormX < 0 ||
+    releaseNormX > 1 ||
+    releaseNormY < 0 ||
+    releaseNormY > 1
+  ) {
+    return null;
+  }
+
+  let xOffset = (pressNormX - releaseNormX) * hsDeg;
+  const yOffset = (pressNormY - releaseNormY) * vsDeg;
+  if (cameraIndex === 0) xOffset *= 2;
+  if (xOffset === 0 && yOffset === 0) return null;
+
+  /** 与 Qt 一致：偏移幅度不应远超一帧视场（防归一化/FOV 错读飞镜） */
+  if (Math.abs(xOffset) > hsDeg * 1.05 + 1e-6 || Math.abs(yOffset) > vsDeg * 1.05 + 1e-6) {
+    return null;
+  }
+
+  const pan = normalizePanDeg360(normalizePanDeg360(panDeg) + xOffset);
+  const tilt = clamp(calcTToGeometricTiltDeg(tiltCalc) - yOffset, -90, 90);
+  return { panDeg: pan, tiltDeg: tilt, xOffsetDeg: xOffset, yOffsetDeg: yOffset };
+}
+
+/** 滚轮等方向控制仍用 */
 export function flickDistRatio(dist: number): number {
   const span = Math.max(PTZ_QUICK_FLICK_DIST_REF_PX - PTZ_DRAG_TRIGGER_PX, 1);
   return clamp((dist - PTZ_DRAG_TRIGGER_PX) / span, 0, 1);
 }
 
-/** 快甩标量速度：短箭头更慢，长箭头渐快（sqrt 使短距更细腻） */
 export function flickSpeedFromDist(dist: number): number {
   const t = Math.sqrt(flickDistRatio(dist));
   return clamp(
@@ -51,29 +148,21 @@ export function flickSpeedFromDist(dist: number): number {
   );
 }
 
-/** 松手总时长 <3s 且箭头有效 → 快甩 */
-export function isQuickFlickGesture(gestureMs: number, dist: number): boolean {
-  if (gestureMs <= 0 || dist < PTZ_FLICK_TRIGGER_PX) return false;
-  return gestureMs < PTZ_SLOW_DRAG_ENTER_MS;
+/** @deprecated */
+export function isQuickFlickGesture(_gestureMs: number, dist: number): boolean {
+  return dist >= PTZ_FLICK_TRIGGER_PX;
 }
 
-/** 快甩松手：短距离时放大至触发阈值 */
+/** @deprecated */
 export function resolvePtzFlickRelease(
   dx: number,
   dy: number,
   gestureMs: number,
 ): { direction: EoPtzDragDirection | null; speed: EoPtzMoveSpeed } {
-  const dist = Math.hypot(dx, dy);
-  if (dist < PTZ_FLICK_TRIGGER_PX) {
-    return { direction: null, speed: { pan: PTZ_HOLD_SPEED_MIN, tilt: PTZ_HOLD_SPEED_MIN } };
-  }
-  if (dist < PTZ_DRAG_TRIGGER_PX) {
-    const scale = PTZ_DRAG_TRIGGER_PX / dist;
-    return resolvePtzDragFromDelta(dx * scale, dy * scale, gestureMs, { flick: true });
-  }
   return resolvePtzDragFromDelta(dx, dy, gestureMs, { flick: true });
 }
 
+/** @deprecated */
 export function quickFlickPulseBudget(dist: number): {
   burstCount: number;
   pulseGapMs: number;
@@ -88,26 +177,9 @@ export function quickFlickPulseBudget(dist: number): {
   };
 }
 
-/** 短轴 ≥ 该值且两轴比例足够时才判斜向 */
-const PTZ_DRAG_DIAGONAL_MIN_AXIS_PX = 7;
-const PTZ_DRAG_DIAGONAL_MIN_RATIO = 0.35;
-
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, n));
-}
-
-/** 长按（≥3s）速度：从 MIN 缓升 */
-export function ptzDragMagnitudeFromGesture(gestureMs: number): number {
-  if (gestureMs < PTZ_SLOW_DRAG_ENTER_MS) {
-    return PTZ_HOLD_SPEED_MIN;
-  }
-  const holdMs = gestureMs - PTZ_SLOW_DRAG_ENTER_MS;
-  const t = Math.sqrt(clamp(holdMs / PTZ_HOLD_RAMP_MS, 0, 1));
-  return clamp(
-    PTZ_HOLD_SPEED_MIN + t * (PTZ_HOLD_SPEED_MAX - PTZ_HOLD_SPEED_MIN),
-    PTZ_HOLD_SPEED_MIN,
-    PTZ_HOLD_SPEED_MAX,
-  );
+/** @deprecated */
+export function ptzDragMagnitudeFromGesture(_gestureMs: number): number {
+  return PTZ_HOLD_SPEED_MIN;
 }
 
 function applyMagnitudeToSpeed(
@@ -132,7 +204,7 @@ function applyMagnitudeToSpeed(
 export function resolvePtzDragFromDelta(
   dx: number,
   dy: number,
-  gestureMs: number,
+  _gestureMs: number,
   opts?: { flick?: boolean },
 ): { direction: EoPtzDragDirection | null; speed: EoPtzMoveSpeed } {
   const dist = Math.hypot(dx, dy);
@@ -144,7 +216,7 @@ export function resolvePtzDragFromDelta(
   const ax = Math.abs(dx);
   const ay = Math.abs(dy);
   const flick = opts?.flick === true;
-  const mag = flick ? flickSpeedFromDist(dist) : ptzDragMagnitudeFromGesture(gestureMs);
+  const mag = flickSpeedFromDist(dist);
   const speedCap = flick ? mag : PTZ_QUICK_SPEED;
   const maxAxis = Math.max(ax, ay);
   const minAxis = Math.min(ax, ay);
@@ -167,7 +239,6 @@ export function ptzSpeedChanged(a: EoPtzMoveSpeed, b: EoPtzMoveSpeed, epsilon = 
   return Math.abs(a.pan - b.pan) > epsilon || Math.abs(a.tilt - b.tilt) > epsilon;
 }
 
-/** 换向时是否需先 stop（仅 180° 翻转） */
 export function ptzDirectionChangeNeedsStop(
   prev: EoPtzDragDirection | null,
   next: EoPtzDragDirection,

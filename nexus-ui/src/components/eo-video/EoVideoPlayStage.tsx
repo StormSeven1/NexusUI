@@ -3,27 +3,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import type { EoWebCodecsPresentation } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
-import { postEoPtzMove, postEoPtzStop, type EoPtzDirection, type EoPtzMoveSpeed } from "@/lib/eo-video/eoPtzTaskClient";
+import { postEoPtzAbsolute, postEoPtzMove, postEoPtzStop, type EoPtzDirection } from "@/lib/eo-video/eoPtzTaskClient";
 import {
-  resolvePtzDragFromDelta,
-  ptzSpeedChanged,
-  ptzDirectionChangeNeedsStop,
-  PTZ_SLOW_DRAG_ENTER_MS,
-  isQuickFlickGesture,
-  quickFlickPulseBudget,
-  resolvePtzFlickRelease,
-  type EoPtzDragDirection,
+  isPlausibleFovDeg,
+  PTZ_ABS_DRAG_MIN_PX,
+  resolvePtzAbsoluteFromDrag,
 } from "@/lib/eo-video/eoPtzDrag";
 import { readEoPtzTaskResponse } from "@/lib/eo-video/cameraTaskResult";
 import { postUavCameraAim } from "@/lib/eo-video/postUavCameraAim";
 import type { EoDetectionBox, EoVideoIceServer } from "@/lib/eo-video/types";
 import { cn } from "@/lib/utils";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
+import {
+  cameraIndexFromOwnerEntityId,
+  maxZoomForCameraIndex,
+} from "@/lib/camera-management-client";
 import { isCameraSingleTrackDetectionActive } from "@/lib/eo-video/formatEoDdsTaskOverlay";
 import {
   armEoSingleTrackUserLatch,
   clearEoSingleTrackUserLatch,
 } from "@/lib/eo-video/eoSingleTrackUserLatch";
+import { getVideoContentRect, resolveEoVideoIntrinsicSize } from "@/lib/eo-video/videoContentRect";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 import { EoDetectionOverlay } from "./EoDetectionOverlay";
 import { EoPtzDragArrowOverlay, type EoPtzDragArrowBox } from "./EoPtzDragArrowOverlay";
@@ -31,15 +31,21 @@ import { EoVideoDetectionLayer } from "./EoVideoDetectionLayer";
 import { resolveEoVideoObjectFit } from "@/lib/eo-video/eoVideoObjectFit";
 import { EoVideoViewport } from "./EoVideoViewport";
 
-/** 按下后超过该像素即显示拖动箭头（早于云台方向触发阈值，便于看见反馈） */
+/** 按下后超过该像素即显示拖动箭头 */
 const PTZ_ARROW_SHOW_MIN_PX = 4;
-/** 松手后发 stop 前最短 hold（慢画箭头路径）；快甩用 quickFlickPulseBudget */
-const PTZ_DRAG_STOP_MIN_HOLD_MS = 280;
-const PTZ_STOP_RETRY_MS = 100;
-/** 同方向持续拖时周期性重发 move（须 ≤ KEEPALIVE） */
-const PTZ_DRAG_MOVE_RESEND_MS = 360;
-const PTZ_DRAG_MOVE_RETRY_MS = 150;
-const PTZ_DRAG_MOVE_KEEPALIVE_MS = 400;
+
+/** 按下时快照：对齐 Qt 用当时 PTZ/FOV 算绝对位移 */
+type PtzAbsPressSnapshot = {
+  panDeg: number;
+  tiltCalc: number;
+  /** m_calcZ ∈ [0,1] */
+  zoomNorm: number;
+  hsDeg: number;
+  vsDeg: number;
+  pressNormX: number;
+  pressNormY: number;
+  cameraIndex: number;
+};
 
 /** 无人机 camera_aim 单次指针手势（松手发 HTTP，device/payload 在按下时快照） */
 type UavAimGestureSession = {
@@ -167,6 +173,8 @@ export interface EoVideoPlayStageProps {
   onUavStopTrackingTask?: () => Promise<void>;
   /** 是否处于无人机单目标跟踪态（本地 + DDS） */
   uavTrackingActive?: boolean;
+  /** 递增时强制重建 WebRTC（私有云 start 推流后重连 ZLM） */
+  webRtcKickEpoch?: number;
 }
 
 /**
@@ -203,6 +211,7 @@ export function EoVideoPlayStage({
   onUavImgTrackingTask,
   onUavStopTrackingTask,
   uavTrackingActive = false,
+  webRtcKickEpoch,
 }: EoVideoPlayStageProps) {
   const [taskBusy, setTaskBusy] = useState(false);
   const [taskHint, setTaskHint] = useState("");
@@ -289,64 +298,30 @@ export function EoVideoPlayStage({
 
   const dragStateRef = useRef<{
     active: boolean;
-    /** 每次 pointerdown 递增；队列任务用快照校验，避免 pointerup 后误跳过 move */
     session: number;
     pointerId: number | null;
     startX: number;
     startY: number;
-    /** pointerdown 时刻，用于识别快拖 */
-    startedAt: number;
     lastDx: number;
     lastDy: number;
-    /** 松手后拒绝新的 move（releaseFlush 除外） */
-    stopRequested: boolean;
-    /** 本手势是否已成功发过 move */
-    moveSent: boolean;
-    direction: EoPtzDirection | null;
-    /** 已过 3s 长按阈值，由定时器或 pointermove 置位 */
-    longPressMode: boolean;
+    absSnapshot: PtzAbsPressSnapshot | null;
   }>({
     active: false,
     session: 0,
     pointerId: null,
     startX: 0,
     startY: 0,
-    startedAt: 0,
     lastDx: 0,
     lastDy: 0,
-    stopRequested: false,
-    moveSent: false,
-    direction: null,
-    longPressMode: false,
+    absSnapshot: null,
   });
-  /** move/stop 串行，避免并发 fetch 在 BFF/gRPC 侧乱序 */
+  /** 绝对定位串行，避免连拖乱序 */
   const ptzDragQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const ptzDragMoveMetaRef = useRef<{
-    dir: EoPtzDirection | null;
-    speed: EoPtzMoveSpeed;
-    sentAt: number;
-    confirmed: boolean;
-  }>({
-    dir: null,
-    speed: { pan: 0.5, tilt: 0.5 },
-    sentAt: 0,
-    confirmed: false,
-  });
   /** 对齐 PtzMainWidget::wheelEvent：节流间隔约 350ms × 刻度步数 */
   const wheelZoomLockUntilRef = useRef(0);
   const wheelZoomStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ptzArrowRafRef = useRef<number | null>(null);
   const ptzArrowPendingRef = useRef<EoPtzDragArrowBox | null>(null);
-  const ptzDragKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const ptzLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startDragPtzRef = useRef<(opts?: { force?: boolean; releaseFlush?: boolean }) => void>(() => {});
-  const ensurePtzDragKeepAliveRef = useRef<() => void>(() => {});
-
-  const resolveDragMove = useCallback(() => {
-    const st = dragStateRef.current;
-    const gestureMs = Math.max(0, Date.now() - st.startedAt);
-    return resolvePtzDragFromDelta(st.lastDx, st.lastDy, gestureMs);
-  }, []);
 
   const uavAimSessionRef = useRef<UavAimGestureSession | null>(null);
   const uavCameraAimRef = useRef(uavCameraAim);
@@ -391,245 +366,148 @@ export function EoVideoPlayStage({
     return next;
   }, []);
 
-  const clearPtzLongPressTimer = useCallback(() => {
-    if (ptzLongPressTimerRef.current != null) {
-      clearTimeout(ptzLongPressTimerRef.current);
-      ptzLongPressTimerRef.current = null;
-    }
-  }, []);
-
-  const clearPtzDragKeepAlive = useCallback(() => {
-    if (ptzDragKeepAliveRef.current != null) {
-      clearInterval(ptzDragKeepAliveRef.current);
-      ptzDragKeepAliveRef.current = null;
-    }
-  }, []);
-
-  const ensurePtzDragKeepAlive = useCallback(() => {
-    if (!dragStateRef.current.longPressMode) return;
-    clearPtzDragKeepAlive();
-    ptzDragKeepAliveRef.current = setInterval(() => {
-      const st = dragStateRef.current;
-      if (!st.active || st.stopRequested || !st.longPressMode) {
-        clearPtzDragKeepAlive();
-        return;
-      }
-      startDragPtzRef.current();
-    }, PTZ_DRAG_MOVE_KEEPALIVE_MS);
-  }, [clearPtzDragKeepAlive]);
-
-  ensurePtzDragKeepAliveRef.current = ensurePtzDragKeepAlive;
-
-  const beginPtzLongPressIfReady = useCallback(() => {
-    const st = dragStateRef.current;
-    if (!st.active || st.stopRequested || st.longPressMode) return;
-    const gestureMs = Math.max(0, Date.now() - st.startedAt);
-    if (gestureMs < PTZ_SLOW_DRAG_ENTER_MS) return;
-    const { direction } = resolvePtzDragFromDelta(st.lastDx, st.lastDy, gestureMs);
-    if (!direction) return;
-    st.longPressMode = true;
-    startDragPtzRef.current({ force: true });
-    ensurePtzDragKeepAliveRef.current();
-  }, []);
-
-  const schedulePtzLongPressTimer = useCallback(() => {
-    clearPtzLongPressTimer();
-    ptzLongPressTimerRef.current = setTimeout(() => {
-      ptzLongPressTimerRef.current = null;
-      beginPtzLongPressIfReady();
-    }, PTZ_SLOW_DRAG_ENTER_MS);
-  }, [beginPtzLongPressIfReady, clearPtzLongPressTimer]);
-
-  const postDragMoveInternal = useCallback(
-    async (override?: { dx: number; dy: number; gestureMs: number; flick?: boolean }) => {
-    const { direction: dir, speed } = override
-      ? override.flick
-        ? resolvePtzFlickRelease(override.dx, override.dy, override.gestureMs)
-        : resolvePtzDragFromDelta(override.dx, override.dy, override.gestureMs)
-      : resolveDragMove();
-    if (!dir) return false;
-
-    const res = await postEoPtzMove({
-      entityId: trimmedEntityId,
-      backendBaseUrl: taskBackendBaseUrl,
-      direction: dir,
-      speed,
-    });
-    const outcome = await readEoPtzTaskResponse(res);
-    if (!outcome.executed) {
-      logClient(
-        `拖动云台 ${dir} 未执行 HTTP ${res.status}${outcome.detail ? `: ${outcome.detail.slice(0, 120)}` : ""}`,
+  const clientToVideoNorm = useCallback(
+    (clientX: number, clientY: number): { x: number; y: number } | null => {
+      const root = stageRef.current;
+      if (!root) return null;
+      const stage = root.getBoundingClientRect();
+      if (stage.width <= 0 || stage.height <= 0) return null;
+      const intrinsic = resolveEoVideoIntrinsicSize(
+        videoRef.current,
+        overlayIntrinsic.w ?? 0,
+        overlayIntrinsic.h ?? 0,
       );
-      return false;
-    }
-    const meta = ptzDragMoveMetaRef.current;
-    meta.dir = dir;
-    meta.speed = speed;
-    meta.sentAt = Date.now();
-    meta.confirmed = true;
-    dragStateRef.current.direction = dir;
-    dragStateRef.current.moveSent = true;
-    return true;
-  },
-    [logClient, resolveDragMove, taskBackendBaseUrl, trimmedEntityId],
+      const content = getVideoContentRect(
+        stage.width,
+        stage.height,
+        intrinsic.w,
+        intrinsic.h,
+        videoObjectFit,
+      );
+      if (content.w <= 0 || content.h <= 0) return null;
+      const lx = clientX - stage.left - content.x;
+      const ly = clientY - stage.top - content.y;
+      return {
+        x: Math.min(1, Math.max(0, lx / content.w)),
+        y: Math.min(1, Math.max(0, ly / content.h)),
+      };
+    },
+    [overlayIntrinsic.h, overlayIntrinsic.w, stageRef, videoObjectFit, videoRef],
   );
 
-  const postDragStopInternal = useCallback(async () => {
-    const res = await postEoPtzStop({ entityId: trimmedEntityId, backendBaseUrl: taskBackendBaseUrl });
-    const outcome = await readEoPtzTaskResponse(res);
-    if (!outcome.executed) {
-      logClient(
-        `拖动云台停止未确认 HTTP ${res.status}${outcome.detail ? `: ${outcome.detail.slice(0, 120)}` : ""}`,
-      );
-    }
-    return outcome.executed;
-  }, [logClient, taskBackendBaseUrl, trimmedEntityId]);
+  const captureAbsPressSnapshot = useCallback(
+    (clientX: number, clientY: number): PtzAbsPressSnapshot | null => {
+      const press = clientToVideoNorm(clientX, clientY);
+      if (!press) return null;
+      const camIdx = cameraIndexFromOwnerEntityId(trimmedEntityId);
+      if (camIdx == null) return null;
+      const row = ddsLookupKey
+        ? useEoCameraDdsStatusStore.getState().byEntityId[ddsLookupKey]
+        : undefined;
+      const panDeg = row?.ptzPanDeg;
+      const tiltCalc = row?.ptzTiltDeg;
+      const zoomRaw = row?.ptzZoom;
+      const hsDeg = row?.fovHsDeg;
+      const vsDeg = row?.fovVsDeg;
+      if (
+        panDeg == null ||
+        tiltCalc == null ||
+        zoomRaw == null ||
+        !Number.isFinite(panDeg) ||
+        !Number.isFinite(tiltCalc) ||
+        !Number.isFinite(zoomRaw) ||
+        !isPlausibleFovDeg(hsDeg ?? NaN) ||
+        !isPlausibleFovDeg(vsDeg ?? NaN)
+      ) {
+        return null;
+      }
+      /** 实体/DDS 常见 m_calcZ∈[0,1]；少数路径已是绝对变倍（>1.5） */
+      const maxZ = maxZoomForCameraIndex(camIdx);
+      const zoomNorm = zoomRaw > 1.5 ? Math.min(1, zoomRaw / maxZ) : Math.min(1, Math.max(0, zoomRaw));
+      return {
+        panDeg,
+        tiltCalc,
+        zoomNorm,
+        hsDeg: hsDeg as number,
+        vsDeg: vsDeg as number,
+        pressNormX: press.x,
+        pressNormY: press.y,
+        cameraIndex: camIdx,
+      };
+    },
+    [clientToVideoNorm, ddsLookupKey, trimmedEntityId],
+  );
 
-  const postDragStopConfirmed = useCallback(async () => {
-    const ok = await postDragStopInternal();
-    if (!ok) {
-      await new Promise<void>((resolve) => {
-        window.setTimeout(resolve, PTZ_STOP_RETRY_MS);
-      });
-      await postDragStopInternal();
-    }
-  }, [postDragStopInternal]);
-
+  /** 松手：对齐 Qt，只发 PTZAbsolutePositionTask（press 内容 → release 点） */
   const stopDragPtz = useCallback(() => {
     const stopSession = dragStateRef.current.session;
-    const gestureStartedAt = dragStateRef.current.startedAt;
-    const dirSnapshot = ptzDragMoveMetaRef.current.dir ?? dragStateRef.current.direction;
-    const hadMove = ptzDragMoveMetaRef.current.confirmed || dragStateRef.current.moveSent;
-    const dxSnapshot = dragStateRef.current.lastDx;
-    const dySnapshot = dragStateRef.current.lastDy;
-
-    clearPtzDragKeepAlive();
-    clearPtzLongPressTimer();
+    const snap = dragStateRef.current.absSnapshot;
+    const releaseClientX = dragStateRef.current.startX + dragStateRef.current.lastDx;
+    const releaseClientY = dragStateRef.current.startY + dragStateRef.current.lastDy;
+    const dragPx = Math.hypot(dragStateRef.current.lastDx, dragStateRef.current.lastDy);
 
     return enqueuePtzDragOp(async () => {
-      const staleSession = () => dragStateRef.current.session !== stopSession;
+      if (dragStateRef.current.session !== stopSession) return;
+      dragStateRef.current.absSnapshot = null;
 
-      const meta = ptzDragMoveMetaRef.current;
-      const gestureMs = Math.max(0, Date.now() - gestureStartedAt);
-      const flickDist = Math.hypot(dxSnapshot, dySnapshot);
-      const resolved = resolvePtzFlickRelease(dxSnapshot, dySnapshot, gestureMs);
-      const dir = resolved.direction ?? meta.dir ?? dragStateRef.current.direction ?? dirSnapshot;
-      const shouldStop = Boolean(dir) || hadMove || meta.confirmed;
-      const isQuickDrag = isQuickFlickGesture(gestureMs, flickDist);
+      if (!snap || dragPx < PTZ_ABS_DRAG_MIN_PX) return;
 
-      if (dir && isQuickDrag) {
-        const { burstCount, pulseGapMs, holdMs } = quickFlickPulseBudget(flickDist);
-        const burstOverride = { dx: dxSnapshot, dy: dySnapshot, gestureMs, flick: true as const };
-        for (let i = 0; i < burstCount; i += 1) {
-          try {
-            await postDragMoveInternal(burstOverride);
-          } catch (e) {
-            logClient(`快甩 move 失败：${e instanceof Error ? e.message : String(e)}`);
-          }
-          if (i < burstCount - 1 && pulseGapMs > 0) {
-            await new Promise<void>((resolve) => {
-              window.setTimeout(resolve, pulseGapMs);
-            });
-          }
-        }
-        if (holdMs > 0) {
-          await new Promise<void>((resolve) => {
-            window.setTimeout(resolve, holdMs);
-          });
-        }
-      } else if (dir && !staleSession()) {
-        const holdLeft = PTZ_DRAG_STOP_MIN_HOLD_MS - (Date.now() - meta.sentAt);
-        if (holdLeft > 0) {
-          await new Promise<void>((resolve) => {
-            window.setTimeout(resolve, holdLeft);
-          });
-        }
+      const release = clientToVideoNorm(releaseClientX, releaseClientY);
+      if (!release) {
+        logClient("快拖绝对定位跳过：松手点无法映射到视频");
+        return;
       }
 
-      if (shouldStop) {
-        try {
-          dragStateRef.current.stopRequested = true;
-          await postDragStopConfirmed();
-        } catch (e) {
-          logClient(`拖动云台停止失败：${e instanceof Error ? e.message : String(e)}`);
-        }
+      const resolved = resolvePtzAbsoluteFromDrag({
+        pressNormX: snap.pressNormX,
+        pressNormY: snap.pressNormY,
+        releaseNormX: release.x,
+        releaseNormY: release.y,
+        panDeg: snap.panDeg,
+        tiltCalc: snap.tiltCalc,
+        hsDeg: snap.hsDeg,
+        vsDeg: snap.vsDeg,
+        cameraIndex: snap.cameraIndex,
+      });
+      if (!resolved) {
+        logClient(
+          `快拖绝对定位跳过：FOV/偏移无效 hs=${snap.hsDeg.toFixed(2)} vs=${snap.vsDeg.toFixed(2)}`,
+        );
+        return;
       }
 
-      if (staleSession()) return;
-
-      meta.dir = null;
-      meta.speed = { pan: 0.12, tilt: 0.12 };
-      meta.sentAt = 0;
-      meta.confirmed = false;
-      dragStateRef.current.direction = null;
-      dragStateRef.current.moveSent = false;
-      dragStateRef.current.stopRequested = false;
-    });
-  }, [clearPtzDragKeepAlive, clearPtzLongPressTimer, enqueuePtzDragOp, logClient, postDragMoveInternal, postDragStopConfirmed]);
-
-  const startDragPtz = useCallback(
-    (opts?: { force?: boolean; releaseFlush?: boolean }) => {
-      const { direction: dir, speed } = resolveDragMove();
-      if (!dir) return;
-
-      const dragSession = dragStateRef.current.session;
-      const force = opts?.force === true;
-      const releaseFlush = opts?.releaseFlush === true;
-      void enqueuePtzDragOp(async () => {
-        const st = dragStateRef.current;
-        if (st.session !== dragSession) return;
-        if (!releaseFlush && st.stopRequested) return;
-
-        const meta = ptzDragMoveMetaRef.current;
-        const gestureMs = Math.max(0, Date.now() - st.startedAt);
-        if (!releaseFlush && gestureMs < PTZ_SLOW_DRAG_ENTER_MS && !st.longPressMode) {
+      const maxZ = maxZoomForCameraIndex(snap.cameraIndex);
+      const zoomAbs = snap.zoomNorm * maxZ;
+      try {
+        const res = await postEoPtzAbsolute({
+          entityId: trimmedEntityId,
+          backendBaseUrl: taskBackendBaseUrl,
+          panDeg: resolved.panDeg,
+          tiltDeg: resolved.tiltDeg,
+          zoom: zoomAbs,
+          speed: { pan: 0.5, tilt: 0.5, zoom: 0 },
+        });
+        const outcome = await readEoPtzTaskResponse(res);
+        if (!outcome.executed) {
+          logClient(
+            `快拖绝对定位未执行 HTTP ${res.status}${outcome.detail ? `: ${outcome.detail.slice(0, 120)}` : ""}`,
+          );
           return;
         }
-        if (!force) {
-          if (meta.dir === dir && meta.confirmed && !ptzSpeedChanged(meta.speed, speed)) {
-            if (Date.now() - meta.sentAt < PTZ_DRAG_MOVE_RESEND_MS) return;
-          } else if (meta.dir === dir && !meta.confirmed) {
-            if (Date.now() - meta.sentAt < PTZ_DRAG_MOVE_RETRY_MS) return;
-          }
-        }
-        if (meta.dir && ptzDirectionChangeNeedsStop(meta.dir as EoPtzDragDirection, dir)) {
-          try {
-            await postDragStopInternal();
-          } catch (e) {
-            logClient(`换向停止失败：${e instanceof Error ? e.message : String(e)}`);
-          }
-          meta.dir = null;
-          meta.speed = { pan: 0.5, tilt: 0.5 };
-          meta.sentAt = 0;
-          meta.confirmed = false;
-        }
-
-        try {
-          logClient(
-            `拖动云台方向=${dir} pan=${speed.pan.toFixed(2)} tilt=${speed.tilt.toFixed(2)}`,
-          );
-          const ok = await postDragMoveInternal();
-          if (!ok) {
-            meta.dir = dir;
-            meta.speed = speed;
-            meta.sentAt = Date.now();
-            meta.confirmed = false;
-            dragStateRef.current.direction = null;
-          }
-        } catch (e) {
-          meta.dir = dir;
-          meta.speed = speed;
-          meta.sentAt = Date.now();
-          meta.confirmed = false;
-          dragStateRef.current.direction = null;
-          logClient(`拖动云台 ${dir} 异常：${e instanceof Error ? e.message : String(e)}`);
-        }
-      });
-    },
-    [enqueuePtzDragOp, logClient, postDragMoveInternal, postDragStopInternal, resolveDragMove],
-  );
-
-  startDragPtzRef.current = startDragPtz;
+        logClient(
+          `快拖绝对 pan=${resolved.panDeg.toFixed(2)} tilt=${resolved.tiltDeg.toFixed(2)} Δp=${resolved.xOffsetDeg.toFixed(2)} Δt=${resolved.yOffsetDeg.toFixed(2)} fov=${snap.hsDeg.toFixed(1)}x${snap.vsDeg.toFixed(1)}`,
+        );
+      } catch (e) {
+        logClient(`快拖绝对定位异常：${e instanceof Error ? e.message : String(e)}`);
+      }
+    });
+  }, [
+    clientToVideoNorm,
+    enqueuePtzDragOp,
+    logClient,
+    taskBackendBaseUrl,
+    trimmedEntityId,
+  ]);
 
   useEffect(() => {
     if (!canSendSingleTrack) return;
@@ -654,31 +532,21 @@ export function EoVideoPlayStage({
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
-      clearPtzDragKeepAlive();
-      clearPtzLongPressTimer();
       cancelPtzArrowFrame();
       ptzArrowPendingRef.current = null;
       setPtzDragArrow(null);
       dragStateRef.current.session += 1;
-      ptzDragQueueRef.current = Promise.resolve();
-      ptzDragMoveMetaRef.current = {
-        dir: null,
-        speed: { pan: 0.5, tilt: 0.5 },
-        sentAt: 0,
-        confirmed: false,
-      };
+      const snap = captureAbsPressSnapshot(e.clientX, e.clientY);
+      if (!snap) {
+        logClient("快拖按下未就绪：等待 PTZ/FOV（ptz.pan/tilt/zoom + hs/vs）");
+      }
       dragStateRef.current.active = true;
-      dragStateRef.current.stopRequested = false;
-      dragStateRef.current.moveSent = false;
-      dragStateRef.current.longPressMode = false;
-      dragStateRef.current.startedAt = Date.now();
       dragStateRef.current.pointerId = e.pointerId;
       dragStateRef.current.startX = e.clientX;
       dragStateRef.current.startY = e.clientY;
       dragStateRef.current.lastDx = 0;
       dragStateRef.current.lastDy = 0;
-      dragStateRef.current.direction = null;
-      schedulePtzLongPressTimer();
+      dragStateRef.current.absSnapshot = snap;
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -704,23 +572,11 @@ export function EoVideoPlayStage({
         ptzArrowPendingRef.current = null;
         setPtzDragArrow(null);
       }
-      const gestureMs = Math.max(0, Date.now() - st.startedAt);
-      const { direction } = resolvePtzDragFromDelta(dx, dy, gestureMs);
-      if (!direction) return;
-      if (gestureMs >= PTZ_SLOW_DRAG_ENTER_MS) {
-        if (!st.longPressMode) {
-          st.longPressMode = true;
-        }
-        startDragPtz();
-        ensurePtzDragKeepAlive();
-      }
     };
 
     const onPointerEnd = (e: PointerEvent) => {
       const st = dragStateRef.current;
       if (!st.active || st.pointerId !== e.pointerId) return;
-      clearPtzDragKeepAlive();
-      clearPtzLongPressTimer();
       cancelPtzArrowFrame();
       ptzArrowPendingRef.current = null;
       setPtzDragArrow(null);
@@ -728,13 +584,6 @@ export function EoVideoPlayStage({
       st.lastDy = e.clientY - st.startY;
       st.active = false;
       st.pointerId = null;
-      st.longPressMode = false;
-      const gestureMs = Math.max(0, Date.now() - st.startedAt);
-      const flickDist = Math.hypot(st.lastDx, st.lastDy);
-      const isQuick = isQuickFlickGesture(gestureMs, flickDist);
-      if (!isQuick && resolvePtzDragFromDelta(st.lastDx, st.lastDy, gestureMs).direction) {
-        startDragPtz({ force: true, releaseFlush: true });
-      }
       void stopDragPtz();
     };
 
@@ -750,23 +599,12 @@ export function EoVideoPlayStage({
       cancelPtzArrowFrame();
       ptzArrowPendingRef.current = null;
       setPtzDragArrow(null);
-      clearPtzDragKeepAlive();
-      clearPtzLongPressTimer();
       const st = dragStateRef.current;
       st.active = false;
       st.pointerId = null;
-      void stopDragPtz();
+      st.absSnapshot = null;
     };
-  }, [
-    canSendSingleTrack,
-    clearPtzDragKeepAlive,
-    clearPtzLongPressTimer,
-    ensurePtzDragKeepAlive,
-    schedulePtzLongPressTimer,
-    stageRef,
-    startDragPtz,
-    stopDragPtz,
-  ]);
+  }, [canSendSingleTrack, captureAbsPressSnapshot, logClient, stageRef, stopDragPtz]);
 
   const uavAimInteractionsEnabled = Boolean(
     uavCameraAim?.airportDeviceSn?.trim() &&
@@ -1296,6 +1134,7 @@ export function EoVideoPlayStage({
         streamLabel={streamLabel}
         webCodecsPresentationRef={webCodecsPresentationRef}
         videoObjectFit={videoObjectFit}
+        webRtcKickEpoch={webRtcKickEpoch}
       />
       {ptzDragArrow ? <EoPtzDragArrowOverlay box={ptzDragArrow} /> : null}
       {!onOverlayTaskLine && !onBottomCenterToast && taskHint ? (

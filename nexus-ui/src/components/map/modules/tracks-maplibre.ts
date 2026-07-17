@@ -8,6 +8,8 @@ import {
   resolveTrackPointFill,
   buildMarkerSymbolDataUrl,
   isAirTrackBirdGlyph,
+  isSeaTrackBuoyGlyph,
+  isSeaTrackReefGlyph,
   type AssetDispositionIconAccent,
 } from "@/lib/map-icons";
 import { resolveTrackMapHighlightFill, shouldApplySuspiciousTrackGreen } from "@/lib/track-map-highlight-color";
@@ -15,6 +17,7 @@ import { shouldApplyVerifiedTrackYellow } from "@/lib/verified-track-color";
 import { loadSvgImage } from "@/lib/map-image-loader";
 import { threatRankBadgeImageId } from "@/lib/map-icons";
 import { isTrackVirtualTroop } from "@/lib/track-reality-type";
+import { isTrackCoasting } from "@/lib/track-target-state";
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { getTrackDispositionForRendering, isTrackAlarmLinked, useTrackStore } from "@/stores/track-store";
 import { useVerifiedTrackStore } from "@/stores/verified-track-store";
@@ -33,6 +36,7 @@ import {
   resolveTrackLayerKey,
   trackMapVisibilitySignature,
 } from "@/lib/track-layer-visibility";
+import { TRACK_LAYER_KEYS_ORDERED } from "@/lib/map-entity-model";
 
 /** GeoJSON source id：仅 **LineString**（尾迹 + 速度矢量）；点符号另用融合/雷达两源，避免单源 + filter 在部分环境下军标整层失效 */
 export const TRACK_SOURCE = "tracks-source";
@@ -106,6 +110,16 @@ const LINE_VECTOR_FILTER: FilterSpecification = [
   ["==", ["get", "_lineKind"], "vector"],
 ] as unknown as FilterSpecification;
 
+function trailForTrackDisplay(t: Track, trailSec: number): [number, number][] | undefined {
+  return trimHistoryTrailForDisplay(
+    t.historyTrail,
+    trailSec,
+    t.speed,
+    [t.lng, t.lat],
+    t.historyTrailAtMs,
+  );
+}
+
 /**
  * 与 `trackRendering.trackDisplay.maxViewportPoints` 对齐的顶点估算：每条航迹计 `1 + len(historyTrail)`（当前点 + 历史折线顶点数）。
  * **不修改** `Track`；仅用于判断是否绘制历史折线。
@@ -114,7 +128,7 @@ export function trackMapVertexEstimate(tracks: ReadonlyArray<Track>): number {
   const td = useTrackDisplayStore.getState();
   return tracks.reduce((n, t) => {
     const trailSec = trailLengthSecondsForTrack(t, td);
-    const tr = trimHistoryTrailForDisplay(t.historyTrail, trailSec);
+    const tr = trailForTrackDisplay(t, trailSec);
     return n + 1 + (tr?.length ?? 0);
   }, 0);
 }
@@ -141,7 +155,9 @@ function trailDrawPlanCacheSig(plan: TrackTrailDrawPlan): string {
 
 /**
  * 在 `maxViewportPoints` 预算内决定各航迹可绘制的尾迹点数。
- * 告警关联航迹优先；仍不足时对单条尾迹做点数裁剪，而不是整批不画。
+ *
+ * 面板秒数是「上限」：`trim` 已按 `min(请求秒, 内存已有)`。全图顶点过多时按比例缩短各条，
+ * **不因拉大秒数把某条抹掉**；数据只有 40s 时，40/100/1000 的 trim 结果相同，预算亦相同。
  */
 export function computeTrackTrailDrawPlan(tracks: ReadonlyArray<Track>): TrackTrailDrawPlan {
   const max = getTrackRenderingConfig().trackDisplay.maxViewportPoints;
@@ -150,35 +166,63 @@ export function computeTrackTrailDrawPlan(tracks: ReadonlyArray<Track>): TrackTr
   if (trackMapVertexEstimate(tracks) <= max) return { mode: "all" };
 
   const td = useTrackDisplayStore.getState();
-  let budget = max;
-  const caps = new Map<string, number>();
-
   const candidates = tracks
     .map((t) => {
       const trailSec = trailLengthSecondsForTrack(t, td);
-      const tr = trimHistoryTrailForDisplay(t.historyTrail, trailSec);
+      const tr = trailForTrackDisplay(t, trailSec);
       const len = tr?.length ?? 0;
-      return { t, len, needed: len >= 1 ? 1 + len : 0 };
+      return { t, len };
     })
-    .filter((c) => c.needed > 0)
-    .sort((a, b) => {
-      const pa = isTrackAlarmLinked(a.t) ? 0 : 1;
-      const pb = isTrackAlarmLinked(b.t) ? 0 : 1;
-      if (pa !== pb) return pa - pb;
-      return a.needed - b.needed;
-    });
+    .filter((c) => c.len >= 1);
 
-  for (const { t, len, needed } of candidates) {
-    if (budget >= needed) {
-      caps.set(t.id, len);
-      budget -= needed;
-    } else if (budget > 1) {
-      caps.set(t.id, budget - 1);
-      budget = 0;
+  if (candidates.length === 0) return { mode: "none" };
+
+  /** 每条折线含当前点，历史点总预算 */
+  const histBudget = max - candidates.length;
+  if (histBudget <= 0) return { mode: "none" };
+
+  const totalHist = candidates.reduce((n, c) => n + c.len, 0);
+  if (totalHist <= histBudget) return { mode: "all" };
+
+  const ranked = [...candidates].sort((a, b) => {
+    const pa = isTrackAlarmLinked(a.t) ? 0 : 1;
+    const pb = isTrackAlarmLinked(b.t) ? 0 : 1;
+    return pa - pb;
+  });
+
+  const caps = new Map<string, number>();
+  let allocated = 0;
+  for (const c of ranked) {
+    const w = isTrackAlarmLinked(c.t) ? 1.25 : 1;
+    const raw = Math.floor((c.len * histBudget * w) / totalHist);
+    const histCap = Math.max(1, Math.min(c.len, raw));
+    caps.set(c.t.id, histCap);
+    allocated += histCap;
+  }
+
+  if (allocated > histBudget) {
+    const s = histBudget / allocated;
+    allocated = 0;
+    for (const c of ranked) {
+      const cur = caps.get(c.t.id) ?? 1;
+      const next = Math.max(1, Math.min(c.len, Math.floor(cur * s)));
+      caps.set(c.t.id, next);
+      allocated += next;
     }
   }
 
-  return caps.size > 0 ? { mode: "partial", maxTrailPointsByTrackId: caps } : { mode: "none" };
+  let rem = histBudget - allocated;
+  for (const c of ranked) {
+    if (rem <= 0) break;
+    const cur = caps.get(c.t.id) ?? 0;
+    const room = c.len - cur;
+    if (room <= 0) continue;
+    const add = Math.min(room, rem);
+    caps.set(c.t.id, cur + add);
+    rem -= add;
+  }
+
+  return { mode: "partial", maxTrailPointsByTrackId: caps };
 }
 
 function trailForDrawPlan(
@@ -190,7 +234,8 @@ function trailForDrawPlan(
   if (plan.mode === "none") return undefined;
   if (plan.mode === "all") return trail;
   const cap = plan.maxTrailPointsByTrackId.get(trackId);
-  if (cap == null) return undefined;
+  if (cap == null) return trail;
+  if (cap <= 0) return trail.slice(-1);
   if (trail.length <= cap) return trail;
   return trail.slice(-cap);
 }
@@ -204,7 +249,7 @@ export function displayHistoryTrailForTrack(
   return trailForDrawPlan(
     plan,
     t.id,
-    trimHistoryTrailForDisplay(t.historyTrail, trailLengthSecondsForTrack(t, td)),
+    trailForTrackDisplay(t, trailLengthSecondsForTrack(t, td)),
   );
 }
 
@@ -249,7 +294,7 @@ export function buildTrackLinesGeoJSON(
     const trail = trailForDrawPlan(
       trailPlan,
       t.id,
-      trimHistoryTrailForDisplay(t.historyTrail, trailLengthSecondsForTrack(t, td)),
+      trailForTrackDisplay(t, trailLengthSecondsForTrack(t, td)),
     );
 
     if (trail && trail.length >= 1) {
@@ -309,8 +354,11 @@ export function buildTrackFusionPointsGeoJSON(
     const isFuseAirTrack = layerKey === "fuse_air";
     const airFuseGlyph = isFuseAirTrack && airBirdGlyph;
     const seaFuseGlyph = layerKey === "fuse_sea" && t.type === "sea";
+    const seaBuoyGlyph = seaFuseGlyph && isSeaTrackBuoyGlyph(t);
+    const seaReefGlyph = seaFuseGlyph && isSeaTrackReefGlyph(t);
     const opticallyVerified = shouldApplyVerifiedTrackYellow(t);
     const suspiciousTarget = shouldApplySuspiciousTrackGreen(t);
+    const coasting = isTrackCoasting(t);
     const baseProps: Record<string, unknown> = {
       id: t.id,
       showID: t.showID,
@@ -327,6 +375,8 @@ export function buildTrackFusionPointsGeoJSON(
       course: t.course ?? null,
       isFuseAirTrack,
       isSeaFuseTrack: seaFuseGlyph,
+      isSeaBuoyGlyph: seaBuoyGlyph,
+      isSeaReefGlyph: seaReefGlyph,
       isAirBirdGlyph: airBirdGlyph,
       altitude: t.altitude ?? null,
       color: pointFill,
@@ -345,7 +395,10 @@ export function buildTrackFusionPointsGeoJSON(
         airFuseGlyph,
         opticallyVerified,
         seaFuseGlyph,
+        seaBuoyGlyph,
+        seaReefGlyph,
         suspiciousTarget,
+        coasting,
       ),
       iconScale,
     };
@@ -694,6 +747,10 @@ export class TracksMaplibre {
               ["==", ["coalesce", ["get", "isAirBirdGlyph"], false], true],
             ],
             0,
+            ["==", ["coalesce", ["get", "isSeaBuoyGlyph"], false], true],
+            0,
+            ["==", ["coalesce", ["get", "isSeaReefGlyph"], false], true],
+            0,
             ["coalesce", ["get", "heading"], ["get", "course"], 0],
           ],
           "icon-rotation-alignment": "map",
@@ -869,7 +926,11 @@ export class TracksMaplibre {
     const maxVp = trd.maxViewportPoints;
     const maxHist = trd.maxHistoryPointsPerTrack;
     const drawTrails = trailDrawPlanCacheSig(computeTrackTrailDrawPlan(filtered));
-    const tdRev = useTrackDisplayStore.getState().displayRevision;
+    const td = useTrackDisplayStore.getState();
+    const tdRev = td.displayRevision;
+    const trailSecSig = TRACK_LAYER_KEYS_ORDERED.map(
+      (k) => td.trailLengthSecondsByLayer[k] ?? 600,
+    ).join(",");
     const affRev = useTrackStore.getState().mapManualAffiliationRev;
     const verRev = useVerifiedTrackStore.getState().mapVerifiedRev;
     const fp = fnv1aTrackDataFingerprint(filtered);
@@ -877,8 +938,9 @@ export class TracksMaplibre {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, v]) => `${k}:${v}`)
       .join("|");
-    const key = `${this.trackRenderRevision}:${maxVp}:${maxHist}:${drawTrails}:${tdRev}:${affRev}:${verRev}:${visSig}:${filtered.length}:${fp}:${rankSig}`;
+    const key = `${this.trackRenderRevision}:${maxVp}:${maxHist}:${drawTrails}:${tdRev}:${trailSecSig}:${affRev}:${verRev}:${visSig}:${filtered.length}:${fp}:${rankSig}`;
     if (key === this.lastSetDataKey) return;
+    /** 先等图（可被更新代际取消）；仅胜出的一代再 build GeoJSON，避免洪峰时白做重计算拖慢航迹 */
     try {
       await this.ensureTrackSymbolImages(filtered);
     } catch (e) {
@@ -939,12 +1001,16 @@ export class TracksMaplibre {
       const layerKey = resolveTrackLayerKey(t);
       const airFuseGlyph = layerKey === "fuse_air" && airBirdGlyph;
       const seaFuseGlyph = layerKey === "fuse_sea" && t.type === "sea";
+      const seaBuoyGlyph = seaFuseGlyph && isSeaTrackBuoyGlyph(t);
+      const seaReefGlyph = seaFuseGlyph && isSeaTrackReefGlyph(t);
       const opticallyVerified = shouldApplyVerifiedTrackYellow(t);
       const suspiciousTarget = shouldApplySuspiciousTrackGreen(t);
+      const coasting = isTrackCoasting(t);
       const needsCustomNeutral = disp === "neutral" && !opticallyVerified && !suspiciousTarget;
       const needsVerifiedIcon = opticallyVerified;
       const needsSuspiciousIcon = suspiciousTarget;
-      if (!needsCustomNeutral && !needsVerifiedIcon && !needsSuspiciousIcon) continue;
+      const needsCoastingIcon = coasting;
+      if (!needsCustomNeutral && !needsVerifiedIcon && !needsSuspiciousIcon && !needsCoastingIcon) continue;
 
       const id = getMarkerSymbolId(
         t.type,
@@ -956,7 +1022,10 @@ export class TracksMaplibre {
         airFuseGlyph,
         opticallyVerified,
         seaFuseGlyph,
+        seaBuoyGlyph,
+        seaReefGlyph,
         suspiciousTarget,
+        coasting,
       );
       if (seen.has(id)) continue;
       seen.add(id);
@@ -976,7 +1045,10 @@ export class TracksMaplibre {
               airFuseGlyph,
               opticallyVerified,
               seaFuseGlyph,
+              seaBuoyGlyph,
+              seaReefGlyph,
               suspiciousTarget,
+              coasting,
             ),
             64,
           ),

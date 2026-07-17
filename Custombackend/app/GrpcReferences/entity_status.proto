@@ -1,0 +1,1509 @@
+syntax = "proto3";
+
+package entityStatusPkg;
+
+// ==================== 服务定义 ====================
+
+// 实体状态订阅服务（设备作为服务端，推送数据给订阅者）
+service EntityStatusService {
+    // 订阅设备实时状态（服务端流）
+    // 客户端发起订阅请求，服务端（设备）持续推送状态
+    rpc EntityStatusMethod(EntityStatusRequest) returns (stream EntityStatusResponse);
+}
+
+// ==================== 实时状态上报 ====================
+// 客户端订阅请求
+message EntityStatusRequest {}
+
+// 服务端发布响应（服务端 -> 客户端）
+message EntityStatusResponse {
+    // 设备实时状态（oneof 选择一种）
+    oneof status {
+        CameraRealTimeStatus camera_real_time_status = 1;
+        DroneRealTimeStatus drone_real_time_status = 2;
+        Dock2RealTimeStatus dock_real_time_status = 3;
+        USVRealTimeStatus usv_real_time_status = 4;
+        RadarRealTimeStatus radar_real_time_status = 5;
+        ModelRealTimeStatus model_real_time_status = 6;
+        DroneTaskRealTimeStatus drone_task_real_time_status = 7;
+        HighFreqRealTimeStatus high_freq_real_time_status = 8;
+		JammerRealTimeStatus jammer_real_time_status = 9;
+        LaserRealTimeStatus laser_real_time_status = 10;
+        MunitionRealTimeStatus munition_real_time_status = 11;
+        WeaponRealTimeStatus weapon_real_time_status = 12;
+    }
+}
+
+
+// ==================== 基础枚举 ====================
+
+// 执行状态枚举
+enum ExecutionState {
+    EXECUTING = 0;
+    COMPLETED = 1;
+    ALREADY_CLEARED = 2;
+    SAVED = 3;
+    FAILED = 4;
+}
+
+// 实体类型枚举
+enum EntityType {
+    CAMERA = 0;
+    UAV = 1;
+    DOCK = 2;
+    USV = 3;
+    RADAR = 4;
+    TRACK = 5;
+    MODEL = 6;
+    JAMMER = 7;
+    LASER = 8;
+    MUNITION = 9;
+    WEAPON = 10;
+}
+
+// 实体敌我属性
+enum DispositionType {
+    DISPOSITION_FRIENDLY = 0;
+    DISPOSITION_HOSTILE = 1;
+    DISPOSITION_NEUTRAL = 2;
+	DISPOSITION_UNKNOWN = 3;
+}
+
+// 设备状态枚举
+enum DeviceState {
+    DEVICE_STATE_STANDBY = 0;
+    DEVICE_STATE_POWERED = 1;
+    DEVICE_STATE_EXECUTING = 2;
+	DEVICE_STATE_UNKNOWN = 3;
+}
+
+// ==================== 基础消息 ====================
+
+// 地理位置（使用 double 保证精度）
+message GeoPosition {
+    double longitude = 1;   // 经度
+    double latitude = 2;    // 纬度
+    double altitude = 3;    // 高度（米）
+}
+
+// 基础设备状态
+message BaseDeviceStatus {
+    EntityType entity_type = 1;
+    string entity_id = 2;
+    bool is_virtual_weapon = 3;
+    DispositionType disposition_type = 4;
+    uint32 target_id = 5;
+    string target_name = 6;
+    EntityType target_type = 7;
+    string task_type = 8;
+    ExecutionState execution_state = 9;
+    uint32 execution_time_ms = 10;
+    bool online = 11;
+    GeoPosition position = 12;
+    double elec = 13;
+    string timestamp = 14;
+    DeviceState device_state = 15;
+
+    reserved 16 to 31;
+}
+
+// ==================== 相机状态 ====================
+
+// 云台状态
+message PTZStatus {
+    double pan = 1;   // 水平角度
+    double tilt = 2;  // 垂直角度
+    double zoom = 3;  // 变焦倍数
+}
+
+// 视场角状态
+message FOVStatus {
+    double horizontal = 1;  // 水平视场角
+    double vertical = 2;    // 垂直视场角
+}
+
+// 相机实时状态
+message CameraRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    PTZStatus ptz = 2;
+    PTZStatus origin_ptz = 3;
+    double focus = 4;
+    FOVStatus fov = 5;
+    double pano_offset = 6;
+    int64 track_id = 7;
+    double visibility = 8;
+    double speed_param = 9;
+    double root_pos = 10;
+
+    reserved 11 to 20;
+}
+
+// ==================== 模型状态 ====================
+
+// 模型工作状态枚举
+enum ModelWorkingState {
+    MODEL_IDLE = 0;
+    INITIALIZING = 1;
+    RUNNING = 2;
+    PAUSED = 3;
+    MODEL_ERROR = 4;
+}
+
+// 资源使用状态
+message ResourceUsage {
+    double cpu_usage_percent = 1;
+    double gpu_usage_percent = 2;
+    uint32 memory_usage_mb = 3;
+    uint32 gpu_memory_usage_mb = 4;
+    uint32 disk_usage_mb = 5;
+    double network_bandwidth_mbps = 6;
+
+    reserved 7 to 15;
+}
+
+// 模型实时状态
+message ModelRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    ModelWorkingState working_state = 2;
+    string error_message = 3;
+    ResourceUsage model_resource_usage = 4;
+
+    reserved 5 to 10;
+}
+
+// ==================== 雷达状态 ====================
+
+// 雷达实时状态
+message RadarRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    uint32 radar_id = 2;
+    uint32 radar_type = 3;
+    string radar_name = 4;
+    double longitude = 5;
+    double latitude = 6;
+    uint32 transmit = 7;
+    uint32 range = 8;
+    uint32 pulse_width = 9;
+    uint32 azi_offset = 10;
+    uint32 range_offset = 11;
+    uint32 sample_rate = 12;
+    uint32 gain = 13;
+    uint32 sea_clutter = 14;
+    uint32 rain_clutter = 15;
+    uint32 inhibit1 = 16;
+    uint32 inhibit1_start_azi = 17;
+    uint32 inhibit1_end_azi = 18;
+    uint32 inhibit2 = 19;
+    uint32 inhibit2_start_azi = 20;
+    uint32 inhibit2_end_azi = 21;
+
+    reserved 22 to 31;
+}
+
+// ==================== 机场状态枚举 ====================
+
+enum HomePositionValidity {
+    HOME_POSITION_INVALID = 0;
+    HOME_POSITION_VALID = 1;
+}
+
+enum RTCMDeviceType {
+    RTCM_DEVICE_DOCK = 0;
+}
+
+enum CalibrationType {
+    NOT_CALIBRATED = 0;
+    SELF_CONVERGENCE = 1;
+    MANUAL_CALIBRATION = 2;
+    NETWORK_RTK_CALIBRATION = 3;
+}
+
+enum AirConditionerState {
+    IDLE_MODE = 0;
+    COOLING_MODE = 1;
+    HEATING_MODE = 2;
+    DEHUMIDIFICATION_MODE = 3;
+    COOLING_EXIT_MODE = 4;
+    HEATING_EXIT_MODE = 5;
+    DEHUMIDIFICATION_EXIT_MODE = 6;
+    COOLING_READY_MODE = 7;
+    HEATING_READY_MODE = 8;
+    DEHUMIDIFICATION_READY_MODE = 9;
+}
+
+enum SilentMode {
+    SILENT_MODE_NOT_SILENT = 0;
+    SILENT_MODE_SILENT = 1;
+}
+
+enum UserExperienceImprovement {
+    UX_IMPROVEMENT_INITIAL = 0;
+    UX_IMPROVEMENT_REFUSE = 1;
+    UX_IMPROVEMENT_AGREE = 2;
+}
+
+enum DongleTypeInDock {
+    DONGLE_TYPE_OLD = 0;
+    DONGLE_TYPE_NEW_WITH_ESIM = 1;
+}
+
+enum ESIMActivationState {
+    ESIM_NOT_ACTIVATED = 0;
+    ESIM_ACTIVATED = 1;
+}
+
+enum SIMCardState {
+    SIM_NOT_INSERTED = 0;
+    SIM_INSERTED = 1;
+}
+
+enum SIMSlot {
+    SIM_SLOT_UNKNOWN = 0;
+    SIM_SLOT_PHYSICAL = 1;
+    SIM_SLOT_ESIM = 2;
+}
+
+enum TelecomOperator {
+    TELECOM_OPERATOR_UNKNOWN = 0;
+    TELECOM_OPERATOR_MOBILE = 1;
+    TELECOM_OPERATOR_CHINA_UNICOM = 2;
+    TELECOM_OPERATOR_TELECOMMUNICATIONS = 3;
+}
+
+enum SIMType {
+    SIM_TYPE_UNKNOWN = 0;
+    SIM_TYPE_REGULAR = 1;
+    SIM_TYPE_TRI_NETWORK = 2;
+}
+
+enum MaintenanceState {
+    MAINTENANCE_STATE_NONE = 0;
+    MAINTENANCE_STATE_WAITING = 1;
+    MAINTENANCE_STATE_IN_PROGRESS = 2;
+}
+
+enum HeatState {
+    HEAT_STATE_NOT_HEATING = 0;
+    HEAT_STATE_HEATING = 1;
+    HEAT_STATE_HEAT_PRESERVATION = 2;
+}
+
+enum SatelliteQuality {
+    SAT_QUALITY_LEVEL_1 = 0;
+    SAT_QUALITY_LEVEL_2 = 1;
+    SAT_QUALITY_LEVEL_3 = 2;
+    SAT_QUALITY_LEVEL_4 = 3;
+    SAT_QUALITY_LEVEL_5 = 4;
+    SAT_QUALITY_RTK_FIXED = 5;
+}
+
+enum EmergencyStopState {
+    EMERGENCY_STOP_DISABLED = 0;
+    EMERGENCY_STOP_ENABLED = 1;
+}
+
+enum ChargingState {
+    CHARGING_STATE_IDLE = 0;
+    CHARGING_STATE_CHARGING = 1;
+}
+
+enum BatteryStoreMode {
+    BATTERY_STORE_SCHEDULE_MODE = 0;
+    BATTERY_STORE_STANDBY_MODE = 1;
+}
+
+enum FirmwareConsistency {
+    FIRMWARE_NO_UPGRADE_REQUIRED = 0;
+    FIRMWARE_UPGRADE_REQUIRED = 1;
+}
+
+enum Rainfall {
+    RAINFALL_NONE = 0;
+    RAINFALL_LIGHT = 1;
+    RAINFALL_MODERATE = 2;
+    RAINFALL_HEAVY = 3;
+}
+
+enum VideoQuality {
+    VIDEO_QUALITY_ADAPTIVE = 0;
+    VIDEO_QUALITY_SMOOTH = 1;
+    VIDEO_QUALITY_SD = 2;
+    VIDEO_QUALITY_HD = 3;
+    VIDEO_QUALITY_UHD = 4;
+}
+
+enum LiveStreamingState {
+    LIVE_STREAMING_OFF = 0;
+    LIVE_STREAMING_ON = 1;
+}
+
+enum LinkState {
+    LINK_DISCONNECTED = 0;
+    LINK_CONNECTED = 1;
+}
+
+enum LinkWorkMode {
+    LINK_WORK_MODE_SDR = 0;
+    LINK_WORK_MODE_4G_FUSION = 1;
+}
+
+enum NetworkType {
+    NETWORK_TYPE_4G = 0;
+    NETWORK_TYPE_ETHERNET = 1;
+}
+
+enum NetworkQuality {
+    NETWORK_QUALITY_NO_SIGNAL = 0;
+    NETWORK_QUALITY_POOR = 1;
+    NETWORK_QUALITY_MODERATE = 2;
+    NETWORK_QUALITY_BETTER = 3;
+    NETWORK_QUALITY_GOOD = 4;
+}
+
+enum SupplementaryLightState {
+    SUPPLEMENTARY_LIGHT_OFF = 0;
+    SUPPLEMENTARY_LIGHT_ON = 1;
+}
+
+enum CoverState {
+    COVER_STATE_DISABLED = 0;
+    COVER_STATE_ON = 1;
+    COVER_STATE_HALF_OPEN = 2;
+    COVER_STATE_ABNORMAL = 3;
+}
+
+enum DeviceOnlineStatus {
+    DEVICE_POWER_OFF = 0;
+    DEVICE_POWER_ON = 1;
+}
+
+enum DevicePairedStatus {
+    DEVICE_NOT_PAIRED = 0;
+    DEVICE_PAIRED = 1;
+}
+
+enum FlightTaskStepCode {
+    FLIGHT_TASK_OPERATION_PREPARATION = 0;
+    FLIGHT_TASK_IN_FLIGHT_OPERATION = 1;
+    FLIGHT_TASK_POST_OPERATION_RECOVERY = 2;
+    FLIGHT_TASK_CUSTOM_AREA_UPDATING = 3;
+    FLIGHT_TASK_TERRAIN_UPDATING = 4;
+    FLIGHT_TASK_IDLE = 5;
+    FLIGHT_TASK_AIRCRAFT_EXCEPTION = 6;
+    FLIGHT_TASK_UNKNOWN_STATE = 7;
+}
+
+enum DockModeCode {
+    DOCK_MODE_IDLE = 0;
+    DOCK_MODE_ON_SITE_DEBUGGING = 1;
+    DOCK_MODE_REMOTE_DEBUGGING = 2;
+    DOCK_MODE_FIRMWARE_UPGRADING = 3;
+    DOCK_MODE_IN_OPERATION = 4;
+}
+
+enum FirmwareUpgradeStatus {
+    FIRMWARE_NOT_UPGRADED = 0;
+    FIRMWARE_UPGRADING = 1;
+}
+
+enum IsWithMaintenance {
+    MAINTENANCE_WITHOUT = 0;
+    MAINTENANCE_WITH = 1;
+}
+
+enum AircraftMaintenanceLevel {
+    AIRCRAFT_MAINTENANCE_NONE = 0;
+    AIRCRAFT_MAINTENANCE_REGULAR = 1;
+    AIRCRAFT_MAINTENANCE_DEEP = 2;
+}
+
+// ==================== 机场状态消息 ====================
+
+// RTK标定源
+message RTCMInfo {
+    string mount_point = 1;
+    string port = 2;
+    string host = 3;
+    RTCMDeviceType rtcm_device_type = 4;
+    CalibrationType source_type = 5;
+
+    reserved 6 to 10;
+}
+
+// 飞行器对频信息
+message CenterNode {
+    uint32 sdr_id = 1;
+    string sn = 2;
+
+    reserved 3 to 5;
+}
+
+// 机场或遥控器对频信息
+message LeafNode {
+    uint32 sdr_id = 1;
+    string sn = 2;
+    uint32 control_source_index = 3;
+
+    reserved 4, 5;
+}
+
+// 图传连接拓扑
+message WirelessLinkTopoInDock {
+    repeated uint32 secret_code = 1;
+    CenterNode center_node = 2;
+    repeated LeafNode leaf_nodes = 3;
+
+    reserved 4, 5;
+}
+
+// 机场空调工作状态
+message AirConditioner {
+    AirConditionerState air_conditioner_state = 1;
+    uint32 switch_time = 2;
+
+    reserved 3, 4;
+}
+
+// eSIM信息
+message ESIMInfo {
+    TelecomOperator telecom_operator = 1;
+    bool enabled = 2;
+    string iccid = 3;
+
+    reserved 4, 5;
+}
+
+// SIM卡信息
+message SIMInfo {
+    TelecomOperator telecom_operator = 1;
+    SIMType sim_type = 2;
+    string iccid = 3;
+
+    reserved 4, 5;
+}
+
+// 4G Dongle信息
+message DongleInfoInDock {
+    string imei = 1;
+    DongleTypeInDock dongle_type = 2;
+    string eid = 3;
+    ESIMActivationState esim_activate_state = 4;
+    SIMCardState sim_card_state = 5;
+    SIMSlot sim_slot = 6;
+    repeated ESIMInfo esim_infos = 7;
+    SIMInfo sim_info = 8;
+
+    reserved 9 to 15;
+}
+
+// 电池详细信息
+message DockBattery {
+    uint32 capacity_percent = 1;
+    uint32 index = 2;
+    uint32 voltage = 3;
+    double temperature = 4;
+
+    reserved 5, 6;
+}
+
+// 飞行器电池保养信息
+message DroneBatteryMaintenanceInfo {
+    MaintenanceState maintenance_state = 1;
+    uint32 maintenance_time_left = 2;
+    HeatState heat_state = 3;
+    repeated DockBattery batteries = 4;
+
+    reserved 5 to 8;
+}
+
+// 保养信息子项
+message MaintainStatusItemInDock {
+    IsWithMaintenance state = 1;
+    AircraftMaintenanceLevel last_maintain_type = 2;
+    int64 last_maintain_time = 3;
+    uint32 last_maintain_work_sorties = 4;
+
+    reserved 5, 6;
+}
+
+// 保养信息
+message MaintainStatusInDock {
+    repeated MaintainStatusItemInDock maintain_status_array = 1;
+
+    reserved 2;
+}
+
+// 搜星状态
+message PositionStateInDock {
+    uint32 is_calibration = 1;
+    uint32 is_fixed = 2;
+    SatelliteQuality quality = 3;
+    uint32 gps_number = 4;
+    uint32 rtk_number = 5;
+
+    reserved 6, 7;
+}
+
+// 飞行器充电状态
+message DroneChargeState {
+    uint32 capacity_percent = 1;
+    ChargingState state = 2;
+
+    reserved 3;
+}
+
+// 备用电池
+message BackupBattery {
+    uint32 switch_state = 1;
+    uint32 voltage = 2;
+    double temperature = 3;
+
+    reserved 4;
+}
+
+// 备降点
+message AlternateLandPoint {
+    double longitude = 1;
+    double latitude = 2;
+    double safe_land_height = 3;
+    uint32 is_configured = 4;
+    double height = 5;
+
+    reserved 6;
+}
+
+// 存储容量
+message StorageCapacity {
+    uint32 total = 1;
+    uint32 used = 2;
+
+    reserved 3;
+}
+
+// 视频列表
+message VideoList {
+    string video_index = 1;
+    string video_type = 2;
+    repeated string switchable_video_types = 3;
+
+    reserved 4;
+}
+
+// 相机列表
+message CameraList {
+    string camera_index = 1;
+    uint32 available_video_number = 2;
+    uint32 coexist_video_number_max = 3;
+    repeated VideoList video_list = 4;
+
+    reserved 5;
+}
+
+// 设备列表
+message DeviceList {
+    string sn = 1;
+    uint32 available_video_number = 2;
+    uint32 coexist_video_number_max = 3;
+    repeated CameraList camera_list = 4;
+
+    reserved 5;
+}
+
+// 直播能力
+message LiveCapacity {
+    uint32 available_video_number = 1;
+    uint32 coexist_video_number_max = 2;
+    repeated DeviceList device_list = 3;
+
+    reserved 4;
+}
+
+// 直播状态项
+message LiveStatusItem {
+    string video_id = 1;
+    string video_type = 2;
+    VideoQuality video_quality = 3;
+    LiveStreamingState status = 4;
+    uint32 error_status = 5;
+
+    reserved 6;
+}
+
+// 直播状态
+message LiveStatus {
+    repeated LiveStatusItem live_status = 1;
+
+    reserved 2;
+}
+
+// 图传链路
+message WirelessLink {
+    uint32 dongle_number = 1;
+    LinkState four_g_link_state = 2;
+    LinkState sdr_link_state = 3;
+    LinkWorkMode link_workmode = 4;
+    uint32 sdr_quality = 5;
+    uint32 four_g_quality = 6;
+    uint32 four_g_uav_quality = 7;
+    uint32 four_g_gnd_quality = 8;
+    double sdr_freq_band = 9;
+    double four_g_freq_band = 10;
+
+    reserved 11 to 15;
+}
+
+// 媒体文件上传细节
+message MediaFileDetail {
+    uint32 remain_upload = 1;
+
+    reserved 2;
+}
+
+// 网络状态
+message NetworkState {
+    NetworkType type = 1;
+    NetworkQuality quality = 2;
+    double rate = 3;
+
+    reserved 4;
+}
+
+// 子设备状态
+message SubDevice {
+    string device_sn = 1;
+    string device_model_key = 2;
+    DeviceOnlineStatus device_online_status = 3;
+    DevicePairedStatus device_paired = 4;
+
+    reserved 5;
+}
+
+// 机场实时状态
+message Dock2RealTimeStatus {
+    BaseDeviceStatus base = 1;
+    HomePositionValidity home_position_is_valid = 2;
+    double heading = 3;
+    RTCMInfo rtcm_info = 4;
+    WirelessLinkTopoInDock wireless_link_topo = 5;
+    AirConditioner air_conditioner = 6;
+    bool air_transfer_enable = 7;
+    SilentMode silent_mode = 8;
+    UserExperienceImprovement user_experience_improvement = 9;
+    repeated DongleInfoInDock dongle_infos = 10;
+    DroneBatteryMaintenanceInfo drone_battery_maintenance_info = 11;
+    MaintainStatusInDock maintain_status = 12;
+    PositionStateInDock position_state = 13;
+    EmergencyStopState emergency_stop_state = 14;
+    DroneChargeState drone_charge_state = 15;
+    BackupBattery backup_battery = 16;
+    uint32 alarm_state = 17;
+    BatteryStoreMode battery_store_mode = 18;
+    int64 activation_time = 19;
+    double height = 20;
+    AlternateLandPoint alternate_land_point = 21;
+    FirmwareConsistency compatible_status = 22;
+    int64 acc_time = 23;
+    int64 first_power_on = 24;
+    StorageCapacity storage = 25;
+    double working_current = 26;
+    uint32 working_voltage = 27;
+    double humidity = 28;
+    double temperature = 29;
+    double environment_temperature = 30;
+    double wind_speed = 31;
+    Rainfall rainfall = 32;
+    LiveCapacity live_capacity = 33;
+    LiveStatus live_status = 34;
+    WirelessLink wireless_link = 35;
+    MediaFileDetail media_file_detail = 36;
+    uint32 job_number = 37;
+    bool drone_in_dock = 38;
+    NetworkState network_state = 39;
+    SupplementaryLightState supplement_light_state = 40;
+    CoverState cover_state = 41;
+    SubDevice sub_device = 42;
+    FlightTaskStepCode flighttask_step_code = 43;
+    DockModeCode mode_code = 44;
+    FirmwareUpgradeStatus firmware_upgrade_status = 45;
+    string firmware_version = 46;
+    double latitude = 47;
+    double longitude = 48;
+    string dock_sn = 49;
+
+    reserved 50 to 63;
+}
+
+// ==================== 无人机任务状态枚举 ====================
+
+enum TemplateType {
+    WAYPOINT = 0;
+    MAPPING_2D = 1;
+    MAPPING_3D = 2;
+    MAPPING_STRIP = 3;
+}
+
+enum DroneType {
+    DRONE_TYPE_M3D_M3TD = 0;
+}
+
+enum PayloadPosition {
+    PAYLOAD_POSITION_0 = 0;
+}
+
+enum FinishAction {
+    FINISH_ACTION_GO_HOME = 0;
+    FINISH_ACTION_NO_ACTION = 1;
+    FINISH_ACTION_AUTO_LAND = 2;
+    FINISH_ACTION_GOTO_FIRST_WAYPOINT = 3;
+}
+
+enum RCLostAction {
+    RC_LOST_ACTION_GO_BACK = 0;
+    RC_LOST_ACTION_LANDING = 1;
+    RC_LOST_ACTION_HOVER = 2;
+}
+
+enum WaypointHeadingMode {
+    WAYPOINT_HEADING_FOLLOW_WAYLINE = 0;
+    WAYPOINT_HEADING_MANUALLY = 1;
+    WAYPOINT_HEADING_FIXED_YAW = 2;
+    WAYPOINT_HEADING_SMOOTH_TRANSITION = 3;
+    WAYPOINT_HEADING_TOWARD_POI = 4;
+}
+
+enum WaypointTurnMode {
+    WAYPOINT_TURN_COORDINATE_TURN = 0;
+    WAYPOINT_TURN_STOP_DISCONTINUOUS = 1;
+    WAYPOINT_TURN_STOP_CONTINUOUS = 2;
+    WAYPOINT_TURN_PASS_CONTINUOUS = 3;
+}
+
+enum GimbalPitchMode {
+    GIMBAL_PITCH_MANUAL = 0;
+    GIMBAL_PITCH_USE_POINT_SETTING = 1;
+}
+
+enum ActionTriggerType {
+    ACTION_TRIGGER_REACH_POINT = 0;
+    ACTION_TRIGGER_BETWEEN_POINTS = 1;
+    ACTION_TRIGGER_MULTIPLE_TIMING = 2;
+    ACTION_TRIGGER_MULTIPLE_DISTANCE = 3;
+}
+
+// ==================== 无人机任务状态消息 ====================
+
+message WaypointHeadingParam {
+    WaypointHeadingMode waypoint_heading_mode = 1;
+    double waypoint_heading_angle = 2;
+    string waypoint_poi_point = 3;
+
+    reserved 4;
+}
+
+message WaypointTurnParam {
+    WaypointTurnMode waypoint_turn_mode = 1;
+    double waypoint_turn_damping_dist = 2;
+    int64 use_straight_line = 3;
+
+    reserved 4;
+}
+
+message TaskAction {
+    int64 action_index = 1;
+    int64 hover_time = 2;
+    double aircraft_heading = 3;
+    int64 use_global_image_format = 4;
+    string image_format = 5;
+    double gimbal_yaw_rotate_angle = 6;
+    double gimbal_pitch_rotate_angle = 7;
+    double zoom = 8;
+
+    reserved 9, 10;
+}
+
+message ActionTriggerParam {
+    ActionTriggerType action_trigger_type = 1;
+    double action_trigger_param = 2;
+
+    reserved 3;
+}
+
+message Waypoint {
+    int64 index = 1;
+    double latitude = 2;
+    double longitude = 3;
+    double height = 4;
+    double speed = 5;
+    WaypointHeadingParam heading_param = 6;
+    WaypointTurnParam turn_param = 7;
+    double gimbal_pitch_angle = 8;
+    repeated TaskAction actions = 9;
+    ActionTriggerParam action_trigger_param = 10;
+
+    reserved 11, 12;
+}
+
+message SearchArea {
+    string area_name = 1;
+    repeated Waypoint area_points = 2;
+
+    reserved 3;
+}
+
+message GenerateArea {
+    string area_name = 1;
+    repeated Waypoint area_points = 2;
+
+    reserved 3;
+}
+
+message Wayline {
+    string wayline_id = 1;
+    string wayline_name = 2;
+    TemplateType template_type = 3;
+    DroneType drone_type = 4;
+    int64 sub_drone_type = 5;
+    string payload_type = 6;
+    PayloadPosition payload_position = 7;
+    string image_format = 8;
+    FinishAction finish_action = 9;
+    RCLostAction execute_rc_lost_action = 10;
+    double global_height = 11;
+    double auto_flight_speed = 12;
+    GimbalPitchMode gimbal_pitch_mode = 13;
+    string take_off_ref_point = 14;
+    WaypointHeadingParam global_waypoint_heading_param = 15;
+    WaypointTurnParam global_waypoint_turn_param = 16;
+    repeated Waypoint way_point_list = 17;
+
+    reserved 18 to 23;
+}
+
+// 弹药数量
+message Munition {
+    string munition_id = 1;
+    string name = 2;
+    int32 quantity_units = 3;
+
+    reserved 4;
+}
+
+// 无人机任务实时状态
+message DroneTaskRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    Wayline current_wayline = 2;
+    SearchArea current_search_area = 3;
+    GenerateArea current_generate_area = 4;
+    Munition munition_info = 5;
+    string drone_state = 6;
+    string drone_task_action = 7;
+    string drone_task_target_id = 8;
+
+    reserved 9 to 15;
+}
+
+// ==================== 无人机状态枚举 ====================
+
+enum DroneCameraMode {
+    DRONE_CAMERA_PHOTO_MODE = 0;
+    DRONE_CAMERA_VIDEO_MODE = 1;
+    DRONE_CAMERA_SMART_LOW_LIGHT = 2;
+    DRONE_CAMERA_PANORAMA_MODE = 3;
+}
+
+enum PhotoState {
+    PHOTO_STATE_IDLE = 0;
+    PHOTO_STATE_IN_PROGRESS = 1;
+}
+
+enum RecordingState {
+    RECORDING_STATE_IDLE = 0;
+    RECORDING_STATE_IN_PROGRESS = 1;
+}
+
+enum WideExposureMode {
+    WIDE_EXPOSURE_AUTO = 0;
+    WIDE_EXPOSURE_SHUTTER_PRIORITY = 1;
+    WIDE_EXPOSURE_APERTURE_PRIORITY = 2;
+    WIDE_EXPOSURE_MANUAL = 3;
+}
+
+enum ZoomFocusMode {
+    ZOOM_FOCUS_MF = 0;
+    ZOOM_FOCUS_AFS = 1;
+    ZOOM_FOCUS_AFC = 2;
+}
+
+enum ZoomFocusState {
+    ZOOM_FOCUS_IDLE = 0;
+    ZOOM_FOCUS_IN_PROGRESS = 1;
+    ZOOM_FOCUS_SUCCESS = 2;
+    ZOOM_FOCUS_FAILED = 3;
+}
+
+enum IrMeteringMode {
+    IR_METERING_OFF = 0;
+    IR_METERING_POINT = 1;
+    IR_METERING_AREA = 2;
+}
+
+enum DongleTypeInDrone {
+    DRONE_DONGLE_TYPE_0 = 0;
+    DRONE_DONGLE_TYPE_1 = 1;
+    DRONE_DONGLE_TYPE_2 = 2;
+    DRONE_DONGLE_TYPE_3 = 3;
+    DRONE_DONGLE_TYPE_4 = 4;
+    DRONE_DONGLE_TYPE_5 = 5;
+    DRONE_DONGLE_TYPE_OLD = 6;
+    DRONE_DONGLE_TYPE_7 = 7;
+    DRONE_DONGLE_TYPE_8 = 8;
+    DRONE_DONGLE_TYPE_9 = 9;
+    DRONE_DONGLE_TYPE_NEW_WITH_ESIM = 10;
+}
+
+enum EsimActivateState {
+    ESIM_STATE_INACTIVE = 0;
+    ESIM_STATE_ACTIVE = 1;
+}
+
+enum DroneSimCardState {
+    DRONE_SIM_NOT_INSERTED = 0;
+    DRONE_SIM_INSERTED = 1;
+}
+
+enum DroneSimSlot {
+    DRONE_SIM_SLOT_UNKNOWN = 0;
+    DRONE_SIM_SLOT_PHYSICAL = 1;
+    DRONE_SIM_SLOT_ESIM = 2;
+}
+
+enum DroneTelecomOperator {
+    DRONE_OPERATOR_UNKNOWN = 0;
+    DRONE_OPERATOR_CHINA_MOBILE = 1;
+    DRONE_OPERATOR_CHINA_UNICOM = 2;
+    DRONE_OPERATOR_CHINA_TELECOM = 3;
+}
+
+enum DroneSimType {
+    DRONE_SIM_TYPE_UNKNOWN = 0;
+    DRONE_SIM_TYPE_NORMAL = 1;
+    DRONE_SIM_TYPE_TRIPLE_NETWORK = 2;
+}
+
+enum RthMode {
+    RTH_MODE_SMART_HEIGHT = 0;
+    RTH_MODE_SET_HEIGHT = 1;
+}
+
+enum ObstacleAvoidanceState {
+    OBSTACLE_AVOIDANCE_OFF = 0;
+    OBSTACLE_AVOIDANCE_ON = 1;
+}
+
+enum PositionFixedStatus {
+    POSITION_FIX_NOT_STARTED = 0;
+    POSITION_FIX_CONVERGING = 1;
+    POSITION_FIX_SUCCESS = 2;
+    POSITION_FIX_FAILED = 3;
+}
+
+enum DronePositionQuality {
+    DRONE_POSITION_QUALITY_0 = 0;
+    DRONE_POSITION_QUALITY_1 = 1;
+    DRONE_POSITION_QUALITY_2 = 2;
+    DRONE_POSITION_QUALITY_3 = 3;
+    DRONE_POSITION_QUALITY_4 = 4;
+    DRONE_POSITION_QUALITY_5 = 5;
+    DRONE_POSITION_QUALITY_6 = 6;
+    DRONE_POSITION_QUALITY_7 = 7;
+    DRONE_POSITION_QUALITY_8 = 8;
+    DRONE_POSITION_QUALITY_9 = 9;
+    DRONE_POSITION_QUALITY_RTK_FIXED = 10;
+}
+
+enum GearMode {
+    GEAR_MODE_A = 0;
+    GEAR_MODE_P = 1;
+    GEAR_MODE_NAV = 2;
+    GEAR_MODE_FPV = 3;
+    GEAR_MODE_FARM = 4;
+    GEAR_MODE_S = 5;
+    GEAR_MODE_F = 6;
+    GEAR_MODE_M = 7;
+    GEAR_MODE_G = 8;
+    GEAR_MODE_T = 9;
+}
+
+enum ModeCodeReason {
+    MODE_CODE_REASON_NONE = 0;
+    MODE_CODE_REASON_LOW_BATTERY = 1;
+    MODE_CODE_REASON_LOW_VOLTAGE = 2;
+    MODE_CODE_REASON_CRITICAL_LOW_VOLTAGE = 3;
+    MODE_CODE_REASON_REMOTE_CONTROL = 4;
+    MODE_CODE_REASON_APP_REQUEST = 5;
+    MODE_CODE_REASON_RC_LOST = 6;
+    MODE_CODE_REASON_EXTERNAL_DEVICE = 7;
+    MODE_CODE_REASON_AIRPORT_GEOZONE = 8;
+    MODE_CODE_REASON_TOO_CLOSE_TO_HOME = 9;
+    MODE_CODE_REASON_TOO_FAR_FROM_HOME = 10;
+    MODE_CODE_REASON_WAYPOINT_MISSION = 11;
+    MODE_CODE_REASON_OVER_HOME_POINT = 12;
+    MODE_CODE_REASON_ALTITUDE_LIMIT = 13;
+    MODE_CODE_REASON_FORCE_LANDING = 14;
+    MODE_CODE_REASON_AIRCRAFT_AVOIDANCE = 15;
+    MODE_CODE_REASON_ALTITUDE_CONTROL_FAILURE = 16;
+    MODE_CODE_REASON_SMART_LOW_BATTERY = 17;
+    MODE_CODE_REASON_AP_CONTROL = 18;
+    MODE_CODE_REASON_HARDWARE_ERROR = 19;
+    MODE_CODE_REASON_GROUND_PROTECTION = 20;
+    MODE_CODE_REASON_RTH_CANCELED = 21;
+    MODE_CODE_REASON_OBSTACLE_AVOIDANCE = 22;
+    MODE_CODE_REASON_STRONG_WIND = 23;
+}
+
+enum DroneModeCode {
+    DRONE_MODE_STANDBY = 0;
+    DRONE_MODE_TAKEOFF_PREPARING = 1;
+    DRONE_MODE_TAKEOFF_READY = 2;
+    DRONE_MODE_MANUAL_FLIGHT = 3;
+    DRONE_MODE_AUTO_TAKEOFF = 4;
+    DRONE_MODE_WAYPOINT_FLIGHT = 5;
+    DRONE_MODE_PANORAMA_PHOTO = 6;
+    DRONE_MODE_SMART_FOLLOW = 7;
+    DRONE_MODE_ADS_B_AVOIDANCE = 8;
+    DRONE_MODE_AUTO_RETURN = 9;
+    DRONE_MODE_AUTO_LANDING = 10;
+    DRONE_MODE_FORCE_LANDING = 11;
+    DRONE_MODE_THREE_BLADE_LANDING = 12;
+    DRONE_MODE_UPGRADING = 13;
+    DRONE_MODE_DISCONNECTED = 14;
+    DRONE_MODE_APAS = 15;
+    DRONE_MODE_VIRTUAL_JOYSTICK = 16;
+    DRONE_MODE_COMMAND_FLIGHT = 17;
+    DRONE_MODE_RTK_CONVERGENCE = 18;
+    DRONE_MODE_AIRPORT_SITE_SELECTION = 19;
+}
+
+enum WindDirection {
+    WIND_DIRECTION_NORTH = 0;
+    WIND_DIRECTION_NORTHEAST = 1;
+    WIND_DIRECTION_EAST = 2;
+    WIND_DIRECTION_SOUTHEAST = 3;
+    WIND_DIRECTION_SOUTH = 4;
+    WIND_DIRECTION_SOUTHWEST = 5;
+    WIND_DIRECTION_WEST = 6;
+    WIND_DIRECTION_NORTHWEST = 7;
+}
+
+enum WatermarkLayout {
+    WATERMARK_LAYOUT_TOP_LEFT = 0;
+    WATERMARK_LAYOUT_BOTTOM_LEFT = 1;
+    WATERMARK_LAYOUT_TOP_RIGHT = 2;
+    WATERMARK_LAYOUT_BOTTOM_RIGHT = 3;
+}
+
+// ==================== 无人机状态消息 ====================
+
+message SdrNode {
+    int32 sdr_id = 1;
+    string sn = 2;
+
+    reserved 3;
+}
+
+message ControlSourceNode {
+    int32 sdr_id = 1;
+    string sn = 2;
+    int32 control_source_index = 3;
+
+    reserved 4;
+}
+
+message WirelessLinkTopoInDrone {
+    bytes secret_code = 1;
+    SdrNode center_node = 2;
+    repeated ControlSourceNode leaf_nodes = 3;
+
+    reserved 4;
+}
+
+message LiveviewWorldRegion {
+    float left = 1;
+    float top = 2;
+    float right = 3;
+    float bottom = 4;
+
+    reserved 5;
+}
+
+message DroneTemperaturePoint {
+    double x = 1;
+    double y = 2;
+    double temperature = 3;
+
+    reserved 4;
+}
+
+message IrMeteringArea {
+    double x = 1;
+    double y = 2;
+    double width = 3;
+    double height = 4;
+    double aver_temperature = 5;
+    DroneTemperaturePoint min_temperature_point = 6;
+    DroneTemperaturePoint max_temperature_point = 7;
+
+    reserved 8;
+}
+
+message DroneEsimInfo {
+    DroneTelecomOperator telecom_operator = 1;
+    bool enabled = 2;
+    string iccid = 3;
+
+    reserved 4;
+}
+
+message DroneSimInfo {
+    DroneTelecomOperator telecom_operator = 1;
+    DroneSimType sim_type = 2;
+    string iccid = 3;
+
+    reserved 4;
+}
+
+message DongleInfoInDrone {
+    string imei = 1;
+    DongleTypeInDrone dongle_type = 2;
+    string eid = 3;
+    EsimActivateState esim_activate_state = 4;
+    DroneSimCardState sim_card_state = 5;
+    DroneSimSlot sim_slot = 6;
+    repeated DroneEsimInfo esim_infos = 7;
+    DroneSimInfo sim_info = 8;
+
+    reserved 9 to 15;
+}
+
+message MaintainStatusItemInDrone {
+    int32 state = 1;
+    int32 last_maintain_type = 2;
+    int64 last_maintain_time = 3;
+    int32 last_maintain_flight_time = 4;
+    int32 last_maintain_flight_sorties = 5;
+
+    reserved 6;
+}
+
+message MaintainStatusInDrone {
+    repeated MaintainStatusItemInDrone maintain_status_array = 1;
+
+    reserved 2;
+}
+
+message TypeSubtypeGimbalIndex {
+    double gimbal_pitch = 1;
+    double gimbal_roll = 2;
+    double gimbal_yaw = 3;
+    string payload_index = 4;
+    double zoom_factor = 5;
+
+    reserved 6;
+}
+
+message PositionStateInDrone {
+    PositionFixedStatus is_fixed = 1;
+    DronePositionQuality quality = 2;
+    int32 gps_number = 3;
+    int32 rtk_number = 4;
+
+    reserved 5;
+}
+
+message StorageInfo {
+    int32 total = 1;
+    int32 used = 2;
+
+    reserved 3;
+}
+
+message DroneBatteryInfo {
+    int32 capacity_percent = 1;
+    int32 index = 2;
+    string sn = 3;
+    int32 type = 4;
+    int32 sub_type = 5;
+    string firmware_version = 6;
+    int32 loop_times = 7;
+    int32 voltage = 8;
+    float temperature = 9;
+    int32 high_voltage_storage_days = 10;
+
+    reserved 11, 12;
+}
+
+message DroneBatteryStatus {
+    int32 capacity_percent = 1;
+    int32 remain_flight_time = 2;
+    int32 return_home_power = 3;
+    int32 landing_power = 4;
+    repeated DroneBatteryInfo batteries = 5;
+
+    reserved 6;
+}
+
+message DroneObstacleAvoidance {
+    ObstacleAvoidanceState horizon = 1;
+    ObstacleAvoidanceState upside = 2;
+    ObstacleAvoidanceState downside = 3;
+
+    reserved 4;
+}
+
+message CameraWatermarkSettings {
+    int32 global_enable = 1;
+    int32 drone_type_enable = 2;
+    int32 drone_sn_enable = 3;
+    int32 datetime_enable = 4;
+    int32 gps_enable = 5;
+    int32 user_custom_string_enable = 6;
+    string user_custom_string = 7;
+    int32 layout = 8;
+
+    reserved 9, 10;
+}
+
+message DroneCameraStatus {
+    int32 remain_photo_num = 1;
+    int32 remain_record_duration = 2;
+    int32 record_time = 3;
+    string payload_index = 4;
+    DroneCameraMode camera_mode = 5;
+    PhotoState photo_state = 6;
+    bool screen_split_enable = 7;
+    RecordingState recording_state = 8;
+    float zoom_factor = 9;
+    float ir_zoom_factor = 10;
+    LiveviewWorldRegion liveview_world_region = 11;
+    repeated string photo_storage_settings = 12;
+    repeated string video_storage_settings = 13;
+    WideExposureMode wide_exposure_mode = 14;
+    int32 wide_iso = 15;
+    int32 wide_shutter_speed = 16;
+    int32 wide_exposure_value = 17;
+    WideExposureMode zoom_exposure_mode = 18;
+    int32 zoom_iso = 19;
+    int32 zoom_shutter_speed = 20;
+    int32 zoom_exposure_value = 21;
+    ZoomFocusMode zoom_focus_mode = 22;
+    int32 zoom_focus_value = 23;
+    int32 zoom_max_focus_value = 24;
+    int32 zoom_min_focus_value = 25;
+    int32 zoom_calibrate_farthest_focus_value = 26;
+    int32 zoom_calibrate_nearest_focus_value = 27;
+    ZoomFocusState zoom_focus_state = 28;
+    IrMeteringMode ir_metering_mode = 29;
+    DroneTemperaturePoint ir_metering_point = 30;
+    IrMeteringArea ir_metering_area = 31;
+
+    reserved 32 to 39;
+}
+
+// 无人机实时状态（经纬度使用 double 保证精度）
+message DroneRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    string best_link_gateway = 2;
+    WirelessLinkTopoInDrone wireless_link_topo = 3;
+    repeated DroneCameraStatus cameras = 4;
+    string flysafe_database_version = 5;
+    bool offline_map_enable = 6;
+    repeated DongleInfoInDrone dongle_infos = 7;
+    RthMode current_rth_mode = 8;
+    RthMode rth_mode = 9;
+    DroneObstacleAvoidance obstacle_avoidance = 10;
+    int32 is_near_area_limit = 11;
+    int32 is_near_height_limit = 12;
+    int32 height_limit = 13;
+    int32 night_lights_state = 14;
+    int64 activation_time = 15;
+    MaintainStatusInDrone maintain_status = 16;
+    int32 total_flight_sorties = 17;
+    TypeSubtypeGimbalIndex type_subtype_gimbalindex = 18;
+    string track_id = 19;
+    PositionStateInDrone position_state = 20;
+    StorageInfo storage = 21;
+    DroneBatteryStatus battery = 22;
+    float total_flight_distance = 23;
+    int32 total_flight_time = 24;
+    int32 serious_low_battery_warning_threshold = 25;
+    int32 low_battery_warning_threshold = 26;
+    string control_source = 27;
+    WindDirection wind_direction = 28;
+    float wind_speed = 29;
+    float home_distance = 30;
+    double home_latitude = 31;      // 改为 double
+    double home_longitude = 32;     // 改为 double
+    int32 attitude_head = 33;
+    float attitude_roll = 34;
+    float attitude_pitch = 35;
+    float elevation = 36;
+    float height = 37;
+    double latitude = 38;           // 改为 double
+    double longitude = 39;          // 改为 double
+    float vertical_speed = 40;
+    float horizontal_speed = 41;
+    int32 firmware_upgrade_status = 42;
+    int32 compatible_status = 43;
+    string firmware_version = 44;
+    GearMode gear = 45;
+    ModeCodeReason mode_code_reason = 46;
+    float commander_flight_height = 47;
+    int32 commander_flight_mode = 48;
+    int32 commander_mode_lost_action = 49;
+    CameraWatermarkSettings camera_watermark_settings = 50;
+    DroneModeCode mode_code = 51;
+    string drone_sn = 52;
+
+    reserved 53 to 63;
+}
+
+// 无人机高频状态（经纬度使用 double 保证精度）
+message HighFreqRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    double attitude_head = 2;
+    double latitude = 3;     // 改为 double
+    double longitude = 4;    // 改为 double
+    double height = 5;
+    double speed_x = 6;
+    double speed_y = 7;
+    double speed_z = 8;
+    double gimbal_pitch = 9;
+    double gimbal_roll = 10;
+    double gimbal_yaw = 11;
+    string drone_sn = 12;
+    string dock_sn = 13;
+
+    reserved 14 to 19;
+}
+
+// ==================== 无人船状态 ====================
+
+enum StrikeWorkingState {
+    STRIKE_IDLE = 0;
+    STRIKE_INITIALIZING = 1;
+    STRIKE_RUNNING = 2;
+    STRIKE_PAUSED = 3;
+    STRIKE_ERROR = 4;
+}
+
+message USVPTZStatus {
+    double pan = 1;
+    double tilt = 2;
+    double zoom = 3;
+    double focus = 4;
+    double horizontal_fov = 5;
+    double vertical_fov = 6;
+
+    reserved 7, 8;
+}
+
+message USVInfo {
+    double hdg = 1;     // heading
+    double cog = 2;     // course over ground
+    double sog = 3;     // speed over ground
+    double longitude = 4;
+    double latitude = 5;
+
+    reserved 6;
+}
+
+message USVRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    USVPTZStatus ptz = 2;
+    USVPTZStatus ptz1 = 3;
+    USVPTZStatus ptz2 = 4;
+    USVPTZStatus ptz3 = 5;
+    USVPTZStatus ptz4 = 6;
+    USVPTZStatus ptz5 = 7;
+    USVInfo usv_info = 8;
+    StrikeWorkingState strike_state = 9;
+
+    reserved 10 to 15;
+}
+
+// ==================== 干扰器状态 ====================
+
+enum JammerType {
+    RADAR_JAMMER = 0;
+    COMMUNICATIONS_JAMMER = 1;
+    CHAFF_JAMMER = 2;
+    INFRARED_JAMMER = 3;
+    EOPT_JAMMER = 4;
+    ACOUSTIC_JAMMER = 5;
+    ACOUSTIC_REPEATER = 6;
+	JAMMER_TYPE_UNKNOWN = 7;
+}
+
+enum JammerAbility {
+    ECM = 0;
+    ESM_ECM = 1;
+    OECM = 2;
+    DECM = 3;
+    OECM_DECM = 4;
+    REPEATER = 5;
+    IRCM = 6;
+	JAMMER_ABILITY_UNKNOWN = 7;
+}
+
+message JammerRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    int32 jammer_state = 2;
+    double hit_point = 3;
+    JammerType jammer_type = 4;
+    repeated JammerAbility jammer_ability = 5;
+	int32 strike_counts = 6;
+
+    reserved 7 to 10;
+}
+
+// ==================== 激光武器状态 ====================
+
+message LaserRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    int32 laser_state = 2;
+    double hit_point = 3;
+	int32 strike_counts = 4;
+
+    reserved 5 to 10;
+}
+
+// ==================== 巡飞弹状态 ====================
+
+message MunitionRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    int32 munition_state = 2;
+    double hit_point = 3;
+    double attitude_head = 4;
+    double latitude = 5;
+    double longitude = 6;
+    double height = 7;
+	int32 strike_counts = 8;
+
+    reserved 9 to 15;
+}
+
+// ==================== 其他武器状态 ====================
+
+message WeaponRealTimeStatus {
+    BaseDeviceStatus base = 1;
+    int32 weapon_state = 2;
+    double hit_point = 3;
+    uint32 launch_platform_id = 4;
+    string launch_platform_name = 5;
+    double attack_angle = 6;
+    double miss_distance = 7;
+    int32 move_step = 8;
+	int32 strike_counts = 9;
+
+    reserved 10 to 15;
+}

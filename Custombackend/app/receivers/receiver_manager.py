@@ -20,6 +20,7 @@ from receivers.network.dds_receiver_service import (
 from receivers.network.dds_track_bridge import get_track_bridge
 from parsers import TrackParser
 from parsers.entity_parser import parse_entity_status
+from receivers.network.entity_status_grpc_receiver import EntityStatusGrpcReceiver
 from websocket_manager import ws_manager
 
 # DDS 航迹 receiver_id → 前端 track_layer_key（与 NexusUI map-entity-model / track-layer-visibility 一致）
@@ -75,6 +76,7 @@ class ReceiverManager:
         self.http_pollers: Dict[str, HTTPPoller] = {}
         self.mqtt_receivers: Dict[str, MQTTReceiver] = {}
         self.dds_receivers: Dict[str, Any] = {}  # DDSReceiver实例（非航迹；航迹在独立子进程）
+        self.entity_status_grpc_receivers: Dict[str, EntityStatusGrpcReceiver] = {}
         self._dds_track_meta: Dict[str, Dict[str, str]] = {}  # 子进程航迹：receiver_id -> topic/name
         
         # 统计信息
@@ -125,6 +127,13 @@ class ReceiverManager:
                 self._stats[receiver_id]['parsed'] += 1
             else:
                 self._stats[receiver_id]['failed'] += 1
+            return
+
+        if data_format == 'BirdRadarMLPacket':
+            from radar_train.csv_recorder import capture_manager
+            n = capture_manager.on_udp_message(data)
+            if n > 0:
+                self._stats[receiver_id]['parsed'] += n
             return
         
         # 解析数据
@@ -511,6 +520,27 @@ class ReceiverManager:
                 logger.error(f"❌ DDS接收器启动失败 [{receiver_id}]: {e}")
                 import traceback
                 logger.debug(traceback.format_exc())
+
+    def start_entity_status_grpc_receivers(self, configs: List[Dict[str, Any]]):
+        """启动无人机 EntityStatus gRPC 订阅（与 DDS drone_status/task/high_freq 二选一）。"""
+        for config in configs:
+            if not config.get("enabled", False):
+                continue
+            receiver_id = config.get("id", "")
+            if not receiver_id:
+                continue
+            try:
+                callback = self._create_dds_callback(receiver_id)
+                receiver = EntityStatusGrpcReceiver(config, data_callback=callback)
+                receiver.name = config.get("name", receiver_id)
+                receiver.start()
+                self.entity_status_grpc_receivers[receiver_id] = receiver
+                logger.info(
+                    f"✅ EntityStatus gRPC 接收器已启动 [{receiver_id}] → "
+                    f"{config.get('host')}:{config.get('port')}"
+                )
+            except Exception as e:
+                logger.error(f"❌ EntityStatus gRPC 接收器启动失败 [{receiver_id}]: {e}")
     
     async def start_http_pollers(self, configs: List[Dict[str, Any]]):
         """启动HTTP轮询器"""
@@ -562,6 +592,13 @@ class ReceiverManager:
                 logger.error(f"停止DDS接收器失败 [{receiver_id}]: {e}")
         self.dds_receivers.clear()
         self._dds_track_meta.clear()
+
+        for receiver in self.entity_status_grpc_receivers.values():
+            try:
+                receiver.stop()
+            except Exception as e:
+                logger.error(f"停止 EntityStatus gRPC 接收器失败: {e}")
+        self.entity_status_grpc_receivers.clear()
         
         logger.info("所有接收器已停止")
     

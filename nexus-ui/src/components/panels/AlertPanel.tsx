@@ -332,6 +332,15 @@ export function AlertPanel() {
                     , 位置：{summary.position}, 区域：{summary.area}, 等级：{summary.level}
                   </p>
 
+                  {isTrackAlarmItem(alert) && alert.content?.trim() ? (
+                    <p
+                      className="mt-0.5 break-words text-[10px] leading-snug text-nexus-text-secondary/90"
+                      title={alert.content}
+                    >
+                      证据链：{alert.content}
+                    </p>
+                  ) : null}
+
                   {alert.detail && (
                     <p
                       className="mt-0.5 truncate text-[10px] text-nexus-text-secondary/80"

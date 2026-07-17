@@ -63,7 +63,7 @@ import { useDbAreaStore } from "@/stores/db-area-store";
 import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
 import { countVisibleDbAreaLeaves, isDbAreaListable, isDbAreaLeafVisible, syncDbAreaLayerMasterFromLeaves } from "@/lib/db-area-panel-helpers";
-import { collectMapGisDroneRowsSync, mapGisDroneSyncSignature } from "@/lib/map-gis-drone-rows";
+import { collectMapGisDroneRowsSync, isStandaloneMapGisDrone, mapGisDroneSyncSignature } from "@/lib/map-gis-drone-rows";
 import { useDroneStore } from "@/stores/drone-store";
 import {
   PanelTreeBranchRow,
@@ -899,7 +899,7 @@ export function LayerPanel() {
                               className="border-b border-nexus-border/30 py-2 pr-2 text-[10px] leading-relaxed text-nexus-text-muted last:border-b-0"
                               style={{ paddingLeft: 24 }}
                             >
-                              暂无可选无人机（需 WS 推送机巢关系或资产列表含无人机）
+                              暂无可选无人机（需 WS 机巢关系、资产列表或 gRPC 蓝方遥测）
                             </div>
                           ) : (
                             dronePanelDevices.map((dev) => {
@@ -912,6 +912,10 @@ export function LayerPanel() {
                               const airportLabel = airportSn
                                 ? airportNameById.get(airportSn) ?? airportSn
                                 : "";
+                              const panelLabel =
+                                !airportSn && isStandaloneMapGisDrone(dev, droneStoreDrones[dev.sn])
+                                  ? `${dev.label}（蓝方）`
+                                  : dev.label;
                               return (
                                 <div key={dev.sn}>
                                   <PanelTreeBranchRow
@@ -920,7 +924,7 @@ export function LayerPanel() {
                                     onToggleOpen={() =>
                                       toggleLayerPanelDynamic("droneDevice", dev.sn)
                                     }
-                                    label={dev.label}
+                                    label={panelLabel}
                                     visibility={droneDeviceVisibilityState(dev)}
                                     onToggleVisible={() => {
                                       const st = droneDeviceVisibilityState(dev);

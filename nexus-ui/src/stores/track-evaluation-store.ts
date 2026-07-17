@@ -57,6 +57,7 @@ export const TRACK_EVAL_SENSOR_OPTIONS = [
   { id: 6, label: "对空融合航迹" },
   { id: 7, label: "KU雷达" },
   { id: 203, label: "反无车雷达航迹" },
+  { id: 204, label: "远遥鹏飞航迹" },
 ] as const;
 
 /** 默认勾选：对海融合、码头雷达、AIS、探鸟、自报位、对空融合 */

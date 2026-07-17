@@ -142,7 +142,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
         "id": "dds_camera_status",
         "name": "DDS相机实时状态",
         "enabled": True,
-        "domain_id": 149,
+        "domain_id": 200,
         "topic_name": "CameraRealTimeStatusTopic",
         "profile_name": "camera_status_subscriber",
         "discovery_server_ip": "192.168.18.141",
@@ -413,20 +413,22 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     },
     {
         "id": "dds_high_freq",
-        "name": "高频位置数据",
-        "enabled": True,  # TODO: 需要配置profile_name后启用
-        "domain_id": 115,
+        "name": "高频位置数据(新版 Entity IDL，与现场发布端 domain 200 对齐)",
+        "enabled": True,
+        "domain_id": 200,
         "topic_name": "highFreqRealTimeStatusTopic",
-        "profile_name": "high_freq_subscriber",  # TODO: 配置实际的profile_name
+        "profile_name": "test_highfreq_client",
         "discovery_server_ip": "192.168.18.141",
         "discovery_server_port": 11611,
         "multicast_ip": "239.255.0.1",
         "multicast_port": 12355,
-        "dds_module_path": "./DDSReferences/highFreq",
+        "dds_module_path": "./DDSReferences/Entity",
+        "subscriber_xml_file": "highfreq_subscriber.xml",
+        "dds_python_module": "EntityRealTimeStatus",
         "structure_type": "high_freq",
         "data_class_name": "highFreqRealTimeStatus",
         "pubsub_type_class_name": "highFreqRealTimeStatusPubSubType",
-        "type_name": "casia::device::status::drcstatus::highFreqRealTimeStatus",
+        "type_name": "casia::device::status::DroneGeneralStatus::DroneStatus::highFreqRealTimeStatus",
         "use_default_xml": False
     }
 ]

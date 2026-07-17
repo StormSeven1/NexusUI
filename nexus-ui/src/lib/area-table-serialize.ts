@@ -28,7 +28,11 @@ export const ROUTE_AREA_GROUP_ID = 0;
 /** 圆形存库：area_rect / area_points 固定占位（与桌面端约定一致） */
 export const CIRCLE_AREA_RECT_ZEROS = "0.00000,0.00000,0.00000,0.00000";
 export const CIRCLE_AREA_POINTS_ZERO = "0";
-/** 圆形默认边色（RGB，写入 line_color 列） */
+/** 矩形/多边形存库：end_point 固定占位 */
+export const AREA_END_POINT_ZEROS = "0.00000,0.00000";
+/** 矩形存库：area_points 固定占位 */
+export const RECT_AREA_POINTS_ZERO = "0";
+/** 默认边色（RGB，写入 line_color 列；与桌面端 area_table 一致） */
 export const CIRCLE_AREA_LINE_COLOR = "255,255,0";
 
 function fmt(n: number): string {
@@ -38,6 +42,21 @@ function fmt(n: number): string {
 /** 矩形对角：lat1,lng1,lat2,lng2 */
 export function serializeAreaRect(a: LngLat, b: LngLat): string {
   return `${fmt(a.lat)},${fmt(a.lng)},${fmt(b.lat)},${fmt(b.lng)}`;
+}
+
+/** 矩形存库：area_rect + start_point（第二角 lat,lng）+ 占位 end_point / area_points */
+export function serializeRect(a: LngLat, b: LngLat): {
+  area_rect: string;
+  start_point: string;
+  end_point: string;
+  area_points: string;
+} {
+  return {
+    area_rect: serializeAreaRect(a, b),
+    start_point: `${fmt(b.lat)},${fmt(b.lng)}`,
+    end_point: AREA_END_POINT_ZEROS,
+    area_points: RECT_AREA_POINTS_ZERO,
+  };
 }
 
 /** 圆心 + 圆周点：各为 lat,lng */
@@ -68,7 +87,13 @@ export function serializeRoute(points: LngLat[]): { start_point: string; area_po
 }
 
 export type AreaGeometryPayload =
-  | { area_type: 1; area_rect: string }
+  | {
+      area_type: 1;
+      area_rect: string;
+      start_point: string;
+      end_point: string;
+      area_points: string;
+    }
   | {
       area_type: 2;
       start_point: string;
@@ -76,7 +101,7 @@ export type AreaGeometryPayload =
       area_rect: string;
       area_points: string;
     }
-  | { area_type: 3; area_points: string }
+  | { area_type: 3; area_points: string; start_point: string; end_point: string }
   | { area_type: 4; start_point: string; area_points: string };
 
 export function buildAreaGeometryPayload(shape: AreaDrawShape, points: LngLat[]): AreaGeometryPayload | null {
@@ -84,7 +109,7 @@ export function buildAreaGeometryPayload(shape: AreaDrawShape, points: LngLat[])
     if (points.length < 2) return null;
     const a = points[0]!;
     const b = points[1]!;
-    return { area_type: 1, area_rect: serializeAreaRect(a, b) };
+    return { area_type: 1, ...serializeRect(a, b) };
   }
   if (shape === "circle") {
     if (points.length < 2) return null;
@@ -102,7 +127,13 @@ export function buildAreaGeometryPayload(shape: AreaDrawShape, points: LngLat[])
     return { area_type: 4, ...serializeRoute(points) };
   }
   if (points.length < 3) return null;
-  return { area_type: 3, area_points: serializeAreaPoints(points) };
+  const first = points[0]!;
+  return {
+    area_type: 3,
+    area_points: serializeAreaPoints(points),
+    start_point: `${fmt(first.lat)},${fmt(first.lng)}`,
+    end_point: AREA_END_POINT_ZEROS,
+  };
 }
 
 /** 从现有行推算下一 area_id（保存前默认名用） */

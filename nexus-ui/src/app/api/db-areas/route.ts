@@ -99,8 +99,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "航线缺少 start_point / area_points" }, { status: 400 });
   }
 
-  const lineColor = String(body.line_color ?? "#3b82f6").trim() || "#3b82f6";
+  const lineColor = String(body.line_color ?? "255,255,0").trim() || "255,255,0";
   const lineWidth = Math.max(1, Math.min(12, Number(body.line_width) || 2));
+
+  const startPoint = String(body.start_point ?? "");
+  const endPoint = String(body.end_point ?? "");
+  const areaRect = String(body.area_rect ?? "");
+  const areaPoints = String(body.area_points ?? "");
 
   const client = await p.connect();
   try {
@@ -136,9 +141,9 @@ export async function POST(req: NextRequest) {
          start_point, end_point, area_rect, area_points,
          line_width, line_color, check_state, waring_type, waring_time
        ) VALUES (
-         $1, $2, $3, $4, $5,
-         $6, $7, $8, $9,
-         $10, $11, 1, 0, 0
+        $1, $2, $3, $4, $5,
+        $6, $7, $8, $9,
+        $10, $11, 0, 0, 0
        )`,
       [
         groupId,
@@ -146,14 +151,10 @@ export async function POST(req: NextRequest) {
         groupName,
         areaName,
         areaType,
-        areaType === 2 || areaType === 4 ? String(body.start_point ?? "") : "",
-        areaType === 2 ? String(body.end_point ?? "") : "",
-        areaType === 1 || areaType === 2 ? String(body.area_rect ?? "") : "",
-        areaType === 2
-          ? String(body.area_points ?? "0")
-          : areaType === 3 || areaType === 4
-            ? String(body.area_points ?? "")
-            : "",
+        startPoint,
+        endPoint,
+        areaRect,
+        areaPoints,
         lineWidth,
         lineColor,
       ],

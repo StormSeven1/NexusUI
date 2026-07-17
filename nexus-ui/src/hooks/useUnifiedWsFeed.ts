@@ -149,7 +149,6 @@ import {
   getCoordinateTransformConfig,
   getTrackRenderingConfig,
   getWebSocketConfig,
-  getHttpConfig,
   shouldDisplayAssetId,
 } from "@/lib/map-app-config";
 import type { TrackWorkerConfig, TrackWorkerResult } from "@/lib/track-parse-worker";
@@ -171,7 +170,7 @@ import {
 
 /**
  * 联调：`.env.local` 设 `NEXT_PUBLIC_WS_DISABLE_TRACK_INGEST=true` 时不处理航迹类 WS、不写 `track-store`，
- * 并跳过航迹修剪定时器 / 查证图片轮询 / 告警 revision→航迹同步（`entity_status`、camera、告警列表等仍照常）。
+ * 并跳过航迹修剪定时器 / 告警 revision→航迹同步（`entity_status`、camera、告警列表等仍照常）。
  * 同时对该类消息尽量 **不做 JSON.parse**：大包 trackbatch 解析会长时间占主线程，拖慢同连接上后续光电帧。
  */
 const WS_DISABLE_TRACK_INGEST =
@@ -401,12 +400,14 @@ async function reloadAppConfigAssetBase() {
     Number.isFinite(rootDefaultRangeM) && rootDefaultRangeM > 0
       ? rootDefaultRangeM / 1000
       : undefined;
-  await reload8090CameraCatalog();
   try {
     sendTrackWorkerConfig();
   } catch {
     /* Worker 或非浏览器环境不可用 */
   }
+  rebuildAndCommitAssetSnapshot();
+  // 8090 慢/不可达时不得阻塞全站 WS（航迹、相机、地图动态态）
+  void reload8090CameraCatalog();
 }
 
 function mergeAssetRowsById(base: AssetData[], overlays: AssetData[]): AssetData[] {
@@ -1361,52 +1362,14 @@ function stopAlertRevisionSync() {
   if (ws.alertRevisionUnsub) { ws.alertRevisionUnsub(); ws.alertRevisionUnsub = null; }
 }
 
-// ── 查证图片轮询 ──
-/** GET /api/image/{id} 连续 404 时暂缓该 ID，减少控制台刷屏 */
-const imageNotFoundUntil = new Map<string, number>();
-const IMAGE_404_RETRY_AFTER_MS = 5 * 60 * 1000;
-
-function startImagePolling() {
-  if (WS_DISABLE_TRACK_INGEST) return;
-  if (ws.imagePollTimer) clearInterval(ws.imagePollTimer);
-  const httpCfg = getHttpConfig();
-  const { getRenderCache } = require("@/stores/track-store") as { getRenderCache: () => Map<string, import("@/lib/map-entity-model").Track> };
-  const { updateTrackImage } = useTrackStore.getState();
-
-  ws.imagePollTimer = setInterval(async () => {
-    const cache = getRenderCache();
-    const now = Date.now();
-    for (const [showID, track] of cache) {
-      try {
-        const resumeAt = imageNotFoundUntil.get(showID);
-        if (resumeAt != null && resumeAt > now) continue;
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), httpCfg.imageFetchTimeoutMs);
-        const res = await fetch(`${httpCfg.backendUrl}/api/image/${encodeURIComponent(showID)}`, { signal: controller.signal });
-        clearTimeout(timeout);
-        if (res.status === 404) {
-          imageNotFoundUntil.set(showID, now + IMAGE_404_RETRY_AFTER_MS);
-          continue;
-        }
-        if (!res.ok) continue;
-        imageNotFoundUntil.delete(showID);
-        const json = await res.json() as Record<string, unknown>;
-        const result = json.result as Record<string, unknown> | undefined;
-        const raw = result?.data as Record<string, unknown> | undefined;
-        const imageBase64 = raw?.imageBase64 as string | undefined;
-        if (!imageBase64) continue;
-        const imageUrl = imageBase64.startsWith("data:")
-          ? imageBase64
-          : `data:image/jpeg;base64,${imageBase64}`;
-        updateTrackImage(showID, imageUrl);
-      } catch {
-        // timeout / network error → next cycle will retry
-      }
-    }
-  }, httpCfg.imagePollIntervalMs);
-}
-
+// ── 查证图片轮询（已停用）──
+/**
+ * 历史上将 GET /api/image/{id} 的 JPEG base64 写入 `Track.verificationImage`。
+ * 前端无消费点（目标档案相册走 `/api/track-screenshots`），且会：
+ * 1) 把大字符串常驻 `_renderCache`；
+ * 2) `updateTrackImage` 刷新 `_lastIngestMsByShowId`，阻止超时 prune → 长跑 OOM。
+ * 保留 stop，避免热重载遗留 timer；勿再 start。
+ */
 function stopImagePolling() {
   if (ws.imagePollTimer) { clearInterval(ws.imagePollTimer); ws.imagePollTimer = null; }
 }
@@ -1440,7 +1403,7 @@ function startUnifiedWs() {
   startTrackStalePrune();
   startAlarmCleanup();
   startAlertRevisionSync();
-  startImagePolling();
+  stopImagePolling();
   start8090CameraCatalogRefresh();
 }
 

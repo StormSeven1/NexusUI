@@ -86,6 +86,93 @@ export function buildPtzStopTaskPayload(entityId: string) {
   };
 }
 
+/**
+ * `PTZAbsolutePositionTask`：pan/tilt/zoom 均为物理量（度 / 变倍倍数），
+ * 与 `CameraManagementClient.ptzAbsolutePosition`、camServer `mainwindow` 解析一致。
+ * 快拖对齐 Qt：`speed.zoom=0` 且 zoom 传当前倍数，避免误变倍。
+ */
+export function buildPtzAbsolutePositionTaskPayload(params: {
+  entityId: string;
+  panDeg: number;
+  tiltDeg: number;
+  zoom: number;
+  speed?: Partial<EoPtzMoveSpeed> & { zoom?: number };
+}) {
+  const pan = Number(params.panDeg);
+  const tilt = Number(params.tiltDeg);
+  const zoom = Number(params.zoom);
+  const speedPan = clampPtzSpeed(params.speed?.pan ?? 0.5);
+  const speedTilt = clampPtzSpeed(params.speed?.tilt ?? 0.5);
+  const speedZoom =
+    params.speed?.zoom != null && Number.isFinite(params.speed.zoom)
+      ? Math.max(0, Math.min(1, params.speed.zoom))
+      : 0;
+  return {
+    taskId: createCameraTaskId("ptz_abs_pos"),
+    parentTaskId: createCameraTaskId("ptz_abs_pos"),
+    version: { definitionVersion: 1, statusVersion: 1 },
+    displayName: "转向指定位置",
+    taskType: "MANUAL",
+    maxExecutionTimeMs: 30000,
+    specification: {
+      "@type": "type.casia.tasks.v1.PTZAbsolutePositionTask",
+      position: { pan, tilt, zoom },
+      speed: { pan: speedPan, tilt: speedTilt, zoom: speedZoom },
+    },
+    createdBy: {
+      user: {
+        userId: "operator_001",
+        priority: 0,
+      },
+    },
+    owner: { entityId: params.entityId },
+  };
+}
+
+/** camServer `type.casia.tasks.v1.PIDUpdate` → `CAMERA_UPDATE_PIDXY`（写 ConfigPID.ini + SetPID 热加载） */
+export type CameraPidParams = {
+  px: number;
+  ix: number;
+  dx: number;
+  py: number;
+  iy: number;
+  dy: number;
+  px1: number;
+  ix1: number;
+  dx1: number;
+  py1: number;
+  iy1: number;
+  dy1: number;
+  px2: number;
+  ix2: number;
+  dx2: number;
+  py2: number;
+  iy2: number;
+  dy2: number;
+};
+
+export function buildPidUpdateTaskPayload(params: { entityId: string; pid: CameraPidParams }) {
+  return {
+    taskId: createCameraTaskId("pid_update"),
+    parentTaskId: createCameraTaskId("pid_update"),
+    version: { definitionVersion: 1, statusVersion: 1 },
+    displayName: "更新PID参数",
+    taskType: "MANUAL",
+    maxExecutionTimeMs: 3000,
+    specification: {
+      "@type": "type.casia.tasks.v1.PIDUpdate",
+      pid: { ...params.pid },
+    },
+    createdBy: {
+      user: {
+        userId: "operator_001",
+        priority: 0,
+      },
+    },
+    owner: { entityId: params.entityId },
+  };
+}
+
 export function resolveCameraTaskHttpEndpoint(backendBaseUrl: string): string | null {
   const raw =
     backendBaseUrl.trim()

@@ -21,6 +21,7 @@ export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) 
   const setUavPoseTrackColor = useTrackDisplayStore((s) => s.setUavPoseTrackColor);
   const setVectorLengthSecondsForLayer = useTrackDisplayStore((s) => s.setVectorLengthSecondsForLayer);
   const setTrailLengthSecondsForLayer = useTrackDisplayStore((s) => s.setTrailLengthSecondsForLayer);
+  const setTrailLengthSecondsForAllLayers = useTrackDisplayStore((s) => s.setTrailLengthSecondsForAllLayers);
 
   const [selectedLayer, setSelectedLayer] = useState<TrackLayerKey>("fuse_sea");
 
@@ -150,10 +151,21 @@ export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) 
             onChange={(e) => setTrailLengthSecondsForLayer(selectedLayer, Number(e.target.value))}
             className="w-full accent-indigo-500"
           />
-          <div className="mt-0.5 flex justify-between text-[9px] text-nexus-text-muted">
+          <div className="mt-0.5 flex items-center justify-between gap-2 text-[9px] text-nexus-text-muted">
             <span>1s</span>
+            <button
+              type="button"
+              className="rounded border border-nexus-border px-1.5 py-0.5 text-[9px] text-nexus-text-secondary hover:bg-nexus-bg-elevated/60"
+              onClick={() => setTrailLengthSecondsForAllLayers(currentTrailLengthSeconds)}
+              title="将该尾迹秒数同步到全部航迹类型"
+            >
+              应用到全部类型
+            </button>
             <span>1800s</span>
           </div>
+          <p className="mt-1 text-[9px] leading-snug text-nexus-text-muted">
+            上限：内存历史不足时再拉大（如 40s 有数据、拉到 1000s）仍画满已有尾迹。请先选对目标类型，或「应用到全部类型」。
+          </p>
         </div>
     </div>
   );

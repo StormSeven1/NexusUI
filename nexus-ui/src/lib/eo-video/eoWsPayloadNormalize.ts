@@ -38,9 +38,15 @@ export function normalizeWsCameraRow(row: unknown): EoCameraWsPayload | null {
     videoWidth: Number(r.videoWidth ?? r.video_width) || undefined,
     videoHeight: Number(r.videoHeight ?? r.video_height) || undefined,
   };
+  const cp = toOptionalNumber(r.calcP ?? r.calc_p);
+  if (cp !== undefined) out.calcP = cp;
+  const calcT = toOptionalNumber(r.calcT ?? r.calc_t);
+  if (calcT !== undefined) out.calcT = calcT;
+  const cz = toOptionalNumber(r.calcZ ?? r.calc_z);
+  if (cz !== undefined) out.calcZ = cz;
   // 顶层时间戳字段透传（某些后端在顶层而非各 rectLayer 里提供）
-  const ct = toOptionalNumber(r.captureTs ?? r.capture_ts ?? r.captureTimestamp ?? r.capture_timestamp);
-  if (ct !== undefined) out.captureTs = ct;
+  const captureTs = toOptionalNumber(r.captureTs ?? r.capture_ts ?? r.captureTimestamp ?? r.capture_timestamp);
+  if (captureTs !== undefined) out.captureTs = captureTs;
   const et = toOptionalNumber(r.encodeTs ?? r.encode_ts ?? r.encodeTimestamp ?? r.encode_timestamp);
   if (et !== undefined) out.encodeTs = et;
   const fid = toOptionalNumber(r.frameId ?? r.frame_id ?? r.frameID);

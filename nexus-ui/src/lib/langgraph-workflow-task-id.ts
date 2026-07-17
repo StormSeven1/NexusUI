@@ -103,6 +103,63 @@ export function extractChatNotificationAlertArea(parsed: Record<string, unknown>
   return null;
 }
 
+function pickWorkflowNameField(
+  o: Record<string, unknown>,
+  opts?: { allowGenericName?: boolean },
+): string | null {
+  for (const key of [
+    "workflow_name",
+    "workflowName",
+    "business_workflow_name",
+    "display_name",
+  ]) {
+    const v = o[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  if (opts?.allowGenericName) {
+    const v = o.name;
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/**
+ * 从 workflow / chat_notification 事件提取工作流名称（含「探鸟雷达」等中文名或 tanniao_radar_*）。
+ */
+export function extractLangGraphWorkflowName(parsed: Record<string, unknown>): string | null {
+  const details = readChatNotificationDetails(parsed);
+  if (details) {
+    const fromDetails = pickWorkflowNameField(details, { allowGenericName: true });
+    if (fromDetails) return fromDetails;
+  }
+  const data = parsed.data;
+  if (data && typeof data === "object") {
+    const fromData = pickWorkflowNameField(data as Record<string, unknown>);
+    if (fromData) return fromData;
+  }
+  return pickWorkflowNameField(parsed);
+}
+
+/** 是否探鸟雷达采集工作流（按名称「探鸟雷达」匹配，兼兼容 thread/内部名） */
+export function isBirdRadarAcquisitionWorkflow(meta: {
+  workflowName?: string | null;
+  businessWorkflowThreadId?: string | null;
+  title?: string | null;
+  hintText?: string | null;
+}): boolean {
+  const parts = [
+    meta.workflowName,
+    meta.businessWorkflowThreadId,
+    meta.title,
+    meta.hintText,
+  ]
+    .map((x) => (typeof x === "string" ? x : ""))
+    .join("\n");
+  if (parts.includes("探鸟雷达")) return true;
+  if (/tanniao_radar/i.test(parts)) return true;
+  return false;
+}
+
 /**
  * 是否应新建工作流「会话N」Tab。
  * 注意：普通流式文本 / thread_id 不算工作流；toolcall 可能在 workflow_update 之后才到。

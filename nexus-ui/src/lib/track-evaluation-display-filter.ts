@@ -37,7 +37,7 @@ export interface TrackEvalDisplayFilterState {
   maxSpeedError: number | null;
 }
 
-export const DEFAULT_DISPLAY_SENSOR_IDS = [0, 1, 2, 3, 4, 5, 6, 7, 203] as const;
+export const DEFAULT_DISPLAY_SENSOR_IDS = [0, 1, 2, 3, 4, 5, 6, 7, 203, 204] as const;
 
 export function defaultTrackEvalDisplayFilter(): TrackEvalDisplayFilterState {
   return {

@@ -31,6 +31,17 @@ import {
 import { getDockableWindows } from "@/components/dock/windowRegistry";
 import { createEoElectroOpticalDefaultPanelStates } from "@/lib/eo-video/eoElectroOpticalDockPool";
 import type { DockLayoutSnapshot } from "@/lib/dock/dock-layout-snapshot";
+import {
+  DEFAULT_CLASSIC_SPLIT_RATIOS,
+  MIN_CLASSIC_RATIO,
+  CLASSIC_RIGHT_DEFAULT_ROW_RATIO,
+  classicRightWidthFromRow,
+  classicRightRowRatioFromWidth,
+  clampClassicRightWidth,
+  clampClassicRightRowRatio,
+  type ClassicSplitRatios,
+} from "@/lib/layout/classic-layout-config";
+import { adjustAdjacentRatios } from "@/lib/layout/adjust-split-ratios";
 
 const DOCK_LAYOUT_STORAGE_KEY = "nexus-dock-layout-v1";
 const DEFAULT_LEFT_SIDEBAR_WIDTH = 300;
@@ -433,6 +444,48 @@ export const useDockStore = create<DockStoreWithSidebar>()(
 
   /** 高亮的面板ID（用于菜单点击反馈） */
   highlightedPanelId: null,
+
+  /** 工作区布局模式 */
+  layoutMode: "free" as const,
+
+  /** 切换到经典布局前保存的自由布局 */
+  freeLayoutSnapshot: null as DockLayoutSnapshot | null,
+
+  /** 经典布局区域比例 */
+  classicSplitRatios: structuredClone(DEFAULT_CLASSIC_SPLIT_RATIOS),
+
+  /** 经典布局：右侧栏占地图+右侧行的宽度比（默认各一半） */
+  classicRightWidthRatio: CLASSIC_RIGHT_DEFAULT_ROW_RATIO,
+
+  setClassicRightWidthRatio: (ratio: number) => {
+    set({ classicRightWidthRatio: clampClassicRightRowRatio(ratio) });
+  },
+
+  setClassicSplitRatio: (key: keyof ClassicSplitRatios, value: number) => {
+    const min = MIN_CLASSIC_RATIO;
+    const max = 1 - min;
+    const clamped = Math.max(min, Math.min(max, value));
+    set((state) => ({
+      classicSplitRatios: { ...state.classicSplitRatios, [key]: clamped },
+    }));
+  },
+
+  adjustClassicEoSubHeight: (dividerIndex: 0 | 1, newLeadingRatio: number) => {
+    set((state) => {
+      const next = adjustAdjacentRatios(
+        [...state.classicSplitRatios.eoSubRatios],
+        dividerIndex,
+        newLeadingRatio,
+        MIN_CLASSIC_RATIO,
+      );
+      return {
+        classicSplitRatios: {
+          ...state.classicSplitRatios,
+          eoSubRatios: next as ClassicSplitRatios["eoSubRatios"],
+        },
+      };
+    });
+  },
 
   // ============ 侧边栏控制状态 ============
 
@@ -902,8 +955,19 @@ export const useDockStore = create<DockStoreWithSidebar>()(
     set({ leftSidebarWidth: constrained });
   },
 
-  setRightSidebarWidth: (width: number) => {
-    const constrained = Math.max(320, Math.min(760, Math.round(width)));
+  setRightSidebarWidth: (width: number, opts?: { containerWidth?: number }) => {
+    const state = get();
+    if (state.layoutMode === "classic") {
+      const rowWidth = opts?.containerWidth ?? (typeof window !== "undefined" ? window.innerWidth : 1920);
+      const clampedPx = clampClassicRightWidth(width, rowWidth);
+      const ratio = classicRightRowRatioFromWidth(rowWidth, clampedPx);
+      set({
+        rightSidebarWidth: clampedPx,
+        classicRightWidthRatio: ratio,
+      });
+      return;
+    }
+    const constrained = Math.max(320, Math.min(720, Math.round(width)));
     set({ rightSidebarWidth: constrained });
   },
 
@@ -1400,6 +1464,24 @@ export const useDockStore = create<DockStoreWithSidebar>()(
       if (missing.length > 0) {
         patch.panels = [...panels, ...missing];
       }
+      if (!state.classicSplitRatios) {
+        patch.classicSplitRatios = structuredClone(DEFAULT_CLASSIC_SPLIT_RATIOS);
+      }
+      if (state.layoutMode !== "classic" && state.layoutMode !== "free") {
+        patch.layoutMode = "free";
+      }
+      if (state.layoutMode === "classic" && typeof window !== "undefined") {
+        const ratio =
+          typeof state.classicRightWidthRatio === "number"
+            ? clampClassicRightRowRatio(state.classicRightWidthRatio)
+            : CLASSIC_RIGHT_DEFAULT_ROW_RATIO;
+        const rowEstimate = Math.max(800, window.innerWidth - 48);
+        patch.classicRightWidthRatio = ratio;
+        patch.rightSidebarWidth = classicRightWidthFromRow(rowEstimate, ratio);
+      }
+      if (!state.classicRightWidthRatio) {
+        patch.classicRightWidthRatio = CLASSIC_RIGHT_DEFAULT_ROW_RATIO;
+      }
       useDockStore.setState(patch);
     },
     partialize: (state) => ({
@@ -1418,6 +1500,10 @@ export const useDockStore = create<DockStoreWithSidebar>()(
       rightSidebarSplitRatio: state.rightSidebarSplitRatio,
       leftSidebarWidth: state.leftSidebarWidth,
       rightSidebarWidth: state.rightSidebarWidth,
+      layoutMode: state.layoutMode,
+      freeLayoutSnapshot: state.freeLayoutSnapshot,
+      classicSplitRatios: state.classicSplitRatios,
+      classicRightWidthRatio: state.classicRightWidthRatio,
     }),
   })
 );

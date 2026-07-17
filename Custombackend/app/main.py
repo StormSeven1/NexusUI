@@ -26,6 +26,8 @@ from config import (
     MQTT_RECEIVERS,
     DDS_RECEIVERS,
     DDS_CAMERA_STATUS_MODE,
+    DRONE_STATUS_GRPC_RECEIVERS,
+    DRONE_STATUS_TRANSPORT,
     HTTP_POLLERS,
     WORK_MODE_DDS_PUBLISHER,
 )
@@ -35,6 +37,8 @@ from receivers.receiver_manager import receiver_manager
 from http_api import router as api_router, set_db_manager
 from camera_task_routes import router as camera_tasks_router, router_singular_alias as camera_task_singular_router
 from system_eval_routes import router as system_eval_router
+from radar_train_routes import router as radar_train_router
+from bird_radar_capture_routes import router as bird_radar_capture_router
 
 import os
 
@@ -178,6 +182,22 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("启动航迹数据中继服务")
     logger.info("=" * 60)
+
+    from radar_train.label_store import label_store
+    from radar_train.service import configure as configure_radar_train
+    from radar_train.csv_recorder import capture_manager
+    label_store._ttl_sec = max(60, int(settings.RADAR_TRAIN_LABEL_TTL_SEC))
+    label_store._persist = bool(settings.RADAR_TRAIN_LABEL_PERSIST)
+    capture_manager.auto_idle_sec = max(30, int(settings.BIRD_RADAR_CAPTURE_IDLE_SEC))
+    capture_manager.qualifying_fresh_sec = max(3.0, float(settings.BIRD_RADAR_QUALIFYING_FRESH_SEC))
+    configure_radar_train(enabled=bool(settings.ENABLE_RADAR_TRAIN_LABEL_COLLECT))
+    logger.info(
+        "雷达训练真值: enabled={} idle_stop={}s fresh={}s ttl={}s",
+        settings.ENABLE_RADAR_TRAIN_LABEL_COLLECT,
+        settings.BIRD_RADAR_CAPTURE_IDLE_SEC,
+        settings.BIRD_RADAR_QUALIFYING_FRESH_SEC,
+        settings.RADAR_TRAIN_LABEL_TTL_SEC,
+    )
     
     # 初始化数据库（可选，失败不影响WebSocket服务）
     try:
@@ -243,6 +263,17 @@ async def lifespan(app: FastAPI):
     )
     logger.info("正在启动DDS接收器...")
     receiver_manager.start_dds_receivers(DDS_RECEIVERS)
+    logger.info(
+        "无人机状态通道 NEXUS_DRONE_STATUS_TRANSPORT={} "
+        "(dds_drone_status/task/high_freq={}, grpc_sources={})",
+        DRONE_STATUS_TRANSPORT,
+        any(
+            c.get("id") in ("dds_drone_status", "dds_drone_task", "dds_high_freq") and c.get("enabled")
+            for c in DDS_RECEIVERS
+        ),
+        [c.get("id") for c in DRONE_STATUS_GRPC_RECEIVERS if c.get("enabled")],
+    )
+    receiver_manager.start_entity_status_grpc_receivers(DRONE_STATUS_GRPC_RECEIVERS)
     from receivers.network import DDS_AVAILABLE as _dds_py_ok
     dds_enabled_cfg = sum(1 for c in DDS_RECEIVERS if c.get("enabled", False))
     dds_started = len(receiver_manager.dds_receivers)
@@ -354,6 +385,8 @@ app.include_router(api_router, prefix="/api")
 app.include_router(camera_tasks_router, prefix="/api")
 app.include_router(camera_task_singular_router, prefix="/api")
 app.include_router(system_eval_router, prefix="/api")
+app.include_router(radar_train_router, prefix="/api")
+app.include_router(bird_radar_capture_router, prefix="/api")
 
 
 # WebSocket端点

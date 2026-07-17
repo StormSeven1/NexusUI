@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package track;
+
+message TrackRequest {
+  int32 cameraIndex = 1;
+  int32 aimType = 2;
+  string aimPath = 3;
+  int32 triggerType = 4;
+  int32 trackStatus = 5;
+  repeated string trackPoints = 6;
+  string interventionStatus = 7;
+  string backupField = 8;
+}
+
+message TrackResponse {
+  int32 cameraIndex = 1;
+  int32 aimType = 2;
+}
+
+service TrackService {
+  rpc StreamTrack(stream TrackRequest) returns (stream TrackResponse);
+}

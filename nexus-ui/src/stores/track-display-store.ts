@@ -31,6 +31,8 @@ function layerUsesAirDisplayDefaults(key: TrackLayerKey): boolean {
 
 /** 尾迹长度（秒）换算为保留点数时，假定相邻采样间隔（秒）；仅前端展示裁剪，不改动 track-store */
 export const TRACK_TRAIL_SAMPLE_INTERVAL_SEC = 2;
+/** 显示控制面板「尾迹长度」滑块上限（秒） */
+export const MAX_TRAIL_LENGTH_SECONDS = 1800;
 
 const STORAGE_KEY = "nexus-ui-track-display-v2";
 
@@ -57,6 +59,7 @@ export interface TrackDisplayState {
   setUavPoseTrackColor: (c: string) => void;
   setVectorLengthSecondsForLayer: (key: TrackLayerKey, s: number) => void;
   setTrailLengthSecondsForLayer: (key: TrackLayerKey, s: number) => void;
+  setTrailLengthSecondsForAllLayers: (s: number) => void;
   toggleTrackSubtype: (key: TrackLayerKey) => void;
   toggleAirFusionSubtype: (key: AirFusionSubtypeKey) => void;
   setTrackSubtypeVisible: (key: TrackLayerKey, visible: boolean) => void;
@@ -154,6 +157,15 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
           },
           displayRevision: s.displayRevision + 1,
         })),
+      /** 将尾迹秒数同步到全部航迹类型（避免只改了当前 tab 却看着别的图层长尾迹） */
+      setTrailLengthSecondsForAllLayers: (sec) =>
+        set((s) => {
+          const v = clamp(Math.round(sec), 1, 1800);
+          return {
+            trailLengthSecondsByLayer: defaultSecondsByLayer(v),
+            displayRevision: s.displayRevision + 1,
+          };
+        }),
       toggleTrackSubtype: (key) =>
         set((s) => {
           const cur = s.trackSubtypeVisible[key] !== false;
