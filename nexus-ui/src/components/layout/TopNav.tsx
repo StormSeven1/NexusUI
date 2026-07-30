@@ -9,12 +9,15 @@ import {
   ChevronDown,
   User,
   LogOut,
+  CircleUser,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TopNavCategoryMenu } from "@/components/layout/TopNavCategoryMenu";
 import { TopNavQuickActions } from "@/components/layout/TopNavQuickActions";
 import { TopNavWeatherStrip } from "@/components/layout/TopNavWeatherStrip";
 import { getHttpConfig } from "@/lib/map-app-config";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { UserProfileDialog } from "@/components/auth/UserProfileDialog";
 
 const WORK_MODE_STORAGE_KEY = "nexus-system-work-mode";
 
@@ -172,21 +175,24 @@ function SystemWorkModeDropdown(props: {
   );
 }
 
-/** 顶栏用户头像菜单（Log Out 等，功能待接） */
+/** 顶栏用户头像菜单：个人信息 / 退出（Keycloak） */
 function UserAvatarMenu() {
+  const { enabled, user, config, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
+  const displayName = user?.name || user?.username || user?.email || "用户";
 
   const updateAnchor = () => {
     const el = btnRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     setAnchor({
-      left: Math.max(8, r.right - 128),
+      left: Math.max(8, r.right - 148),
       top: r.bottom + 4,
-      width: 128,
+      width: 148,
     });
   };
 
@@ -234,15 +240,38 @@ function UserAvatarMenu() {
         style={{ left: anchor.left, top: anchor.top, minWidth: anchor.width }}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        {enabled && user ? (
+          <li role="none" className="border-b border-nexus-border px-3 py-2 text-[11px] text-nexus-text-secondary">
+            <div className="truncate text-nexus-text-primary">{displayName}</div>
+            {user.email ? <div className="truncate opacity-70">{user.email}</div> : null}
+          </li>
+        ) : null}
         <li role="none">
           <button
             type="button"
             role="menuitem"
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10"
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              setOpen(false);
+              setProfileOpen(true);
+            }}
+          >
+            <CircleUser size={13} className="shrink-0 opacity-80" />
+            个人信息
+          </button>
+        </li>
+        <li role="none">
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-nexus-text-primary hover:bg-white/10"
+            onClick={() => {
+              setOpen(false);
+              if (enabled) void logout();
+            }}
           >
             <LogOut size={13} className="shrink-0 opacity-80" />
-            Log Out
+            {enabled ? "退出登录" : "Log Out"}
           </button>
         </li>
       </ul>,
@@ -257,7 +286,7 @@ function UserAvatarMenu() {
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label="用户菜单"
-        title="用户"
+        title={enabled ? displayName : "用户"}
         className={cn(
           "flex h-8 w-8 items-center justify-center rounded-full border border-nexus-border bg-nexus-bg-elevated text-nexus-text-secondary transition-colors",
           "hover:border-nexus-accent/50 hover:text-nexus-text-primary",
@@ -274,6 +303,12 @@ function UserAvatarMenu() {
         <User size={15} />
       </button>
       {menu}
+      <UserProfileDialog
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        user={user}
+        config={config}
+      />
     </div>
   );
 }

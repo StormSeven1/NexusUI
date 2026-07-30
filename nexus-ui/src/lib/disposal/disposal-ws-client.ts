@@ -23,6 +23,7 @@
 
 import { getHttpChatConfig } from "@/lib/map-app-config";
 import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
+import { appendAccessTokenToUrl } from "@/lib/auth/auth-fetch";
 import type { NormalizedDisposalPlans } from "./disposal-types";
 import { normalizeDisposalPayload } from "./normalize-disposal-plans";
 
@@ -84,7 +85,7 @@ export class DisposalPlanWsClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
 
     try {
-      this.ws = new WebSocket(rewriteWsUrlForHttpsPage(this.wsUrl));
+      this.ws = new WebSocket(appendAccessTokenToUrl(rewriteWsUrlForHttpsPage(this.wsUrl)));
       if (this.connectTimer) clearTimeout(this.connectTimer);
       this.connectTimer = setTimeout(() => {
         if (!this.active || !this.ws || this.ws.readyState === WebSocket.OPEN) return;

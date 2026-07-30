@@ -2,6 +2,7 @@
 
 import { parseThirdPartyWsFrame } from "@/lib/eo-video/thirdPartyCameraWsFrame";
 import { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
+import { appendAccessTokenToUrl } from "@/lib/auth/auth-fetch";
 
 export { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
 
@@ -51,7 +52,7 @@ function scheduleReconnect() {
 
 function connectHub() {
   if (hub.closed || hub.listeners.size === 0) return;
-  const url = resolveThirdPartyCameraWsUrl();
+  const url = appendAccessTokenToUrl(resolveThirdPartyCameraWsUrl());
   if (!url) return;
 
   let ws: WebSocket;

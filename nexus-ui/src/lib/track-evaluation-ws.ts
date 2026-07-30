@@ -6,6 +6,7 @@
  */
 
 import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
+import { appendAccessTokenToUrl } from "@/lib/auth/auth-fetch";
 import { recordTrackEvalReceived } from "@/stores/network-stats-store";
 
 export const DEFAULT_TRACK_EVAL_WS_URL = "ws://127.0.0.1:12600/ws/test-client";
@@ -119,7 +120,7 @@ export class TrackEvaluationWsClient {
     this.intentionalClose = false;
     this.callbacks.onState?.("connecting");
     try {
-      const ws = new WebSocket(rewriteWsUrlForHttpsPage(this.url));
+      const ws = new WebSocket(appendAccessTokenToUrl(rewriteWsUrlForHttpsPage(this.url)));
       this.ws = ws;
       ws.onopen = () => {
         this.reconnectAttempts = 0;

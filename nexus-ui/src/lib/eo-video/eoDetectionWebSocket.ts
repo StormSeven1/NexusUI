@@ -6,6 +6,7 @@ import {
   unwrapDetectionEnvelope,
 } from "@/lib/eo-video/eoWsPayloadNormalize";
 import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
+import { appendAccessTokenToUrl } from "@/lib/auth/auth-fetch";
 import { recordEoDetectionReceived } from "@/stores/network-stats-store";
 
 type Listener = (data: EoCameraWsPayload) => void;
@@ -108,7 +109,7 @@ class EoDetectionWebSocketManager {
           resolve(false);
           return;
         }
-        const ws = new WebSocket(url);
+        const ws = new WebSocket(appendAccessTokenToUrl(rewriteWsUrlForHttpsPage(url)));
         let settled = false;
         let t: ReturnType<typeof setTimeout>;
         const finish = (ok: boolean) => {

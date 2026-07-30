@@ -163,6 +163,8 @@ import {
   normThirdPartyEntityId,
 } from "@/lib/eo-video/thirdPartyEntityId";
 import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
+import { appendAccessTokenToUrl } from "@/lib/auth/auth-fetch";
+import { ensureFreshToken } from "@/lib/auth/keycloak-client";
 import {
   apply8090CameraPositionsToAssets,
   fetch8090OptoCameraCatalog,
@@ -1265,57 +1267,64 @@ function scheduleReconnect() {
 
 function openConnection() {
   if (!ws.running) return;
-  const url = rewriteWsUrlForHttpsPage(getWebSocketConfig().url);
-  if (!url) return;
-
   if (ws.socket && (ws.socket.readyState === WebSocket.OPEN || ws.socket.readyState === WebSocket.CONNECTING)) return;
 
-  const socket = new WebSocket(url);
-  ws.socket = socket;
-
-  socket.onopen = () => {
-    ws.reconnectAttempt = 0;
-    useTrackStore.getState().setConnected(true);
-    recordWsHeartbeat();
-    startHeartbeat();
-    if (!ws.readyNotified) {
-      ws.readyNotified = true;
-      notify("WebSocket 已就绪", url, "success");
-    }
-  };
-
-  socket.onmessage = (ev) => {
-    const data = ev.data;
-    if (typeof data === "string") {
-      dispatchWsMessage(data);
-      return;
-    }
-    if (typeof Blob !== "undefined" && data instanceof Blob) {
-      void data
-        .text()
-        .then((raw) => dispatchWsMessage(raw))
-        .catch(() => {});
-    }
-  };
-
-  socket.onerror = () => {
-    notify("WebSocket 连接异常", "请确认后端 WebSocket 服务可用", "error");
-    try { socket.close(); } catch { /* noop */ }
-  };
-
-  socket.onclose = () => {
-    clearHeartbeat();
-    useTrackStore.getState().setConnected(false);
-    ws.socket = null;
+  void (async () => {
+    await ensureFreshToken(30);
     if (!ws.running) return;
-    ws.reconnectAttempt += 1;
-    const maxAttempts = getWebSocketConfig().maxReconnectAttempts;
-    if (ws.reconnectAttempt > maxAttempts) {
-      notify("WebSocket 重连失败", "已停止自动重连", "error");
-      return;
-    }
-    scheduleReconnect();
-  };
+    if (ws.socket && (ws.socket.readyState === WebSocket.OPEN || ws.socket.readyState === WebSocket.CONNECTING)) return;
+
+    const raw = rewriteWsUrlForHttpsPage(getWebSocketConfig().url);
+    const url = appendAccessTokenToUrl(raw);
+    if (!url) return;
+
+    const socket = new WebSocket(url);
+    ws.socket = socket;
+
+    socket.onopen = () => {
+      ws.reconnectAttempt = 0;
+      useTrackStore.getState().setConnected(true);
+      recordWsHeartbeat();
+      startHeartbeat();
+      if (!ws.readyNotified) {
+        ws.readyNotified = true;
+        notify("WebSocket 已就绪", url.split("?")[0] ?? url, "success");
+      }
+    };
+
+    socket.onmessage = (ev) => {
+      const data = ev.data;
+      if (typeof data === "string") {
+        dispatchWsMessage(data);
+        return;
+      }
+      if (typeof Blob !== "undefined" && data instanceof Blob) {
+        void data
+          .text()
+          .then((text) => dispatchWsMessage(text))
+          .catch(() => {});
+      }
+    };
+
+    socket.onerror = () => {
+      notify("WebSocket 连接异常", "请确认后端 WebSocket 服务可用", "error");
+      try { socket.close(); } catch { /* noop */ }
+    };
+
+    socket.onclose = () => {
+      clearHeartbeat();
+      useTrackStore.getState().setConnected(false);
+      ws.socket = null;
+      if (!ws.running) return;
+      ws.reconnectAttempt += 1;
+      const maxAttempts = getWebSocketConfig().maxReconnectAttempts;
+      if (ws.reconnectAttempt > maxAttempts) {
+        notify("WebSocket 重连失败", "已停止自动重连", "error");
+        return;
+      }
+      scheduleReconnect();
+    };
+  })();
 }
 
 // ── 定时器 ──
