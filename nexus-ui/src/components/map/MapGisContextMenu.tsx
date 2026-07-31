@@ -40,7 +40,7 @@ import { useAssetStore } from "@/stores/asset-store";
 import { useEoFocusedUavAirportSnStore } from "@/stores/eo-focused-uav-airport-sn-store";
 import { useDroneStore } from "@/stores/drone-store";
 import { useTrackStore } from "@/stores/track-store";
-import { resolveUniqueIdFromTrack, sendAlarmConfirmRequest } from "@/lib/alarm-confirm-api";
+import { resolveUniqueIdFromTrack, sendAlarmConfirmRequest, buildAlarmConfirmTrackHint } from "@/lib/alarm-confirm-api";
 import { dismissAlarmForTrack, resolveAlarmFilterTargetId } from "@/lib/dismiss-alarm-for-track";
 import {
   SEA_MANUAL_TARGET_TYPE_OPTIONS,
@@ -49,6 +49,21 @@ import {
   type SeaManualTargetType,
 } from "@/lib/target-type-api";
 import { useAppConfigStore } from "@/stores/app-config-store";
+import {
+  isTrackEligibleForHistory,
+  useTrackHistoryStore,
+} from "@/stores/track-history-store";
+import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
+import {
+  markFuseAirTrackAsUav,
+  resolveFuseAirBirdPihaoForMark,
+  unmarkFuseAirTrackAsUav,
+} from "@/lib/radar-train-mark-uav-api";
+import { useManualUavMarkStore } from "@/stores/manual-uav-mark-store";
+import {
+  isAirRadarCollectAutoEligible,
+  useAirRadarCollectStore,
+} from "@/stores/air-radar-collect-store";
 
 export type MapGisMenuState = {
   clientX: number;
@@ -218,6 +233,9 @@ export function MapGisContextMenu({
   const track = useTrackStore((s) =>
     state.variant === "track" && state.trackId ? s.tracks.find((t) => t.id === state.trackId) ?? null : null,
   );
+  const manualUavPihao = useManualUavMarkStore((s) =>
+    track?.showID ? s.markedPihaoByShowId[track.showID] ?? null : null,
+  );
 
   const [trackOwnersEpoch, setTrackOwnersEpoch] = useState(0);
 
@@ -362,7 +380,10 @@ export function MapGisContextMenu({
                   console.warn("[map-gis-menu] 航迹跟踪: track 为空");
                   return false;
                 }
-                const target = buildImportantTrackTargetFromTrack(tr);
+                const target = buildImportantTrackTargetFromTrack(
+                  tr,
+                  useTrackStore.getState().tracks,
+                );
                 const body = buildImportantTrackTaskBody(cm, c.entityId, target, {
                   taskIdSuffix: c.entityId,
                 });
@@ -450,7 +471,8 @@ export function MapGisContextMenu({
                 if (uniqueId == null) {
                   toast.error("确认告警失败：航迹缺少 uniqueId");
                 } else {
-                  void sendAlarmConfirmRequest(uniqueId).then((result) => {
+                  const hint = buildAlarmConfirmTrackHint(tr);
+                  void sendAlarmConfirmRequest(uniqueId, hint).then((result) => {
                     if (result.ok) {
                       toast.success("已确认告警", { description: `uniqueId ${uniqueId}` });
                     } else {
@@ -559,6 +581,17 @@ export function MapGisContextMenu({
 
         <button
           type="button"
+          className={itemCls}
+          onClick={() => {
+            useAirRadarCollectStore.getState().openManual();
+            onClose();
+          }}
+        >
+          手动采集对空雷达数据
+        </button>
+
+        <button
+          type="button"
           className={cn(subTriggerCls, cascade?.key === "cam-map" ? "bg-white/10" : "")}
           onClick={(e) => toggleCascade("cam-map", e.currentTarget)}
         >
@@ -620,6 +653,88 @@ export function MapGisContextMenu({
         </button>
 
         <div className="-mx-1 my-1 h-px bg-white/[0.08]" />
+
+        {isTrackEligibleForHistory(track) ? (
+          <button
+            type="button"
+            className={itemCls}
+            onClick={() => {
+              const uid = resolveUniqueIdFromTrack(track);
+              if (uid == null) {
+                toast.error("当前航迹无有效 target_id，无法查询历史航迹");
+                onClose();
+                return;
+              }
+              useTrackHistoryStore.getState().openForTrack({
+                track,
+                clientX: state.clientX,
+                clientY: state.clientY,
+              });
+              onClose();
+            }}
+          >
+            历史航迹
+          </button>
+        ) : null}
+
+        {resolveTrackLayerKey(track) === "fuse_air" ? (
+          <button
+            type="button"
+            className={itemCls}
+            onClick={() => {
+              const showId = track.showID;
+              const markedPihao = useManualUavMarkStore.getState().getPihao(showId);
+              const birdPihao = resolveFuseAirBirdPihaoForMark(track);
+              if (markedPihao != null) {
+                void (async () => {
+                  const ret = await unmarkFuseAirTrackAsUav(markedPihao);
+                  if (!ret.ok) {
+                    toast.error("取消标记失败", { description: ret.message });
+                    return;
+                  }
+                  useManualUavMarkStore.getState().clearMarked(showId);
+                  toast.success(ret.message);
+                })();
+                onClose();
+                return;
+              }
+              if (birdPihao == null) {
+                toast.error("无法标为无人机", {
+                  description: "当前对空融合航迹无探鸟批号（CSV is_uav 按探鸟批号写入）",
+                });
+                onClose();
+                return;
+              }
+              void (async () => {
+                const ret = await markFuseAirTrackAsUav(track);
+                if (!ret.ok) {
+                  toast.error("标记失败", { description: ret.message });
+                  return;
+                }
+                useManualUavMarkStore.getState().setMarked(showId, ret.pihao);
+                toast.success(ret.message, {
+                  description: "探鸟采集 CSV 中该批号的 is_uav / final_label 等将按无人机写入",
+                });
+              })();
+              onClose();
+            }}
+          >
+            {manualUavPihao != null ? "取消无人机标记" : "标为无人机"}
+          </button>
+        ) : null}
+
+        {isAirRadarCollectAutoEligible(track) ? (
+          <button
+            type="button"
+            className={itemCls}
+            onClick={() => {
+              useAirRadarCollectStore.getState().openAuto(track);
+              onClose();
+            }}
+          >
+            自动采集对空雷达数据
+          </button>
+        ) : null}
 
         <button
           type="button"

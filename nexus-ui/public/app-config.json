@@ -12,7 +12,8 @@
       }
     },
     "websocket": {
-      "url": "WebSocket 连接地址（V2 后端只有单条 WS，如 ws://192.168.18.141:8001/ws）。",
+      "url": "WebSocket 连接地址（主通道：告警/实体/非对海融合航迹等，如 ws://192.168.18.141:27003/ws）。",
+      "fuseSeaUrl": "对海融合专用 WS（可选；空则由 url 推导为 …/ws/fuse-sea）。与其它航迹拆开可避免对海融合闪烁。",
       "reconnectInterval": "重连基础间隔（毫秒），实际使用指数退避。",
       "heartbeatInterval": "心跳 ping 发送间隔（毫秒）。",
       "maxReconnectAttempts": "最大连续重连次数，超过后停止重连。",
@@ -280,6 +281,8 @@
         "enabled": "总开关。",
         "seconds": "非 UAV、非融合分档航迹（码头/靖子头/探鸟等）超时秒数。",
         "fusionSeconds": "对海/对空融合 DDS（`fuse_sea`/`fuse_air`）。融合常按区域轮询推送，同一区域集体长时间不进包；应 ≥ 单区最长静默间隔（秒）。",
+        "fusionAirSeconds": "对空融合 DDS（`fuse_air`）专用超时秒数。",
+        "aisSeconds": "AIS 航迹（`ais_track`）专用超时秒数；AIS 报文间隔长，可比雷达/融合更久。缺省回退到 `seconds`。",
         "uavSeconds": "`Track.isUav===true` 时使用的超时秒数。",
         "checkIntervalMs": "定时扫 `track-store` 并剔除超时的间隔（毫秒）。"
       },
@@ -306,6 +309,15 @@
     "defaultAngleLabelsVisible": false,
     "defaultAngleLabelInterval": 30,
     "defaultCrosshairVisible": true,
+    "scan": {
+      "enabled": true,
+      "cycleMs": 2500,
+      "fadeDeg": 30,
+      "solidDeg": 3,
+      "tickMs": 40,
+      "sliceDeg": 1.5,
+      "peakOpacity": 0.45
+    },
     "visibility": {
       "centerNameVisible": true,
       "centerIconVisible": true
@@ -697,10 +709,11 @@
     },
     "trackTimeout": {
       "enabled": true,
-      "seconds": 30,
-      "fusionSeconds": 30,
-      "fusionAirSeconds": 10,
-      "uavSeconds": 10,
+      "seconds": 3,
+      "fusionSeconds": 3,
+      "fusionAirSeconds": 3,
+      "aisSeconds": 180,
+      "uavSeconds": 3,
       "checkIntervalMs": 2000
     },
     "airIconHeadingOffsetDeg": -45,
@@ -714,6 +727,7 @@
   },
   "websocket": {
     "url": "ws://192.168.18.141:27004/ws",
+    "fuseSeaUrl": "ws://192.168.18.141:27004/ws/fuse-sea",
     "reconnectInterval": 3000,
     "heartbeatInterval": 25000,
     "maxReconnectAttempts": 12,
@@ -793,7 +807,7 @@
     }
   ],
   "cameraManagement": {
-    "_说明": "host/port 可被 NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL 覆盖。不写 path 或省略时 POST 默认 /api/v1/tasks（与光电视频 PTZ 同源）；仅兼容 Qt 根路径时写 \"path\": \"\"。",
+    "_说明": "host/port 可被 NEXT_PUBLIC_NEXUS_CAMERA_MANAGEMENT_URL 覆盖。不写 path 或省略时 POST 默认 /api/v1/tasks（与光电视频 PTZ 同源）；仅兼容 Qt 根路径时写 \"path\": \"\"。mapTrackDblClickLookAtOnly=true 时双击融合/雷达只 LookAt 转到位置，不做单目标跟踪与左右搜索。",
     "host": "127.0.0.1",
     "port": 8080,
     "userId": "web",
@@ -801,6 +815,8 @@
     "seaCameraIndex": 1,
     "skyCameraIndex": 4,
     "mapFovCameraEntityIds": ["camera_001", "camera_004"],
+    "mapTrackDblClickLookAtOnly": false,
+    "mapTrackDblClickLookAtCheckTime": 0,
     "requestTimeoutMs": 60000
   }
 }

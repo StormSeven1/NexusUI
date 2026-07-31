@@ -32,5 +32,5 @@ export function resolveCalcRecordBaselineTargetId(
 export function isAirCalcRecordTrack(track: Track): boolean {
   if (track.isAirTrack === true || track.type === "air") return true;
   const lk = track.trackLayerKey;
-  return lk === "fuse_air" || lk === "bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track";
+  return lk === "fuse_air" || lk === "bird_radar" || lk === "auto_bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track";
 }

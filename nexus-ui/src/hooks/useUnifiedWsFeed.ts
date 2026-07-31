@@ -149,12 +149,13 @@ import {
   getCoordinateTransformConfig,
   getTrackRenderingConfig,
   getWebSocketConfig,
+  getFuseSeaWebSocketUrl,
   shouldDisplayAssetId,
 } from "@/lib/map-app-config";
 import type { TrackWorkerConfig, TrackWorkerResult } from "@/lib/track-parse-worker";
 import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
 import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
-import { normalizeAssetType, type PublicMapAssetType, type Track } from "@/lib/map-entity-model";
+import { normalizeAssetType, LYR_TRACKS, type PublicMapAssetType, type Track } from "@/lib/map-entity-model";
 import { recordTrackReceived, recordAlertReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived, recordHighFreqReceived, recordWsHeartbeat, recordEntityStatusFrame, recordAssetBatchReceived, recordAssetEventReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
@@ -167,6 +168,10 @@ import {
   apply8090CameraPositionsToAssets,
   fetch8090OptoCameraCatalog,
 } from "@/lib/opto-camera-positions-8090";
+import { useAppStore } from "@/stores/app-store";
+import { useTrackDisplayStore } from "@/stores/track-display-store";
+import { isTrackVisibleBySubtype } from "@/lib/track-layer-visibility";
+import { installTrackJankObserver } from "@/lib/track-perf";
 
 /**
  * 联调：`.env.local` 设 `NEXT_PUBLIC_WS_DISABLE_TRACK_INGEST=true` 时不处理航迹类 WS、不写 `track-store`，
@@ -213,9 +218,26 @@ const WORKER_TRACK_TYPES = new Set(["trackbatch", "track_update", "track_snapsho
  * - 单条 `track` 小包直接走同步路径（帧小，parse 快，无需积压）。
  */
 const TRACK_FLUSH_INTERVAL_MS = 500;
+/** 对海融合单独更快 flush，避免与其它航迹大包同批拖慢 / 挤兑 */
+const FUSE_SEA_FLUSH_INTERVAL_MS = 100;
 const _trackAccumulator = new Map<string, import("@/lib/map-entity-model").Track>();
+const _fuseSeaAccumulator = new Map<string, import("@/lib/map-entity-model").Track>();
 let _trackFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let _fuseSeaFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let _trackFlushTimestamp: string | undefined;
+let _fuseSeaFlushTimestamp: string | undefined;
+
+function isFuseSeaTrackForFlush(t: import("@/lib/map-entity-model").Track): boolean {
+  if (t.trackLayerKey === "fuse_sea") return true;
+  const dds = (t.ddsSourceId ?? "").trim().toLowerCase();
+  return (
+    dds === "dds_forward_fuse_track" ||
+    dds === "dds_forward_fuse_track_virtual" ||
+    dds === "dds_forward_fuse_track_legacy" ||
+    dds === "grpc_new_track_struct_fuse_sea" ||
+    dds === "grpc_virtual_blue_fuse_sea"
+  );
+}
 
 function scheduleTrackFlush() {
   if (_trackFlushTimer != null) return;
@@ -232,23 +254,80 @@ function scheduleTrackFlush() {
   }, TRACK_FLUSH_INTERVAL_MS);
 }
 
+function scheduleFuseSeaTrackFlush() {
+  if (_fuseSeaFlushTimer != null) return;
+  _fuseSeaFlushTimer = setTimeout(() => {
+    _fuseSeaFlushTimer = null;
+    if (_fuseSeaAccumulator.size === 0) return;
+    const batch = [..._fuseSeaAccumulator.values()];
+    _fuseSeaAccumulator.clear();
+    const ts = _fuseSeaFlushTimestamp;
+    _fuseSeaFlushTimestamp = undefined;
+    useTrackStore.getState().setTracks(batch, ts !== undefined ? { lastUpdate: ts } : undefined);
+    for (const t of batch) recordTrackReceived(!!t.isAirTrack);
+  }, FUSE_SEA_FLUSH_INTERVAL_MS);
+}
+
 /** 丢弃未 flush 的航迹（如 cleartracks），避免清空后下一 tick 仍写入旧数据 */
 function discardPendingTrackAccumulator() {
   if (_trackFlushTimer !== null) {
     clearTimeout(_trackFlushTimer);
     _trackFlushTimer = null;
   }
+  if (_fuseSeaFlushTimer !== null) {
+    clearTimeout(_fuseSeaFlushTimer);
+    _fuseSeaFlushTimer = null;
+  }
   _trackAccumulator.clear();
+  _fuseSeaAccumulator.clear();
   _trackFlushTimestamp = undefined;
+  _fuseSeaFlushTimestamp = undefined;
+}
+
+/**
+ * 入库前按「目标图层」显隐丢弃当前不可见航迹（radar_wharf / bird_radar / ais 等默认关闭图层）。
+ * 根因：主 `/ws` 会推送全部图层，即便地图与目标列表都只消费可见图层，
+ * `setTracks` 仍要对上千条（含数百条永不绘制的）做 merge / 尾迹 / buildDisplayTracks 全量重算，
+ * 主线程被挤占 → 独立 100ms 刷新的对海融合 GL 更新被拖住 → 抖。
+ * 地图 `filterTracksForMapRender` 与 `TrackListPanel` 本就按同一 `isTrackVisibleBySubtype` 过滤，
+ * 故此处提前丢弃对两者完全透明；图层被打开后新数据约 1 个 flush 周期内即回填。
+ */
+function isTrackIngestVisible(t: import("@/lib/map-entity-model").Track): boolean {
+  const app = useAppStore.getState();
+  if (app.layerVisibility[LYR_TRACKS] === false) return false;
+  const td = useTrackDisplayStore.getState();
+  return isTrackVisibleBySubtype(t, td.trackSubtypeVisible, td.airFusionSubtypeVisible);
 }
 
 function accumulateTracks(
   tracks: import("@/lib/map-entity-model").Track[],
   timestamp?: string,
 ) {
-  for (const t of tracks) _trackAccumulator.set(t.showID, t);
-  if (timestamp) _trackFlushTimestamp = timestamp;
-  scheduleTrackFlush();
+  // 显隐快照一次读取，避免逐条 getState()
+  const app = useAppStore.getState();
+  const masterOn = app.layerVisibility[LYR_TRACKS] !== false;
+  const td = useTrackDisplayStore.getState();
+  const sub = td.trackSubtypeVisible;
+  const airSub = td.airFusionSubtypeVisible;
+
+  let hasOther = false;
+  let hasFuseSea = false;
+  for (const t of tracks) {
+    if (!masterOn || !isTrackVisibleBySubtype(t, sub, airSub)) continue;
+    if (isFuseSeaTrackForFlush(t)) {
+      _fuseSeaAccumulator.set(t.showID, t);
+      hasFuseSea = true;
+    } else {
+      _trackAccumulator.set(t.showID, t);
+      hasOther = true;
+    }
+  }
+  if (timestamp) {
+    if (hasOther) _trackFlushTimestamp = timestamp;
+    if (hasFuseSea) _fuseSeaFlushTimestamp = timestamp;
+  }
+  if (hasOther) scheduleTrackFlush();
+  if (hasFuseSea) scheduleFuseSeaTrackFlush();
 }
 
 // ── 航迹解析 Worker 单例：JSON.parse + normalize 在工作线程，结果入蓄水池 ──
@@ -294,10 +373,10 @@ function sendTrackWorkerConfig() {
 }
 
 /** 大批量航迹优先走 Worker（JSON.parse 在子线程），Worker 不可用则主线程解析后直接积入蓄水池 */
-function postTrackPayloadToWorkerOrAccumulate(raw: string) {
+function postTrackPayloadToWorkerOrAccumulate(raw: string, wsRecvMs?: number) {
   const w = getTrackWorker();
   if (w) {
-    w.postMessage({ type: "parse", raw });
+    w.postMessage({ type: "parse", raw, wsRecvMs });
   } else {
     try {
       const msg = JSON.parse(raw) as Record<string, unknown>;
@@ -310,12 +389,12 @@ function postTrackPayloadToWorkerOrAccumulate(raw: string) {
           tracks = arr.map((item) => {
             if (!item || typeof item !== "object") return null;
             const envelope = item as Record<string, unknown>;
-            return normalizeIncomingTrack(envelope.data ?? envelope);
+            return normalizeIncomingTrack(envelope.data ?? envelope, wsRecvMs);
           }).filter(Boolean) as import("@/lib/map-entity-model").Track[];
         }
       } else {
         const arr = msg.tracks;
-        if (Array.isArray(arr)) tracks = normalizeIncomingTrackList(arr);
+        if (Array.isArray(arr)) tracks = normalizeIncomingTrackList(arr, wsRecvMs);
       }
       if (tracks.length) accumulateTracks(tracks, timestamp);
     } catch {
@@ -503,6 +582,15 @@ const ws = {
   alarmCleanupTimer: null as ReturnType<typeof setInterval> | null,
   alertRevisionUnsub: null as (() => void) | null,
   imagePollTimer: null as ReturnType<typeof setInterval> | null,
+};
+
+/** 对海融合专用第二路 WS（与主 /ws 解耦，减轻 trackBatch 挤兑导致的闪烁） */
+const fuseSeaWs = {
+  socket: null as WebSocket | null,
+  reconnectTimer: null as ReturnType<typeof setTimeout> | null,
+  reconnectAttempt: 0,
+  heartbeatTimer: null as ReturnType<typeof setInterval> | null,
+  readyNotified: false,
 };
 
 function notify(title: string, body: string | undefined, variant: "info" | "success" | "error") {
@@ -737,11 +825,27 @@ function isVerifySuccessAlarmRaw(raw: Record<string, unknown>): boolean {
 
 /** 统一的 alarm 处理：判断 alarm vs threat 后写入 store */
 function handleAlarmItem(raw: Record<string, unknown>) {
+  // 航迹类告警只吃 NewTrackStruct 目标.alarms（证据链同源）；丢弃 DDS AlarmEvent
+  if (isDdsAlarmEventPayload(raw)) return;
   const normalized = normalizeWsAlertItem(raw);
   if (!normalized) return;
   const alertStore = useAlertStore.getState();
-  if (isVerifySuccessAlarmRaw(raw)) alertStore.upsertAlarm(normalized);
-  else alertStore.upsertThreat(normalized);
+  if (isVerifySuccessAlarmRaw(raw)) {
+    // 右键设为蓝方 → VERIFY_SUCCESS：告警中心级别固定为严重
+    alertStore.upsertAlarm({ ...normalized, severity: "critical" });
+  } else {
+    alertStore.upsertThreat(normalized);
+  }
+}
+
+/** DDS AlarmEventTopic 整包（含 alarms[]），与目标结构 embedded 单条区分 */
+function isDdsAlarmEventPayload(raw: Record<string, unknown>): boolean {
+  const dataType = String(raw.data_type ?? raw.dataType ?? "").toLowerCase();
+  if (dataType === "alarm_event" || dataType === "alarm_data") return true;
+  const source = String(raw.source ?? "").trim();
+  if (source === "DDS") return true;
+  if (Array.isArray(raw.alarms) && source !== "NewTrackStruct") return true;
+  return false;
 }
 
 /**
@@ -769,7 +873,7 @@ function handleAlarmItem(raw: Record<string, unknown>) {
  *            → applyAssetListFromWs → 与静态配置合并 → asset-store.setAssets
  *   → 第3步：同步 airport/drone 到 asset-store
  */
-function dispatchWsMessageSync(raw: string) {
+function dispatchWsMessageSync(raw: string, replySocket?: WebSocket | null, wsRecvMs?: number) {
   const msg = JSON.parse(raw) as Record<string, unknown>;
   const type = (msg.type as string | undefined)?.toLowerCase();
   if (!type) return;
@@ -786,7 +890,7 @@ function dispatchWsMessageSync(raw: string) {
               if (!item || typeof item !== "object") return null;
               const envelope = item as Record<string, unknown>;
               const inner = envelope.data ?? envelope;
-              return normalizeIncomingTrack(inner);
+              return normalizeIncomingTrack(inner, wsRecvMs);
             })
             .filter(Boolean) as Track[];
           if (tracks.length)
@@ -797,8 +901,8 @@ function dispatchWsMessageSync(raw: string) {
       case "track": {
         if (WS_DISABLE_TRACK_INGEST) break;
         // V2 单条 Track
-        const t = normalizeIncomingTrack(msg.data ?? msg);
-        if (t) {
+        const t = normalizeIncomingTrack(msg.data ?? msg, wsRecvMs);
+        if (t && isTrackIngestVisible(t)) {
           const ts = msg.timestamp ? String(msg.timestamp) : undefined;
           useTrackStore.getState().setTracks([t], ts !== undefined ? { lastUpdate: ts } : undefined);
           recordTrackReceived(!!t.isAirTrack);
@@ -810,7 +914,7 @@ function dispatchWsMessageSync(raw: string) {
         if (WS_DISABLE_TRACK_INGEST) break;
         const tracks = msg.tracks as unknown[] | undefined;
         if (Array.isArray(tracks)) {
-          const normalized = normalizeIncomingTrackList(tracks);
+          const normalized = normalizeIncomingTrackList(tracks, wsRecvMs);
           if (normalized.length)
             accumulateTracks(normalized, msg.timestamp ? String(msg.timestamp) : undefined);
         }
@@ -820,8 +924,10 @@ function dispatchWsMessageSync(raw: string) {
       // ── 告警 ──
       case "alarm": {
         // V2 Alarm: data = { alarms: [...] } 或 data 直接是单条
+        // 航迹类告警：只接 NewTrackStruct embedded（单条 source=NewTrackStruct）；DDS AlarmEvent 整包丢弃
         const d = msg.data as Record<string, unknown> | undefined;
         if (d) {
+          if (isDdsAlarmEventPayload(d)) break;
           if (Array.isArray(d.alarms)) {
             for (const a of d.alarms) {
               if (a && typeof a === "object") handleAlarmItem(a as Record<string, unknown>);
@@ -1037,6 +1143,11 @@ function dispatchWsMessageSync(raw: string) {
           if (d.taskType != null) baseProps.taskType = d.taskType;
           if (d.executionState != null) baseProps.executionState = d.executionState;
           if (d.online !== undefined) baseProps.online = d.online;
+          /* 勿用空 patch 冲掉 entity_status 已写入的 sensorParameters / visibleP */
+          delete baseProps.sensorParameters;
+          delete baseProps.capabilities;
+          delete baseProps.visibleP;
+          delete baseProps.visible_p;
 
           const patch: Partial<AssetData> = {
             mission_status: "monitoring",
@@ -1111,31 +1222,61 @@ function dispatchWsMessageSync(raw: string) {
       case "dockstatus":
       case "dock_status": {
         const d = msg.data as Record<string, unknown> | undefined;
-        if (!d || d.latitude == null || d.longitude == null) break;
+        if (!d) break;
         const dockSn = String(d.dock_sn ?? d.sn ?? "").trim();
         if (!dockSn) break;
-        useDroneStore.getState().setDockStatus(d);
-        /* dock_status 只更新已有机场资产，不新增。
-         * 机场用 dockSn 做 key（机场没有 entityId） */
-        const existingAsset = useAssetStore.getState().assets.find((x) => x.id === dockSn);
-        if (!existingAsset) break;
-        const airportName = useDroneStore.getState().docks[dockSn]?.displayName ?? "机场";
-        const prevProps =
-          existingAsset.properties && typeof existingAsset.properties === "object"
-            ? ({ ...(existingAsset.properties as Record<string, unknown>) } as Record<string, unknown>)
-            : {};
-        useAssetStore.getState().mergeAssetFields(dockSn, {
-          lat: Number(d.latitude),
-          lng: Number(d.longitude),
-          name: airportName,
-          properties: {
-            ...prevProps,
-            dock: d,
-            map_label: airportName,
-            virtual_troop: existingAsset.properties?.virtual_troop ?? false,
-          },
-        });
-        recordDockReceived(dockSn);
+        /* 有坐标时更新机场资产；无坐标仍写入 docks，供回仓判定 */
+        if (d.latitude != null && d.longitude != null) {
+          useDroneStore.getState().setDockStatus(d);
+          /* dock_status 只更新已有机场资产，不新增。
+           * 机场用 dockSn 做 key（机场没有 entityId） */
+          const existingAsset = useAssetStore.getState().assets.find((x) => x.id === dockSn);
+          if (existingAsset) {
+            const airportName = useDroneStore.getState().docks[dockSn]?.displayName ?? "机场";
+            const prevProps =
+              existingAsset.properties && typeof existingAsset.properties === "object"
+                ? ({ ...(existingAsset.properties as Record<string, unknown>) } as Record<string, unknown>)
+                : {};
+            useAssetStore.getState().mergeAssetFields(dockSn, {
+              lat: Number(d.latitude),
+              lng: Number(d.longitude),
+              name: airportName,
+              properties: {
+                ...prevProps,
+                dock: d,
+                map_label: airportName,
+                virtual_troop: existingAsset.properties?.virtual_troop ?? false,
+              },
+            });
+          }
+          recordDockReceived(dockSn);
+        } else {
+          useDroneStore.getState().setDockStatus(d);
+        }
+        /* 舱状态观测：曾离舱再回舱 → 清粘性任务文案（不依赖文案内容） */
+        const inDock = d.drone_in_dock ?? d.droneInDock;
+        const docked =
+          inDock === true ||
+          inDock === 1 ||
+          inDock === "1" ||
+          (typeof inDock === "string" && ["true", "yes"].includes(inDock.trim().toLowerCase()));
+        const undocked =
+          inDock === false ||
+          inDock === 0 ||
+          inDock === "0" ||
+          (typeof inDock === "string" && ["false", "no"].includes(inDock.trim().toLowerCase()));
+        if (docked || undocked) {
+          const ds = useDroneStore.getState();
+          const deviceSns = ds.airportToDrones[dockSn] ?? [];
+          const relatedEids = new Set<string>();
+          for (const [eid, sn] of Object.entries(ds.entityIdToDeviceSn)) {
+            if (deviceSns.includes(sn) || ds.droneToAirport[sn] === dockSn) relatedEids.add(eid);
+          }
+          for (const sn of deviceSns) relatedEids.add(sn);
+          useEoDroneDdsStatusStore
+            .getState()
+            .applyDroneInDockObservation([...relatedEids], docked ? true : false);
+        }
         break;
       }
       case "dronestatus":
@@ -1197,7 +1338,7 @@ function dispatchWsMessageSync(raw: string) {
       // ── 心跳 ──
       case "heartbeat": {
         recordWsHeartbeat();
-        const sock = ws.socket;
+        const sock = replySocket ?? ws.socket;
         if (sock?.readyState === WebSocket.OPEN) {
           sock.send(JSON.stringify({ type: "pong", created_at: new Date().toISOString(), data: { message: "pong" } }));
         }
@@ -1216,21 +1357,23 @@ function dispatchWsMessageSync(raw: string) {
     }
 }
 
-function dispatchWsMessage(raw: string) {
+function dispatchWsMessage(raw: string, replySocket?: WebSocket | null) {
   try {
+    // 前端收到 WS 报文的墙上时钟：在最外层入口打点，供标牌显示「前端接收时间」。
+    const wsRecvMs = Date.now();
     const earlyType = peekWsTopLevelTypePrefix(raw);
     if (WS_DISABLE_TRACK_INGEST) {
       if (earlyType && WS_SKIP_PARSE_WHEN_TRACK_INGEST_DISABLED.has(earlyType)) {
         return;
       }
     } else if (earlyType && WORKER_TRACK_TYPES.has(earlyType)) {
-      postTrackPayloadToWorkerOrAccumulate(raw);
+      postTrackPayloadToWorkerOrAccumulate(raw, wsRecvMs);
       return;
     }
     if (earlyType && WS_SKIP_PARSE_UNHANDLED_HIGH_VOLUME.has(earlyType)) {
       return;
     }
-    dispatchWsMessageSync(raw);
+    dispatchWsMessageSync(raw, replySocket, wsRecvMs);
   } catch (e) {
     if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_DEBUG_WS_CAMERA === "true") {
       console.warn("[NexusUI WS] dispatchWsMessage error (完整 JSON 可能被截断)", e, String(raw).slice(0, 500));
@@ -1249,6 +1392,96 @@ function startHeartbeat() {
       ws.socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
     } catch { /* ignore */ }
   }, interval);
+}
+
+function clearFuseSeaReconnectTimer() {
+  if (fuseSeaWs.reconnectTimer) clearTimeout(fuseSeaWs.reconnectTimer);
+  fuseSeaWs.reconnectTimer = null;
+}
+
+function clearFuseSeaHeartbeat() {
+  if (fuseSeaWs.heartbeatTimer) clearInterval(fuseSeaWs.heartbeatTimer);
+  fuseSeaWs.heartbeatTimer = null;
+}
+
+function startFuseSeaHeartbeat() {
+  clearFuseSeaHeartbeat();
+  const interval = getWebSocketConfig().heartbeatInterval;
+  fuseSeaWs.heartbeatTimer = setInterval(() => {
+    if (!fuseSeaWs.socket || fuseSeaWs.socket.readyState !== WebSocket.OPEN) return;
+    try {
+      fuseSeaWs.socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
+    } catch { /* ignore */ }
+  }, interval);
+}
+
+function fuseSeaBackoffMs(): number {
+  const cfg = getWebSocketConfig();
+  return Math.min(cfg.maxReconnectMs, cfg.initialReconnectMs * Math.pow(2, Math.min(fuseSeaWs.reconnectAttempt, 4)));
+}
+
+function scheduleFuseSeaReconnect() {
+  if (!ws.running || WS_DISABLE_TRACK_INGEST) return;
+  clearFuseSeaReconnectTimer();
+  const delay = fuseSeaBackoffMs();
+  fuseSeaWs.reconnectTimer = setTimeout(() => {
+    fuseSeaWs.reconnectTimer = null;
+    if (!ws.running) return;
+    openFuseSeaConnection();
+  }, delay);
+}
+
+function openFuseSeaConnection() {
+  if (!ws.running || WS_DISABLE_TRACK_INGEST) return;
+  const url = rewriteWsUrlForHttpsPage(getFuseSeaWebSocketUrl());
+  if (!url) return;
+
+  if (
+    fuseSeaWs.socket &&
+    (fuseSeaWs.socket.readyState === WebSocket.OPEN || fuseSeaWs.socket.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  const socket = new WebSocket(url);
+  fuseSeaWs.socket = socket;
+
+  socket.onopen = () => {
+    fuseSeaWs.reconnectAttempt = 0;
+    startFuseSeaHeartbeat();
+    if (!fuseSeaWs.readyNotified) {
+      fuseSeaWs.readyNotified = true;
+      notify("对海融合 WS 已就绪", url, "success");
+    }
+  };
+
+  socket.onmessage = (ev) => {
+    const data = ev.data;
+    if (typeof data === "string") {
+      dispatchWsMessage(data, socket);
+      return;
+    }
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      void data
+        .text()
+        .then((raw) => dispatchWsMessage(raw, socket))
+        .catch(() => {});
+    }
+  };
+
+  socket.onerror = () => {
+    try { socket.close(); } catch { /* noop */ }
+  };
+
+  socket.onclose = () => {
+    clearFuseSeaHeartbeat();
+    fuseSeaWs.socket = null;
+    if (!ws.running) return;
+    fuseSeaWs.reconnectAttempt += 1;
+    const maxAttempts = getWebSocketConfig().maxReconnectAttempts;
+    if (fuseSeaWs.reconnectAttempt > maxAttempts) return;
+    scheduleFuseSeaReconnect();
+  };
 }
 
 function scheduleReconnect() {
@@ -1287,13 +1520,13 @@ function openConnection() {
   socket.onmessage = (ev) => {
     const data = ev.data;
     if (typeof data === "string") {
-      dispatchWsMessage(data);
+      dispatchWsMessage(data, socket);
       return;
     }
     if (typeof Blob !== "undefined" && data instanceof Blob) {
       void data
         .text()
-        .then((raw) => dispatchWsMessage(raw))
+        .then((raw) => dispatchWsMessage(raw, socket))
         .catch(() => {});
     }
   };
@@ -1395,11 +1628,14 @@ function startUnifiedWs() {
   ws.running = true;
   ws.readyNotified = false;
   ws.reconnectAttempt = 0;
+  fuseSeaWs.readyNotified = false;
+  fuseSeaWs.reconnectAttempt = 0;
   if (WS_DISABLE_TRACK_INGEST) {
     useTrackStore.getState().clearAllTracks();
   }
   notify("正在连接 WebSocket", "", "info");
   openConnection();
+  openFuseSeaConnection();
   startTrackStalePrune();
   startAlarmCleanup();
   startAlertRevisionSync();
@@ -1416,13 +1652,20 @@ function stopUnifiedWs() {
   stopImagePolling();
   clearReconnectTimer();
   clearHeartbeat();
+  clearFuseSeaReconnectTimer();
+  clearFuseSeaHeartbeat();
   if (ws.socket && ws.socket.readyState === WebSocket.OPEN) ws.socket.close(1000, "client shutdown");
   ws.socket = null;
+  if (fuseSeaWs.socket && fuseSeaWs.socket.readyState === WebSocket.OPEN) {
+    fuseSeaWs.socket.close(1000, "client shutdown");
+  }
+  fuseSeaWs.socket = null;
   useTrackStore.getState().setConnected(false);
 }
 
 export function useUnifiedWsFeed() {
   useEffect(() => {
+    installTrackJankObserver();
     let cancelled = false;
     void (async () => {
       // 必须先拉取 app-config.json 并 applyResolvedNewConfigs，否则 WS 仍用默认 ws://localhost:8001，

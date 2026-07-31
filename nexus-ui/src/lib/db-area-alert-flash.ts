@@ -69,5 +69,6 @@ export function buildDbAreasFlashFeatureCollection(
       lineStyle: "solid",
       lineDash: null,
     },
+    { applyStyleToRoutes: true },
   );
 }

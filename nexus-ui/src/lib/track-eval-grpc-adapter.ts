@@ -18,6 +18,19 @@ function mapErrorItems(arr: unknown): TrackErrorStatsItem[] {
   if (!Array.isArray(arr)) return [];
   return arr.map((raw) => {
     const o = raw as Record<string, unknown>;
+    const sourceRaw = o.source_errors ?? o.sourceErrors;
+    const sourceErrors = Array.isArray(sourceRaw)
+      ? sourceRaw.map((s) => {
+          const x = s as Record<string, unknown>;
+          return {
+            key: String(x.source_key ?? x.key ?? ""),
+            label: String(x.source_name ?? x.label ?? x.source_key ?? ""),
+            avg: optNum(x.avg),
+            rmse: optNum(x.rmse),
+            errors: [] as number[],
+          };
+        })
+      : [];
     return {
       id: String(o.reference_id ?? o.id ?? ""),
       fusionAvg: optNum(o.fusion_avg),
@@ -26,9 +39,14 @@ function mapErrorItems(arr: unknown): TrackErrorStatsItem[] {
       radar1Rmse: optNum(o.radar1_rmse),
       radar2Avg: optNum(o.radar2_avg),
       radar2Rmse: optNum(o.radar2_rmse),
+      radar1Key: typeof o.radar1_key === "string" ? o.radar1_key : undefined,
+      radar1Name: typeof o.radar1_name === "string" ? o.radar1_name : undefined,
+      radar2Key: typeof o.radar2_key === "string" ? o.radar2_key : undefined,
+      radar2Name: typeof o.radar2_name === "string" ? o.radar2_name : undefined,
       fusionErrors: [],
       radar1Errors: [],
       radar2Errors: [],
+      sourceErrors,
     };
   });
 }
@@ -53,6 +71,10 @@ function emptyMetrics(): TrackEvalMetricsResult {
     airFusionStabilityDurationAvg: null,
     seaFusionStabilityDurationByAis: [],
     airFusionStabilityDurationBySelfReport: [],
+    seaFusionTrackCoverageAvg: null,
+    airFusionTrackCoverageAvg: null,
+    seaFusionTrackCoverageByAis: [],
+    airFusionTrackCoverageBySelfReport: [],
     seaMaxTrackingDuration: [],
     airMaxTrackingDuration: [],
     seaMaxTrackingDurationAvg: null,
@@ -262,6 +284,27 @@ export function grpcResultToTrackEvalMetrics(result: Record<string, unknown>): T
   }
   out.seaMaxTrackingDurationAvg = optNum(cont.sea_max_tracking_duration_avg);
   out.airMaxTrackingDurationAvg = optNum(cont.air_max_tracking_duration_avg);
+
+  const seaFusCov = cont.sea_fusion_track_coverage as Record<string, unknown> | undefined;
+  if (seaFusCov) {
+    out.seaFusionTrackCoverageAvg = optNum(seaFusCov.avg);
+    if (Array.isArray(seaFusCov.by_reference)) {
+      out.seaFusionTrackCoverageByAis = seaFusCov.by_reference.map((raw) => {
+        const o = raw as Record<string, unknown>;
+        return { aisId: String(o.reference_id ?? ""), coverage: num(o.stability) };
+      });
+    }
+  }
+  const airFusCov = cont.air_fusion_track_coverage as Record<string, unknown> | undefined;
+  if (airFusCov) {
+    out.airFusionTrackCoverageAvg = optNum(airFusCov.avg);
+    if (Array.isArray(airFusCov.by_reference)) {
+      out.airFusionTrackCoverageBySelfReport = airFusCov.by_reference.map((raw) => {
+        const o = raw as Record<string, unknown>;
+        return { selfReportId: String(o.reference_id ?? ""), coverage: num(o.stability) };
+      });
+    }
+  }
 
   out.seaDistanceError = mapErrorItems(err.sea_distance);
   out.seaHeightError = mapErrorItems(err.sea_height);

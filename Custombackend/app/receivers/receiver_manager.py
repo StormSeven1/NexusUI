@@ -21,6 +21,8 @@ from receivers.network.dds_track_bridge import get_track_bridge
 from parsers import TrackParser
 from parsers.entity_parser import parse_entity_status
 from receivers.network.entity_status_grpc_receiver import EntityStatusGrpcReceiver
+from receivers.network.new_track_struct_grpc_receiver import NewTrackStructGrpcReceiver
+from receivers.network.fusion_track_grpc_receiver import FusionTrackGrpcReceiver
 from websocket_manager import ws_manager
 
 # DDS 航迹 receiver_id → 前端 track_layer_key（与 NexusUI map-entity-model / track-layer-visibility 一致）
@@ -29,11 +31,30 @@ TRACK_LAYER_KEY_BY_RECEIVER = {
     "dds_forward_fuse_track_virtual": "fuse_sea",
     "dds_forward_fuse_bird_radar_track": "fuse_air",
     "dds_forward_fuse_bird_radar_track_virtual": "fuse_air",
+    "grpc_new_track_struct_fuse_sea": "fuse_sea",
+    "grpc_new_track_struct_fuse_air": "fuse_air",
+    # 蓝方虚兵独立 gRPC 路（非原 DDS *_virtual 替代）
+    "grpc_virtual_blue_fuse_sea": "fuse_sea",
+    "grpc_virtual_blue_fuse_air": "fuse_air",
     "dds_forward_bird_radar_track": "bird_radar",
+    # 探鸟智能跟踪（UDP 直收 SPx Track Ext → 前端图层「探鸟雷达智能跟踪点迹」）
+    "udp_auto_bird_radar": "auto_bird_radar",
+    "dds_forward_auto_bird_radar_track": "auto_bird_radar",
     "dds_forward_fanwu_car_track": "fanwu_car_radar",
     "dds_udp_fanwucar_track": "fanwu_car_radar",
     "dds_forward_radar_track1": "radar_wharf",
     "dds_forward_radar_track2": "radar_jingzi",
+    # FusionTrack gRPC(:60056) 虚拟 receiver_id → 同一 track_layer_key
+    "grpc_fusion_track_radar_wharf": "radar_wharf",
+    "grpc_fusion_track_radar_jingzi": "radar_jingzi",
+    "grpc_fusion_track_xpf": "xpf_track",
+    "grpc_fusion_track_boatself": "boat_self_track",
+    "grpc_fusion_track_ais": "ais_track",
+    "grpc_fusion_track_bird": "bird_radar",
+    "grpc_fusion_track_uav_pose": "uav_pose_track",
+    "grpc_fusion_track_fanwu": "fanwu_car_radar",
+    "grpc_fusion_track_ku": "fanwu_car_radar",
+    "grpc_fusion_track_auto_bird": "auto_bird_radar",
     "dds_forward_ais_track": "ais_track",
     "dds_forward_uav_pose_track": "uav_pose_track",
     "dds_udp_boatself_track": "boat_self_track",
@@ -77,6 +98,8 @@ class ReceiverManager:
         self.mqtt_receivers: Dict[str, MQTTReceiver] = {}
         self.dds_receivers: Dict[str, Any] = {}  # DDSReceiver实例（非航迹；航迹在独立子进程）
         self.entity_status_grpc_receivers: Dict[str, EntityStatusGrpcReceiver] = {}
+        self.new_track_struct_grpc_receivers: Dict[str, NewTrackStructGrpcReceiver] = {}
+        self.fusion_track_grpc_receivers: Dict[str, FusionTrackGrpcReceiver] = {}
         self._dds_track_meta: Dict[str, Dict[str, str]] = {}  # 子进程航迹：receiver_id -> topic/name
         
         # 统计信息
@@ -217,7 +240,12 @@ class ReceiverManager:
                         'data': parsed_data
                     })
                 elif data_type == 'alarm_event':
-                    # 告警数据，发送为 Alarm 类型
+                    # 航迹类告警默认走 NewTrackStruct.alarms（embedded）；DDS AlarmEvent 仅在
+                    # NEXUS_TRACK_ALARM_TRANSPORT=dds 且本接收器 enabled 时才会进到这里。
+                    # 双保险：embedded 模式下即使误启订阅也不转发到告警中心。
+                    from config import resolve_track_alarm_transport
+                    if resolve_track_alarm_transport() != "dds":
+                        return
                     ws_manager.queue_message({
                         'type': 'Alarm',
                         'data': parsed_data
@@ -354,9 +382,10 @@ class ReceiverManager:
             if not receiver_id:
                 continue
             
-            # 添加本机接口配置
-            config['local_interface'] = self.local_interface
-            
+            # 本机组播网卡：配置项优先，否则用 Settings.LOCAL_INTERFACE
+            if not config.get("local_interface"):
+                config["local_interface"] = self.local_interface
+
             receiver = UDPReceiver(config, self._on_udp_data)
             self.udp_receivers[receiver_id] = receiver
             receiver.start()
@@ -541,7 +570,166 @@ class ReceiverManager:
                 )
             except Exception as e:
                 logger.error(f"❌ EntityStatus gRPC 接收器启动失败 [{receiver_id}]: {e}")
-    
+
+    def _on_new_track_struct_grpc_batch(
+        self,
+        tracks: List[Dict[str, Any]],
+        client_id: str = "new_track_struct_grpc_client",
+    ) -> None:
+        """gRPC TargetOutputSet 一批多目标 → 按 environment 分流为对空/对海后入 WS。"""
+        self._init_stats(client_id)
+        self._stats[client_id]["received"] += 1
+        if not tracks:
+            return
+        self._stats[client_id]["parsed"] += 1
+
+        # 蓝方虚兵独立 gRPC 路：仅对该 client 标虚兵，不影响原有 DDS/融合虚兵
+        is_virtual_blue = client_id == "virtual_new_track_struct_grpc_client"
+
+        sea_n = 0
+        air_n = 0
+        for track in tracks:
+            if not isinstance(track, dict):
+                continue
+            env = track.get("environment")
+            try:
+                env_i = int(env) if env is not None else 0
+            except (TypeError, ValueError):
+                env_i = 0
+            if env_i == 2:
+                if is_virtual_blue:
+                    layer_rid = "grpc_virtual_blue_fuse_air"
+                    source_name = "蓝方虚兵对空航迹(gRPC)"
+                else:
+                    layer_rid = "grpc_new_track_struct_fuse_air"
+                    source_name = "对空融合航迹(gRPC)"
+                air_n += 1
+            else:
+                if is_virtual_blue:
+                    layer_rid = "grpc_virtual_blue_fuse_sea"
+                    source_name = "蓝方虚兵对海航迹(gRPC)"
+                else:
+                    layer_rid = "grpc_new_track_struct_fuse_sea"
+                    source_name = "对海融合航迹(gRPC)"
+                sea_n += 1
+            if is_virtual_blue:
+                track["reality_type"] = 2
+                track["is_virtual"] = True
+                track["virtualTroop"] = True
+                track.setdefault("disposition", "hostile")
+                track.setdefault("affiliation", "blue")
+            _annotate_track_receiver_metadata(track, layer_rid, source_name)
+            # 兼容前端/统计：同时累计空海虚拟 receiver 计数
+            self._init_stats(layer_rid)
+            self._stats[layer_rid]["received"] += 1
+            self._stats[layer_rid]["parsed"] += 1
+            ws_manager.queue_track_data(track)
+
+        if sea_n or air_n:
+            logger.debug(
+                "NewTrackStruct gRPC 批次 [{}]: sea={} air={} total={}",
+                client_id,
+                sea_n,
+                air_n,
+                len(tracks),
+            )
+
+    def start_new_track_struct_grpc_receivers(self, configs: List[Dict[str, Any]]):
+        """启动对空/对海融合 NewTrackStruct gRPC（与对应 DDS 融合 topic 二选一）。"""
+        for config in configs:
+            if not config.get("enabled", False):
+                continue
+            receiver_id = config.get("id", "")
+            if not receiver_id:
+                continue
+            try:
+                receiver = NewTrackStructGrpcReceiver(
+                    config,
+                    data_callback=lambda tracks, rid=receiver_id: self._on_new_track_struct_grpc_batch(
+                        tracks, client_id=rid
+                    ),
+                )
+                receiver.name = config.get("name", receiver_id)
+                receiver.start()
+                self.new_track_struct_grpc_receivers[receiver_id] = receiver
+                logger.info(
+                    f"✅ NewTrackStruct gRPC 接收器已启动 [{receiver_id}] → "
+                    f"{config.get('host')}:{config.get('port')}"
+                )
+            except Exception as e:
+                logger.error(f"❌ NewTrackStruct gRPC 接收器启动失败 [{receiver_id}]: {e}")
+
+    # FusionTrack gRPC 源 → 前端归类元数据（虚拟 receiver_id / 来源名）
+    _FUSION_TRACK_LAYER_META = {
+        "radar_wharf": ("grpc_fusion_track_radar_wharf", "远遥码头雷达航迹(gRPC)"),
+        "radar_jingzi": ("grpc_fusion_track_radar_jingzi", "靖子头雷达航迹(gRPC)"),
+        "xpf_track": ("grpc_fusion_track_xpf", "远遥鹏飞航迹(gRPC)"),
+        "boat_self_track": ("grpc_fusion_track_boatself", "船只自报位航迹(gRPC)"),
+        "ais_track": ("grpc_fusion_track_ais", "AIS航迹(gRPC)"),
+        "bird_radar": ("grpc_fusion_track_bird", "探鸟雷达航迹(gRPC)"),
+        "uav_pose_track": ("grpc_fusion_track_uav_pose", "自报位航迹(gRPC)"),
+        "fanwu_car_radar": ("grpc_fusion_track_fanwu", "反无车雷达航迹(gRPC)"),
+        "auto_bird_radar": ("grpc_fusion_track_auto_bird", "探鸟智能跟踪点迹(gRPC)"),
+    }
+    # 同图层但不同 dataSourceId 时覆盖虚拟 receiver / 显示名
+    _FUSION_TRACK_DATASOURCE_META = {
+        "ku_lei_da": ("grpc_fusion_track_ku", "Ku雷达航迹(gRPC)"),
+    }
+
+    def _on_fusion_track_grpc_batch(
+        self,
+        tracks: List[Dict[str, Any]],
+        client_id: str = "fusion_track_grpc_client",
+    ) -> None:
+        """FusionTrack gRPC 一批（已在解析器筛为旁路源）→ 标注 track_layer_key 后入 WS。"""
+        self._init_stats(client_id)
+        self._stats[client_id]["received"] += 1
+        if not tracks:
+            return
+        self._stats[client_id]["parsed"] += 1
+
+        for track in tracks:
+            if not isinstance(track, dict):
+                continue
+            layer_key = track.get("track_layer_key")
+            ds = str(track.get("data_source_id") or "").strip()
+            meta = self._FUSION_TRACK_DATASOURCE_META.get(ds) or self._FUSION_TRACK_LAYER_META.get(
+                layer_key
+            )
+            if not meta:
+                continue
+            layer_rid, source_name = meta
+            _annotate_track_receiver_metadata(track, layer_rid, source_name)
+            self._init_stats(layer_rid)
+            self._stats[layer_rid]["received"] += 1
+            self._stats[layer_rid]["parsed"] += 1
+            ws_manager.queue_track_data(track)
+
+    def start_fusion_track_grpc_receivers(self, configs: List[Dict[str, Any]]):
+        """启动 FusionTrack gRPC(:60056)（与 DDS 传感器旁路源二选一）。"""
+        for config in configs:
+            if not config.get("enabled", False):
+                continue
+            receiver_id = config.get("id", "")
+            if not receiver_id:
+                continue
+            try:
+                receiver = FusionTrackGrpcReceiver(
+                    config,
+                    data_callback=lambda tracks, rid=receiver_id: self._on_fusion_track_grpc_batch(
+                        tracks, client_id=rid
+                    ),
+                )
+                receiver.name = config.get("name", receiver_id)
+                receiver.start()
+                self.fusion_track_grpc_receivers[receiver_id] = receiver
+                logger.info(
+                    f"✅ FusionTrack gRPC 接收器已启动 [{receiver_id}] → "
+                    f"{config.get('host')}:{config.get('port')}"
+                )
+            except Exception as e:
+                logger.error(f"❌ FusionTrack gRPC 接收器启动失败 [{receiver_id}]: {e}")
+
     async def start_http_pollers(self, configs: List[Dict[str, Any]]):
         """启动HTTP轮询器"""
         for config in configs:
@@ -599,7 +787,21 @@ class ReceiverManager:
             except Exception as e:
                 logger.error(f"停止 EntityStatus gRPC 接收器失败: {e}")
         self.entity_status_grpc_receivers.clear()
-        
+
+        for receiver in self.new_track_struct_grpc_receivers.values():
+            try:
+                receiver.stop()
+            except Exception as e:
+                logger.error(f"停止 NewTrackStruct gRPC 接收器失败: {e}")
+        self.new_track_struct_grpc_receivers.clear()
+
+        for receiver in self.fusion_track_grpc_receivers.values():
+            try:
+                receiver.stop()
+            except Exception as e:
+                logger.error(f"停止 FusionTrack gRPC 接收器失败: {e}")
+        self.fusion_track_grpc_receivers.clear()
+
         logger.info("所有接收器已停止")
     
     async def stop_http_pollers(self):

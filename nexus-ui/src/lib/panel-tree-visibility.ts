@@ -30,6 +30,7 @@ export type DeviceLayerVisibilityEntry = {
   fov?: boolean;
   icon?: boolean;
   coverage?: boolean;
+  capability?: boolean;
   position?: boolean;
   route?: boolean;
   airport?: boolean;

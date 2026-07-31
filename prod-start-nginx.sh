@@ -121,6 +121,12 @@ echo ""
 echo "✅ HTTPS 已就绪"
 echo "  航迹/WebSocket：浏览器经隧道连 wss；app-config 已由启动脚本按本机 IP 与端口写入。"
 echo "  若仍报混合内容：确认镜像为 NEXT_PUBLIC_WS_USE_NGINX_TUNNEL=true 重新 build。"
+if [[ -f "$ROOT/docker/nginx/certs/ca.crt" ]]; then
+  echo "  证书: 本地 CA 签发。消除「不安全」提示：把 docker/nginx/certs/ca.crt 导入客户端受信任根（一次）。"
+  echo "  重签: ./scripts/gen-prod-nginx-ca-certs.sh --force"
+else
+  echo "  证书: 自签。建议 ./scripts/gen-prod-nginx-ca-certs.sh --force 后导入 ca.crt，避免每次点「继续访问」。"
+fi
 echo "  前端 HTTPS: https://127.0.0.1:${PUBLIC_HTTPS_PORT}/"
 echo "  前端内网:   https://$(hostname -I | awk '{print $1}'):${PUBLIC_HTTPS_PORT}/"
 echo "  航迹 wss（明文 ${TRACK_WS_BACKEND_HOST}:${TRACK_WS_BACKEND_PORT} → /wss-track）: wss://<主机>:${PUBLIC_HTTPS_PORT}/wss-track/ws"

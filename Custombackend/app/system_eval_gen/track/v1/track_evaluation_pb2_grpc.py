@@ -5,7 +5,7 @@ import warnings
 
 from track.v1 import track_evaluation_pb2 as track_dot_v1_dot_track__evaluation__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.81.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class TrackEvaluationServiceStub(object):
+class TrackEvaluationServiceStub:
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -46,7 +46,7 @@ class TrackEvaluationServiceStub(object):
                 _registered_method=True)
 
 
-class TrackEvaluationServiceServicer(object):
+class TrackEvaluationServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
     def EvaluateTrackQuality(self, request, context):
@@ -82,7 +82,7 @@ def add_TrackEvaluationServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class TrackEvaluationService(object):
+class TrackEvaluationService:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod

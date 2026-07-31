@@ -77,14 +77,29 @@ ensure_prod_nginx_certs() {
   local cert_dir="$root/docker/nginx/certs"
   local cert_file="$cert_dir/server.crt"
   local key_file="$cert_dir/server.key"
+  local ca_file="$cert_dir/ca.crt"
+  local gen_script="$root/scripts/gen-prod-nginx-ca-certs.sh"
   mkdir -p "$cert_dir"
   if [[ -f "$cert_file" && -f "$key_file" ]]; then
+    if [[ -f "$ca_file" ]] && openssl verify -CAfile "$ca_file" "$cert_file" >/dev/null 2>&1; then
+      echo "使用本地 CA 签发的生产证书（客户端需已信任 ${ca_file}）"
+    else
+      echo "使用已有 server.crt（自签或非本 CA）。浏览器仍会提示不安全时，请执行:"
+      echo "  ${gen_script} --force"
+      echo "  然后将 ${cert_dir}/ca.crt 导入客户端「受信任的根证书」"
+    fi
+    return 0
+  fi
+  if [[ -x "$gen_script" ]] || [[ -f "$gen_script" ]]; then
+    echo "未检测到证书，调用本地 CA 签发脚本..."
+    chmod +x "$gen_script" 2>/dev/null || true
+    "$gen_script"
     return 0
   fi
   local host_ip
   host_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   [[ -n "${host_ip:-}" ]] || host_ip="127.0.0.1"
-  echo "未检测到证书，正在生成自签证书（IP SAN: ${host_ip}）..."
+  echo "未检测到证书且无 gen 脚本，回退生成自签证书（IP SAN: ${host_ip}）..."
   openssl req -x509 -nodes -newkey rsa:2048 \
     -keyout "$key_file" \
     -out "$cert_file" \
@@ -194,18 +209,25 @@ server {
         expires 7d;
     }
 
+    # SSE（/api/langgraph-chat 等）必须关缓冲；Connection 勿对普通 HTTP 强制 upgrade
+    # Host 须用 \$http_host（含端口）：\$host 会丢掉 :21911/:25311，导致 BFF 拼出 wss://IP/（默认 443）→ ERR_CONNECTION_REFUSED
     location / {
         proxy_pass http://127.0.0.1:${internal_frontend};
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Forwarded-Host \$http_host;
+        proxy_set_header X-Forwarded-Port \$server_port;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection "";
         proxy_connect_timeout 10s;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_request_buffering off;
     }
 }
 EOF

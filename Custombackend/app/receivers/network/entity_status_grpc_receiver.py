@@ -97,7 +97,9 @@ class EntityStatusGrpcReceiver:
         self._channel = grpc.insecure_channel(self.target, options=options)
         grpc.channel_ready_future(self._channel).result(timeout=10)
         stub = EntityStatusServiceStub(self._channel)
-        stream = stub.EntityStatusMethod(EntityStatusRequest(), timeout=30)
+        # 长期服务端流：勿设短 timeout（否则约 30s 整段 RPC 被掐断，高频图标会「动一会→停→再动」）。
+        # 断线/僵死靠 channel keepalive；与 new_track_struct_grpc_receiver 一致。
+        stream = stub.EntityStatusMethod(EntityStatusRequest())
         logger.info(f"EntityStatus gRPC 已连接 [{self.receiver_id}] {self.target}")
         for resp in stream:
             if self._stop.is_set():

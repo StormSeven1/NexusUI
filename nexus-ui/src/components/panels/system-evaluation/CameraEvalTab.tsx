@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Aperture, Crosshair, Eye, Loader2, RefreshCw, ScanEye } from "lucide-react";
+import { Aperture, Crosshair, Eye, FileText, Loader2, RefreshCw, ScanEye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isThirdPartyCameraEntityId } from "@/lib/eo-video/thirdPartyEntityId";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
@@ -26,6 +26,7 @@ import {
   type PointingAccuracyResult,
 } from "@/lib/system-eval-camera-api";
 import { PointingAccuracyDisk } from "@/components/panels/system-evaluation/PointingAccuracyDisk";
+import { openEvalReportPreview } from "@/lib/eval-report/open-eval-report-preview";
 
 type EvalPhase = "idle" | "running" | "done" | "error";
 
@@ -331,9 +332,28 @@ export function CameraEvalTab() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-nexus-border px-2 py-1.5">
-        <p className="text-[11px] font-medium text-nexus-text-secondary">相机清晰度、能见度与指向准确度</p>
-        <p className="text-[9px] text-nexus-text-muted">选择相机实体 ID，提交航迹目标并执行评估</p>
+      <div className="flex shrink-0 items-start justify-between gap-2 border-b border-nexus-border px-2 py-1.5">
+        <div>
+          <p className="text-[11px] font-medium text-nexus-text-secondary">相机清晰度、能见度与指向准确度</p>
+          <p className="text-[9px] text-nexus-text-muted">选择相机实体 ID，提交航迹目标并执行评估</p>
+        </div>
+        <button
+          type="button"
+          onClick={() =>
+            openEvalReportPreview({
+              reuseExistingResults: true,
+              selectedKinds: ["camera"],
+            })
+          }
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1 rounded-md border border-nexus-accent/50 bg-nexus-accent/15 px-2 py-1 text-[10px]",
+            "text-nexus-text-primary hover:bg-nexus-accent/25",
+          )}
+          title="打开评估报告面板（光电章节目前为占位，可与其他章节一并生成）"
+        >
+          <FileText size={12} />
+          生成评估报告
+        </button>
       </div>
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">

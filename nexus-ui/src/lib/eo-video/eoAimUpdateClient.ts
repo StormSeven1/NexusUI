@@ -23,7 +23,7 @@ export type AimUpdateResponse = {
   note?: string;
 };
 
-/** 触发 camServer `POST /api/v1/aim-update`（默认对海+对空，写入 ConfigAIM{N}_test.ini） */
+/** 触发 camServer `POST /api/v1/aim-update`（默认对海+对空，写入正式 ConfigAIM{N}.ini 并热更运行时） */
 export async function postEoAimUpdate(params: {
   entityId: string;
   backendBaseUrl?: string;

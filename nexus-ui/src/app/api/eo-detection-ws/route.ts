@@ -24,13 +24,15 @@ export async function GET(request: Request) {
   const explicit = process.env.EO_DETECTION_WS_URL?.trim();
   const derived = deriveWsFromEntityHttpBase(base);
   const tunnel = process.env.NEXT_PUBLIC_WS_USE_NGINX_TUNNEL === "true";
-  const host = request.headers.get("host")?.trim();
+  const xfHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = (xfHost || request.headers.get("host") || "").trim();
   const xfProto = request.headers.get("x-forwarded-proto");
+  const xfPort = request.headers.get("x-forwarded-port");
   const pageHttps = xfProto?.split(",")[0]?.trim().toLowerCase() === "https";
   /** 隧道模式下 WSS 须打到 Nginx 端口（非 Next dev :22301） */
   let viaNginx: string | null = null;
   if (tunnel && host && pageHttps) {
-    const wssHost = resolveNginxTunnelWssHost(host);
+    const wssHost = resolveNginxTunnelWssHost(host, { forwardedPort: xfPort });
     viaNginx = wssHost ? `wss://${wssHost}/wss-detection/` : null;
   }
   const urls = [...(explicit ? [explicit] : []), ...(viaNginx ? [viaNginx] : []), derived];

@@ -78,13 +78,52 @@ export interface AlertData {
   distanceNm?: number;
   /** 方位角（度，0–360），WS 或航迹补齐 */
   bearingDeg?: number;
+  /** 系统告警类型码（GetActiveAlarms / SystemAlarm） */
+  systemAlarmKind?:
+    | "EQUIPMENT"
+    | "DATA_COMM"
+    | "TASK"
+    | "ENVIRONMENT"
+    | "COMPREHENSIVE"
+    | "SYSTEM_AUTH";
+  /** 上报方系统 ID，如 sys-005 */
+  systemId?: string;
+  /** 系统告警关联实体 */
+  entityId?: string;
 }
 
-/** 告警过期时间（对齐 V2 ALARM_STALE_MS = 25s） */
-const ALARM_STALE_MS = 25_000;
+/**
+ * 告警过期时间：60s。
+ * AlarmSys 的 gRPC 快照推送与 processAlarms 同线程；processAlarms 受轨迹量影响偶尔耗时
+ * 超过 20s，导致快照中断。60s 窗口可容忍更长的处理延迟，避免告警误判过期后闪烁消失。
+ */
+const ALARM_STALE_MS = 60_000;
 const MAX_ALERTS = 200;
 
-/** 合并同航迹告警：NewTrackStruct 主要带证据链，勿覆盖 AlarmEvent 的严重度/时间 */
+/** 合并同航迹告警：NewTrackStruct 主要带证据链；严重度只升不降，避免 Top5 排名跳变导致严重↔信息闪烁 */
+const SEVERITY_RANK: Record<AlertData["severity"], number> = {
+  info: 0,
+  warning: 1,
+  critical: 2,
+};
+
+function stickierSeverity(
+  a: AlertData["severity"],
+  b: AlertData["severity"],
+): AlertData["severity"] {
+  return SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
+}
+
+/** alarmLevel：取较大值，避免 Top5 排名 0 覆盖威胁分/高等级 */
+function stickyAlarmLevel(
+  existing: number | undefined,
+  incoming: number | undefined,
+): number | undefined {
+  if (existing == null) return incoming;
+  if (incoming == null) return existing;
+  return Math.max(existing, incoming);
+}
+
 function mergeAlertFields(existing: AlertData, incoming: AlertData): AlertData {
   const incomingFromNewTrack = incoming.source === "NewTrackStruct";
   const existingFromAlarmEvent = existing.source !== "NewTrackStruct";
@@ -94,27 +133,44 @@ function mergeAlertFields(existing: AlertData, incoming: AlertData): AlertData {
     merged = {
       ...existing,
       ...incoming,
-      // 保留 AlarmEvent 的等级展示，避免严重/警告来回跳
-      severity: existing.severity,
-      alarmLevel: existing.alarmLevel ?? incoming.alarmLevel,
-      threatScore: existing.threatScore ?? incoming.threatScore,
+      severity: stickierSeverity(existing.severity, incoming.severity),
+      alarmLevel: stickyAlarmLevel(existing.alarmLevel, incoming.alarmLevel),
+      threatScore:
+        existing.threatScore != null && incoming.threatScore != null
+          ? Math.max(existing.threatScore, incoming.threatScore)
+          : (existing.threatScore ?? incoming.threatScore),
       message: existing.message || incoming.message,
       source: existing.source,
-      // 证据链以 NewTrackStruct.content 为准
       content: incoming.content?.trim() ? incoming.content : existing.content,
     };
   } else if (!incomingFromNewTrack && existing.source === "NewTrackStruct") {
     merged = {
       ...existing,
       ...incoming,
+      severity: stickierSeverity(existing.severity, incoming.severity),
+      alarmLevel: stickyAlarmLevel(existing.alarmLevel, incoming.alarmLevel),
+      threatScore:
+        existing.threatScore != null && incoming.threatScore != null
+          ? Math.max(existing.threatScore, incoming.threatScore)
+          : (existing.threatScore ?? incoming.threatScore),
       content: existing.content?.trim() ? existing.content : incoming.content,
     };
   } else {
-    merged = { ...existing, ...incoming };
+    merged = {
+      ...existing,
+      ...incoming,
+      severity: stickierSeverity(existing.severity, incoming.severity),
+      threatScore:
+        existing.threatScore != null && incoming.threatScore != null
+          ? Math.max(existing.threatScore, incoming.threatScore)
+          : (existing.threatScore ?? incoming.threatScore),
+      alarmLevel: stickyAlarmLevel(existing.alarmLevel, incoming.alarmLevel),
+    };
   }
 
   // 列表展示时间锁定首次出现，避免每秒 updateTime / 双源格式切换导致跳动
   merged.timestamp = existing.timestamp || incoming.timestamp;
+  merged.firstSeenTime = existing.firstSeenTime ?? incoming.firstSeenTime;
   return merged;
 }
 
@@ -158,6 +214,11 @@ interface AlertState {
   removeAlarmItemsByTrackId: (trackId: string) => void;
   /** 按告警 id 移除（第三方相机检测等无 trackId 告警） */
   removeAlarmById: (id: string) => void;
+  /**
+   * 用 GetActiveAlarms 全量快照替换系统告警（source=SystemAlarm）。
+   * 航迹/其它来源告警保留；取消后的系统告警本轮不再出现即移除。
+   */
+  syncSystemAlarms: (systemAlerts: AlertData[]) => void;
   clearAlarmFlashing: () => void;
   clearAlerts: () => void;
 }
@@ -243,11 +304,12 @@ export const useAlertStore = create<AlertState>((set, get) => ({
     }
   },
 
-  /** 移除过期告警（超过 ALARM_STALE_MS 未更新） */
+  /** 移除过期告警（超过 ALARM_STALE_MS 未更新）；系统告警由 2s 快照同步，不参与过期清理 */
   removeStaleAlarms: () =>
     set((s) => {
       const now = Date.now();
       const next = s.alerts.filter((item) => {
+        if (item.source === "SystemAlarm") return true;
         const raw = item.lastUpdateTime ?? new Date(item.timestamp).getTime();
         const lastUpdate = typeof raw === "number" ? raw : 0;
         return now - lastUpdate < ALARM_STALE_MS;
@@ -278,6 +340,22 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       if (!needle) return s;
       const next = s.alerts.filter((a) => a.id !== needle);
       if (next.length === s.alerts.length) return s;
+      return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });
+    }),
+
+  syncSystemAlarms: (systemAlerts) =>
+    set((s) => {
+      const keep = s.alerts.filter((a) => a.source !== "SystemAlarm");
+      const now = Date.now();
+      // 全量替换系统告警，保留上报方最新 timestamp / 描述 / 级别（勿锁死首次时间）
+      const incoming = systemAlerts.map((a) => ({
+        ...a,
+        source: "SystemAlarm" as const,
+        alarmType: "alert" as const,
+        firstSeenTime: a.firstSeenTime ?? now,
+        lastUpdateTime: now,
+      }));
+      const next = [...incoming, ...keep].slice(0, MAX_ALERTS);
       return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });
     }),
 

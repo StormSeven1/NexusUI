@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package alarmsys.grpc.system_alarm;
+
+option cc_enable_arenas = true;
+
+// 系统级事项告警（与航迹 AlarmResultService 独立）
+enum AlarmKind {
+  ALARM_KIND_UNSPECIFIED = 0;
+  EQUIPMENT = 1;       // 装备状态
+  DATA_COMM = 2;       // 数据通信
+  TASK = 3;            // 任务
+  ENVIRONMENT = 4;     // 环境
+  COMPREHENSIVE = 5;   // 综合
+  SYSTEM_AUTH = 6;     // 系统权鉴
+}
+
+enum AlarmLevel {
+  LOW = 0;             // 默认
+  MEDIUM = 1;
+  HIGH = 2;
+}
+
+message SystemAlarmItem {
+  string alarm_id = 1;          // 必填，建议 alarm_{短名}_{ms}
+  string system_id = 2;         // 必填，如 sys-005
+  string description = 3;       // 必填
+  int64 timestamp_ms = 4;       // 必填，消息时间戳 ms
+  int64 raised_time_ms = 5;     // 必填，告警产生时间 ms
+  int64 canceled_time_ms = 6;   // 告警取消时间 ms；未取消为 0
+  AlarmKind alarm_kind = 7;     // 必填，1~6
+  string entity_id = 8;         // 可空
+  AlarmLevel level = 9;         // 可空，默认 LOW
+  string reserved1 = 10;
+  string reserved2 = 11;
+  string reserved3 = 12;
+}
+
+message CommonAck {
+  bool ok = 1;
+  string message = 2;           // ok / invalid_param / not_found / ...
+  int64 server_time_ms = 3;
+}
+
+message ReportAlarmRequest {
+  SystemAlarmItem alarm = 1;
+}
+
+message CancelAlarmRequest {
+  string alarm_id = 1;
+  string system_id = 2;
+  int64 timestamp_ms = 3;       // 取消请求消息时间戳 ms
+  int64 canceled_time_ms = 4;   // 必填，告警取消时间 ms
+  string reason = 5;            // 可空
+}
+
+message GetActiveAlarmsRequest {
+  string system_id = 1;         // 空=不过滤
+  AlarmKind alarm_kind = 2;     // UNSPECIFIED=不过滤
+  // level_filter_set=false 时不过滤级别；true 时按 level 过滤
+  bool level_filter_set = 3;
+  AlarmLevel level = 4;
+}
+
+message GetActiveAlarmsResponse {
+  repeated SystemAlarmItem alarms = 1;
+  int64 server_time_ms = 2;
+}
+
+service SystemAlarmService {
+  rpc ReportAlarm(ReportAlarmRequest) returns (CommonAck);
+  rpc CancelAlarm(CancelAlarmRequest) returns (CommonAck);
+  rpc GetActiveAlarms(GetActiveAlarmsRequest) returns (GetActiveAlarmsResponse);
+}

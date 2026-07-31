@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useAppStore } from "@/stores/app-store";
 import { useAssetStore } from "@/stores/asset-store";
@@ -20,9 +20,12 @@ import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
 import { useDroneDeviceLayerStore } from "@/stores/drone-device-layer-store";
 import { useDroneStore } from "@/stores/drone-store";
 import { useEoDroneDdsStatusStore } from "@/stores/eo-drone-dds-status-store";
-import { formatEoDdsDroneTaskLine } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import { formatEoDdsDroneTaskLine, shouldForceIdleAfterDockReturn } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import { resolveWsDroneInDock } from "@/lib/eo-video/resolveWsDroneInDock";
 import { openElectroOpticalDockPopup } from "@/components/eo-video/EoVideoTopLauncher";
-import { countDbAreaPanelUiRows, countVisibleDbAreaLeaves } from "@/lib/db-area-panel-helpers";
+import { countDbAreaPanelUiRows, countVisibleDbAreaLeaves, countVisibleDbAreaTargetLeaves } from "@/lib/db-area-panel-helpers";
+import { isDbAreaTargetListable } from "@/lib/db-area-target-geometry";
+import { useDbAreaTargetStore } from "@/stores/db-area-target-store";
 import { countOptoDevicePanelUiRows, countVisibleOptoDeviceLeaves } from "@/lib/opto-device-layer-visibility";
 import {
   countDroneDevicePanelUiRows,
@@ -63,6 +66,12 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QuickWorkflowModal } from "@/components/layout/QuickWorkflowModal";
+import {
+  applyGisCapabilityPreset,
+  applyGisTrackQuickPresets,
+  clearGisCapabilitySweeps,
+  type GisTrackQuickFlags,
+} from "@/lib/gis-situation-presets";
 
 type StatRow = {
   label: string;
@@ -71,6 +80,20 @@ type StatRow = {
   color: string;
   /** 态势「活跃无人机」：可点击弹出列表 */
   interactive?: "active-drones";
+};
+
+type GisQuickMode = {
+  capability: boolean;
+  seaRadar: boolean;
+  seaFusion: boolean;
+  airFusion: boolean;
+};
+
+const GIS_QUICK_INITIAL: GisQuickMode = {
+  capability: false,
+  seaRadar: false,
+  seaFusion: false,
+  airFusion: false,
 };
 
 type ActiveDroneListItem = {
@@ -92,11 +115,15 @@ function resolveDroneDisplayName(entityId: string): string {
 }
 
 function collectActiveDroneListItems(
-  byEntityId: Record<string, { droneTaskAction?: unknown }>,
+  byEntityId: Record<string, { droneTaskAction?: unknown; droneState?: unknown }>,
+  hadLeftDockByEntityId: Record<string, boolean>,
 ): ActiveDroneListItem[] {
   const items: ActiveDroneListItem[] = [];
   for (const [entityId, row] of Object.entries(byEntityId)) {
-    const taskLine = formatEoDdsDroneTaskLine(row);
+    const droneInDock = resolveWsDroneInDock(entityId);
+    const hadLeftDock = Boolean(hadLeftDockByEntityId[entityId]);
+    if (shouldForceIdleAfterDockReturn(droneInDock, hadLeftDock)) continue;
+    const taskLine = formatEoDdsDroneTaskLine(row, { droneInDock, hadLeftDock });
     if (taskLine === "空闲中") continue;
     items.push({
       entityId,
@@ -125,10 +152,21 @@ function countLayerPanelEnabled(
   airFusionSubtypeVisible: AirFusionSubtypeVisibility,
   dbAreaRows: ReadonlyArray<AreaTableRow>,
   dbAreaVisibility: Readonly<Record<string, boolean>>,
+  dbAreaTargetRows: ReadonlyArray<{
+    id: string;
+    area_type: number;
+    target_id: number;
+    area_name: string;
+    start_point?: string | null;
+    end_point?: string | null;
+    area_rect?: string | null;
+    area_points?: string | null;
+  }>,
+  dbAreaTargetVisibility: Readonly<Record<string, boolean>>,
   optoDeviceVisibility: Readonly<Record<string, { fov?: boolean; icon?: boolean }>>,
   droneDeviceVisibility: Readonly<Record<string, { position?: boolean; route?: boolean }>>,
   dronePanelRows: ReadonlyArray<{ sn: string; airportSN: string }>,
-  radarDeviceVisibility: Readonly<Record<string, { coverage?: boolean; icon?: boolean }>>,
+  radarDeviceVisibility: Readonly<Record<string, { icon?: boolean; capability?: boolean }>>,
   radarPanelIds: ReadonlyArray<string>,
 ): number {
   const rows = buildDataLayerPanelRows(assets);
@@ -144,6 +182,11 @@ function countLayerPanelEnabled(
     airFusionSubtypeVisible,
   );
   n += countVisibleDbAreaLeaves(dbAreaRows, dbAreaVisibility, layerVisibility[LYR_DB_AREAS] !== false);
+  n += countVisibleDbAreaTargetLeaves(
+    dbAreaTargetRows,
+    dbAreaTargetVisibility,
+    layerVisibility[LYR_DB_AREAS] !== false,
+  );
   n += countVisibleOptoDeviceLeaves(
     cameraMenuIds,
     optoDeviceVisibility,
@@ -167,12 +210,24 @@ function countLayerPanelLoaded(
   assets: ReadonlyArray<{ asset_type: string }>,
   basemapVectorLayers: ReadonlyArray<{ id: string }>,
   dbAreaRows: ReadonlyArray<AreaTableRow>,
+  dbAreaTargetRows: ReadonlyArray<{
+    id: string;
+    area_type: number;
+    target_id?: number;
+    area_name?: string;
+    start_point?: string | null;
+    end_point?: string | null;
+    area_rect?: string | null;
+    area_points?: string | null;
+  }>,
   cameraMenuIds: ReadonlyArray<string>,
   dronePanelRows: ReadonlyArray<{ sn: string; airportSN: string }>,
   radarPanelIds: ReadonlyArray<string>,
 ): number {
   const rows = buildDataLayerPanelRows(assets);
   const dbUi = countDbAreaPanelUiRows(dbAreaRows);
+  const fixedListable = dbAreaTargetRows.filter(isDbAreaTargetListable).length;
+  const fixedUi = fixedListable > 0 ? 1 + fixedListable : 0;
   const optoUi = rows.some((r) => r.id === LYR_OPTO_FOV)
     ? countOptoDevicePanelUiRows(cameraMenuIds.length)
     : 0;
@@ -188,6 +243,7 @@ function countLayerPanelLoaded(
     countTargetLayerPanelUiRows() +
     rows.length +
     dbUi +
+    fixedUi +
     optoUi +
     droneUi +
     radarUi
@@ -325,6 +381,8 @@ export function WorkspaceDetails() {
   const routeLines = useAppStore((s) => s.routeLines);
   const dbAreaRows = useDbAreaStore((s) => s.rows);
   const dbAreaVisibility = useDbAreaStore((s) => s.areaVisibility);
+  const dbAreaTargetRows = useDbAreaTargetStore((s) => s.rows);
+  const dbAreaTargetVisibility = useDbAreaTargetStore((s) => s.targetVisibility);
   const optoDeviceVisibility = useOptoDeviceLayerStore((s) => s.deviceVisibility);
   const droneDeviceVisibility = useDroneDeviceLayerStore((s) => s.deviceVisibility);
   const cameraMenuRows = useMapGisCameraMenuStore((s) => s.rows);
@@ -358,6 +416,7 @@ export function WorkspaceDetails() {
   /** 快捷工作流弹窗状态 */
   const [quickWorkflowOpen, setQuickWorkflowOpen] = useState(false);
   const [activeDronesOpen, setActiveDronesOpen] = useState(false);
+  const [gisQuick, setGisQuick] = useState<GisQuickMode>(GIS_QUICK_INITIAL);
   const activeDronesBtnRef = useRef<HTMLButtonElement>(null);
   const activeDronesMenuRef = useRef<HTMLDivElement>(null);
   const [activeDronesAnchor, setActiveDronesAnchor] = useState<{
@@ -367,9 +426,11 @@ export function WorkspaceDetails() {
   } | null>(null);
 
   const droneTaskByEntityId = useEoDroneDdsStatusStore((s) => s.byEntityId);
+  const hadLeftDockByEntityId = useEoDroneDdsStatusStore((s) => s.hadLeftDockByEntityId);
+  const droneDocks = useDroneStore((s) => s.docks);
   const activeDroneItems = useMemo(
-    () => collectActiveDroneListItems(droneTaskByEntityId),
-    [droneTaskByEntityId, droneStoreDrones, droneToAirport],
+    () => collectActiveDroneListItems(droneTaskByEntityId, hadLeftDockByEntityId),
+    [droneTaskByEntityId, hadLeftDockByEntityId, droneStoreDrones, droneToAirport, droneDocks],
   );
 
   useEffect(() => {
@@ -426,6 +487,64 @@ export function WorkspaceDetails() {
     ];
   }, [tracks, alerts, activeDroneItems]);
 
+  const applyTrackQuick = useCallback(
+    (flags: GisTrackQuickFlags) => {
+      applyGisTrackQuickPresets(flags, {
+        cameraIds: cameraMenuIds,
+        radarIds: radarPanelIds,
+      });
+    },
+    [cameraMenuIds, radarPanelIds],
+  );
+
+  const applyCapabilityQuick = useCallback(() => {
+    applyGisCapabilityPreset({
+      assets,
+      cameraIds: cameraMenuIds,
+      droneSns: dronePanelRows.map((r) => r.sn),
+    });
+  }, [assets, cameraMenuIds, dronePanelRows]);
+
+  const clearCapabilityQuick = useCallback(() => {
+    clearGisCapabilitySweeps(cameraMenuIds, radarPanelIds);
+  }, [cameraMenuIds, radarPanelIds]);
+
+  /** 能力模式下雷达在线态变化时同步显隐（避免离线站仍留图标/扫描） */
+  const radarOnlineSig = useMemo(
+    () =>
+      assets
+        .filter((a) => a.asset_type === "radar")
+        .map((a) => `${a.id}:${String(a.status ?? "").toLowerCase()}`)
+        .sort()
+        .join("|"),
+    [assets],
+  );
+
+  useEffect(() => {
+    if (!gisQuick.capability) return;
+    applyCapabilityQuick();
+  }, [gisQuick.capability, radarOnlineSig, applyCapabilityQuick]);
+
+  const onGisQuickCapability = () => {
+    if (gisQuick.capability) {
+      clearCapabilityQuick();
+      setGisQuick((prev) => ({ ...prev, capability: false }));
+      return;
+    }
+    applyCapabilityQuick();
+    setGisQuick({ capability: true, seaRadar: false, seaFusion: false, airFusion: false });
+  };
+
+  const onGisQuickTrack = (key: keyof GisTrackQuickFlags) => {
+    const nextFlags: GisTrackQuickFlags = {
+      seaRadar: key === "seaRadar" ? !gisQuick.seaRadar : gisQuick.seaRadar,
+      seaFusion: key === "seaFusion" ? !gisQuick.seaFusion : gisQuick.seaFusion,
+      airFusion: key === "airFusion" ? !gisQuick.airFusion : gisQuick.airFusion,
+    };
+    applyTrackQuick(nextFlags);
+    setGisQuick({ capability: false, ...nextFlags });
+  };
+
   const assetsLiveStats = useMemo((): StatRow[] => {
     const total = assets.length;
     const pending = assets.filter(
@@ -452,6 +571,7 @@ export function WorkspaceDetails() {
       assets,
       basemapVectorLayers,
       dbAreaRows,
+      dbAreaTargetRows,
       cameraMenuIds,
       dronePanelRows,
       radarPanelIds,
@@ -469,6 +589,8 @@ export function WorkspaceDetails() {
       airFusionSubtypeVisible,
       dbAreaRows,
       dbAreaVisibility,
+      dbAreaTargetRows,
+      dbAreaTargetVisibility,
       optoDeviceVisibility,
       droneDeviceVisibility,
       dronePanelRows,
@@ -497,6 +619,8 @@ export function WorkspaceDetails() {
     routeLines,
     dbAreaRows,
     dbAreaVisibility,
+    dbAreaTargetRows,
+    dbAreaTargetVisibility,
     optoDeviceVisibility,
     droneDeviceVisibility,
     cameraMenuIds,
@@ -572,6 +696,59 @@ export function WorkspaceDetails() {
               </div>
             );
           })}
+
+          {topTab === "situation" ? (
+            <div className="flex items-center gap-1.5 border-l border-nexus-border/80 pl-4">
+              {(
+                [
+                  {
+                    id: "capability" as const,
+                    label: "能力",
+                    title: "隐藏航迹；仅显示在线雷达图标与能力扫描，以及 camera_001 / camera_004 能力（可再次点击取消）",
+                    checked: gisQuick.capability,
+                    onClick: onGisQuickCapability,
+                  },
+                  {
+                    id: "seaRadar" as const,
+                    label: "对海雷达",
+                    title: "显示远遥码头与靖子头雷达航迹",
+                    checked: gisQuick.seaRadar,
+                    onClick: () => onGisQuickTrack("seaRadar"),
+                  },
+                  {
+                    id: "seaFusion" as const,
+                    label: "对海融合",
+                    title: "显示对海融合航迹",
+                    checked: gisQuick.seaFusion,
+                    onClick: () => onGisQuickTrack("seaFusion"),
+                  },
+                  {
+                    id: "airFusion" as const,
+                    label: "对空融合",
+                    title: "显示对空融合航迹",
+                    checked: gisQuick.airFusion,
+                    onClick: () => onGisQuickTrack("airFusion"),
+                  },
+                ] as const
+              ).map((btn) => (
+                <button
+                  key={btn.id}
+                  type="button"
+                  title={btn.title}
+                  aria-pressed={btn.checked}
+                  onClick={btn.onClick}
+                  className={cn(
+                    "rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    btn.checked
+                      ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-200"
+                      : "border-nexus-border bg-nexus-bg-surface/60 text-nexus-text-muted hover:bg-nexus-bg-elevated hover:text-nexus-text-secondary",
+                  )}
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -580,7 +757,7 @@ export function WorkspaceDetails() {
           <>
             <button
               type="button"
-              title="区域标绘：选分组与形状后绘制，写入 area_table；右键取消"
+              title="区域标绘：区域/航线写入 area_table，固定目标写入 area_table_target；右键取消"
               className={cn(
                 situationToolBtn,
                 measureUi.activeDrawTool === "area" || areaDrawing

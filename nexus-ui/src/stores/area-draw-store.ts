@@ -4,8 +4,12 @@ import { create } from "zustand";
 import type { AreaDrawShape } from "@/lib/area-table-serialize";
 import type { DbAreaDrawCompletePayload } from "@/components/map/modules/db-area-draw-maplibre";
 
+export type AreaDrawKind = "area" | "fixed-target";
+
 export type AreaDrawSession = {
+  kind: AreaDrawKind;
   shape: AreaDrawShape;
+  /** kind=area 时使用；fixed-target 占位 */
   groupId: number;
   groupName: string;
   isNewGroup: boolean;

@@ -47,6 +47,9 @@ class TrackParser:
                 return TrackParser._parse_json(data, source_id)
             elif data_format == 'DroneTelemetry':
                 return TrackParser._parse_drone_telemetry(data, source_id)
+            elif data_format in ('SPxTrackExt', 'AutoBirdRadarSPx', 'SPxPacketTrackExtended'):
+                from parsers.spx_track_ext_parser import parse_spx_track_ext_to_tracks
+                return parse_spx_track_ext_to_tracks(data, source_id)
             else:
                 # 尝试JSON解析
                 return TrackParser._parse_json(data, source_id)

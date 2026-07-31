@@ -159,23 +159,53 @@ export function TrackEvalDisplayFilterSection() {
           </div>
 
           <div>
-            <label className="mb-1 block text-[10px] text-nexus-text-muted">航迹 ID</label>
+            <label className="mb-1 block text-[10px] text-nexus-text-muted">
+              融合航迹 ID（target_id / unique_id）
+            </label>
             <input
               type="text"
-              value={df.trackId}
-              onChange={(e) => patchDisplayFilter({ trackId: e.target.value })}
-              placeholder="可输入多个 ID，用逗号分隔，如：1,2,3"
+              value={df.fusionUniqueId}
+              onChange={(e) => patchDisplayFilter({ fusionUniqueId: e.target.value })}
+              placeholder="界面融合批号，如 412331590"
+              className="h-8 w-full rounded-md border border-nexus-border bg-nexus-bg-base px-2 text-xs text-nexus-text-primary"
+            />
+            <p className="mt-0.5 text-[9px] text-nexus-text-muted">
+              对应库表 unique_id，不是 fused_track_id
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[10px] text-nexus-text-muted">雷达航迹 ID</label>
+            <input
+              type="text"
+              value={df.radarTrackId}
+              onChange={(e) => patchDisplayFilter({ radarTrackId: e.target.value })}
+              placeholder="鹏飞/码头/探鸟等雷达批号"
               className="h-8 w-full rounded-md border border-nexus-border bg-nexus-bg-base px-2 text-xs text-nexus-text-primary"
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-[10px] text-nexus-text-muted">唯一 ID</label>
+            <label className="mb-1 block text-[10px] text-nexus-text-muted">AIS ID（对海）</label>
             <input
               type="text"
-              value={df.uniqueId}
-              onChange={(e) => patchDisplayFilter({ uniqueId: e.target.value })}
-              placeholder="可输入多个 ID，用逗号分隔，如：100,200,300"
+              value={df.aisId}
+              onChange={(e) => patchDisplayFilter({ aisId: e.target.value })}
+              placeholder="AIS/MMSI；与融合 unique_id 相同时可只填融合 ID"
+              className="h-8 w-full rounded-md border border-nexus-border bg-nexus-bg-base px-2 text-xs text-nexus-text-primary"
+            />
+            <p className="mt-0.5 text-[9px] text-nexus-text-muted">
+              仅筛 AIS 源点时用；融合目标请优先填上方「融合航迹 ID」
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[10px] text-nexus-text-muted">自报位 ID</label>
+            <input
+              type="text"
+              value={df.selfReportId}
+              onChange={(e) => patchDisplayFilter({ selfReportId: e.target.value })}
+              placeholder="对海船自报 / 对空自报，多个用逗号分隔"
               className="h-8 w-full rounded-md border border-nexus-border bg-nexus-bg-base px-2 text-xs text-nexus-text-primary"
             />
           </div>
@@ -237,7 +267,7 @@ export function TrackEvalDisplayFilterSection() {
           </div>
 
           <p className={cn("text-[9px] leading-snug text-nexus-text-muted/80")}>
-            与 mapbox-vue2 一致：显示筛选在查询完成后应用；gRPC 模式下会带条件重新评估或本地过滤指标。
+            已填的航迹 ID / 属性范围会在「发送查询」时一并带上（gRPC 服务端过滤）。也可查询后再点「开始筛选」收窄结果。
           </p>
         </div>
       ) : null}

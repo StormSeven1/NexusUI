@@ -129,9 +129,9 @@ const TOKEN_MATCH_MAX_DISTANCE_M = 800;
 const PROXIMITY_MATCH_MAX_DISTANCE_M = 250;
 
 /**
- * 地图无人机自报位/高频图标 → 相机跟踪用航迹快照。
+ * 地图无人机高频三角图标 → 相机跟踪用航迹快照。
  * 优先匹配 store 中 `uav_pose_track` / 含自报位源的航迹（按 SN/entityId/名称或近距离），
- * 坐标与速度取当前高频/状态；无匹配时合成自报位航迹（仅 IM，POS 可能因无 numeric target_id 跳过）。
+ * 坐标与速度取当前高频/状态；无匹配时合成占位航迹（target_id=0，靠 lon/lat/alt 引导；POS 跳过）。
  */
 export function resolveTrackForDroneSelfReport(sn: string): Track | null {
   const trimmedSn = sn.trim();
@@ -145,7 +145,11 @@ export function resolveTrackForDroneSelfReport(sn: string): Track | null {
 
   const tokens = collectDroneMatchTokens(trimmedSn);
   const tracks = useTrackStore.getState().tracks;
-  const selfReportTracks = tracks.filter(isSelfReportLayerTrack);
+  /** 优先独立自报位层，避免误命中含自报位源的对空融合导致 ③ 跳过/槽位错乱 */
+  const selfReportTracks = [
+    ...tracks.filter((t) => resolveTrackLayerKey(t) === "uav_pose_track"),
+    ...tracks.filter((t) => resolveTrackLayerKey(t) !== "uav_pose_track" && isSelfReportLayerTrack(t)),
+  ];
 
   for (const t of selfReportTracks) {
     if (!trackMatchesDroneTokens(t, tokens)) continue;

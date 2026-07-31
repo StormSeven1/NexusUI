@@ -2,8 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useAppStore } from "@/stores/app-store";
-import { Map as MapIcon, Globe } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { MapLegendPanel } from "./MapLegendPanel";
 // import { MiniMap } from "./MiniMap"; // 小地图暂隐藏，恢复时取消注释
 
 /** dev 热更新 / 容器重启后浏览器可能仍引用旧 chunk，自动刷新一次 */
@@ -54,7 +53,7 @@ function MapPlaceholder() {
 }
 
 export function MapContainer() {
-  const { mapViewMode, setMapViewMode } = useAppStore();
+  const mapViewMode = useAppStore((s) => s.mapViewMode);
 
   return (
     <div className="relative h-full w-full">
@@ -62,37 +61,10 @@ export function MapContainer() {
         {mapViewMode === "2d" ? <Map2D /> : <Map3D />}
       </div>
 
-      {/* 2D/3D 切换 */}
-      <div className="absolute right-3 top-3 z-10 flex overflow-hidden rounded-md border border-nexus-border nexus-glass">
-        <button
-          onClick={() => setMapViewMode("2d")}
-          className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200",
-            mapViewMode === "2d"
-              ? "bg-nexus-accent-glow text-nexus-text-primary border border-nexus-border-accent"
-              : "text-nexus-text-muted hover:bg-white/5 hover:text-nexus-text-secondary"
-          )}
-        >
-          <MapIcon size={13} />
-          2D
-        </button>
-        <div className="w-px bg-nexus-border" />
-        <button
-          onClick={() => setMapViewMode("3d")}
-          className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200",
-            mapViewMode === "3d"
-              ? "bg-nexus-accent-glow text-nexus-text-primary border border-nexus-border-accent"
-              : "text-nexus-text-muted hover:bg-white/5 hover:text-nexus-text-secondary"
-          )}
-        >
-          <Globe size={13} />
-          3D
-        </button>
-      </div>
-
       {/* 小地图暂隐藏；恢复：取消上面 MiniMap import 注释并取消下一行注释 */}
       {/* <MiniMap /> */}
+
+      <MapLegendPanel />
 
       {/* 中心十字
       <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center">

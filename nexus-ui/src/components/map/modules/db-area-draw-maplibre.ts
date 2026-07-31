@@ -122,6 +122,11 @@ export class DbAreaDrawMaplibre {
 
       if ((this.shape === "polygon" || this.shape === "route") && me.detail === 2) {
         e.preventDefault();
+        /**
+         * 双击结束时，第一下 click（detail=1）已 push 折点；
+         * 若不去掉，终点会叠两个几乎重合的序号（如 4 与 5）。
+         */
+        if (this.points.length > 0) this.points.pop();
         const min = this.shape === "route" ? 2 : 3;
         if (this.points.length >= min) this.finish();
         return;

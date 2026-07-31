@@ -133,12 +133,19 @@ function resolveSeverityFromRaw(o: Record<string, unknown>): "critical" | "warni
         ? Number(alarmLevelRaw.trim())
         : undefined;
 
-  // threatScore>2 → AlarmEvent 威胁分；否则 alarmLevel/threatScore 按 ThreatLevel 枚举
+  // threatScore>2 → AlarmEvent 威胁分（稳定）；勿被每秒重算的 Top5 alarmLevel(0↔5) 覆盖
   if (threatScore != null && Number.isFinite(threatScore) && threatScore > 2) {
     return wsAlertTypeToSeverity(threatScore);
   }
+  // alarmLevel 仅在明确是 ThreatLevel 枚举 0/1/2 时使用；≥3 视为威胁分排名残留
   if (alarmLevel != null && Number.isFinite(alarmLevel)) {
-    return wsAlertTypeToSeverity(alarmLevel);
+    const n = Math.trunc(alarmLevel);
+    if (n === 0 || n === 1 || n === 2) {
+      return wsAlertTypeToSeverity(n);
+    }
+    if (n >= 3) {
+      return "critical";
+    }
   }
   if (threatScore != null && Number.isFinite(threatScore)) {
     return wsAlertTypeToSeverity(threatScore);
@@ -296,7 +303,8 @@ export function normalizeWsAlertItem(raw: unknown): AlertData | null {
     const n = Number(threatScoreRaw.trim());
     if (Number.isFinite(n)) threatScore = n;
   }
-  if (threatScore == null && alarmLevel != null && Number.isFinite(alarmLevel)) {
+  if (threatScore == null && alarmLevel != null && Number.isFinite(alarmLevel) && alarmLevel > 5) {
+    // 仅当 alarmLevel 明显是威胁分（非 Top5 排名 0~5）时回填
     threatScore = alarmLevel;
   }
 

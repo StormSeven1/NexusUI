@@ -69,6 +69,7 @@ const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
   "fuse_sea",
   "fuse_air",
   "bird_radar",
+  "auto_bird_radar",
   "fanwu_car_radar",
   "radar_wharf",
   "radar_jingzi",
@@ -118,11 +119,11 @@ function surfaceKindFromDdsOrTrackLayerKey(rec: Record<string, unknown>): Track[
   if (typeof ddsRaw === "string") {
     const rid = ddsRaw.trim().toLowerCase();
     const lk = TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[rid];
-    if (lk === "fuse_air" || lk === "bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track") return "air";
+    if (lk === "fuse_air" || lk === "bird_radar" || lk === "auto_bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track") return "air";
     if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track" || lk === "boat_self_track" || lk === "xpf_track") return "sea";
   }
   const tlk = readTrackLayerKey(rec);
-  if (tlk === "fuse_air" || tlk === "bird_radar" || tlk === "fanwu_car_radar" || tlk === "uav_pose_track") return "air";
+  if (tlk === "fuse_air" || tlk === "bird_radar" || tlk === "auto_bird_radar" || tlk === "fanwu_car_radar" || tlk === "uav_pose_track") return "air";
   if (tlk === "fuse_sea" || tlk === "radar_wharf" || tlk === "radar_jingzi" || tlk === "ais_track" || tlk === "boat_self_track" || tlk === "xpf_track") return "sea";
   return undefined;
 }
@@ -322,6 +323,23 @@ function resolveUniqueID(rec: Record<string, unknown>): string {
 }
 
 /**
+ * store 主键（showID/id）命名空间。
+ *
+ * 根因：发布端对「原始传感器点」（远遥/靖子头雷达、探鸟、AIS、xpf…）与「融合航迹」分配的是
+ * **同一个全局唯一 id 池**——同一物理目标的原始雷达点 `uniqueId` 与其对海融合航迹 `target_id` 取值相同。
+ * 而前端 `showID = uniqueID`，两者落在同一 store key → 互相覆盖 → 雷达与对海融合「交替显示」。
+ *
+ * 修法：仅对**非融合图层**的 store key 追加 `图层:` 前缀，使雷达点与融合航迹落在不同 key、可并存同显；
+ * `uniqueID` / `trackId` 保持原值（告警、相机任务、fusionSources 匹配均不受影响）；
+ * `fuse_sea` / `fuse_air` 保持原 key（它们是被告警/相机引用的权威航迹，不能改键）。
+ * 与传输方式（DDS / gRPC）无关，故雷达无论走哪条链路都不再撞。
+ */
+function namespacedStoreKey(rawKey: string, layer: TrackLayerKey | undefined): string {
+  if (!layer || layer === "fuse_sea" || layer === "fuse_air") return rawKey;
+  return `${layer}:${rawKey}`;
+}
+
+/**
  * 将单条 WS 航迹（含不完整字段）规范为 `Track`。
  *
  * 数据传递：WS 报文 → 此函数 → Track → track-store → 地图渲染 + UI 组件
@@ -335,7 +353,7 @@ function resolveUniqueID(rec: Record<string, unknown>): string {
  *   - heading: 图标渲染航向（对空=course+offset）
  *   - sensorValue: 传感器信息（有 fusionSources 时为 "源名(trackId)" 格式）
  */
-export function normalizeIncomingTrack(raw: unknown): Track | null {
+export function normalizeIncomingTrack(raw: unknown, wsRecvMs?: number): Track | null {
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as Record<string, unknown>;
 
@@ -454,9 +472,11 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
           : undefined),
   );
 
+  const storeKey = namespacedStoreKey(showID, resolvedTrackLayerKey);
+
   return {
-    id: showID,
-    showID,
+    id: storeKey,
+    showID: storeKey,
     uniqueID,
     ...(trackIdStr ? { trackId: trackIdStr } : {}),
     ...(externalTargetIdStr ? { externalTargetId: externalTargetIdStr } : {}),
@@ -487,15 +507,40 @@ export function normalizeIncomingTrack(raw: unknown): Track | null {
     ...(trackCategoryId !== undefined ? { trackCategoryId } : {}),
     ...(classifiedType !== undefined ? { classifiedType } : {}),
     ...(targetState ? { targetState } : {}),
+    ...(() => {
+      const trackCreatedMs = parseEpochMsField(rec, "track_created_time_ms", "trackCreatedMs");
+      const trackSourceRecvMs = parseEpochMsField(rec, "track_source_recv_time_ms", "trackSourceRecvMs");
+      const trackGrpcSendMs = parseEpochMsField(rec, "track_grpc_send_time_ms", "trackGrpcSendMs");
+      const backendRecvMs = parseEpochMsField(rec, "backend_recv_ms", "backendRecvMs");
+      return {
+        ...(trackCreatedMs !== undefined ? { trackCreatedMs } : {}),
+        ...(trackSourceRecvMs !== undefined ? { trackSourceRecvMs } : {}),
+        ...(trackGrpcSendMs !== undefined ? { trackGrpcSendMs } : {}),
+        ...(backendRecvMs !== undefined ? { backendRecvMs } : {}),
+        ...(wsRecvMs !== undefined ? { wsRecvMs } : {}),
+      };
+    })(),
   };
 }
 
+/** 报文 epoch ms 字段（snake / camel）→ 正数毫秒。 */
+function parseEpochMsField(
+  rec: Record<string, unknown>,
+  snake: string,
+  camel: string,
+): number | undefined {
+  const v = rec[snake] ?? rec[camel];
+  if (v == null) return undefined;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 /** 批量规范化：WS 航迹数组 → Track[]，过滤掉无效航迹 */
-export function normalizeIncomingTrackList(list: unknown): Track[] {
+export function normalizeIncomingTrackList(list: unknown, wsRecvMs?: number): Track[] {
   if (!Array.isArray(list)) return [];
   const out: Track[] = [];
   for (const item of list) {
-    const t = normalizeIncomingTrack(item);
+    const t = normalizeIncomingTrack(item, wsRecvMs);
     if (t) out.push(t);
   }
   return out;

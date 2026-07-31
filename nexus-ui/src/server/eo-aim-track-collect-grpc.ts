@@ -36,6 +36,10 @@ let activeStream: grpc.ClientDuplexStream<
   AimTrackCollectGrpcResponse
 > | null = null;
 let pending: PendingCollect | null = null;
+const waitQueue: Array<{
+  params: AimTrackCollectRequest;
+  resolve: (result: AimTrackCollectGrpcResult) => void;
+}> = [];
 
 const DEFAULT_GRPC_ADDR = "192.168.18.108:50055";
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -160,22 +164,31 @@ function ensureStream(target: string): void {
   });
 }
 
+function pumpWaitQueue(): void {
+  if (pending || waitQueue.length === 0) return;
+  const next = waitQueue.shift();
+  if (!next) return;
+  void sendAimTrackCollectViaGrpc(next.params).then(next.resolve);
+}
+
 export function sendAimTrackCollectViaGrpc(
   params: AimTrackCollectRequest,
 ): Promise<AimTrackCollectGrpcResult> {
   const target = getAimTrackCollectGrpcTarget();
   if (pending) {
-    return Promise.resolve({
-      ok: false,
-      target,
-      error: "aim_track_collect_busy",
-      detail: "another aim track collect request is in progress",
+    return new Promise((resolve) => {
+      waitQueue.push({ params, resolve });
     });
   }
 
   ensureStream(target);
 
   return new Promise((resolve) => {
+    const finish = (result: AimTrackCollectGrpcResult) => {
+      resolve(result);
+      pumpWaitQueue();
+    };
+
     const timer = setTimeout(() => {
       if (!pending) return;
       const current = pending;
@@ -188,7 +201,7 @@ export function sendAimTrackCollectViaGrpc(
       });
     }, REQUEST_TIMEOUT_MS);
 
-    pending = { params, resolve, timer };
+    pending = { params, resolve: finish, timer };
     try {
       console.info("[eo-aim-track-collect] send gRPC", {
         target,
@@ -202,7 +215,7 @@ export function sendAimTrackCollectViaGrpc(
       clearTimeout(timer);
       pending = null;
       resetStream();
-      resolve({
+      finish({
         ok: false,
         target,
         error: "grpc_write_failed",

@@ -1,17 +1,17 @@
 import type { Track } from "@/lib/map-entity-model";
-import { resolveTrackMapHighlightFill, shouldApplySuspiciousTrackGreen } from "@/lib/track-map-highlight-color";
-import { isTrackOpticallyVerified } from "@/stores/verified-track-store";
+import { resolveTrackMapHighlightFill } from "@/lib/track-map-highlight-color";
 import { VERIFIED_TRACK_MAP_COLOR } from "@/lib/verified-track-constants";
-import { isTrackAlarmLinked } from "@/stores/track-store";
 
 export { VERIFIED_TRACK_MAP_COLOR };
 
-/** 地图是否标黄：已光电查证，且非告警/可疑（蓝 > 绿 > 黄） */
-export function shouldApplyVerifiedTrackYellow(track: Pick<Track, "uniqueID" | "showID">): boolean {
-  if (!isTrackOpticallyVerified(track)) return false;
-  if (isTrackAlarmLinked(track as Track)) return false;
-  if (shouldApplySuspiciousTrackGreen(track)) return false;
-  return true;
+/**
+ * 查证目标不再标黄（恒 false）。
+ * 保留函数名以兼容军标/列表调用点；黄色已改用于重点关注。
+ */
+export function shouldApplyVerifiedTrackYellow(
+  _track: Pick<Track, "uniqueID" | "showID">,
+): boolean {
+  return false;
 }
 
 /** @deprecated 请用 shouldApplyVerifiedTrackYellow */

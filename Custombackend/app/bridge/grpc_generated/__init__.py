@@ -1,1 +1,1 @@
-"""EntityStatus gRPC generated modules."""
+"""gRPC generated modules (entity_status / target_stream)."""

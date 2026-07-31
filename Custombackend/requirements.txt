@@ -46,6 +46,7 @@ matplotlib==3.8.2
 mcp==1.25.0
 multidict==6.7.0
 numpy==1.26.4
+orjson==3.11.4
 opencv-python==4.10.0.84
 packaging==25.0
 paho-mqtt==2.1.0

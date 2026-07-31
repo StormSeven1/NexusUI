@@ -144,8 +144,18 @@ export interface UavMqttTelemetry {
   attitudeHeadDeg: number | null;
   /** 相对起飞点高度（米） */
   elevationM: number | null;
-  /** 海拔绝对高度（米） */
+  /** 海拔绝对高度（米）；航迹投影算法用此字段作为 UAV_height */
   heightM: number | null;
+  /** 机体经度（OSD data.longitude；航迹投影用） */
+  longitude: number | null;
+  /** 机体纬度（OSD data.latitude；航迹投影用） */
+  latitude: number | null;
+  /** 主摄云台 roll（data["81-0-0"] / "80-0-0".gimbal_roll） */
+  gimbalRollDeg: number | null;
+  /** 主摄云台 pitch */
+  gimbalPitchDeg: number | null;
+  /** 主摄云台 yaw */
+  gimbalYawDeg: number | null;
   /** 垂直速度（m/s，上升正） */
   verticalSpeedMps: number | null;
   /** 水平速度（m/s） */
@@ -170,6 +180,11 @@ const TELEMETRY_INITIAL: UavMqttTelemetry = {
   attitudeHeadDeg: null,
   elevationM: null,
   heightM: null,
+  longitude: null,
+  latitude: null,
+  gimbalRollDeg: null,
+  gimbalPitchDeg: null,
+  gimbalYawDeg: null,
   verticalSpeedMps: null,
   horizontalSpeedMps: null,
   droneWindSpeedMps: null,
@@ -212,6 +227,28 @@ function extractDroneTelemetry(root: unknown): Partial<UavMqttTelemetry> | null 
     if (typeof rft === "number" && Number.isFinite(rft)) remainFlightTimeSec = rft;
     else if (typeof rft === "string") { const n = Number(rft); if (Number.isFinite(n)) remainFlightTimeSec = n; }
   }
+  /** 主摄载荷：多数机型 81-0-0，个别 80-0-0（与 uavMainPayloadIndexForDrone 一致） */
+  const payloadRaw = data["81-0-0"] ?? data["80-0-0"] ?? null;
+  let gimbalRollDeg: number | null = null;
+  let gimbalPitchDeg: number | null = null;
+  let gimbalYawDeg: number | null = null;
+  if (payloadRaw != null && typeof payloadRaw === "object" && !Array.isArray(payloadRaw)) {
+    const pl = payloadRaw as Record<string, unknown>;
+    const gn = (k: string): number | null => {
+      const v = pl[k];
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+      if (typeof v === "string") {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
+    };
+    gimbalRollDeg = gn("gimbal_roll");
+    gimbalPitchDeg = gn("gimbal_pitch");
+    gimbalYawDeg = gn("gimbal_yaw");
+  }
+  const latitude = getNum("latitude");
+  const longitude = getNum("longitude");
   const result: Partial<UavMqttTelemetry> = {
     batteryPercent,
     remainFlightTimeSec,
@@ -219,6 +256,11 @@ function extractDroneTelemetry(root: unknown): Partial<UavMqttTelemetry> | null 
     attitudeHeadDeg: getNum("attitude_head"),
     elevationM: getNum("elevation"),
     heightM: getNum("height"),
+    latitude,
+    longitude,
+    gimbalRollDeg,
+    gimbalPitchDeg,
+    gimbalYawDeg,
     verticalSpeedMps: getNum("vertical_speed"),
     horizontalSpeedMps: getNum("horizontal_speed"),
     droneWindSpeedMps: getNum("wind_speed"),

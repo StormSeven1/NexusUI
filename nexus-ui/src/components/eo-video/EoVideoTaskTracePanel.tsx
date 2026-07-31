@@ -24,6 +24,7 @@ export function EoVideoTaskTracePanel({
   trace,
   clientEcho,
   uavMqttStatus,
+  streamKindLine,
   detectionWsLine,
   detectionWsTitle,
   className,
@@ -33,6 +34,8 @@ export function EoVideoTaskTracePanel({
   clientEcho?: string;
   /** 当前无人机 MQTT 连接与最近一帧（无报文/无舱字段时写「无」） */
   uavMqttStatus?: string;
+  /** 第三方等：UDP 图传 / WebRTC 分流说明 */
+  streamKindLine?: string;
   /** 检测 WebSocket 状态一行（如 OPEN / 缓冲数），悬停可看详情 */
   detectionWsLine?: string;
   detectionWsTitle?: string;
@@ -56,6 +59,11 @@ export function EoVideoTaskTracePanel({
           <span className="text-[9px] text-nexus-text-muted">等待发送</span>
         )}
       </div>
+      {streamKindLine?.trim() ? (
+        <pre className="mb-1 max-h-12 overflow-auto whitespace-pre-wrap break-all rounded border border-sky-500/25 bg-black/40 p-1.5 font-mono text-[9px] leading-tight text-sky-200/90">
+          {streamKindLine.trim()}
+        </pre>
+      ) : null}
       {detectionWsLine?.trim() ? (
         <pre
           className="mb-1 max-h-16 overflow-auto whitespace-pre-wrap break-all rounded border border-emerald-500/20 bg-black/40 p-1.5 font-mono text-[9px] leading-tight text-emerald-200/90"

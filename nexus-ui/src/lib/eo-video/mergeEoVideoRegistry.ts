@@ -2,6 +2,7 @@ import type { EoCameraRegistryRow } from "./cameraRegistryTypes";
 import type { EoDroneDeviceRow } from "./droneRegistryTypes";
 import { isCameraEntityId } from "./mapEntitiesToCameraDevices";
 import { getThirdPartyCameraMulticastUdp } from "./thirdPartyCameraMulticast";
+import { normThirdPartyEntityId } from "./thirdPartyEntityId";
 import type { EoVideoStreamEntry, EoVideoStreamsConfig } from "./types";
 
 export type ThirdPartyCamerasRegistryInput = {
@@ -23,12 +24,16 @@ function normalizeThirdPartyRegistryInput(
 
 /** 去掉从注册表合并的相机/无人机流（保留 JSON 静态流） */
 export function stripRegistryStreams(c: EoVideoStreamsConfig): EoVideoStreamsConfig {
+  /**
+   * 只按 registrySource 剥离；不要用 `uav:` 前缀清掉无 source 的占位流。
+   * 刷新后记忆流常是 `uav:…`，注册表未到前需占位；若按前缀 strip，会落到 dock 默认
+   * camera_004 并写回 localStorage，冲掉无人机记忆（相机 id 不受此影响故能记住）。
+   */
   const streams = c.streams.filter(
     (s) =>
       s.registrySource !== "camera" &&
       s.registrySource !== "uav" &&
-      s.registrySource !== "thirdPartyCamera" &&
-      !s.id.startsWith("uav:"),
+      s.registrySource !== "thirdPartyCamera",
   );
   return { ...c, streams };
 }
@@ -47,7 +52,10 @@ async function fetchCameraRegistryFromStaticFile(): Promise<EoCameraRegistryRow[
 /** 8090 实时光电相机列表（`NEXUS_ENTITIES_LIST_URL`） */
 export async function fetchCameraRegistryFromApi(): Promise<EoCameraRegistryRow[]> {
   try {
-    const r = await fetch("/api/nexus-entities/opto-cameras", { cache: "no-store" });
+    const r = await fetch("/api/nexus-entities/opto-cameras", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!r.ok) return [];
     const j = (await r.json()) as { ok?: boolean; cameras?: EoCameraRegistryRow[] };
     if (j.ok !== true || !Array.isArray(j.cameras)) return [];
@@ -97,7 +105,10 @@ async function fetchDroneDevicesFromStaticFile(): Promise<EoDroneDeviceRow[]> {
 /** 8090 实时无人机列表（`NEXUS_ENTITIES_LIST_URL`，`indicators.simulated === false`） */
 export async function fetchDroneDevicesFromApi(): Promise<EoDroneDeviceRow[]> {
   try {
-    const r = await fetch("/api/nexus-entities/drones", { cache: "no-store" });
+    const r = await fetch("/api/nexus-entities/drones", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!r.ok) return [];
     const j = (await r.json()) as { ok?: boolean; devices?: EoDroneDeviceRow[] };
     if (j.ok !== true || !Array.isArray(j.devices)) return [];
@@ -110,7 +121,10 @@ export async function fetchDroneDevicesFromApi(): Promise<EoDroneDeviceRow[]> {
 /** 资产列表侧边栏：含 `indicators.simulated === true` 的虚兵无人机 */
 export async function fetchDroneDevicesForAssetPanel(): Promise<EoDroneDeviceRow[]> {
   try {
-    const r = await fetch("/api/nexus-entities/drones?includeSimulated=1", { cache: "no-store" });
+    const r = await fetch("/api/nexus-entities/drones?includeSimulated=1", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!r.ok) return [];
     const j = (await r.json()) as { ok?: boolean; devices?: EoDroneDeviceRow[] };
     if (j.ok !== true || !Array.isArray(j.devices)) return [];
@@ -150,7 +164,10 @@ export async function fetchDroneDevicesFromPublic(): Promise<EoDroneDeviceRow[]>
 /** 服务端走 `NEXUS_ENTITIES_LIST_URL`（见 `/api/nexus-entities/third-party-cameras`） */
 export async function fetchThirdPartyCamerasFromApi(): Promise<Required<ThirdPartyCamerasRegistryInput>> {
   try {
-    const r = await fetch("/api/nexus-entities/third-party-cameras", { cache: "no-store" });
+    const r = await fetch("/api/nexus-entities/third-party-cameras", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
     if (!r.ok) return { udp: [], webrtc: [] };
     const j = (await r.json()) as {
       ok?: boolean;
@@ -197,10 +214,41 @@ export function mergeRegistryStreams(
   const thirdParty = normalizeThirdPartyRegistryInput(thirdPartyCameras);
   const apiCameraIdSet = new Set(apiCameras.map((c) => c.entityId));
 
-  const stripped = stripRegistryStreams(base);
-  const staticStreams = stripped.streams.filter(
-    (s) => !(isCameraEntityId(s.id) && apiCameraIdSet.has(s.id)),
+  const thirdPartyMulticast = getThirdPartyCameraMulticastUdp();
+  const apiThirdPartyUdpStreams: EoVideoStreamEntry[] = thirdParty.udp.map((c) => ({
+    id: c.entityId,
+    label: c.label,
+    signalingUrl: "",
+    registrySource: "thirdPartyCamera",
+    ...(thirdPartyMulticast ? { multicastUdp: thirdPartyMulticast } : {}),
+  }));
+  const apiThirdPartyWebrtcStreams: EoVideoStreamEntry[] = thirdParty.webrtc.map((c) => ({
+    id: c.entityId,
+    label: c.label,
+    signalingUrl: c.signalingUrl?.trim() || "about:blank",
+    registrySource: "thirdPartyCamera",
+    playbackKind: "webrtc" as const,
+  }));
+  const apiThirdPartyStreams = [...apiThirdPartyUdpStreams, ...apiThirdPartyWebrtcStreams];
+  const thirdPartyIdSet = new Set(apiThirdPartyStreams.map((s) => s.id));
+  const thirdPartyNormSet = new Set(
+    apiThirdPartyStreams.map((s) => normThirdPartyEntityId(s.id)).filter(Boolean),
   );
+
+  const stripped = stripRegistryStreams(base);
+  /**
+   * 有实时列表时丢弃静态/记忆占位，避免与 API 流同 id 重复。
+   * 刷新记忆的 camera-hs-00x 常以无 registrySource 的 seed 进 streams；若不剔除，
+   * findStreamById 会命中 seed → 不走 UDP 栈 → 黑屏。
+   */
+  const staticStreams = stripped.streams.filter((s) => {
+    if (isCameraEntityId(s.id) && apiCameraIdSet.has(s.id)) return false;
+    if (thirdPartyIdSet.has(s.id)) return false;
+    const norm = normThirdPartyEntityId(s.id);
+    if (norm && thirdPartyNormSet.has(norm)) return false;
+    if (s.id.startsWith("uav:") && apiDrones.length > 0) return false;
+    return true;
+  });
 
   const baseById = new Map(base.streams.map((s) => [s.id, s]));
 
@@ -220,23 +268,6 @@ export function mergeRegistryStreams(
     };
   });
 
-  const thirdPartyMulticast = getThirdPartyCameraMulticastUdp();
-  const apiThirdPartyUdpStreams: EoVideoStreamEntry[] = thirdParty.udp.map((c) => ({
-    id: c.entityId,
-    label: c.label,
-    signalingUrl: "",
-    registrySource: "thirdPartyCamera",
-    ...(thirdPartyMulticast ? { multicastUdp: thirdPartyMulticast } : {}),
-  }));
-  const apiThirdPartyWebrtcStreams: EoVideoStreamEntry[] = thirdParty.webrtc.map((c) => ({
-    id: c.entityId,
-    label: c.label,
-    signalingUrl: c.signalingUrl?.trim() || "about:blank",
-    registrySource: "thirdPartyCamera",
-    playbackKind: "webrtc" as const,
-  }));
-  const apiThirdPartyStreams = [...apiThirdPartyUdpStreams, ...apiThirdPartyWebrtcStreams];
-
   const apiUavStreams: EoVideoStreamEntry[] = apiDrones.map((d) => ({
     id: `uav:${d.entityId}`,
     label: d.name?.trim() || d.entityId,
@@ -252,7 +283,6 @@ export function mergeRegistryStreams(
     },
   }));
 
-  const thirdPartyIdSet = new Set(apiThirdPartyStreams.map((s) => s.id));
   const streams = [...staticStreams, ...apiCameraStreams, ...apiThirdPartyStreams, ...apiUavStreams];
   const ids = new Set(streams.map((s) => s.id));
 
@@ -307,8 +337,7 @@ export function stripDroneStreamsFromConfig(c: EoVideoStreamsConfig): EoVideoStr
     (s) =>
       s.registrySource !== "camera" &&
       s.registrySource !== "uav" &&
-      s.registrySource !== "thirdPartyCamera" &&
-      !s.id.startsWith("uav:"),
+      s.registrySource !== "thirdPartyCamera",
   );
   const groups = c.contextMenu.groups.filter(
     (g) => g.label !== "无人机" && g.label !== "光电" && g.label !== "第三方相机",

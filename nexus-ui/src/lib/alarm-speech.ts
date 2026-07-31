@@ -74,6 +74,8 @@ export function seedSpokenAlarmIds(alarmIds: Iterable<string>): void {
  * 按 alarm_id（AlertData.id）仅播报一次；返回是否已入队。
  */
 export function announceAlarmOnce(alert: AlertData, tracks: readonly Track[]): boolean {
+  // 系统告警（装备/通信等）暂不走航迹威胁播报文案
+  if (alert.source === "SystemAlarm") return false;
   const alarmId = alert.id.trim();
   if (!alarmId || spokenAlarmIds.has(alarmId)) return false;
   spokenAlarmIds.add(alarmId);

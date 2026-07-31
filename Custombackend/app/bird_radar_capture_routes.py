@@ -25,7 +25,7 @@ class CaptureStopBody(BaseModel):
 
 @router.get("/check")
 async def capture_check():
-    """检查当前是否满足采集条件（对空融合含自报位+探鸟）。"""
+    """检查当前是否满足采集条件（自报位+探鸟自动真值，或手动标为无人机）。"""
     result = capture_manager.check_can_start()
     code = 200 if result.get("ok") else 400
     return JSONResponse(status_code=code, content={"code": code, **result, "timestamp": datetime.now().isoformat()})

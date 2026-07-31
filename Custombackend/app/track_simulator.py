@@ -113,7 +113,7 @@ class TrackSimulator:
             ">IBBBBffffffIIBBHIII",
             track_id,
             1,
-            0,
+            2,  # status: ESTABLISHED（0=DELETED 会被接收端丢弃）
             1,
             0,
             1000.0,
@@ -180,7 +180,7 @@ class TrackSimulator:
         total_size = 16 + len(body)
         header = struct.pack(
             ">HHIII",
-            0xA55A,
+            0x4342,  # SPX_PACKET_MAGIC_B = 'CB'
             RDR_PACKET_TYPEB_TRACK_EXT,
             total_size,
             now_sec,

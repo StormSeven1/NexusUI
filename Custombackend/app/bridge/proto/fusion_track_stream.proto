@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package trackmanager.grpc.fusion_track;
+
+// TrackDataClass mirrors dds/TrackRealTimeStatus.idl.
+// Source metadata stays in the stream wrapper so the DDS-equivalent body stays unchanged.
+
+message SubscribeFusionTrackRequest {}
+
+message TrackDataClass {
+  uint32 trackId = 1;
+  uint32 mmsi = 2;
+  uint32 uniqueId = 3;
+  double longitude = 4;
+  double latitude = 5;
+  double course = 6;
+  double distance = 7;
+  double speed = 8;
+  double speed_N = 9;
+  double speed__E = 10;
+  double speed_V = 11;
+  double height = 12;
+  double azimuth = 13;
+  double range = 14;
+  double sizeMetres = 15;
+  double sizeDegrees = 16;
+  string radarId = 17;
+  uint32 dotID = 18;
+  uint32 trackQuality = 19;
+  uint32 fusion = 20;
+  uint32 sensors = 21;
+  repeated uint32 trackID = 22;
+  uint32 timeStamp = 23;
+  double threatScore = 24;
+  uint32 threatLevel = 25;
+  uint32 trackCategoryId = 26;
+  string trackCategoryName = 27;
+  string trackAlias = 28;
+  bool isManual = 29;
+  string modifiedBy = 30;
+  uint32 modifiedTime = 31;
+  uint32 reserved0 = 32;
+  uint32 reserved1 = 33;
+  double reserved2 = 34;
+  double reserved3 = 35;
+  uint32 reserved4 = 36;
+  uint32 reserved5 = 37;
+  string reserved6 = 38;
+}
+
+message TrackDataClassSource {
+  string dataSourceId = 1;
+  string sourceId = 2;
+  string streamName = 3;
+}
+
+message TrackDataClassBatch {
+  repeated TrackDataClass tracks = 1;
+  repeated TrackDataClassSource sources = 2;
+}
+
+service FusionTrackStreamService {
+  rpc Subscribe(SubscribeFusionTrackRequest) returns (stream TrackDataClassBatch);
+}

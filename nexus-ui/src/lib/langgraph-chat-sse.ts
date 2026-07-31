@@ -129,11 +129,16 @@ export function parseSseDataLine(trimmed: string): Record<string, unknown> | nul
   }
 }
 
-/** 上游可能发 [DONE] 或带 event 的结束帧；interrupt 需由调用方单独处理（不关流） */
+/** 上游可能发 [DONE] 或带 event 的结束帧；interrupt 本身不是流结束 */
 export function isLangGraphSseTerminalEvent(obj: Record<string, unknown>): boolean {
   const ev = String(obj.event ?? "").toLowerCase();
+  if (ev === "interrupt") return false;
   if (ev === "error" || ev === "done" || ev === "stream_end" || ev === "complete" || ev === "end") {
     return true;
+  }
+  // 仅工作流进度类用 status 判断结束，避免 chat_notification 等误伤
+  if (ev && ev !== "workflow_update" && ev !== "workflow_started" && ev !== "workflow_start") {
+    return false;
   }
   const data = obj.data;
   if (data && typeof data === "object") {
@@ -157,7 +162,7 @@ export type LangGraphInterruptUiPayload = {
   mainInterruptId: string;
   threadId: string;
   nodeName?: string;
-  /** 弹窗确认后用于查证 SSE 路由（无人机管理软件常不带 taskID） */
+  /** 确认后用于查证 SSE 路由（无人机管理软件常不带 taskID） */
   verifyEntityIds: string[];
 };
 
@@ -201,7 +206,8 @@ export function parseLangGraphInterruptEvent(obj: Record<string, unknown>): Lang
 }
 
 export type LangGraphSseConsumeResult = {
-  reason: "http_done" | "idle_timeout" | "terminal_event" | "interrupt" | "cancelled";
+  /** interrupt 不再作为流结束原因：与 Qt 一致，中断后继续读同一条 SSE */
+  reason: "http_done" | "idle_timeout" | "terminal_event" | "cancelled";
   eventCount: number;
 };
 
@@ -233,6 +239,7 @@ export async function consumeLangGraphSseStream(
   let stopReason: LangGraphSseConsumeResult["reason"] = "http_done";
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let cancelledByIdle = false;
+  let sawInterrupt = false;
 
   const clearIdle = () => {
     if (idleTimer != null) {
@@ -278,12 +285,18 @@ export async function consumeLangGraphSseStream(
         const chunk = await reader.read();
         done = chunk.done;
         value = chunk.value;
-      } catch {
+      } catch (readErr) {
         if (cancelledByIdle || opts?.signal?.aborted) {
           stopReason = cancelledByIdle ? "idle_timeout" : "cancelled";
           break;
         }
-        throw new Error("SSE read failed");
+        // interrupt 之后上游常会在收到 feedback 时关掉原连接，属预期，勿当成失败
+        if (sawInterrupt) {
+          stopReason = "http_done";
+          break;
+        }
+        const detail = readErr instanceof Error ? readErr.message : String(readErr);
+        throw new Error(`SSE read failed${detail ? `: ${detail}` : ""}`);
       }
 
       if (done) {
@@ -304,7 +317,10 @@ export async function consumeLangGraphSseStream(
         if (line === "data: [DONE]" || line === "data:[DONE]") {
           stopReason = "terminal_event";
           clearIdle();
-          await cancelReader();
+          // interrupt 之后勿强行 cancel：易触发 ERR_INCOMPLETE_CHUNKED_ENCODING
+          if (!sawInterrupt) {
+            await cancelReader();
+          }
           return { reason: stopReason, eventCount };
         }
 
@@ -317,20 +333,21 @@ export async function consumeLangGraphSseStream(
         }
 
         if (String(parsed.event ?? "") === "interrupt") {
+          // interrupt 只在助手内展示确认按钮，原 SSE 继续 readyRead。
+          // 若此处 return 并 releaseLock 却不读 body，会背压代理/上游，随后 interrupt_feedback
+          // 常挂起数分钟直至超时 → net::ERR_INCOMPLETE_CHUNKED_ENCODING。
+          sawInterrupt = true;
           await onParsed(parsed);
-          stopReason = "interrupt";
-          clearIdle();
-          // 不要 reader.cancel()：强制掐断会让任务管理丢掉等待中的 interrupt 状态，
-          // 随后 interrupt_feedback 会一直挂起、无 SSE（与 Qt 保持原连接不同）。
-          // 由调用方在恢复成功后再 abort 原 AbortController。
-          return { reason: stopReason, eventCount };
+          continue;
         }
 
         if (isLangGraphSseTerminalEvent(parsed)) {
           await onParsed(parsed);
           stopReason = "terminal_event";
           clearIdle();
-          await cancelReader();
+          if (!sawInterrupt) {
+            await cancelReader();
+          }
           return { reason: stopReason, eventCount };
         }
 

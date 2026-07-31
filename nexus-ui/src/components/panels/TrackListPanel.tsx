@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackStore, getTrackDispositionForRendering, isTrackAlarmLinked } from "@/stores/track-store";
 import {
-  getFusionTrackMarkerFill,
   resolveTrackPointFill,
   isSeaTrackBuoyGlyph,
   isSeaTrackReefGlyph,
@@ -21,14 +20,16 @@ import { MilSymbol } from "@/components/military/MilSymbol";
 import { LYR_TRACKS, trackMapDisplayId, type Track } from "@/lib/map-entity-model";
 import {
   useTrackDisplayStore,
+  neutralColorForLayer,
   neutralFusionColorForTrack,
-  uavPoseTrackDotColor,
 } from "@/stores/track-display-store";
 import { isTrackVirtualTroop } from "@/lib/track-reality-type";
 import { formatTrackSpeed } from "@/lib/track-speed-format";
 import {
   effectiveTrackLayerKey,
+  isAisTrackLayerKey,
   isDotTrackLayerKey,
+  isNonMilSymbolTrackLayerKey,
   isTrackVisibleBySubtype,
   resolveTrackLayerKey,
   TRACK_SUBTYPE_LABELS,
@@ -59,13 +60,14 @@ function TrackListRow({
   const disp = getTrackDispositionForRendering(track);
   const td = useTrackDisplayStore();
   const layerKey = effectiveTrackLayerKey(track);
+  const aisRow = isAisTrackLayerKey(layerKey);
   const dotRow = isDotTrackLayerKey(layerKey);
   const dotFill = resolveVerifiedTrackPointFill(
     track,
-    layerKey === "uav_pose_track"
-      ? uavPoseTrackDotColor(td)
+    isNonMilSymbolTrackLayerKey(layerKey)
+      ? neutralColorForLayer(layerKey, td.neutralColorByLayer)
       : disp === "neutral"
-        ? neutralFusionColorForTrack(track, td.seaFusionColor, td.airFusionColor)
+        ? neutralFusionColorForTrack(track, td.neutralColorByLayer, td.airFusionNeutralColorBySubtype)
         : resolveTrackPointFill(track, disp, null, undefined),
   );
   return (
@@ -79,7 +81,22 @@ function TrackListRow({
           : "hover:bg-nexus-bg-elevated"
       )}
     >
-      {dotRow ? (
+      {aisRow ? (
+        <svg
+          className="mt-0.5 h-3.5 w-3.5 shrink-0"
+          viewBox="0 0 14 14"
+          aria-hidden
+        >
+          <title>{TRACK_SUBTYPE_LABELS[layerKey]}</title>
+          <polygon
+            points="7,1.5 12.5,12.5 1.5,12.5"
+            fill="none"
+            stroke={dotFill}
+            strokeWidth="1.6"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : dotRow ? (
         <span
           className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-black/35"
           style={{ backgroundColor: dotFill }}
@@ -101,7 +118,15 @@ function TrackListRow({
             track.type === "sea" &&
             isSeaTrackReefGlyph(track)
           }
-          neutralFusionFill={disp === "neutral" ? getFusionTrackMarkerFill(track) : undefined}
+          neutralFusionFill={
+            disp === "neutral"
+              ? neutralFusionColorForTrack(
+                  track,
+                  td.neutralColorByLayer,
+                  td.airFusionNeutralColorBySubtype,
+                )
+              : undefined
+          }
           opticallyVerified={shouldApplyVerifiedTrackYellow(track)}
           size="sm"
           className="mt-0.5 shrink-0"

@@ -14,7 +14,7 @@ import {
 } from "@/stores/eo-video-panel-focus-store";
 import { EoVideoSmartWindowToggle } from "@/components/eo-video/EoVideoSmartWindowToggle";
 
-/** 右侧竖条：上目标档案、下系统评估 + 智能助手 + 知识库查询（与 `rightPartitions` 顺序一致） */
+/** 右侧竖条：上目标档案、下系统评估 + 智能助手（与 `rightPartitions` 顺序一致） */
 const RIGHT_TOOLS = RIGHT_DOCK_TOOL_IDS;
 const rightToolSet = new Set<string>(RIGHT_TOOLS);
 

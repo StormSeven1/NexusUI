@@ -28,6 +28,14 @@ from config import (
     DDS_CAMERA_STATUS_MODE,
     DRONE_STATUS_GRPC_RECEIVERS,
     DRONE_STATUS_TRANSPORT,
+    CAMERA_STATUS_GRPC_RECEIVERS,
+    CAMERA_STATUS_TRANSPORT,
+    NEW_TRACK_STRUCT_GRPC_RECEIVERS,
+    VIRTUAL_NEW_TRACK_STRUCT_GRPC_RECEIVERS,
+    FUSION_TRACK_TRANSPORT,
+    TRACK_ALARM_TRANSPORT,
+    FUSION_TRACK_STREAM_GRPC_RECEIVERS,
+    RADAR_TRACK_TRANSPORT,
     HTTP_POLLERS,
     WORK_MODE_DDS_PUBLISHER,
 )
@@ -39,6 +47,7 @@ from camera_task_routes import router as camera_tasks_router, router_singular_al
 from system_eval_routes import router as system_eval_router
 from radar_train_routes import router as radar_train_router
 from bird_radar_capture_routes import router as bird_radar_capture_router
+from air_radar_collect_routes import router as air_radar_collect_router
 
 import os
 
@@ -64,13 +73,22 @@ async def _receiver_stats_log_loop():
                     (cam_legacy or {}).get("parsed", 0),
                     (cam_legacy or {}).get("failed", 0),
                 )
-            fuse_bird = stats.get("dds_forward_fuse_bird_radar_track")
-            fuse_sea = stats.get("dds_forward_fuse_track")
-            if fuse_bird or fuse_sea:
+            fuse_bird = stats.get("dds_forward_fuse_bird_radar_track") or stats.get(
+                "grpc_new_track_struct_fuse_air"
+            )
+            fuse_sea = stats.get("dds_forward_fuse_track") or stats.get(
+                "grpc_new_track_struct_fuse_sea"
+            )
+            grpc_fuse = stats.get("new_track_struct_grpc_client")
+            grpc_fuse_virtual = stats.get("virtual_new_track_struct_grpc_client")
+            if fuse_bird or fuse_sea or grpc_fuse or grpc_fuse_virtual:
                 logger.info(
-                    "[receiver_stats] 航迹 dds_forward_fuse_bird_radar_track received={} | dds_forward_fuse_track received={}",
+                    "[receiver_stats] 航迹 fuse_air received={} | fuse_sea received={} | "
+                    "new_track_struct_grpc received={} | virtual_grpc received={}",
                     (fuse_bird or {}).get("received", 0),
                     (fuse_sea or {}).get("received", 0),
+                    (grpc_fuse or {}).get("received", 0),
+                    (grpc_fuse_virtual or {}).get("received", 0),
                 )
             health = receiver_manager.get_dds_track_health()
             if not health.get("any_matched") and not health.get("any_received"):
@@ -237,6 +255,9 @@ async def lifespan(app: FastAPI):
     # 启动WebSocket任务
     ws_manager.heartbeat_interval = settings.HEARTBEAT_INTERVAL
     ws_manager.broadcast_interval = settings.BROADCAST_INTERVAL
+    ws_manager.client_send_timeout_sec = float(
+        getattr(settings, "WS_CLIENT_SEND_TIMEOUT_SEC", 0.15) or 0.15
+    )
     ws_manager.start_tasks()
     
     logger.info("MCP地图定位服务可通过 /api/map/* 接口调用")
@@ -274,6 +295,72 @@ async def lifespan(app: FastAPI):
         [c.get("id") for c in DRONE_STATUS_GRPC_RECEIVERS if c.get("enabled")],
     )
     receiver_manager.start_entity_status_grpc_receivers(DRONE_STATUS_GRPC_RECEIVERS)
+    logger.info(
+        "相机状态通道 NEXUS_CAMERA_STATUS_TRANSPORT={} "
+        "(dds_camera_status={}, grpc_sources={})",
+        CAMERA_STATUS_TRANSPORT,
+        any(
+            c.get("id") in ("dds_camera_status", "dds_camera_status_legacy") and c.get("enabled")
+            for c in DDS_RECEIVERS
+        ),
+        [c.get("id") for c in CAMERA_STATUS_GRPC_RECEIVERS if c.get("enabled")],
+    )
+    receiver_manager.start_entity_status_grpc_receivers(CAMERA_STATUS_GRPC_RECEIVERS)
+    logger.info(
+        "融合航迹通道 NEXUS_FUSION_TRACK_TRANSPORT={} "
+        "(dds_fuse_sea/air={}, grpc={})",
+        FUSION_TRACK_TRANSPORT,
+        any(
+            c.get("id")
+            in (
+                "dds_forward_fuse_track",
+                "dds_forward_fuse_bird_radar_track",
+            )
+            and c.get("enabled")
+            for c in DDS_RECEIVERS
+        ),
+        [c.get("id") for c in NEW_TRACK_STRUCT_GRPC_RECEIVERS if c.get("enabled")],
+    )
+    logger.info(
+        "航迹告警通道 NEXUS_TRACK_ALARM_TRANSPORT={} (dds_alarm_event enabled={})",
+        TRACK_ALARM_TRANSPORT,
+        any(c.get("id") == "dds_alarm_event" and c.get("enabled") for c in DDS_RECEIVERS),
+    )
+    receiver_manager.start_new_track_struct_grpc_receivers(NEW_TRACK_STRUCT_GRPC_RECEIVERS)
+    logger.info(
+        "蓝方虚兵航迹 gRPC 独立一路: {}",
+        [c.get("id") for c in VIRTUAL_NEW_TRACK_STRUCT_GRPC_RECEIVERS if c.get("enabled")],
+    )
+    receiver_manager.start_new_track_struct_grpc_receivers(
+        VIRTUAL_NEW_TRACK_STRUCT_GRPC_RECEIVERS
+    )
+    logger.info(
+        "传感器旁路航迹通道 NEXUS_RADAR_TRACK_TRANSPORT={} "
+        "(dds/udp_bypass={}, grpc={})",
+        RADAR_TRACK_TRANSPORT,
+        any(
+            (
+                c.get("id")
+                in (
+                    "dds_forward_radar_track1",
+                    "dds_forward_radar_track2",
+                    "dds_udp_xpf_track",
+                    "dds_udp_boatself_track",
+                    "dds_forward_ais_track",
+                    "dds_forward_bird_radar_track",
+                    "dds_forward_uav_pose_track",
+                    "dds_forward_fanwu_car_track",
+                )
+                and c.get("enabled")
+                for c in DDS_RECEIVERS
+            )
+        )
+        or any(
+            c.get("id") == "udp_auto_bird_radar" and c.get("enabled") for c in UDP_RECEIVERS
+        ),
+        [c.get("id") for c in FUSION_TRACK_STREAM_GRPC_RECEIVERS if c.get("enabled")],
+    )
+    receiver_manager.start_fusion_track_grpc_receivers(FUSION_TRACK_STREAM_GRPC_RECEIVERS)
     from receivers.network import DDS_AVAILABLE as _dds_py_ok
     dds_enabled_cfg = sum(1 for c in DDS_RECEIVERS if c.get("enabled", False))
     dds_started = len(receiver_manager.dds_receivers)
@@ -309,6 +396,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info(f"服务已启动: http://{settings.HOST}:{settings.PORT}")
     logger.info(f"WebSocket端点: ws://{settings.HOST}:{settings.PORT}/ws")
+    logger.info(f"对海融合WS: ws://{settings.HOST}:{settings.PORT}/ws/fuse-sea")
     logger.info("=" * 60)
     
     yield
@@ -387,12 +475,21 @@ app.include_router(camera_task_singular_router, prefix="/api")
 app.include_router(system_eval_router, prefix="/api")
 app.include_router(radar_train_router, prefix="/api")
 app.include_router(bird_radar_capture_router, prefix="/api")
+app.include_router(air_radar_collect_router, prefix="/api")
 
 
-# WebSocket端点
+# WebSocket端点（更具体的路径须先于 /ws 注册）
+@app.websocket("/ws/fuse-sea")
+async def websocket_fuse_sea_endpoint(websocket: WebSocket):
+    """对海融合航迹专用 WebSocket（减轻主 /ws trackBatch 压力，避免前端闪烁）"""
+    origin = websocket.headers.get("origin", "*")
+    logger.info(f"对海融合 WebSocket 连接请求，Origin: {origin}")
+    await ws_manager.handle_fuse_sea_connection(websocket)
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket连接端点"""
+    """WebSocket连接端点（告警/实体/非对海融合航迹等）"""
     # 显式接受所有Origin（开发环境）
     # 生产环境应该验证Origin
     origin = websocket.headers.get("origin", "*")

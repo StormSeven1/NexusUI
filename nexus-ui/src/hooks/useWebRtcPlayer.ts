@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { reattachVideoFromPeer } from "@/lib/eo-video/eoSharedPlaybackStream";
 import { shouldCutEoVideoHardwarePassthrough } from "@/lib/eo-video/eoVideoHardwarePassthrough";
 import { attachEncodedVideoFrameSync, type EoEncodedSyncHub, type EncodedFrameData } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import type { EoVideoIceServer } from "@/lib/eo-video/types";
@@ -29,8 +30,8 @@ export interface UseWebRtcPlayerOptions {
    */
   forceVideoPassthrough?: boolean;
   /**
-   * 若 >0，每 N ms 用 `getStats().framesDecoded` 检测停帧并自动 `restart`。
-   * 仅无人机等需对齐 C++ `uavReconnectTimer` 的场景传入（通常 6000）。
+   * 停帧看门狗间隔（ms）。默认开启（约 4s）；显式传 `0` 关闭。
+   * 用 `getStats().framesDecoded` 判断停帧（避免 videoWidth>0 冻帧误判为正常）。
    */
   stallWatchIntervalMs?: number;
   /** 递增时强制重建 WebRTC（如私有云 start 推流后需重连 ZLM） */
@@ -54,8 +55,63 @@ const BLACK_FRAME_GIVEUP_MS = 2400;
 
 /** 对齐 C++ `PtzMainWidget::m_uavReconnectTimer`（6000ms） */
 export const WEBRTC_UAV_STALL_WATCH_INTERVAL_MS = 6000;
-const STALL_WATCH_GRACE_MS = 8000;
-const STALL_RECOVER_COOLDOWN_MS = 15000;
+/** 相机/UAV 硬件播默认停帧看门狗；显式传 stallWatchIntervalMs=0 关闭 */
+export const WEBRTC_DEFAULT_STALL_WATCH_INTERVAL_MS = 4000;
+const STALL_WATCH_GRACE_MS = 5000;
+const STALL_NEVER_PICTURE_GRACE_MS = 8000;
+const STALL_RECOVER_COOLDOWN_MS = 8000;
+const ICE_FAIL_HARD_LIMIT = 14;
+const ICE_FAIL_UNLOCK_MS = 20000;
+/** 切回前台后等待解码/出画的探测窗口；仍无进展则判定停流并重连 */
+const FOREGROUND_PROBE_MS = 1800;
+/** 多路光电同时 focus 重连时错开信令，避免 ZLM 挤爆只剩部分窗有画 */
+const FOREGROUND_RESTART_STAGGER_STEP_MS = 380;
+const FOREGROUND_RESTART_STAGGER_SLOTS = 6;
+
+function staggerMsForKey(key: string): number {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (Math.imul(h, 31) + key.charCodeAt(i)) | 0;
+  return (Math.abs(h) % FOREGROUND_RESTART_STAGGER_SLOTS) * FOREGROUND_RESTART_STAGGER_STEP_MS;
+}
+
+/**
+ * 等真正送到 `<video>` 的一帧（遮挡/切窗后常见：framesDecoded 仍涨但画面黑）。
+ * 无 rVFC 时退化为 videoWidth>0 且未 paused。
+ */
+function waitForVideoPaint(video: HTMLVideoElement | null, timeoutMs: number): Promise<boolean> {
+  if (!video) return Promise.resolve(false);
+  if (video.videoWidth > 0 && video.videoHeight > 0 && !video.paused) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const v = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: (now: number, meta: unknown) => void) => number;
+      cancelVideoFrameCallback?: (id: number) => void;
+    };
+    let rVfcId: number | null = null;
+    let timer: number | null = null;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timer != null) window.clearTimeout(timer);
+      if (rVfcId != null) {
+        try {
+          v.cancelVideoFrameCallback?.(rVfcId);
+        } catch {
+          /* ignore */
+        }
+      }
+      resolve(ok);
+    };
+    if (typeof v.requestVideoFrameCallback === "function") {
+      rVfcId = v.requestVideoFrameCallback(() => finish(true));
+    }
+    timer = window.setTimeout(() => {
+      finish(video.videoWidth > 0 && video.videoHeight > 0 && !video.paused);
+    }, timeoutMs);
+  });
+}
 
 async function readInboundVideoFramesDecoded(pc: RTCPeerConnection): Promise<number | null> {
   const stats = await pc.getStats();
@@ -116,12 +172,14 @@ export function useWebRtcPlayer({
   const detachEncodedRef = useRef<(() => void) | null>(null);
   /** 浏览器定时器句柄（避免与 Node `Timeout` 类型合并冲突） */
   const iceRecoverTimerRef = useRef<number | null>(null);
+  const iceUnlockTimerRef = useRef<number | null>(null);
   const blackFrameTimerRef = useRef<number | null>(null);
   const stallWatchTimerRef = useRef<number | null>(null);
   const prevFramesDecodedRef = useRef<number | null>(null);
   const hadLiveFramesRef = useRef(false);
   const stallWatchSinceRef = useRef(0);
   const lastStallRecoverAtRef = useRef(0);
+  const softHealAttemptedRef = useRef(false);
   const onStallRecoverRef = useRef(onStallRecover);
   onStallRecoverRef.current = onStallRecover;
   const iceFailCountRef = useRef(0);
@@ -131,11 +189,17 @@ export function useWebRtcPlayer({
   const genRef = useRef(0);
   /** 仅在 signalingUrl / enabled / ice 配置变化时递增，用于取消旧的重连定时器（避免与 gen 递增冲突） */
   const bootSeqRef = useRef(0);
+  /** 本 hook 是否曾接管过 video.srcObject；共享小窗流时不得在 cleanup 里清空 */
+  const didOwnPlaybackRef = useRef(false);
 
   const cleanup = useCallback(() => {
     if (iceRecoverTimerRef.current != null) {
       window.clearTimeout(iceRecoverTimerRef.current);
       iceRecoverTimerRef.current = null;
+    }
+    if (iceUnlockTimerRef.current != null) {
+      window.clearTimeout(iceUnlockTimerRef.current);
+      iceUnlockTimerRef.current = null;
     }
     if (blackFrameTimerRef.current != null) {
       window.clearInterval(blackFrameTimerRef.current);
@@ -162,13 +226,15 @@ export function useWebRtcPlayer({
         /* ignore */
       }
     }
+    const owned = didOwnPlaybackRef.current;
+    didOwnPlaybackRef.current = false;
     const v = videoRef.current;
-    if (v) {
+    if (v && owned) {
       v.srcObject = null;
     }
     setConnectionState("idle");
     setIceConnectionState("idle");
-  }, [encodedSyncHub, peerConnectionRef, videoRef]);
+  }, [encodedSyncHub, peerConnectionRef, videoRef, videoReceiverRef]);
 
   const start = useCallback(async () => {
     if (!enabled || !signalingUrl) return;
@@ -178,6 +244,7 @@ export function useWebRtcPlayer({
     const gen = ++genRef.current;
     const bootSnapshot = bootSeqRef.current;
     cleanup();
+    didOwnPlaybackRef.current = true;
     setError(null);
 
     const rtcConfig = {
@@ -192,8 +259,17 @@ export function useWebRtcPlayer({
       if (bootSnapshot !== bootSeqRef.current) return;
       if (iceRecoverTimerRef.current != null) return;
       iceFailCountRef.current += 1;
-      if (iceFailCountRef.current > 14) {
-        setError(`WebRTC 多次重连仍失败（${reason}）`);
+      if (iceFailCountRef.current > ICE_FAIL_HARD_LIMIT) {
+        setError(`WebRTC 多次重连仍失败（${reason}），稍后自动再试…`);
+        if (iceUnlockTimerRef.current == null) {
+          iceUnlockTimerRef.current = window.setTimeout(() => {
+            iceUnlockTimerRef.current = null;
+            if (bootSnapshot !== bootSeqRef.current) return;
+            iceFailCountRef.current = 0;
+            setError(null);
+            void start();
+          }, ICE_FAIL_UNLOCK_MS);
+        }
         return;
       }
       const delay = ICE_RECONNECT_DELAYS_MS[Math.min(iceFailCountRef.current - 1, ICE_RECONNECT_DELAYS_MS.length - 1)];
@@ -351,16 +427,32 @@ export function useWebRtcPlayer({
   }, [signalingUrl, enabled, iceKey, forceVideoPassthrough, webRtcKickEpoch, start, cleanup]);
 
   useEffect(() => {
-    const intervalMs = stallWatchIntervalMs ?? 0;
+    const intervalMs =
+      stallWatchIntervalMs === undefined
+        ? WEBRTC_DEFAULT_STALL_WATCH_INTERVAL_MS
+        : stallWatchIntervalMs;
     if (!enabled || intervalMs <= 0) return;
 
     const resetStallWatchState = () => {
       prevFramesDecodedRef.current = null;
       hadLiveFramesRef.current = false;
+      softHealAttemptedRef.current = false;
       stallWatchSinceRef.current = Date.now();
     };
 
     resetStallWatchState();
+
+    const triggerRecover = () => {
+      lastStallRecoverAtRef.current = Date.now();
+      iceFailCountRef.current = Math.min(iceFailCountRef.current, 2);
+      resetStallWatchState();
+      try {
+        onStallRecoverRef.current?.();
+      } catch {
+        /* ignore */
+      }
+      restartRef.current();
+    };
 
     const checkStall = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
@@ -375,9 +467,18 @@ export function useWebRtcPlayer({
       const ice = pc.iceConnectionState;
       if (ice !== "connected" && ice !== "completed") {
         prevFramesDecodedRef.current = null;
+        softHealAttemptedRef.current = false;
         return;
       }
       if (pc.connectionState !== "connected") return;
+
+      // 软恢复：轨还在但 video 空/暂停（放大关窗、srcObject 被清等）
+      if (video) {
+        const healed = reattachVideoFromPeer(video, pc);
+        if (healed && video.videoWidth > 0 && video.videoHeight > 0) {
+          softHealAttemptedRef.current = false;
+        }
+      }
 
       let framesDecoded: number | null;
       try {
@@ -385,25 +486,46 @@ export function useWebRtcPlayer({
       } catch {
         return;
       }
-      if (framesDecoded == null) return;
 
       const videoHasPicture = Boolean(video && video.videoWidth > 0 && video.videoHeight > 0);
-      const prev = prevFramesDecodedRef.current;
+      const since = now - stallWatchSinceRef.current;
 
+      // 无 inbound-rtp：宽限后仍无画 → 重建
+      if (framesDecoded == null) {
+        if (since >= STALL_NEVER_PICTURE_GRACE_MS && !videoHasPicture) {
+          if (!softHealAttemptedRef.current) {
+            softHealAttemptedRef.current = true;
+            reattachVideoFromPeer(video, pc);
+            return;
+          }
+          triggerRecover();
+        }
+        return;
+      }
+
+      const prev = prevFramesDecodedRef.current;
       if (prev != null) {
         const delta = framesDecoded - prev;
-        if (delta > 0) hadLiveFramesRef.current = true;
+        if (delta > 0) {
+          hadLiveFramesRef.current = true;
+          iceFailCountRef.current = 0;
+          softHealAttemptedRef.current = false;
+        }
 
-        const gracePassed = now - stallWatchSinceRef.current >= STALL_WATCH_GRACE_MS;
-        if (gracePassed && hadLiveFramesRef.current && videoHasPicture && delta <= 0) {
-          lastStallRecoverAtRef.current = now;
-          resetStallWatchState();
-          try {
-            onStallRecoverRef.current?.();
-          } catch {
-            /* ignore */
+        const stalledAfterLive =
+          since >= STALL_WATCH_GRACE_MS && hadLiveFramesRef.current && delta <= 0;
+        // 不要求 videoHasPicture：冻帧常仍有 videoWidth>0，旧逻辑会永远不恢复
+        const neverGotPicture =
+          since >= STALL_NEVER_PICTURE_GRACE_MS && !hadLiveFramesRef.current && !videoHasPicture && delta <= 0;
+
+        if (stalledAfterLive || neverGotPicture) {
+          if (!softHealAttemptedRef.current) {
+            softHealAttemptedRef.current = true;
+            reattachVideoFromPeer(video, pc);
+            prevFramesDecodedRef.current = framesDecoded;
+            return;
           }
-          restartRef.current();
+          triggerRecover();
           return;
         }
       }
@@ -422,6 +544,105 @@ export function useWebRtcPlayer({
       }
     };
   }, [enabled, stallWatchIntervalMs, signalingUrl, videoRef]);
+
+  /**
+   * 切回前台主动恢复：
+   * - 切标签：document.hidden + visibilitychange
+   * - 编译器盖住再点回网页：常不改 hidden，只靠 window focus
+   * 旧逻辑只看 framesDecoded：遮挡后解码计数仍可能上涨，但 `<video>` 黑屏（右侧小窗更易中招），
+   * 误判为正常就不重连——表现为「多光电 4 黑、点重连才好」。
+   * 现改为：软挂回轨 + 等真正出画；无出画则按流 URL 错开硬重连，避免多路同时打 ZLM。
+   */
+  useEffect(() => {
+    if (!enabled) return;
+    if (typeof document === "undefined") return;
+
+    let foregroundGen = 0;
+    let lastForegroundAt = 0;
+
+    const scheduleHardRestart = () => {
+      const delay = staggerMsForKey(signalingUrl || "webrtc");
+      window.setTimeout(() => {
+        if (document.hidden) return;
+        restartRef.current();
+      }, delay);
+    };
+
+    const onForeground = () => {
+      if (document.hidden) return;
+      const now = Date.now();
+      // focus 会连打多次，短窗内合并成一次探测
+      if (now - lastForegroundAt < 400) return;
+      lastForegroundAt = now;
+      const gen = ++foregroundGen;
+
+      const pc = pcRef.current;
+      const video = videoRef.current;
+
+      if (!pc || pc.connectionState === "failed" || pc.connectionState === "closed") {
+        scheduleHardRestart();
+        return;
+      }
+
+      lastStallRecoverAtRef.current = 0;
+
+      if (video) {
+        reattachVideoFromPeer(video, pc);
+        void video.play().catch(() => {});
+      }
+
+      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
+        scheduleHardRestart();
+        return;
+      }
+
+      void (async () => {
+        const paintedQuick = await waitForVideoPaint(videoRef.current, Math.min(600, FOREGROUND_PROBE_MS));
+        if (gen !== foregroundGen || document.hidden) return;
+        if (paintedQuick) return;
+
+        let base: number | null = null;
+        try {
+          base = await readInboundVideoFramesDecoded(pc);
+        } catch {
+          /* ignore */
+        }
+        if (gen !== foregroundGen || document.hidden) return;
+
+        window.setTimeout(() => {
+          if (gen !== foregroundGen || document.hidden) return;
+          const cur = pcRef.current;
+          if (!cur || cur !== pc) return;
+          void (async () => {
+            let after: number | null = null;
+            try {
+              after = await readInboundVideoFramesDecoded(cur);
+            } catch {
+              /* ignore */
+            }
+            const v = videoRef.current;
+            const painted = await waitForVideoPaint(v, 400);
+            if (gen !== foregroundGen || document.hidden) return;
+            const advancing = after != null && base != null && after > base;
+            // 无出画就重连：即便 framesDecoded 在涨（遮挡后解码空转/画面未挂上）
+            if (!painted || !advancing) {
+              scheduleHardRestart();
+            } else if (v) {
+              void v.play().catch(() => {});
+            }
+          })();
+        }, FOREGROUND_PROBE_MS);
+      })();
+    };
+
+    document.addEventListener("visibilitychange", onForeground);
+    window.addEventListener("focus", onForeground);
+    return () => {
+      foregroundGen += 1;
+      document.removeEventListener("visibilitychange", onForeground);
+      window.removeEventListener("focus", onForeground);
+    };
+  }, [enabled, signalingUrl, videoRef]);
 
   return { connectionState, iceConnectionState, error, restart };
 }

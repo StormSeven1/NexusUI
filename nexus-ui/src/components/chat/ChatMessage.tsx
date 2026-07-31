@@ -20,6 +20,8 @@ import { ApprovalCard, ApprovalResultCard } from "@/components/chat/ApprovalCard
 import type { ApprovalCardProps } from "@/components/chat/ApprovalCard";
 import { VerifyReportCard } from "@/components/chat/VerifyReportCard";
 import { isTaskVerifyReportPart } from "@/lib/task-status-verify-report-model";
+import { isWorkflowProgressPart } from "@/lib/langgraph-workflow-progress";
+import { WorkflowProgressTree } from "@/components/chat/WorkflowProgressTree";
 import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -230,6 +232,7 @@ export function ChatMessage({
   const hasAnyContent = message.parts?.some(
     (part) =>
       isTaskVerifyReportPart(part) ||
+      isWorkflowProgressPart(part) ||
       (part.type === "text" && "text" in part && (part.text as string)?.trim().length > 0) ||
       (part.type === "reasoning" && "text" in part && (part.text as string)?.trim().length > 0) ||
       part.type.startsWith("tool-")
@@ -286,6 +289,14 @@ export function ChatMessage({
               return (
                 <div key={key} className="mt-1 w-full max-w-full">
                   <VerifyReportCard report={part.data} />
+                </div>
+              );
+            }
+
+            if (isWorkflowProgressPart(part)) {
+              return (
+                <div key={key} className="mt-1 w-full max-w-full">
+                  <WorkflowProgressTree data={part.data} />
                 </div>
               );
             }

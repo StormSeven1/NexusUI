@@ -36,6 +36,8 @@ export interface EoDetectionOverlayProps {
     normalizedY: number;
     hitBoxId: string | null;
     hitBox: EoDetectionBox | null;
+    /** 与本次命中一致的当前帧框（lastDrawn），避免父级 detectionBoxes 滞后 */
+    drawnBoxes: EoDetectionBox[];
   }) => void;
   className?: string;
   /** 与视频元素/Canvas 的 object-fit 一致 */
@@ -45,6 +47,11 @@ export interface EoDetectionOverlayProps {
   videoIntrinsicHeight?: number;
   /** false：仅绘制框，不拦截指针（无人机拖拽瞄准等） */
   interactive?: boolean;
+  /**
+   * 烧录流：框已在码流内，不在 canvas 上绘制，但仍用 boxes 做点击命中与选中回调
+   * （选中后由 burn-in-select 让后端烧录框变色）。
+   */
+  hideDrawnBoxes?: boolean;
   /** 由 `useEoEntityDetection` 每帧回调注册，实现与视频同帧 canvas 绘制 */
   onRegisterDraw?: (draw: ((frameBoxes?: EoDetectionBox[]) => void) | null) => void;
 }
@@ -262,6 +269,7 @@ export function EoDetectionOverlay({
   videoIntrinsicWidth = 0,
   videoIntrinsicHeight = 0,
   interactive = true,
+  hideDrawnBoxes = false,
   onRegisterDraw,
 }: EoDetectionOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -270,6 +278,8 @@ export function EoDetectionOverlay({
   const onRegisterDrawRef = useRef(onRegisterDraw);
   onRegisterDrawRef.current = onRegisterDraw;
   boxesRef.current = boxes;
+  const hideDrawnBoxesRef = useRef(hideDrawnBoxes);
+  hideDrawnBoxesRef.current = hideDrawnBoxes;
 
   const ddsLookupKey = useMemo(() => {
     const raw = (ddsCameraEntityId ?? detectionEntityId ?? "").trim();
@@ -323,6 +333,9 @@ export function EoDetectionOverlay({
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+
+    /** 烧录流：只维护命中用框列表，不画前端框（变色靠 burn-in-select） */
+    if (hideDrawnBoxesRef.current) return;
 
     const fit = videoObjectFitRef.current;
     const viw = videoIntrinsicWidthRef.current;
@@ -391,16 +404,22 @@ export function EoDetectionOverlay({
     };
   }, [containerRef, draw, videoRef]);
 
-  /** 选中高亮不等待下一视频帧 */
+  /** 选中高亮不等待下一视频帧；烧录隐藏绘制时也要刷新 lastDrawnBoxes */
   useEffect(() => {
     draw();
-  }, [draw, selectedBoxId]);
+  }, [draw, selectedBoxId, hideDrawnBoxes]);
 
   const resolveHit = useCallback(
     (
       clientX: number,
       clientY: number,
-    ): { normalizedX: number; normalizedY: number; hitBoxId: string | null; hitBox: EoDetectionBox | null } | null => {
+    ): {
+      normalizedX: number;
+      normalizedY: number;
+      hitBoxId: string | null;
+      hitBox: EoDetectionBox | null;
+      drawnBoxes: EoDetectionBox[];
+    } | null => {
       const container = containerRef.current;
       const video = videoRef.current;
       if (!container) return null;
@@ -450,7 +469,13 @@ export function EoDetectionOverlay({
       const ny = content.h > 0 ? (py - content.y) / content.h : 0;
       const normalizedX = clamp01(nx);
       const normalizedY = clamp01(ny);
-      return { normalizedX, normalizedY, hitBoxId, hitBox };
+      return {
+        normalizedX,
+        normalizedY,
+        hitBoxId,
+        hitBox,
+        drawnBoxes: hitList.slice(),
+      };
     },
     [boxes, containerRef, videoRef, videoObjectFit, videoIntrinsicWidth, videoIntrinsicHeight],
   );
@@ -472,7 +497,17 @@ export function EoDetectionOverlay({
         clientY: e.clientY,
       });
       if (!hit) return;
-      let out = hit;
+      const drawnBoxes =
+        onRegisterDrawRef.current && lastDrawnBoxesRef.current.length > 0
+          ? lastDrawnBoxesRef.current.slice()
+          : boxes.slice();
+      let out: {
+        normalizedX: number;
+        normalizedY: number;
+        hitBoxId: string | null;
+        hitBox: EoDetectionBox | null;
+        drawnBoxes: EoDetectionBox[];
+      } = { ...hit, drawnBoxes };
       if (!hit.hitBox && selectedBoxId) {
         const b = boxes.find((x) => x.id === selectedBoxId) ?? null;
         if (b) {
@@ -481,6 +516,7 @@ export function EoDetectionOverlay({
             normalizedY: b.y + b.h / 2,
             hitBoxId: selectedBoxId,
             hitBox: b,
+            drawnBoxes,
           };
         }
       }
@@ -530,6 +566,7 @@ export function EoDetectionOverlay({
                     normalizedY: b.y + b.h / 2,
                     hitBoxId: selectedBoxId,
                     hitBox: b,
+                    drawnBoxes: hit.drawnBoxes,
                   };
                 }
               }

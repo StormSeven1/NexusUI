@@ -46,6 +46,11 @@ export type EoHighSpeedYuvStackHandle = {
     strideY: number;
     boxes: EoHighSpeedBox[];
   }) => void;
+  /**
+   * 切换相机时调用：清除上一路的帧缓存并将 `livePresent` 归零，
+   * 使占位提示（「等待 UDP 帧」）重新可见，避免黑屏且无任何提示。
+   */
+  clearLiveFrame: () => void;
 };
 
 export type EoHighSpeedLiveFrame = Parameters<EoHighSpeedYuvStackHandle["applyLiveFrame"]>[0];
@@ -232,6 +237,15 @@ export const EoHighSpeedYuvStack = forwardRef<EoHighSpeedYuvStackHandle, EoHighS
         if (!livePresentRef.current) {
           livePresentRef.current = true;
           setLivePresent(true);
+        }
+        paintWebGLRef.current?.();
+      },
+      clearLiveFrame: () => {
+        liveFrameRef.current = null;
+        liveCopyRef.current = null;
+        if (livePresentRef.current) {
+          livePresentRef.current = false;
+          setLivePresent(false);
         }
         paintWebGLRef.current?.();
       },

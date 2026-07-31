@@ -6,6 +6,7 @@ export type TrackLayerKey =
   | "fuse_sea"
   | "fuse_air"
   | "bird_radar"
+  | "auto_bird_radar"
   | "fanwu_car_radar"
   | "radar_wharf"
   | "radar_jingzi"
@@ -19,6 +20,7 @@ export const TRACK_LAYER_KEYS_ORDERED = [
   "fuse_sea",
   "fuse_air",
   "bird_radar",
+  "auto_bird_radar",
   "fanwu_car_radar",
   "radar_wharf",
   "radar_jingzi",
@@ -133,10 +135,54 @@ export interface Track {
   fusionSources?: TrackFusionSourceItem[];
   /** DDS TargetObject.state：STABLE / COASTING / LOST / MERGED / SPLIT */
   targetState?: TargetState;
+  /**
+   * gRPC 临时约定链路时间（epoch ms）：
+   * - trackCreatedMs：UDP 包头 / created_time（航迹创建）
+   * - trackSourceRecvMs：源端本机接收 / last_update_time|reserved2（航迹接收）
+   * - trackGrpcSendMs：gRPC yield 前 / alternate_ids|reserved3（航迹发送）
+   */
+  trackCreatedMs?: number;
+  trackSourceRecvMs?: number;
+  trackGrpcSendMs?: number;
+  /**
+   * 后端 Custombackend 接收/入队该航迹的墙上时钟（epoch ms，来自报文 `backend_recv_ms`）。
+   */
+  backendRecvMs?: number;
+  /**
+   * 前端收到承载该航迹的 WS 报文的墙上时钟（epoch ms，在 WS onmessage 时刻打点）。
+   */
+  wsRecvMs?: number;
 }
 
-/** GIS 地图标牌 / 列表主显示 ID：NewTrack `target_id`（`uniqueID` / `showID`） */
-export function trackMapDisplayId(track: Pick<Track, "showID" | "uniqueID">): string {
+/**
+ * 对海/对空融合航迹展示名：恰好 9 位纯数字时只显示后四位（如 AIS/批号）；中文或其它数字不变。
+ */
+export function formatFusionTrackDisplayName(raw: string, isFusionTrack: boolean): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return s;
+  if (isFusionTrack && /^\d{9}$/.test(s)) return s.slice(-4);
+  return s;
+}
+
+/**
+ * GIS 地图 / 列表主显示名：TargetObject.`name`（前端存为 `trackAlias`；
+ * 推送方：有船名用船名，否则常为类型英文或 target_id）。
+ * 无别名时回退 `uniqueID`（= target_id），再回退 `showID`。
+ * 对海/对空融合：name 为 9 位数字时只显示后四位。
+ * 交互（单击/双击/右键）仍用 `showID` / `uniqueID`，本函数只改呈现。
+ */
+export function trackMapDisplayId(
+  track: Pick<Track, "showID" | "uniqueID" | "trackAlias" | "trackLayerKey">,
+): string {
+  const alias = track.trackAlias?.trim();
+  const raw = alias || track.uniqueID?.trim() || track.showID;
+  const isFusion =
+    track.trackLayerKey === "fuse_sea" || track.trackLayerKey === "fuse_air";
+  return formatFusionTrackDisplayName(raw, isFusion);
+}
+
+/** 标牌副标题等处展示的 target_id（不用带图层前缀的 showID） */
+export function trackTargetIdDisplay(track: Pick<Track, "showID" | "uniqueID">): string {
   const uid = track.uniqueID?.trim();
   return uid || track.showID;
 }

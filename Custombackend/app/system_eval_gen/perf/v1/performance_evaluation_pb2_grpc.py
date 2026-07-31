@@ -5,7 +5,7 @@ import warnings
 
 from perf.v1 import performance_evaluation_pb2 as perf_dot_v1_dot_performance__evaluation__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.81.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class PerformanceEvaluationServiceStub(object):
+class PerformanceEvaluationServiceStub:
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -41,7 +41,7 @@ class PerformanceEvaluationServiceStub(object):
                 _registered_method=True)
 
 
-class PerformanceEvaluationServiceServicer(object):
+class PerformanceEvaluationServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
     def GetSystemResponseTimeStats(self, request, context):
@@ -66,7 +66,7 @@ def add_PerformanceEvaluationServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class PerformanceEvaluationService(object):
+class PerformanceEvaluationService:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod

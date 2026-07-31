@@ -31,15 +31,22 @@ import {
 import {
   useEoCameraDdsHeldTrackUi,
 } from "@/lib/eo-video/eoCameraDdsUiHold";
-import { isCameraSingleTrackDetectionActive } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import {
+  isCameraSingleTrackDetectionActive,
+  isCameraTrackingExecutionActive,
+} from "@/lib/eo-video/formatEoDdsTaskOverlay";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
 import { useTrackStore } from "@/stores/track-store";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 
 const RENDER_MS = 40;
+/** 缓冲内 WS 包的有效扫描窗口（header 匹配 / freshest 选帧用）；过短会让正常帧抖动匹配失败而闪 */
 const DETECTION_ENTRY_STALE_MS = 2000;
-/** WS 无新可绘制框超过此时长则强制清屏（不影响短 tick hold / 单多互斥） */
-const DETECTION_DISPLAY_STALE_MS = 3000;
+/**
+ * WS 无新可绘制框超过此时长则强制清屏（兜底）。
+ * 实时性主要由 camServer 停发时主动下发空框保证；此值仅用于 WS 完全断流的兜底清屏。
+ */
+const DETECTION_DISPLAY_STALE_MS = 300;
 /** 对齐 Qt `m_nNoneSingleTagTick`：连续 N 次 processAt 无新 singleRect 才清框 */
 const SINGLE_NONE_RECT_MAX_TICKS = 5;
 /** DDS 跟踪结束后禁止 WS 残留 singleRect 再次 latch 单目标层 */
@@ -312,6 +319,22 @@ function hasAnyHeader(arr: BufferedDetectionEntry[], now: number): boolean {
     if (!e) continue;
     if (now - e.receivedAt > DETECTION_ENTRY_STALE_MS) break;
     if (e.header) return true;
+  }
+  return false;
+}
+
+/**
+ * 与 WebRTC SEI hub（≥32B）可对齐的 syncHeader。
+ * 第三方 UDP 框常带短 hex（如 8B），永远对不上 SEI，不应进入 hub 匹配。
+ */
+const SEI_SYNC_HEADER_MIN_LEN = 32;
+
+function hasSeiCompatibleHeader(arr: BufferedDetectionEntry[], now: number): boolean {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const e = arr[i];
+    if (!e) continue;
+    if (now - e.receivedAt > DETECTION_ENTRY_STALE_MS) break;
+    if (e.header && e.header.byteLength >= SEI_SYNC_HEADER_MIN_LEN) return true;
   }
   return false;
 }
@@ -743,6 +766,7 @@ export function useEoEntityDetection({
       /** 仅 stale-clear / 显式清除 / 多目标 hold 耗尽时清 canvas，避免短时空帧闪灭 */
       let forceClearCanvas = false;
       let ddsSingleTrackActive = false;
+      let ddsExecTracking = false;
       let displayLayer: "single" | "multi" = "multi";
       let userSingleLatch = false;
       try {
@@ -752,10 +776,19 @@ export function useEoEntityDetection({
         const ddsRow = ddsLookupId
           ? useEoCameraDdsStatusStore.getState().byEntityId[ddsLookupId]
           : undefined;
-        /** 仅 EXECUTING 跟踪态锁单目标层；ddsTrackIdForUi 3s 滞回只影响标牌，不 gate 画框 */
-        ddsSingleTrackActive = isCameraSingleTrackDetectionActive(ddsRow);
+        /** 有航迹号的跟踪态（标牌/采集语义）；ddsTrackIdForUi 3s 滞回只影响标牌 */
+        const ddsWithTrack = isCameraSingleTrackDetectionActive(ddsRow);
+        /** 跟踪任务仍 EXECUTING（不要求 trackID；航迹消失后相机管理可能继续视觉跟踪） */
+        ddsExecTracking = isCameraTrackingExecutionActive(ddsRow);
+        /** 画框 gate：有 tid，或仍 EXECUTING（具体是否 engage 还看 singleRect） */
+        ddsSingleTrackActive = ddsWithTrack || ddsExecTracking;
 
-        const ddsTrackJustEnded = prevSingleTrackModeRef.current && !ddsSingleTrackActive;
+        /**
+         * 仅当跟踪任务离开 EXECUTING 时才视为结束。
+         * ❌ 勿因 trackID 清空（航迹消失）触发：否则会 ignore single WS 并切到多目标，
+         *    而 camServer 此时仍在跟踪并继续推 singleRect。
+         */
+        const ddsTrackJustEnded = prevSingleTrackModeRef.current && !ddsExecTracking;
         if (ddsTrackJustEnded) {
           lastSingleBoxesRef.current = [];
           singleBuf.current = [];
@@ -773,7 +806,7 @@ export function useEoEntityDetection({
           if (id) clearEoSingleTrackUserLatch(id);
         }
         const ddsWasActiveLastFrame = prevSingleTrackModeRef.current;
-        prevSingleTrackModeRef.current = ddsSingleTrackActive;
+        prevSingleTrackModeRef.current = ddsExecTracking;
 
         const ignoreSingleWs = now < singleIgnoreWsUntilRef.current;
         userSingleLatch = id ? isEoSingleTrackUserLatchActive(id, now) : false;
@@ -789,16 +822,31 @@ export function useEoEntityDetection({
         }
 
         /**
-         * 单/多硬互斥（对齐 Qt）：仅 DDS EXECUTING 或界面双击 latch 可进单目标层。
+         * 单/多硬互斥（对齐 Qt）：仅 DDS 单跟任务 EXECUTING 或界面双击 latch 可进单目标层。
          * ❌ 禁止 WS 出现 singleRect 即在 dds=0 时自动 engage（camServer 会 boat/single 分包交替广播）。
+         * 航迹号已空但仍 EXECUTING：以 DDS EXECUTING 为权威锁定单目标层（不要求 fresh singleRect），
+         * 避免重挂载/WS 中断空档回退到多目标层；任务结束（离开 EXECUTING）由 ddsTrackJustEnded 清理。
          */
-        if (ddsSingleTrackActive) {
+        if (ddsWithTrack) {
+          singleEngagedRef.current = true;
+          singleDdsMissTicksRef.current = 0;
+          if (id) clearEoSingleTrackUserLatch(id);
+        } else if (ddsExecTracking) {
+          /**
+           * DDS 权威：单目标跟踪任务仍 EXECUTING（航迹号可能已空）即锁定单目标层，
+           * 不再要求 recentSingle。否则窗口放大/关闭导致组件重挂载、singleEngaged 被重置，
+           * 而 WS singleRect 尚未重连到达时（recentSingle=false），会错误回退到多目标层——
+           * 单跟状态下多目标检测仍满帧广播，一旦失锁其框就会冒出。
+           * 该分支仅在 DDS 确有单跟任务 EXECUTING 时成立，纯多目标检测态不受影响。
+           * 真正结束时 executionState 离开 EXECUTING → ddsTrackJustEnded 已在上方清理。
+           */
           singleEngagedRef.current = true;
           singleDdsMissTicksRef.current = 0;
           if (id) clearEoSingleTrackUserLatch(id);
         } else if (
           singleEngagedRef.current &&
           ddsWasActiveLastFrame &&
+          !ddsExecTracking &&
           singleDdsMissTicksRef.current < SINGLE_DDS_MISS_MAX_TICKS
         ) {
           singleEngagedRef.current = true;
@@ -991,6 +1039,10 @@ export function useEoEntityDetection({
           hasAnyHeader(boatBuf.current, now) ||
           hasAnyHeader(planeBuf.current, now) ||
           hasAnyHeader(singleBuf.current, now);
+        const seiCompatibleWs =
+          hasSeiCompatibleHeader(boatBuf.current, now) ||
+          hasSeiCompatibleHeader(planeBuf.current, now) ||
+          hasSeiCompatibleHeader(singleBuf.current, now);
 
         const hubSnapForWallMs = encodedSyncHub?.snapshotForPresentation(0) ?? null;
 
@@ -998,7 +1050,12 @@ export function useEoEntityDetection({
       let syncHubWallMs: number | null = null;
       /** 40ms 定时 tick 与 sei_poc_test overlayTimer 一致：不传 rtp，用 hub 最新 + ws-latest */
       const intervalTick = rvfcMeta === undefined;
-        if (encodedSyncHub && bufHasHeader) {
+        /** 第三方短 header：跳过 SEI hub，直接 ws-latest */
+        if (encodedSyncHub && bufHasHeader && !seiCompatibleWs) {
+          syncHdr = null;
+          syncHdrPickMode = "tp-short-hdr";
+          wsLatestMulti = true;
+        } else if (encodedSyncHub && bufHasHeader) {
           const wc = webCodecsPresentationRefRef.current?.current;
           const wcTs =
             wc && wc.lastRenderedRtpTimestamp > 0 ? wc.lastRenderedRtpTimestamp : null;
@@ -1166,23 +1223,28 @@ export function useEoEntityDetection({
 
         const pushSingleHold = (): boolean => {
           if (lastSingleBoxesRef.current.length === 0) return false;
-          if (
-            !ddsSingleTrackActive &&
-            singleNoneSyncTickRef.current >= SINGLE_NONE_RECT_MAX_TICKS
-          ) {
+          /**
+           * 有航迹号的 EXECUTING：短暂无 singleRect 时有限 hold（不再无限），
+           * 超时后走 single-lost-multi-fallback，避免整屏无框还锁死多目标。
+           */
+          const stickyDdsHold = ddsWithTrack;
+          const holdCap = stickyDdsHold
+            ? SINGLE_NONE_RECT_MAX_TICKS * 4
+            : SINGLE_NONE_RECT_MAX_TICKS;
+          if (singleNoneSyncTickRef.current >= holdCap) {
             return false;
           }
           next.push(...lastSingleBoxesRef.current);
-          if (!ddsSingleTrackActive) {
-            singleNoneSyncTickRef.current++;
-          }
-          syncMode = ddsSingleTrackActive
+          singleNoneSyncTickRef.current++;
+          syncMode = stickyDdsHold
             ? `single-dds-hold(${singleNoneSyncTickRef.current})`
-            : `single-hold(${singleNoneSyncTickRef.current})`;
+            : ddsExecTracking
+              ? `single-exec-hold(${singleNoneSyncTickRef.current})`
+              : `single-hold(${singleNoneSyncTickRef.current})`;
           return true;
         };
 
-        /** 单/多硬互斥：eng=1 时绝不 append 多目标 */
+        /** 单/多硬互斥：eng=1 时优先单目标；无框可画时回退多目标显示（eng 仍保持，取消跟踪语义不变） */
         let useSingleLayer = singleEngagedRef.current;
 
         if (useSingleLayer) {
@@ -1200,7 +1262,7 @@ export function useEoEntityDetection({
             drawn = pushSingleHold();
           }
 
-          if (!drawn && !ddsSingleTrackActive && !userSingleLatch) {
+          if (!drawn && !ddsWithTrack && !ddsExecTracking && !userSingleLatch) {
             singleTargetLost = true;
             singleEngagedRef.current = false;
             lastSingleBoxesRef.current = [];
@@ -1209,7 +1271,18 @@ export function useEoEntityDetection({
             singleLastPresentAtRef.current = 0;
             useSingleLayer = false;
           } else if (!drawn) {
-            syncMode = syncMode || "single-wait";
+            /**
+             * DDS/latch 仍锁单目标层，但 singleRect 已丢且 hold 耗尽 → 原先停在 single-wait 整屏无框，
+             * 多目标被互斥挡住；用户双击取消跟踪后 DDS 结束才又看见多目标。
+             * 回退画多目标，不解除 eng（取消跟踪仍走 trackAction=0）。
+             */
+            singleNoneSyncTickRef.current++;
+            if (singleNoneSyncTickRef.current >= SINGLE_NONE_RECT_MAX_TICKS) {
+              useSingleLayer = false;
+              syncMode = "single-lost-multi-fallback";
+            } else {
+              syncMode = syncMode || "single-wait";
+            }
           }
         }
 
@@ -1218,22 +1291,25 @@ export function useEoEntityDetection({
           resetDetectionMatchState(singleMatchStateRef.current);
           singleNoneSyncTickRef.current = 0;
 
+          /** 短 header / hub 从未命中：强制各层 freshest，避免空 syncHdr 路径被 SEI hub 挡住 */
+          const layerSyncHdr = wsLatestMulti ? null : syncHdr;
+
           const boatEntry = resolveLayerForDisplay(
             boatBuf.current,
-            syncHdr,
+            layerSyncHdr,
             boatMatchStateRef.current,
             now,
             boatExplicitlyCleared,
-            syncHubWallMs ?? undefined,
+            wsLatestMulti ? undefined : syncHubWallMs ?? undefined,
             detectionDelayMsRef.current,
           );
           const planeEntry = resolveLayerForDisplay(
             planeBuf.current,
-            syncHdr,
+            layerSyncHdr,
             planeMatchStateRef.current,
             now,
             planeExplicitlyCleared,
-            syncHubWallMs ?? undefined,
+            wsLatestMulti ? undefined : syncHubWallMs ?? undefined,
             detectionDelayMsRef.current,
           );
           let boatDraw = boatEntry;
@@ -1244,7 +1320,7 @@ export function useEoEntityDetection({
           if (!planeExplicitlyCleared && !planeDraw?.videoRects?.length) {
             planeDraw = pickFreshestDrawable(planeBuf.current, now);
           }
-          if (intervalTick) {
+          if (intervalTick || wsLatestMulti) {
             if (!boatExplicitlyCleared) {
               boatDraw =
                 preferFresherOverHeaderHit(boatDraw, boatBuf.current, now) ??
@@ -1260,7 +1336,11 @@ export function useEoEntityDetection({
           }
           appendMultiFromEntries(boatDraw, planeDraw);
           if (next.length > 0) {
-            syncMode = syncHdr ? "header-multi" : "multi-hold";
+            syncMode = wsLatestMulti
+              ? "ws-latest-multi"
+              : syncHdr
+                ? "header-multi"
+                : "multi-hold";
             multiNoneSyncTickRef.current = 0;
           }
 
@@ -1346,7 +1426,7 @@ export function useEoEntityDetection({
         const layerChanged =
           displayLayerRef.current != null && displayLayerRef.current !== displayLayer;
         displayLayerRef.current = displayLayer;
-        const line = `检测 WS ${wsName} · buf ${boatBuf.current.length}/${planeBuf.current.length}/${singleBuf.current.length} u${unifiedBuf.current.length} · 框 ${out.length} · layer=${displayLayer} state=${lastBoxesRef.current.length} · eng=${singleEngagedRef.current ? 1 : 0} dds=${ddsSingleTrackActive ? 1 : 0} latch=${userSingleLatch ? 1 : 0} · ${jitterMs}${syncInfo}${hdrDiag}${noTs}${
+        const line = `检测 WS ${wsName} · buf ${boatBuf.current.length}/${planeBuf.current.length}/${singleBuf.current.length} u${unifiedBuf.current.length} · 框 ${out.length} · layer=${displayLayer} state=${lastBoxesRef.current.length} · eng=${singleEngagedRef.current ? 1 : 0} dds=${ddsSingleTrackActive ? 1 : 0} exec=${ddsExecTracking ? 1 : 0} latch=${userSingleLatch ? 1 : 0} · ${jitterMs}${syncInfo}${hdrDiag}${noTs}${
           wsDbg.summary ? ` | ${wsDbg.summary}` : ""
         }`;
         const nowEmit = Date.now();

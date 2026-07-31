@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
+  isOptoDeviceCapabilityVisible,
   isOptoDeviceFovVisible,
   isOptoDeviceIconVisible,
   pruneOptoDeviceVisibility,
@@ -12,13 +13,15 @@ import {
 const OPTO_DEVICE_LAYER_STORAGE_KEY = "nexus-ui-opto-device-layer-v1";
 
 interface OptoDeviceLayerState {
-  /** 资产 id → 视场 / GIS 图标；缺省 true */
+  /** 资产 id → 视场 / GIS 图标 / 能力；缺省 视场+图标 true、能力 false */
   deviceVisibility: OptoDeviceVisibilityMap;
   syncCameraIds: (cameraIds: string[]) => void;
   setDeviceFovVisible: (assetId: string, visible: boolean) => void;
   setDeviceIconVisible: (assetId: string, visible: boolean) => void;
+  setDeviceCapabilityVisible: (assetId: string, visible: boolean) => void;
   toggleDeviceFov: (assetId: string) => void;
   toggleDeviceIcon: (assetId: string) => void;
+  toggleDeviceCapability: (assetId: string) => void;
   setDeviceAllVisible: (assetId: string, visible: boolean) => void;
 }
 
@@ -48,6 +51,14 @@ export const useOptoDeviceLayerStore = create<OptoDeviceLayerState>()(
           },
         })),
 
+      setDeviceCapabilityVisible: (assetId, visible) =>
+        set((s) => ({
+          deviceVisibility: {
+            ...s.deviceVisibility,
+            [assetId]: { ...s.deviceVisibility[assetId], capability: visible },
+          },
+        })),
+
       toggleDeviceFov: (assetId) => {
         const { deviceVisibility } = get();
         get().setDeviceFovVisible(assetId, !isOptoDeviceFovVisible(assetId, deviceVisibility));
@@ -58,11 +69,19 @@ export const useOptoDeviceLayerStore = create<OptoDeviceLayerState>()(
         get().setDeviceIconVisible(assetId, !isOptoDeviceIconVisible(assetId, deviceVisibility));
       },
 
+      toggleDeviceCapability: (assetId) => {
+        const { deviceVisibility } = get();
+        get().setDeviceCapabilityVisible(
+          assetId,
+          !isOptoDeviceCapabilityVisible(assetId, deviceVisibility),
+        );
+      },
+
       setDeviceAllVisible: (assetId, visible) =>
         set((s) => ({
           deviceVisibility: {
             ...s.deviceVisibility,
-            [assetId]: { fov: visible, icon: visible },
+            [assetId]: { fov: visible, icon: visible, capability: visible },
           },
         })),
     }),

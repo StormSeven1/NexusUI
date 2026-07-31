@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
     url: `${bp}/api/task-status-image-proxy?bucket=${encodeURIComponent(r.minioBucket)}&objectKey=${encodeURIComponent(r.minioObjectKey)}`,
     bucket: r.minioBucket,
     objectKey: r.minioObjectKey,
+    cameraIndex: r.cameraIndex,
+    uploadedAt: r.uploadedAt,
   }));
 
   return Response.json({ ok: true, items });

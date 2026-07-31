@@ -29,8 +29,11 @@ import { fetchTrackEvalQuality, isTrackEvalGrpcEnabled } from "@/lib/system-eval
 import {
   buildDisplayFilterGrpcPayload,
   defaultTrackEvalDisplayFilter,
+  enrichSensorsForDisplayIdFilters,
   filterEvalTrackFeatures,
   filterGrpcTrackMetrics,
+  hasActiveDisplayIdOrAttrFilter,
+  summarizeDisplayIdFilterHint,
   type TrackEvalDisplayFilterState,
 } from "@/lib/track-evaluation-display-filter";
 
@@ -52,6 +55,8 @@ export const TRACK_EVAL_SENSOR_OPTIONS = [
   { id: 1, label: "远遥码头雷达" },
   { id: 2, label: "靖子头雷达" },
   { id: 3, label: "AIS" },
+  /** record_radar_track.sensor_id=202（sensor_info：船自报位）；可与 AIS 同为对海基准 */
+  { id: 202, label: "船自报位" },
   { id: 5, label: "探鸟雷达" },
   { id: 4, label: "自报位" },
   { id: 6, label: "对空融合航迹" },
@@ -60,10 +65,12 @@ export const TRACK_EVAL_SENSOR_OPTIONS = [
   { id: 204, label: "远遥鹏飞航迹" },
 ] as const;
 
-/** 默认勾选：对海融合、码头雷达、AIS、探鸟、自报位、对空融合 */
-export const DEFAULT_TRACK_EVAL_SENSOR_IDS = [0, 1, 3, 4, 5, 6] as const;
+/** 默认勾选：对海融合、AIS、船自报位、探鸟雷达、自报位、对空融合、远遥鹏飞 */
+export const DEFAULT_TRACK_EVAL_SENSOR_IDS = [0, 3, 202, 5, 4, 6, 204] as const;
 
 export const TRACK_EVAL_AUTO_QUERY_INTERVAL_MS = 3 * 60 * 1000;
+/** 开始/结束时间滚动刷新间隔 */
+export const TRACK_EVAL_TIME_REFRESH_INTERVAL_MS = 60 * 1000;
 /** 定时查询时间窗：最近 3 分钟 */
 export const TRACK_EVAL_SCHEDULED_QUERY_WINDOW_MINUTES = 3;
 
@@ -71,6 +78,7 @@ export const QUALITY_METRIC_TABS = [
   { id: "accuracy", label: "准确率" },
   { id: "recall", label: "召回率" },
   { id: "falseAlarm", label: "虚警率" },
+  { id: "fusionTrackCoverage", label: "融合航迹稳定性" },
   { id: "stability", label: "跟踪稳定性-航迹点" },
   { id: "stabilityDuration", label: "跟踪稳定性-时长" },
   { id: "maxTrackingDuration", label: "最大跟踪时长" },
@@ -130,6 +138,8 @@ interface TrackEvaluationState {
   setQualityTab: (tab: QualityMetricTabId) => void;
   setStartTime: (v: string) => void;
   setEndTime: (v: string) => void;
+  /** 按当前时间窗长度滚动：结束=现在，开始=现在−原时长（默认 1 小时） */
+  refreshTimeWindow: () => void;
   toggleSensorForQuery: (id: number) => void;
   setDirectDownload: (v: boolean) => void;
   setAutoAnalysisEnabled: (v: boolean) => void;
@@ -280,16 +290,31 @@ function handleInbound(
   }
 
   if (msg.status === "complete") {
-    set((s) => ({
-      queryFeatures: [...s.pendingQueryFeatures],
-      unfilteredQueryFeatures: [...s.pendingQueryFeatures],
-      queryStats: { ...s.pendingQueryStats },
-      queryStatus: {
-        type: "loading",
-        message: "查询完成，正在计算质量指标…",
-        details: msg.total_count != null ? `共 ${msg.total_count} 条` : s.queryStatus.details,
-      },
-    }));
+    set((s) => {
+      const unfiltered = [...s.pendingQueryFeatures];
+      const filtered = filterEvalTrackFeatures(unfiltered, s.displayFilter);
+      const usedFilter = filtered.length !== unfiltered.length;
+      return {
+        queryFeatures: filtered,
+        unfilteredQueryFeatures: unfiltered,
+        queryStats: {
+          total: filtered.length,
+          bySensor: countBySensor(filtered),
+        },
+        queryStatus: {
+          type: "loading",
+          message: usedFilter
+            ? "查询完成，已按显示筛选过滤，正在计算质量指标…"
+            : "查询完成，正在计算质量指标…",
+          details:
+            msg.total_count != null
+              ? usedFilter
+                ? `原始 ${unfiltered.length} 条 → 筛选后 ${filtered.length} 条`
+                : `共 ${msg.total_count} 条`
+              : s.queryStatus.details,
+        },
+      };
+    });
     runMetrics(set, get);
     return;
   }
@@ -359,6 +384,19 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   setQualityTab: (tab) => set({ qualityTab: tab }),
   setStartTime: (v) => set({ startTime: v }),
   setEndTime: (v) => set({ endTime: v }),
+  refreshTimeWindow: () => {
+    const s = get();
+    const startMs = Date.parse(s.startTime);
+    const endMs = Date.parse(s.endTime);
+    let durationMin = 60;
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+      durationMin = Math.max(1, Math.round((endMs - startMs) / 60_000));
+    }
+    set({
+      startTime: defaultDatetimeLocalFromMinutes(-durationMin),
+      endTime: defaultDatetimeLocalFromMinutes(0),
+    });
+  },
   setDirectDownload: (v) => set({ directDownload: v }),
   setAutoAnalysisEnabled: (v) => set({ autoAnalysisEnabled: v }),
   toggleSensorForQuery: (id) =>
@@ -458,11 +496,21 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   sendQuery: () => {
     const s = get();
     if (isTrackEvalGrpcEnabled() && !s.directDownload) {
+      const displayGrpc = buildDisplayFilterGrpcPayload(s.displayFilter);
+      const baseSensors =
+        s.sensorIdsForQuery.length > 0
+          ? [...s.sensorIdsForQuery]
+          : [...DEFAULT_TRACK_EVAL_SENSOR_IDS];
+      const sensorIds = enrichSensorsForDisplayIdFilters(baseSensors, displayGrpc);
+      const idHint = summarizeDisplayIdFilterHint(displayGrpc);
+      const hasFilter = hasActiveDisplayIdOrAttrFilter(displayGrpc);
       set({
         ...emptyPendingQueryState(),
         queryStatus: {
           type: "loading",
-          message: "正在通过 gRPC 评估航迹质量…",
+          message: hasFilter
+            ? `正在通过 gRPC 评估航迹质量（含显示筛选${idHint ? `：${idHint}` : ""}）…`
+            : "正在通过 gRPC 评估航迹质量…",
           details: s.regionInfo || "",
         },
         metricsComputing: true,
@@ -472,13 +520,11 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
           const { metrics, status, error, trackPointCount } = await fetchTrackEvalQuality({
             start_time: formatTimeForQuery(get().startTime),
             end_time: formatTimeForQuery(get().endTime),
-            sensor_ids:
-              get().sensorIdsForQuery.length > 0
-                ? [...get().sensorIdsForQuery]
-                : [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
+            sensor_ids: sensorIds,
             region_type: get().regionType || "",
             bounding_box: get().bounding_box ?? undefined,
             polygon: get().polygon ?? undefined,
+            ...displayGrpc,
           });
           if (!metrics || status !== "OK") {
             set({
@@ -492,15 +538,18 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
             });
             return;
           }
+          const filtered = filterGrpcTrackMetrics(metrics, get().displayFilter);
           set({
-            metrics,
+            metrics: filtered,
             unfilteredGrpcMetrics: metrics,
             metricsComputing: false,
             mainTab: "quality",
             queryStats: { total: trackPointCount, bySensor: {} },
             queryStatus: {
               type: "success",
-              message: "质量指标计算完成（gRPC）",
+              message: hasFilter
+                ? `质量指标计算完成（gRPC${idHint ? ` · ${idHint}` : " · 已应用显示筛选"}）`
+                : "质量指标计算完成（gRPC）",
               details: `共 ${trackPointCount} 条航迹点参与计算`,
             },
           });
@@ -623,13 +672,17 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
       void (async () => {
         try {
           const displayGrpc = buildDisplayFilterGrpcPayload(df);
+          const baseSensors =
+            df.displaySensorIds.length > 0
+              ? [...df.displaySensorIds]
+              : get().sensorIdsForQuery.length > 0
+                ? [...get().sensorIdsForQuery]
+                : [...DEFAULT_TRACK_EVAL_SENSOR_IDS];
+          const sensorIds = enrichSensorsForDisplayIdFilters(baseSensors, displayGrpc);
           const { metrics, status, error, trackPointCount } = await fetchTrackEvalQuality({
             start_time: formatTimeForQuery(get().startTime),
             end_time: formatTimeForQuery(get().endTime),
-            sensor_ids:
-              df.displaySensorIds.length > 0
-                ? [...df.displaySensorIds]
-                : [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
+            sensor_ids: sensorIds,
             region_type: get().regionType || "",
             bounding_box: get().bounding_box ?? undefined,
             polygon: get().polygon ?? undefined,
@@ -648,6 +701,8 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
             return;
           }
           const filtered = filterGrpcTrackMetrics(base, df);
+          const hasSeaErr = (filtered.seaDistanceError?.length ?? 0) > 0;
+          const idHint = summarizeDisplayIdFilterHint(displayGrpc);
           set({
             metrics: filtered,
             metricsComputing: false,
@@ -657,11 +712,18 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
               bySensor: get().queryStats.bySensor,
             },
             queryStatus: {
-              type: "success",
-              message: "显示筛选已应用（gRPC）",
-              details:
-                status !== "OK" && status
+              type: hasSeaErr || !idHint ? "success" : "info",
+              message: hasSeaErr
+                ? "显示筛选已应用（gRPC）"
+                : idHint
+                  ? `已按 ${idHint} 筛选，但距离误差为空`
+                  : "显示筛选已应用（gRPC）",
+              details: hasSeaErr
+                ? status !== "OK" && status
                   ? `筛选完成（评估状态: ${status}）`
+                  : "已按高级条件过滤质量指标"
+                : idHint
+                  ? "融合 ID 为 target_id/unique_id。请打开「距离/高度误差」页；并确认时间窗内有关联 AIS/雷达点。"
                   : "已按高级条件过滤质量指标",
             },
           });

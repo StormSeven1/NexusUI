@@ -16,6 +16,7 @@ async function fetchAllEntityRecords(listUrl: string): Promise<unknown[]> {
   const res = await fetch(listUrl, {
     headers: { Accept: "application/json", "Cache-Control": "no-cache" },
     cache: "no-store",
+    signal: AbortSignal.timeout(8_000),
   });
   const text = await res.text();
   let payload: unknown;
@@ -39,6 +40,7 @@ async function fetchAllEntityRecords(listUrl: string): Promise<unknown[]> {
     const pageRes = await fetch(base.toString(), {
       headers: { Accept: "application/json", "Cache-Control": "no-cache" },
       cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
     });
     if (!pageRes.ok) continue;
     const pageJson = (await pageRes.json()) as unknown;

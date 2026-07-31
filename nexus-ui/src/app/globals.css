@@ -502,3 +502,69 @@
       box-shadow 0.2s !important;
   }
 }
+
+/* 告警中心：严重告警左侧三角呼吸灯 + 红光
+ * 注意：刻意不响应 prefers-reduced-motion——严重告警需持续引起注意。
+ */
+@keyframes alert-critical-icon-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.22);
+  }
+}
+
+@keyframes alert-critical-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.7);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.55);
+  }
+}
+
+.alert-critical-icon-breathe {
+  position: relative;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  animation: alert-critical-icon-breathe 1.2s ease-in-out infinite !important;
+  filter: drop-shadow(0 0 4px rgba(255, 50, 50, 0.85));
+  will-change: opacity, transform;
+}
+
+.alert-critical-icon-breathe::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    rgba(255, 40, 40, 0.9) 0%,
+    rgba(255, 60, 60, 0.45) 40%,
+    rgba(255, 50, 50, 0) 72%
+  );
+  animation: alert-critical-glow-pulse 1.2s ease-in-out infinite !important;
+  pointer-events: none;
+  z-index: 0;
+  will-change: opacity, transform;
+}
+
+.alert-critical-icon-breathe > svg {
+  position: relative;
+  z-index: 1;
+  color: #ff2a2a !important;
+  stroke: #ff2a2a !important;
+}
+
+
+

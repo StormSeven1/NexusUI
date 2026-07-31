@@ -22,7 +22,8 @@ function parseTrackCollectBody(body: Record<string, unknown>): AimTrackCollectRe
   const triggerType = Math.trunc(Number(body.triggerType ?? 1));
   const trackStatus = Math.trunc(Number(body.trackStatus ?? 1));
   if (!Number.isFinite(cameraIndex) || cameraIndex < 0) return null;
-  if (!Number.isFinite(aimType) || (aimType !== 0 && aimType !== 1)) return null;
+  // 0=对海 1=对空 2=自报位（双击）
+  if (!Number.isFinite(aimType) || (aimType !== 0 && aimType !== 1 && aimType !== 2)) return null;
   if (!Number.isFinite(triggerType) || !Number.isFinite(trackStatus)) return null;
 
   const trackPointsRaw = body.trackPoints;

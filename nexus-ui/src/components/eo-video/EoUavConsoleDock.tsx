@@ -50,6 +50,14 @@ const STATUS_ICON = "shrink-0 text-white/90";
 const AIRPORT_MODE = ["作业准备中", "飞行作业中", "作业后状态恢复", "自定义飞行区更新中", "地形障碍物更新中", "任务空闲"] as const;
 const AIRPORT_DEBUG_MODE = ["空闲中", "现场调试", "远程调试", "固件升级中", "作业中", "待标定"] as const;
 
+/**
+ * 对齐 Qt `uavctrlboard::setTask`：机场 `mode_code` 为 1/2/3 时热备按钮为 checked。
+ * （1=现场调试，2=远程调试，3=固件升级中）
+ */
+export function isAirportHotbackActive(modeCode: number | null | undefined): boolean {
+  return modeCode === 1 || modeCode === 2 || modeCode === 3;
+}
+
 function KeyCap({
   k,
   transparent,
@@ -83,12 +91,15 @@ function ActionBtn({
   danger,
   transparent,
   busy,
+  checked,
   onClick,
 }: {
   label: string;
   danger?: boolean;
   transparent?: boolean;
   busy?: boolean;
+  /** 对齐 Qt QPushButton::checked（热备等） */
+  checked?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -96,15 +107,20 @@ function ActionBtn({
       type="button"
       onClick={onClick}
       disabled={busy}
+      aria-pressed={checked ? true : undefined}
       className={cn(
         "rounded border px-1.5 py-1 text-[10px] font-medium transition",
         danger && transparent
           ? "h-6 border-red-500/60 bg-red-950/75 px-1 text-[9px] text-red-100 hover:bg-red-900/85"
           : danger
             ? "border-red-500/50 bg-red-950/70 text-red-100 hover:bg-red-900/80"
-            : transparent
-              ? "h-6 border-white/35 bg-black/55 px-1 text-[9px] text-nexus-text-primary hover:border-white/50 hover:bg-black/70"
-              : "border-white/15 bg-white/5 text-nexus-text-secondary hover:border-white/25 hover:bg-white/10 hover:text-nexus-text-primary",
+            : checked
+              ? transparent
+                ? "h-6 border-sky-400/70 bg-sky-950/75 px-1 text-[9px] text-sky-100 hover:border-sky-300/80 hover:bg-sky-900/80"
+                : "border-sky-400/55 bg-sky-950/55 text-sky-100 hover:border-sky-300/70 hover:bg-sky-900/65"
+              : transparent
+                ? "h-6 border-white/35 bg-black/55 px-1 text-[9px] text-nexus-text-primary hover:border-white/50 hover:bg-black/70"
+                : "border-white/15 bg-white/5 text-nexus-text-secondary hover:border-white/25 hover:bg-white/10 hover:text-nexus-text-primary",
         busy ? "cursor-wait opacity-70" : "",
       )}
     >
@@ -174,6 +190,18 @@ export function EoUavConsoleDock({
   const rainfall = telemetry?.rainfall ?? null;
   const airportStepCode = telemetry?.airportFlightTaskStepCode ?? null;
   const airportModeCode = telemetry?.airportModeCode ?? null;
+  /** 对齐 Qt setTask(code, debugcode)：debugcode∈{1,2,3} → 热备按钮 checked */
+  const hotbackChecked = isAirportHotbackActive(airportModeCode);
+  const hotbackBusy = Boolean(actionBusy?.hotback || actionBusy?.hotback_close);
+
+  const onHotbackClick = () => {
+    if (!onAction) {
+      log(hotbackChecked ? "无人机控制台：取消热备（占位）" : "无人机控制台：热备（占位）");
+      return;
+    }
+    /** 对齐 Qt checkable：已热备再点 → debug_mode_close；未热备再点 → open+drone_open */
+    onAction(hotbackChecked ? "hotback_close" : "hotback");
+  };
 
   // 与 C++ uavstatusboard::setAirportStatus 映射一致：mode_code=1/2/3 优先显示 debug 状态，否则 flighttask_step_code
   const airportStatusTxt =
@@ -371,8 +399,9 @@ export function EoUavConsoleDock({
               <ActionBtn
                 label="热备"
                 transparent={transparent}
-                busy={actionBusy?.hotback}
-                onClick={() => (onAction ? onAction("hotback") : log("无人机控制台：热备（占位）"))}
+                busy={hotbackBusy}
+                checked={hotbackChecked}
+                onClick={onHotbackClick}
               />
               <ActionBtn
                 label="重连"
@@ -513,8 +542,9 @@ export function EoUavConsoleDock({
               <ActionBtn
                 label="热备"
                 transparent={transparent}
-                busy={actionBusy?.hotback}
-                onClick={() => (onAction ? onAction("hotback") : log("无人机控制台：热备（占位）"))}
+                busy={hotbackBusy}
+                checked={hotbackChecked}
+                onClick={onHotbackClick}
               />
               <ActionBtn
                 label="重连"

@@ -10,6 +10,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { normalizeVerifyEntityId } from "@/lib/task-status-verify-entity-ref";
 
+import type { WorkflowDeviceCard } from "@/lib/langgraph-workflow-context";
+import { formatWorkflowSessionTitle } from "@/lib/langgraph-workflow-context";
 
 
 /** 固定 Tab：值班助手 / AI助手；用户新建 `user`；任务工作流自动建 `workflow` */
@@ -49,6 +51,9 @@ export type AssistantChatTab = {
   /** 工作流显示/内部名称（用于匹配如「探鸟雷达」） */
   workflowName: string;
 
+  /** 会话顶部设备卡片（相机 / 无人机等，SSE 下发后累积） */
+  workflowDevices: WorkflowDeviceCard[];
+
   /** 工作流会话登记的业务 taskId（查证 SSE 路由） */
 
   taskIds: string[];
@@ -83,6 +88,7 @@ function emptyTab(
     langGraphThreadId: "",
     businessWorkflowThreadId: "",
     workflowName: "",
+    workflowDevices: [],
     taskIds: [],
     verifyEntityIds: [],
   };
@@ -113,6 +119,12 @@ type State = {
   setTabBusinessWorkflowThreadId: (tabId: string, threadId: string) => void;
 
   setTabWorkflowName: (tabId: string, name: string) => void;
+
+  /** 用 extracted_topic 替换「会话N」标题，并写入 workflowName */
+  applyWorkflowTopicToTab: (tabId: string, topic: string) => void;
+
+  /** 合并会话顶部设备卡片（同 id 更新 status） */
+  upsertWorkflowDevicesForTab: (tabId: string, devices: WorkflowDeviceCard[]) => void;
 
   registerTaskIdsForTab: (tabId: string, taskIds: string[]) => void;
 
@@ -211,6 +223,8 @@ function mergePersistedTabs(
 
         workflowName: t.workflowName ?? "",
 
+        workflowDevices: Array.isArray(t.workflowDevices) ? t.workflowDevices : [],
+
         taskIds: Array.isArray(t.taskIds) ? t.taskIds : [],
 
         verifyEntityIds: Array.isArray(t.verifyEntityIds) ? t.verifyEntityIds : [],
@@ -230,6 +244,8 @@ function mergePersistedTabs(
         businessWorkflowThreadId: t.businessWorkflowThreadId ?? "",
 
         workflowName: t.workflowName ?? "",
+
+        workflowDevices: Array.isArray(t.workflowDevices) ? t.workflowDevices : [],
 
         taskIds: Array.isArray(t.taskIds) ? t.taskIds : [],
 
@@ -390,6 +406,53 @@ export const useAssistantChatTabsStore = create<State>()(
             // 已有更具体中文名时不降级覆盖；仍允许补齐
             if (t.workflowName.includes("探鸟雷达") && !n.includes("探鸟雷达")) return t;
             return { ...t, workflowName: n };
+          }),
+        }));
+      },
+
+      applyWorkflowTopicToTab: (tabId, topic) => {
+        const raw = topic.trim();
+        if (!raw) return;
+        const title = formatWorkflowSessionTitle(raw);
+        set((s) => ({
+          tabs: s.tabs.map((t) => {
+            if (t.id !== tabId) return t;
+            const nextName =
+              t.workflowName.includes("探鸟雷达") && !raw.includes("探鸟雷达")
+                ? t.workflowName
+                : raw;
+            return {
+              ...t,
+              workflowName: nextName,
+              // 工作流 Tab：用 topic 替换「会话N」；已是业务标题则允许更新为更新的 topic
+              title: t.kind === "workflow" ? title : t.title,
+            };
+          }),
+        }));
+      },
+
+      upsertWorkflowDevicesForTab: (tabId, devices) => {
+        if (!devices.length) return;
+        set((s) => ({
+          tabs: s.tabs.map((t) => {
+            if (t.id !== tabId) return t;
+            const map = new Map(t.workflowDevices.map((d) => [d.id, d]));
+            for (const d of devices) {
+              const id = d.id.trim();
+              if (!id) continue;
+              const prev = map.get(id);
+              map.set(id, {
+                id,
+                kind: d.kind,
+                statusLabel: d.statusLabel || prev?.statusLabel || "",
+              });
+            }
+            // 相机在前、无人机在后，稳定顺序
+            const merged = [...map.values()].sort((a, b) => {
+              if (a.kind === b.kind) return a.id.localeCompare(b.id);
+              return a.kind === "camera" ? -1 : 1;
+            });
+            return { ...t, workflowDevices: merged };
           }),
         }));
       },

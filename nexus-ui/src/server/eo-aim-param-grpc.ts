@@ -15,6 +15,7 @@ export type AimParamGrpcSeaAim = {
   maxDis?: number;
   seamParamP?: string;
   seamParamT?: string;
+  Tparam_type?: number;
 };
 
 export type AimParamGrpcResponse = {

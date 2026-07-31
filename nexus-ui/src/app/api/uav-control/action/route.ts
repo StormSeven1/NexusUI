@@ -12,7 +12,7 @@ import {
 
 export const runtime = "nodejs";
 
-type UavAction = "takeoff" | "stop" | "back" | "hotback" | "reconnect" | "emergency";
+type UavAction = "takeoff" | "stop" | "back" | "hotback" | "hotback_close" | "reconnect" | "emergency";
 
 type ControlBody = {
   action?: unknown;
@@ -107,7 +107,13 @@ function fillTemplate(tpl: string, airportSN: string, deviceSN: string): string 
 
 function envByAction(action: UavAction, suffix: "URL" | "METHOD" | "MQTT_TOPIC" | "MQTT_PAYLOAD"): string {
   const key = `NEXUS_UAV_CTRL_${action.toUpperCase()}_${suffix}`;
-  return process.env[key]?.trim() ?? "";
+  const direct = process.env[key]?.trim() ?? "";
+  if (direct) return direct;
+  /** 取消热备与热备共用 remote-debug-control / services topic */
+  if (action === "hotback_close") {
+    return process.env[`NEXUS_UAV_CTRL_HOTBACK_${suffix}`]?.trim() ?? "";
+  }
+  return "";
 }
 
 function readEnvNumber(key: string): number | null {
@@ -148,8 +154,10 @@ function buildTakeoffToPointPayload(lat: number, lon: number, heightM: number): 
   });
 }
 
-/** 与 api4third `debug_mode_open` / Qt uavctrlboard 热备一致，走 `thing/product/{sn}/services` */
-function buildDebugModeMqttPayload(method: "debug_mode_open" | "debug_mode_close"): string {
+/** 与 api4third / Qt uavctrlboard 远程调试一致，走 `thing/product/{sn}/services` */
+type RemoteDebugMethod = "debug_mode_open" | "debug_mode_close" | "drone_open";
+
+function buildRemoteDebugMqttPayload(method: RemoteDebugMethod): string {
   const nTime = Date.now();
   const strip = (u: string) => u.replace(/-/g, "");
   return JSON.stringify({
@@ -160,6 +168,13 @@ function buildDebugModeMqttPayload(method: "debug_mode_open" | "debug_mode_close
     data: {},
   });
 }
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Qt uavctrlboard：debug_mode_open 成功后 QTimer::singleShot(2000) 再 drone_open */
+const HOTBACK_DRONE_OPEN_DELAY_MS = 2000;
 
 function parseTakeoffCoords(body: ControlBody): { lat: number; lon: number; heightM: number } | null {
   const defH = readEnvNumber("NEXUS_UAV_CTRL_TAKEOFF_DEFAULT_HEIGHT_M") ?? 120;
@@ -219,7 +234,14 @@ function resolveMqttTopicAndPayload(
     if (payloadTpl && payloadTpl !== "{}") {
       return { topic, payload: fillTemplate(payloadTpl, airportSN, deviceSN) };
     }
-    return { topic, payload: buildDebugModeMqttPayload("debug_mode_open") };
+    return { topic, payload: buildRemoteDebugMqttPayload("debug_mode_open") };
+  }
+
+  if (action === "hotback_close") {
+    if (payloadTpl && payloadTpl !== "{}") {
+      return { topic, payload: fillTemplate(payloadTpl, airportSN, deviceSN) };
+    }
+    return { topic, payload: buildRemoteDebugMqttPayload("debug_mode_close") };
   }
 
   if (!payloadTpl) return { skip: "no_mqtt_payload_configured" };
@@ -229,11 +251,14 @@ function resolveMqttTopicAndPayload(
 /**
  * 与 WatchSys uavctrlboard.cpp 一致：JSON 字段名为 device_sn，取值用机场 gateway SN（airportSN）。
  * 参见 onBackFlightSlot / finishFlight 等：`backFlightObject["device_sn"] = this->airportSN`
+ * 热备 HTTP 体见 callRemoteDebugHttp（debug_mode_open → drone_open）。
  */
 function defaultHttpPayload(action: UavAction, airportSN: string): Record<string, unknown> {
   switch (action) {
     case "hotback":
       return { device_sn: airportSN, method: "debug_mode_open" };
+    case "hotback_close":
+      return { device_sn: airportSN, method: "debug_mode_close" };
     default:
       return { device_sn: airportSN };
   }
@@ -294,12 +319,64 @@ async function callHttpControl(
   }
 }
 
+/**
+ * Qt onUavHotBackSlot / setUavOpen：同一 remote-debug-control URL，仅 method 不同。
+ * method: debug_mode_open | drone_open | debug_mode_close
+ */
+async function callRemoteDebugHttp(
+  base: string,
+  token: string,
+  airportSN: string,
+  deviceSN: string,
+  remoteMethod: RemoteDebugMethod,
+): Promise<{ ok: boolean; status: number; body: string; url: string; method: RemoteDebugMethod }> {
+  const urlFromEnv = envByAction("hotback", "URL");
+  if (!urlFromEnv) {
+    return {
+      ok: false,
+      status: 0,
+      body: "missing_action_url_env",
+      url: "",
+      method: remoteMethod,
+    };
+  }
+  const httpMethod = (envByAction("hotback", "METHOD") || "POST").toUpperCase();
+  const fullUrl = /^https?:\/\//i.test(urlFromEnv)
+    ? fillTemplate(urlFromEnv, airportSN, deviceSN)
+    : `${base}${fillTemplate(urlFromEnv, airportSN, deviceSN)}`;
+  const payload = { device_sn: airportSN, method: remoteMethod };
+  try {
+    const res = await fetchWithTimeout(
+      fullUrl,
+      {
+        method: httpMethod,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify(payload),
+        cache: "no-store",
+      },
+      TIMEOUT_MS,
+      `uav_hotback_${remoteMethod}_http`,
+    );
+    const txt = await res.text().catch(() => "");
+    const ok = bizOkFromDronePlatformBody(txt, res.ok);
+    return { ok, status: res.status, body: txt.slice(0, 800), url: fullUrl, method: remoteMethod };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, status: 0, body: msg.slice(0, 800), url: fullUrl, method: remoteMethod };
+  }
+}
+
 async function publishMqttControl(
   action: UavAction,
   airportSN: string,
   deviceSN: string,
   body: ControlBody,
   loginMqtt: Pick<LoginSession, "mqttBrokerUrl" | "mqttUsername" | "mqttPassword">,
+  mqttOverride?: { topic?: string; payload: string },
 ): Promise<{ ok: boolean; detail: string }> {
   const brokerUrl =
     process.env.NEXUS_UAV_MQTT_BROKER_URL?.trim() || loginMqtt.mqttBrokerUrl?.trim() || "";
@@ -309,11 +386,23 @@ async function publishMqttControl(
       detail: "missing_mqtt_broker_set_NEXUS_UAV_MQTT_BROKER_URL_or_ensure_login_returns_mqtt_addr",
     };
   }
-  const resolved = resolveMqttTopicAndPayload(action, airportSN, deviceSN, body);
-  if ("skip" in resolved) {
-    return { ok: false, detail: resolved.skip };
+  let topic: string;
+  let payload: string;
+  if (mqttOverride) {
+    const topicTpl = mqttOverride.topic || envByAction(action, "MQTT_TOPIC");
+    if (!topicTpl) {
+      return { ok: false, detail: "no_mqtt_topic_configured" };
+    }
+    topic = fillTemplate(topicTpl, airportSN, deviceSN);
+    payload = mqttOverride.payload;
+  } else {
+    const resolved = resolveMqttTopicAndPayload(action, airportSN, deviceSN, body);
+    if ("skip" in resolved) {
+      return { ok: false, detail: resolved.skip };
+    }
+    topic = resolved.topic;
+    payload = resolved.payload;
   }
-  const { topic, payload } = resolved;
   const connect = resolveMqttConnect();
   const username =
     process.env.NEXUS_UAV_MQTT_USERNAME?.trim() || loginMqtt.mqttUsername?.trim() || undefined;
@@ -352,7 +441,7 @@ export async function POST(req: NextRequest) {
   const action = typeof body.action === "string" ? (body.action.trim() as UavAction) : ("" as UavAction);
   const airportSN = typeof body.airportSN === "string" ? body.airportSN.trim() : "";
   const deviceSN = typeof body.deviceSN === "string" ? body.deviceSN.trim() : "";
-  if (!action || !["takeoff", "stop", "back", "hotback", "reconnect", "emergency"].includes(action)) {
+  if (!action || !["takeoff", "stop", "back", "hotback", "hotback_close", "reconnect", "emergency"].includes(action)) {
     return NextResponse.json({ ok: false, error: "invalid_action" }, { status: 400 });
   }
   if (!airportSN) {
@@ -391,6 +480,96 @@ export async function POST(req: NextRequest) {
         const msg = e instanceof Error ? e.message : String(e);
         viaTaskCancel = { ok: false, status: 0, body: msg.slice(0, 800), url: getUavTaskApiBase() ?? "" };
       }
+    }
+
+    /**
+     * 热备两步（对齐 Qt onUavHotBackSlot → setUavOpen）：
+     * 1) debug_mode_open 进入调试状态
+     * 2) 成功后延时 2s 再 drone_open 开机
+     */
+    if (action === "hotback") {
+      const httpDebug = await callRemoteDebugHttp(
+        base,
+        session.token,
+        airportSN,
+        deviceSN,
+        "debug_mode_open",
+      );
+      const mqttDebug = await publishMqttControl(
+        action,
+        airportSN,
+        deviceSN,
+        body,
+        session,
+      ).catch((e) => ({
+        ok: false,
+        detail: e instanceof Error ? e.message : String(e),
+      }));
+
+      const step1Ok = httpDebug.ok || mqttDebug.ok;
+      let httpDrone: { ok: boolean; status: number; body: string; url: string; method: RemoteDebugMethod } | undefined;
+      let mqttDrone: { ok: boolean; detail: string } | undefined;
+
+      if (step1Ok) {
+        await sleep(HOTBACK_DRONE_OPEN_DELAY_MS);
+        httpDrone = await callRemoteDebugHttp(base, session.token, airportSN, deviceSN, "drone_open");
+        mqttDrone = await publishMqttControl(action, airportSN, deviceSN, body, session, {
+          payload: buildRemoteDebugMqttPayload("drone_open"),
+        }).catch((e) => ({
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        }));
+      }
+
+      const step2Ok = Boolean(httpDrone && (httpDrone.ok || mqttDrone?.ok));
+      const ok = step1Ok && step2Ok;
+      return NextResponse.json(
+        {
+          ok,
+          action,
+          airportSN,
+          deviceSN: deviceSN || undefined,
+          viaHttp: httpDebug,
+          viaMqtt: mqttDebug,
+          viaHttpDroneOpen: httpDrone,
+          viaMqttDroneOpen: mqttDrone,
+          hotbackSteps: {
+            debugModeOpen: step1Ok,
+            droneOpen: step2Ok,
+            droneOpenDelayMs: step1Ok ? HOTBACK_DRONE_OPEN_DELAY_MS : 0,
+          },
+        },
+        { status: ok ? 200 : 502 },
+      );
+    }
+
+    /** 取消热备（对齐 Qt onUavHotBackCloseSlot）：debug_mode_close */
+    if (action === "hotback_close") {
+      const httpClose = await callRemoteDebugHttp(
+        base,
+        session.token,
+        airportSN,
+        deviceSN,
+        "debug_mode_close",
+      );
+      const mqttClose = await publishMqttControl(action, airportSN, deviceSN, body, session).catch(
+        (e) => ({
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        }),
+      );
+      const ok = httpClose.ok || mqttClose.ok;
+      return NextResponse.json(
+        {
+          ok,
+          action,
+          airportSN,
+          deviceSN: deviceSN || undefined,
+          viaHttp: httpClose,
+          viaMqtt: mqttClose,
+        },
+        { status: ok ? 200 : 502 },
+      );
     }
 
     const httpRes = await callHttpControl(action, base, session.token, airportSN, deviceSN);

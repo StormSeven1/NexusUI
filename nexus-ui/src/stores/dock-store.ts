@@ -202,6 +202,16 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     displayOrder: 6,
   },
   {
+    id: "eval-report",
+    location: null,
+    mode: "hidden",
+    position: { x: 160, y: 72 },
+    size: { width: 720, height: 680 },
+    zIndex: DEFAULT_Z_INDEX,
+    lastPopupPosition: null,
+    displayOrder: 20,
+  },
+  {
     id: "chat",
     location: "right-1",
     mode: "docked",
@@ -210,16 +220,6 @@ const DEFAULT_PANELS: PanelWindowState[] = [
     zIndex: DEFAULT_Z_INDEX,
     lastPopupPosition: null,
     displayOrder: 7,
-  },
-  {
-    id: "knowledge-base",
-    location: "right-1",
-    mode: "docked",
-    position: { x: 500, y: 200 },
-    size: { width: 440, height: 400 },
-    zIndex: DEFAULT_Z_INDEX,
-    lastPopupPosition: null,
-    displayOrder: 8,
   },
   {
     id: "overview",
@@ -1612,13 +1612,25 @@ export function getAllPanelConfigs(): PanelConfig[] {
  * 初始化动态分区系统
  * 在应用启动时自动调用，从固定区域迁移到动态分区
  */
-/** 将 DEFAULT_PANELS 中尚未出现在持久化布局里的面板补进 panels（如新增 knowledge-base） */
+/** 将 DEFAULT_PANELS 中尚未出现在持久化布局里的面板补进 panels；并移除已废弃面板 */
 export function mergeMissingDefaultPanels() {
   const state = useDockStore.getState();
-  const existingIds = new Set(state.panels.map((p) => p.id));
+  const withoutDeprecated = state.panels.filter((p) => p.id !== "knowledge-base");
+  const existingIds = new Set(withoutDeprecated.map((p) => p.id));
   const missing = DEFAULT_PANELS.filter((p) => !existingIds.has(p.id));
-  if (missing.length === 0) return;
-  useDockStore.setState({ panels: [...state.panels, ...missing] });
+  const rightPartitions = state.rightPartitions.map((p) =>
+    p.currentPanelId === "knowledge-base" ? { ...p, currentPanelId: "chat" as PanelId } : p,
+  );
+  const panelsChanged =
+    missing.length > 0 || withoutDeprecated.length !== state.panels.length;
+  const partitionsChanged = rightPartitions.some(
+    (p, i) => p.currentPanelId !== state.rightPartitions[i]?.currentPanelId,
+  );
+  if (!panelsChanged && !partitionsChanged) return;
+  useDockStore.setState({
+    panels: [...withoutDeprecated, ...missing],
+    ...(partitionsChanged ? { rightPartitions } : {}),
+  });
   log("info", "Merged missing default panels", missing.map((p) => p.id));
 }
 

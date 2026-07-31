@@ -19,6 +19,7 @@ export async function GET(req: Request) {
     const res = await fetch(listUrl, {
       headers: { Accept: "application/json", "Cache-Control": "no-cache" },
       cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
     });
     const text = await res.text();
     let payload: unknown;

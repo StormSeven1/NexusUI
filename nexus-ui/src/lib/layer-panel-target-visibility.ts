@@ -39,11 +39,11 @@ export function targetLayerMasterVisibility(
 }
 
 export function fuseAirSubtypeVisibility(
-  tracksMasterOn: boolean,
+  _tracksMasterOn: boolean,
   subtypeVisible: TrackSubtypeVisibility,
   airSubtypeVisible: AirFusionSubtypeVisibility,
 ): PanelTreeVisibilityState {
-  if (!tracksMasterOn || subtypeVisible.fuse_air === false) return "none";
+  if (subtypeVisible.fuse_air === false) return "none";
   return aggregatePanelVisibility([
     airSubtypeVisible.uav !== false,
     airSubtypeVisible.bird !== false,
@@ -51,10 +51,10 @@ export function fuseAirSubtypeVisibility(
 }
 
 export function trackSubtypeVisibilityState(
-  tracksMasterOn: boolean,
+  _tracksMasterOn: boolean,
   key: TrackLayerKey,
   subtypeVisible: TrackSubtypeVisibility,
 ): PanelTreeVisibilityState {
-  if (!tracksMasterOn) return "none";
+  // 显示子项自身开关状态（不因子开关关掉而强制显示为关），否则关母后点子项会「看起来没开」再点又关掉。
   return subtypeVisible[key] !== false ? "all" : "none";
 }

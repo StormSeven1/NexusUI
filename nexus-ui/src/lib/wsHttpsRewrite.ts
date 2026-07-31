@@ -7,8 +7,8 @@
  * 生产 **:21911** → `prod-start-nginx.sh`（与 dev WSS 网关独立）。
  *
  * Nginx 将下列端口映射为同源 path（终结 TLS 后反代明文 WS）：
- *   dev :22402  /wss-track/      → **27003**
- *   prod :21911 /ws              → **27004**（app-config.prod 的 27004）
+ *   dev :22402  /wss-track/      → **27003**（含 /wss-track/ws、/wss-track/ws/fuse-sea）
+ *   prod :21911 /ws              → **27004**（含 /ws、/ws/fuse-sea）
  *   /wss-mqtt/       → MQTT_WS_BACKEND_PORT
  *   /wss-detection/  → EO_DETECTION_WS_BACKEND_PORT
  *   /wss-track-eval/ → TRACK_EVAL_WS_BACKEND_PORT（航迹评估 C++ 数据服务）

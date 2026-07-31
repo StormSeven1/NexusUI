@@ -81,6 +81,12 @@ def evaluate_track_quality(
     region_type: str = "",
     bounding_box: Optional[Dict[str, float]] = None,
     polygon_points: Optional[List[Dict[str, float]]] = None,
+    fusion_unique_ids: Optional[List[int]] = None,
+    radar_track_ids: Optional[List[int]] = None,
+    ais_ids: Optional[List[int]] = None,
+    self_report_ids: Optional[List[int]] = None,
+    # 兼容旧字段
+    fused_track_ids: Optional[List[int]] = None,
     fused_track_id: Optional[int] = None,
     unique_id: Optional[int] = None,
     attr_range: Optional[Dict[str, float]] = None,
@@ -133,10 +139,24 @@ def evaluate_track_quality(
     elif display_sensor_ids:
         req.sensor_ids.extend(int(x) for x in display_sensor_ids)
 
+    fusion_uids = list(fusion_unique_ids or []) + list(fused_track_ids or [])
+    radar = list(radar_track_ids or [])
+    ais = list(ais_ids or [])
+    self_ids = list(self_report_ids or [])
     if fused_track_id is not None:
-        req.track_id_filter.fused_track_id = int(fused_track_id)
-    elif unique_id is not None:
-        req.track_id_filter.unique_id = int(unique_id)
+        # 旧字段名易误解：按 unique_id/target_id 处理
+        fusion_uids.append(int(fused_track_id))
+    if unique_id is not None:
+        fusion_uids.append(int(unique_id))
+    if fusion_uids or radar or ais or self_ids:
+        if fusion_uids:
+            req.track_id_filter.fusion_unique_ids.extend(int(x) for x in fusion_uids)
+        if radar:
+            req.track_id_filter.radar_track_ids.extend(int(x) for x in radar)
+        if ais:
+            req.track_id_filter.ais_ids.extend(int(x) for x in ais)
+        if self_ids:
+            req.track_id_filter.self_report_ids.extend(int(x) for x in self_ids)
 
     if attr_range:
         ar = req.attr_range

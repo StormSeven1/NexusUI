@@ -32,6 +32,14 @@ export interface EoVideoViewportProps {
   /** 递增时强制重建 WebRTC（私有云 start 推流后重连 ZLM） */
   webRtcKickEpoch?: number;
   /**
+   * 复用已有 MediaStream（放大窗跟小窗同轨）：不建第二路 WebRTC，只绑到本 video。
+   */
+  sharedMediaStream?: MediaStream | null;
+  /**
+   * 放大窗模式：即使 sharedMediaStream 尚未就绪也禁止本窗协商 WebRTC（避免抢流后变黑）。
+   */
+  sharedPlaybackOnly?: boolean;
+  /**
    * WebCodecs Canvas 模式：每次解码输出尺寸或 canvas 变化时更新，供叠层 letterbox / 截图。
    * `active` 为 false 时表示当前未使用或未就绪。
    */
@@ -67,9 +75,15 @@ export function EoVideoViewport({
   stallWatchIntervalMs,
   onStallRecover,
   webRtcKickEpoch,
+  sharedMediaStream = null,
+  sharedPlaybackOnly = false,
 }: EoVideoViewportProps) {
+  /** 共享小窗流时强制走硬件 video，避免放大窗再开 WebCodecs/第二路协商 */
   const useCanvas =
-    isEoVideoWebCodecsCanvasEnabled() && Boolean(encodedSyncHub && signalingUrl && enabled);
+    !sharedMediaStream &&
+    !sharedPlaybackOnly &&
+    isEoVideoWebCodecsCanvasEnabled() &&
+    Boolean(encodedSyncHub && signalingUrl && enabled);
 
   if (useCanvas) {
     return (
@@ -108,6 +122,8 @@ export function EoVideoViewport({
       stallWatchIntervalMs={stallWatchIntervalMs}
       onStallRecover={onStallRecover}
       webRtcKickEpoch={webRtcKickEpoch}
+      sharedMediaStream={sharedMediaStream}
+      sharedPlaybackOnly={sharedPlaybackOnly}
     />
   );
 }
@@ -136,8 +152,13 @@ function EoVideoViewportHardware({
   stallWatchIntervalMs,
   onStallRecover,
   webRtcKickEpoch,
+  sharedMediaStream = null,
+  sharedPlaybackOnly = false,
 }: EoVideoViewportProps) {
   const showDebugOverlay = isEoVideoDebugUiEnabled();
+  const blockWebRtc = Boolean(sharedMediaStream) || Boolean(sharedPlaybackOnly);
+  const reuseShared = Boolean(sharedMediaStream);
+
   useEffect(() => {
     applyPresentationRef(webCodecsPresentationRef, {
       active: false,
@@ -161,17 +182,64 @@ function EoVideoViewportHardware({
     };
   }, [webCodecsPresentationRef]);
 
+  /** 放大窗：直接使用父窗 capture/clone 的流；勿再 clone getTracks（易拖死小窗轨） */
+  useEffect(() => {
+    if (!reuseShared || !sharedMediaStream) return;
+    let cancelled = false;
+    let boundVideo: HTMLVideoElement | null = null;
+
+    const bind = (): boolean => {
+      const video = videoRef.current;
+      if (!video || cancelled) return false;
+      if (video.srcObject !== sharedMediaStream) {
+        video.srcObject = sharedMediaStream;
+      }
+      video.muted = true;
+      video.playsInline = true;
+      try {
+        video.disablePictureInPicture = true;
+      } catch {
+        /* noop */
+      }
+      void video.play().catch(() => {
+        /* autoplay */
+      });
+      boundVideo = video;
+      return true;
+    };
+
+    if (bind()) {
+      return () => {
+        cancelled = true;
+        if (boundVideo && boundVideo.srcObject === sharedMediaStream) {
+          boundVideo.srcObject = null;
+        }
+      };
+    }
+
+    const id = window.setInterval(() => {
+      if (bind()) window.clearInterval(id);
+    }, 100);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      if (boundVideo && boundVideo.srcObject === sharedMediaStream) {
+        boundVideo.srcObject = null;
+      }
+    };
+  }, [reuseShared, sharedMediaStream, videoRef]);
+
   const { connectionState, iceConnectionState, error } = useWebRtcPlayer({
     signalingUrl,
     iceServers,
     videoRef,
-    enabled,
+    enabled: enabled && !blockWebRtc,
     peerConnectionRef,
-    encodedSyncHub,
-    videoReceiverRef,
-    stallWatchIntervalMs,
-    onStallRecover,
-    webRtcKickEpoch,
+    encodedSyncHub: blockWebRtc ? undefined : encodedSyncHub,
+    videoReceiverRef: blockWebRtc ? undefined : videoReceiverRef,
+    stallWatchIntervalMs: blockWebRtc ? undefined : stallWatchIntervalMs,
+    onStallRecover: blockWebRtc ? undefined : onStallRecover,
+    webRtcKickEpoch: blockWebRtc ? 0 : webRtcKickEpoch,
   });
 
   return (
@@ -195,8 +263,11 @@ function EoVideoViewportHardware({
         <div className="pointer-events-none absolute left-2 top-2 z-20 flex max-w-[min(90%,280px)] flex-col gap-0.5 rounded border border-white/10 bg-black/70 px-2 py-1 font-mono text-[9px] text-nexus-text-secondary">
           {streamLabel ? <span className="text-nexus-text-primary">{streamLabel}</span> : null}
           <span>
-            PC {connectionState} · ICE {iceConnectionState}
-            {encodedSyncHub ? " · syncHub" : ""}
+            {blockWebRtc
+              ? reuseShared
+                ? "shared · MediaStream"
+                : "shared · waiting"
+              : `PC ${connectionState} · ICE ${iceConnectionState}${encodedSyncHub ? " · syncHub" : ""}`}
           </span>
           {error ? <span className="text-nexus-error">ERR {error}</span> : null}
         </div>
@@ -248,7 +319,7 @@ function EoVideoViewportWebCodecs({
     }
   };
 
-  /** 舱内/舱外或任意信令切换：清 Canvas 残留帧，避免长时间仍显示机场画面 */
+  /** 舱内/舱外或任意信令切换 / 强制重连：清 Canvas 残留帧，避免黑屏仍叠检测框 */
   useEffect(() => {
     resetForNewStream();
     setVideoFallback(false);
@@ -266,7 +337,7 @@ function EoVideoViewportWebCodecs({
       videoFallbackActive: false,
       presentationEpoch: 0,
     });
-  }, [signalingUrl, resetForNewStream, webCodecsPresentationRef]);
+  }, [signalingUrl, webRtcKickEpoch, resetForNewStream, webCodecsPresentationRef]);
 
   const { connectionState, iceConnectionState, error, restart } = useWebRtcPlayer({
     signalingUrl,

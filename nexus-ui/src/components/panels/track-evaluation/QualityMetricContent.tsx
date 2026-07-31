@@ -10,7 +10,7 @@ import { TrackEvalLineChart } from "@/components/panels/track-evaluation/TrackEv
 import { MetricErrorChart } from "@/components/panels/track-evaluation/MetricErrorChart";
 
 const ERROR_DESC =
-  "平均值 = Σ误差值 / 样本数量，RMSE = √(Σ(误差值²) / 样本数量)。对海以 AIS 为参考，对空以自报位为参考。";
+  "平均值 = Σ误差值 / 样本数量，RMSE = √(Σ(误差值²) / 样本数量)。对海从融合 extra_data.fusionSources 解析航迹源，船自报位优先于 AIS 作参考，对非 AIS 源（鹏飞/码头/靖子头等）与融合分别评估；对空以自报位为参考。";
 
 function CalculationNote({ children }: { children: React.ReactNode }) {
   return (
@@ -82,6 +82,7 @@ function renderTab(tab: QualityMetricTabId, m: TrackEvalMetricsResult) {
     case "stability":
       return (
         <>
+          <CalculationNote>按 AIS / 自报位 ID 分组，衡量融合航迹对源航迹的覆盖程度（航迹点口径）。</CalculationNote>
           <TrackEvalLineChart
             title="对海融合 — 跟踪稳定性（航迹点）"
             description={
@@ -115,6 +116,9 @@ function renderTab(tab: QualityMetricTabId, m: TrackEvalMetricsResult) {
     case "stabilityDuration":
       return (
         <>
+          <CalculationNote>
+            有雷达关联的连续时段累计时长 / 参考源（AIS/自报位）整段时长；中间无雷达的空洞不计入分子。换融合批不断开。
+          </CalculationNote>
           <TrackEvalLineChart
             title="对海 — 跟踪稳定性（时长）"
             description={
@@ -141,6 +145,42 @@ function renderTab(tab: QualityMetricTabId, m: TrackEvalMetricsResult) {
               value: x.stability,
             }))}
             color="#06b6d4"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
+          />
+        </>
+      );
+    case "fusionTrackCoverage":
+      return (
+        <>
+          <CalculationNote>
+            各融合航迹（按融合批号）有雷达关联的连续时长之和 / 参考源整段时长；换融合批即断开，批间空洞不计入。
+          </CalculationNote>
+          <TrackEvalLineChart
+            title="对海 — 融合航迹稳定性"
+            description={
+              m.seaFusionTrackCoverageAvg != null
+                ? `平均 ${(m.seaFusionTrackCoverageAvg * 100).toFixed(1)}%`
+                : undefined
+            }
+            points={m.seaFusionTrackCoverageByAis.map((x) => ({
+              id: x.aisId,
+              value: x.coverage,
+            }))}
+            color="#84cc16"
+            formatValue={(v) => `${(v * 100).toFixed(2)}%`}
+          />
+          <TrackEvalLineChart
+            title="对空 — 融合航迹稳定性"
+            description={
+              m.airFusionTrackCoverageAvg != null
+                ? `平均 ${(m.airFusionTrackCoverageAvg * 100).toFixed(1)}%`
+                : undefined
+            }
+            points={m.airFusionTrackCoverageBySelfReport.map((x) => ({
+              id: x.selfReportId,
+              value: x.coverage,
+            }))}
+            color="#14b8a6"
             formatValue={(v) => `${(v * 100).toFixed(2)}%`}
           />
         </>

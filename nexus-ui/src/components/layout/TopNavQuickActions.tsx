@@ -31,6 +31,7 @@ import {
   stopBirdRadarCapture,
 } from "@/lib/bird-radar-capture-api";
 import { BirdRadarCaptureUploadDialog } from "@/components/layout/BirdRadarCaptureUploadDialog";
+import { useManualUavMarkStore } from "@/stores/manual-uav-mark-store";
 
 function quickBtnClass(active?: boolean) {
   return cn(
@@ -102,7 +103,7 @@ export function TopNavQuickActions() {
             autoStopHandledRef.current = sid;
             setBirdCaptureEnabled(false);
             toast.message("探鸟采集已自动结束", {
-              description: "超过 1 分钟未再出现自报位+探鸟融合航迹",
+              description: "超过 1 分钟无可用无人机真值（自报位+探鸟或手动标记）",
             });
             await openUploadDialog(st.autoStopped);
           } else if (!st.recording && birdCaptureEnabled) {
@@ -142,10 +143,11 @@ export function TopNavQuickActions() {
     try {
       await useAppConfigStore.getState().ensureLoaded();
       const tracks = useTrackStore.getState().tracks;
-      const candidates = listFuseAirBirdCaptureCandidates(tracks);
+      const manualMarks = useManualUavMarkStore.getState().markedPihaoByShowId;
+      const candidates = listFuseAirBirdCaptureCandidates(tracks, manualMarks);
       if (candidates.length === 0) {
         toast.error("无法开始探鸟采集", {
-          description: describeBirdCaptureBlockReason(tracks),
+          description: describeBirdCaptureBlockReason(tracks, manualMarks),
         });
         return;
       }
@@ -306,7 +308,7 @@ export function TopNavQuickActions() {
           type="button"
           className={quickBtnClass(birdCaptureEnabled)}
           disabled={birdCaptureBusy}
-          title="开启：校验对空融合含自报位+探鸟雷达后开始记录 CSV。关闭：结束采集并上传 DataLink。超过 1 分钟无符合条件航迹将自动停止。"
+          title="开启：校验有无人机真值（自报位+探鸟，或右键标为无人机）后开始记录 CSV。关闭：结束采集并上传 DataLink。超过 1 分钟无真值将自动停止。"
           onClick={() => void onToggleBirdRadarCapture()}
         >
           <ScanSearch size={13} className="shrink-0" />

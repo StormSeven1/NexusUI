@@ -24,6 +24,7 @@ export async function GET(
     const upstream = await fetch(url, {
       headers: { Accept: "application/json", "Cache-Control": "no-cache" },
       cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
     });
     const body = await upstream.text();
     return new NextResponse(body, {

@@ -21,6 +21,7 @@ export interface EoVideoDetectionLayerProps {
     normalizedY: number;
     hitBoxId: string | null;
     hitBox: EoDetectionBox | null;
+    drawnBoxes?: EoDetectionBox[];
   }) => void;
   onDiagnostic?: (line: string, hoverDetail?: string) => void;
   encodedSyncHub?: EoEncodedSyncHub;
@@ -37,6 +38,8 @@ export interface EoVideoDetectionLayerProps {
   ddsCameraEntityId?: string;
   /** false：无人机等场景仅显示框，不拦截拖拽/瞄准 */
   interactive?: boolean;
+  /** 烧录流：隐藏前端框绘制，保留点击选中 */
+  hideDrawnBoxes?: boolean;
 }
 
 /**
@@ -62,6 +65,7 @@ export function EoVideoDetectionLayer({
   expandedMode = false,
   ddsCameraEntityId,
   interactive = true,
+  hideDrawnBoxes = false,
 }: EoVideoDetectionLayerProps) {
   const presentDrawRef = useRef<((frameBoxes?: EoDetectionBox[]) => void) | null>(null);
   const registerPresentDraw = useCallback((draw: ((frameBoxes?: EoDetectionBox[]) => void) | null) => {
@@ -114,6 +118,7 @@ export function EoVideoDetectionLayer({
       videoIntrinsicWidth={videoIntrinsicWidth}
       videoIntrinsicHeight={videoIntrinsicHeight}
       interactive={interactive}
+      hideDrawnBoxes={hideDrawnBoxes}
       onRegisterDraw={registerPresentDraw}
     />
   );

@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * 数据入口：`useUnifiedWsFeed` 负责 WebSocket；`useDbAreasPoll` 轮询 Postgres `area_table`（区域图层）。
+ * 数据入口：`useUnifiedWsFeed` 负责 WebSocket；`useDbAreasPoll` 轮询 Postgres `area_table`（区域图层）；
+ * `useSystemAlarmPoll` 每 2s 拉取 AlarmSys 系统告警（GetActiveAlarms）。
  */
 
 import { useRef } from "react";
@@ -17,6 +18,7 @@ import { WorkspaceDetails } from "./WorkspaceDetails";
 import { useUnifiedWsFeed } from "@/hooks/useUnifiedWsFeed";
 import { useDbAreasPoll } from "@/hooks/useDbAreasPoll";
 import { useMapLayoutResize } from "@/hooks/useMapLayoutResize";
+import { useSystemAlarmPoll } from "@/hooks/useSystemAlarmPoll";
 import { AlarmSpeechAnnouncer } from "@/components/system/AlarmSpeechAnnouncer";
 import { TaskStatusChatSseHost } from "@/components/system/TaskStatusChatSseHost";
 import { TaskStatusVerifyChatHost } from "@/components/system/TaskStatusVerifyChatHost";
@@ -27,6 +29,7 @@ import { useDockStore } from "@/stores/dock-store";
 export function AppShell() {
   useUnifiedWsFeed();
   useDbAreasPoll();
+  useSystemAlarmPoll();
   useTrackEvalAutoQuery();
   useMapLayoutResize();
 

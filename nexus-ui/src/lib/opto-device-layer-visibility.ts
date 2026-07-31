@@ -1,7 +1,9 @@
-/** 单台光电（camera）在图层面板下的子项显隐；缺省均为 true */
+/** 单台光电（camera）在图层面板下的子项显隐；视场/图标缺省 true，能力缺省 false */
 export type OptoDeviceVisibilityEntry = {
   fov?: boolean;
   icon?: boolean;
+  /** 能力扫描（按 visibleP 分段旋转）；缺省关闭 */
+  capability?: boolean;
 };
 
 export type OptoDeviceVisibilityMap = Record<string, OptoDeviceVisibilityEntry>;
@@ -18,6 +20,14 @@ export function isOptoDeviceIconVisible(
   map: Readonly<OptoDeviceVisibilityMap>,
 ): boolean {
   return map[assetId]?.icon !== false;
+}
+
+/** 能力扫描：显式 true 才开启 */
+export function isOptoDeviceCapabilityVisible(
+  assetId: string,
+  map: Readonly<OptoDeviceVisibilityMap>,
+): boolean {
+  return map[assetId]?.capability === true;
 }
 
 /**
@@ -51,7 +61,16 @@ export function shouldRenderOptoCameraIcon(
   return isOptoDeviceIconVisible(assetId, map);
 }
 
-/** 图层面板「已开启」：总开关开时，每台设备视场 + GIS 图标各计 1 项 */
+export function shouldRenderOptoCameraCapability(
+  assetId: string,
+  map: Readonly<OptoDeviceVisibilityMap>,
+  panelIds: ReadonlySet<string> | null,
+): boolean {
+  if (!isOptoCameraAllowedOnMap(assetId, panelIds)) return false;
+  return isOptoDeviceCapabilityVisible(assetId, map);
+}
+
+/** 图层面板「已开启」：总开关开时，每台设备视场 + GIS 图标 + 能力 各计 1 项 */
 export function countVisibleOptoDeviceLeaves(
   cameraIds: ReadonlyArray<string>,
   map: Readonly<OptoDeviceVisibilityMap>,
@@ -62,13 +81,14 @@ export function countVisibleOptoDeviceLeaves(
   for (const id of cameraIds) {
     if (isOptoDeviceFovVisible(id, map)) n += 1;
     if (isOptoDeviceIconVisible(id, map)) n += 1;
+    if (isOptoDeviceCapabilityVisible(id, map)) n += 1;
   }
   return n;
 }
 
-/** 图层面板 UI 行数：每台光电 2 行（视场、GIS 图标） */
+/** 图层面板 UI 行数：每台光电 3 行（视场、GIS 图标、能力） */
 export function countOptoDevicePanelUiRows(cameraCount: number): number {
-  return cameraCount > 0 ? cameraCount * 2 : 0;
+  return cameraCount > 0 ? cameraCount * 3 : 0;
 }
 
 export function pruneOptoDeviceVisibility(

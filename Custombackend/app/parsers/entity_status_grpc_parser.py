@@ -76,6 +76,8 @@ def parse_entity_status_response(resp, *, source_id: str) -> Optional[Dict[str, 
         return None
 
     try:
+        if which == "camera_real_time_status":
+            return _parse_camera_real_time_status(resp.camera_real_time_status, source_id=source_id)
         if which == "drone_real_time_status":
             return _parse_drone_real_time_status(resp.drone_real_time_status, source_id=source_id)
         if which == "drone_task_real_time_status":
@@ -85,6 +87,59 @@ def parse_entity_status_response(resp, *, source_id: str) -> Optional[Dict[str, 
     except Exception as e:
         logger.error(f"解析 EntityStatus gRPC [{source_id}] {which} 失败: {e}")
     return None
+
+
+def _parse_camera_real_time_status(msg, *, source_id: str) -> Optional[Dict[str, Any]]:
+    """解析 CameraRealTimeStatus gRPC → 与 dds_parser._parse_camera_status 输出结构完全对齐。"""
+    base = msg.base
+    entity_id = (base.entity_id if base else "").strip() or None
+    if not entity_id:
+        return None
+
+    result: Dict[str, Any] = {
+        # 基础字段（对齐 DDS camera_status）
+        "entityId": entity_id,
+        "taskType": base.task_type or None,
+        "executionState": int(base.execution_state),
+        "executionTimeMs": int(base.execution_time_ms),
+        "online": bool(base.online),
+        "elec": float(base.elec) if base.elec else None,
+        "timestamp": base.timestamp or None,
+        "entityType": int(base.entity_type),
+        "dispositionType": int(base.disposition_type),
+        "targetID": int(base.target_id) if base.target_id else None,
+        "targetName": base.target_name or None,
+        "targetType": int(base.target_type),
+        "deviceState": int(base.device_state),
+        # 相机专属
+        "focus": float(msg.focus) if msg.focus else None,
+        "panoOffset": float(msg.pano_offset) if msg.pano_offset else None,
+        "trackID": int(msg.track_id) if msg.track_id else None,
+        "trackAlias": None,          # gRPC proto 暂无此字段
+        "visibility": float(msg.visibility) if msg.visibility else None,
+        "rootPos": float(msg.root_pos) if msg.root_pos else None,
+        "speedParam": float(msg.speed_param) if msg.speed_param else None,
+        # PTZ（与 DDS 一致：pan/tilt/zoom 子字典）
+        "ptz": {
+            "pan": float(msg.ptz.pan),
+            "tilt": float(msg.ptz.tilt),
+            "zoom": float(msg.ptz.zoom),
+        },
+        "originPtz": {
+            "pan": float(msg.origin_ptz.pan),
+            "tilt": float(msg.origin_ptz.tilt),
+            "zoom": float(msg.origin_ptz.zoom),
+        },
+        # FOV（gRPC 用 horizontal/vertical；store 里 fovHsDeg/fovVsDeg 也读这两个键）
+        "fov": {
+            "horizontal": float(msg.fov.horizontal),
+            "vertical": float(msg.fov.vertical),
+        },
+        "source": "gRPC",
+        "grpc_source_id": source_id,
+        "data_type": "camera_status",
+    }
+    return result
 
 
 def _parse_drone_real_time_status(msg, *, source_id: str) -> Optional[Dict[str, Any]]:

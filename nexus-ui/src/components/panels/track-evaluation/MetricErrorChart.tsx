@@ -11,19 +11,62 @@ import {
   chartY,
 } from "@/components/panels/track-evaluation/track-eval-chart-utils";
 
-const SERIES = [
-  { key: "fusion" as const, label: "融合", color: "#3b82f6", dash: undefined },
-  { key: "radar1" as const, label: "远遥码头", color: "#f59e0b", dash: "5,5" },
-  { key: "radar2" as const, label: "靖子头", color: "#22c55e", dash: "3,3" },
-];
+const SERIES_COLORS = ["#3b82f6", "#f59e0b", "#22c55e", "#a855f7", "#ef4444", "#06b6d4", "#eab308"];
 
-function seriesValue(item: TrackErrorStatsItem, key: (typeof SERIES)[number]["key"]): number | null {
-  if (key === "fusion") return item.fusionAvg;
-  if (key === "radar1") return item.radar1Avg;
-  return item.radar2Avg;
+type SeriesDef = { key: string; label: string; color: string; dash?: string };
+
+function buildSeries(items: TrackErrorStatsItem[]): SeriesDef[] {
+  const series: SeriesDef[] = [
+    { key: "fusion", label: "融合", color: SERIES_COLORS[0] },
+  ];
+  const seen = new Set<string>();
+  for (const it of items) {
+    for (const s of it.sourceErrors ?? []) {
+      if (!s.key || seen.has(s.key)) continue;
+      seen.add(s.key);
+      const color = SERIES_COLORS[(series.length % (SERIES_COLORS.length - 1)) + 1];
+      series.push({
+        key: s.key,
+        label: s.label || s.key,
+        color,
+        dash: series.length % 2 === 0 ? "5,5" : "3,3",
+      });
+    }
+  }
+  // 兼容无 sourceErrors 的旧数据
+  if (series.length === 1) {
+    const hasR1 = items.some((it) => it.radar1Avg != null);
+    const hasR2 = items.some((it) => it.radar2Avg != null);
+    if (hasR1) {
+      series.push({
+        key: "radar1",
+        label: items.find((it) => it.radar1Name)?.radar1Name || "远遥码头",
+        color: SERIES_COLORS[1],
+        dash: "5,5",
+      });
+    }
+    if (hasR2) {
+      series.push({
+        key: "radar2",
+        label: items.find((it) => it.radar2Name)?.radar2Name || "靖子头",
+        color: SERIES_COLORS[2],
+        dash: "3,3",
+      });
+    }
+  }
+  return series;
 }
 
-function overallAvg(items: TrackErrorStatsItem[], key: (typeof SERIES)[number]["key"]): number | null {
+function seriesValue(item: TrackErrorStatsItem, key: string): number | null {
+  if (key === "fusion") return item.fusionAvg;
+  const fromSrc = item.sourceErrors?.find((s) => s.key === key);
+  if (fromSrc) return fromSrc.avg;
+  if (key === "radar1") return item.radar1Avg;
+  if (key === "radar2") return item.radar2Avg;
+  return null;
+}
+
+function overallAvg(items: TrackErrorStatsItem[], key: string): number | null {
   const vals = items
     .map((it) => seriesValue(it, key))
     .filter((v): v is number => v != null);
@@ -43,11 +86,12 @@ export function MetricErrorChart({
   unit?: string;
 }) {
   const gridId = useId().replace(/:/g, "");
+  const series = useMemo(() => buildSeries(items), [items]);
 
   const { min, max } = useMemo(() => {
     const vals: number[] = [];
     for (const it of items) {
-      for (const s of SERIES) {
+      for (const s of series) {
         const v = seriesValue(it, s.key);
         if (v != null) vals.push(v);
       }
@@ -57,12 +101,12 @@ export function MetricErrorChart({
     const hi = Math.max(...vals);
     const pad = (hi - lo) * 0.05 || 1;
     return { min: lo - pad, max: hi + pad };
-  }, [items]);
+  }, [items, series]);
 
   const yLabels = buildLinearYAxisLabels(min, max, 4);
   const fmt = (v: number) => `${v.toFixed(0)}${unit}`;
 
-  const buildLine = (key: (typeof SERIES)[number]["key"]) =>
+  const buildLine = (key: string) =>
     items
       .map((it, i) => {
         const v = seriesValue(it, key);
@@ -95,7 +139,7 @@ export function MetricErrorChart({
       ) : null}
 
       <div className="mb-3 flex flex-wrap gap-3 rounded-md border border-nexus-border/50 bg-nexus-bg-base/30 px-3 py-2">
-        {SERIES.map((s) => {
+        {series.map((s) => {
           const avg = overallAvg(items, s.key);
           return (
             <div key={s.key} className="text-[11px]">
@@ -121,37 +165,26 @@ export function MetricErrorChart({
               />
             </pattern>
           </defs>
-          <rect width="100%" height="100%" fill={`url(#err-grid-${gridId})`} />
-
+          <rect
+            x={CHART_PADDING}
+            y={CHART_PADDING}
+            width={CHART_WIDTH - CHART_PADDING * 2}
+            height={CHART_HEIGHT - CHART_PADDING * 2}
+            fill={`url(#err-grid-${gridId})`}
+          />
           {yLabels.map((label) => (
             <text
               key={label.ratio}
-              x={CHART_PADDING - 8}
-              y={chartY(label.value, min, max) + 4}
+              x={CHART_PADDING - 6}
+              y={chartY(label.value, min, max) + 3}
               textAnchor="end"
-              className="fill-zinc-400 text-[10px]"
+              className="fill-nexus-text-muted"
+              style={{ fontSize: 9 }}
             >
               {fmt(label.value)}
             </text>
           ))}
-
-          {items.map((it, i) => {
-            const x = chartX(i, items.length);
-            return (
-              <text
-                key={`x-${it.id}`}
-                x={x}
-                y={CHART_HEIGHT - 6}
-                textAnchor="end"
-                transform={`rotate(-40, ${x}, ${CHART_HEIGHT - 6})`}
-                className="fill-zinc-500 text-[9px]"
-              >
-                {it.id}
-              </text>
-            );
-          })}
-
-          {SERIES.map((s) => {
+          {series.map((s) => {
             const pts = buildLine(s.key);
             if (!pts) return null;
             return (
@@ -165,75 +198,65 @@ export function MetricErrorChart({
               />
             );
           })}
-
-          {SERIES.flatMap((s) =>
-            items.map((it, i) => {
-              const v = seriesValue(it, s.key);
-              if (v == null) return null;
-              return (
-                <circle
-                  key={`${s.key}-${it.id}`}
-                  cx={chartX(i, items.length)}
-                  cy={chartY(v, min, max)}
-                  r={3.5}
-                  fill={s.color}
-                />
-              );
-            }),
-          )}
-
-          <g transform={`translate(${CHART_PADDING}, 12)`}>
-            {SERIES.map((s, idx) => (
-              <g key={s.key} transform={`translate(${idx * 88}, 0)`}>
-                <line
-                  x1={0}
-                  y1={0}
-                  x2={24}
-                  y2={0}
-                  stroke={s.color}
-                  strokeWidth={2}
-                  strokeDasharray={s.dash}
-                />
-                <text x={28} y={4} className="fill-zinc-400 text-[9px]">
-                  {s.label}
-                </text>
-              </g>
-            ))}
-          </g>
+          {items.map((it, i) => (
+            <text
+              key={it.id}
+              x={chartX(i, items.length)}
+              y={CHART_HEIGHT - 8}
+              textAnchor="middle"
+              className="fill-nexus-text-muted"
+              style={{ fontSize: 8 }}
+            >
+              {String(it.id).length > 8 ? `${String(it.id).slice(0, 6)}…` : it.id}
+            </text>
+          ))}
         </svg>
       </div>
 
-      <ul className="mt-3 max-h-52 space-y-2 overflow-y-auto">
-        {items.map((it) => (
-          <li
-            key={it.id}
-            className="rounded-md border border-nexus-border/60 bg-nexus-bg-base/40 px-3 py-2 text-[11px]"
-          >
-            <div className="mb-1.5 font-medium text-nexus-text-secondary">ID {it.id}</div>
-            <div className="grid gap-1 sm:grid-cols-3">
-              {SERIES.map((s) => {
-                const avg = seriesValue(it, s.key);
-                const rmse =
-                  s.key === "fusion"
-                    ? it.fusionRmse
-                    : s.key === "radar1"
-                      ? it.radar1Rmse
-                      : it.radar2Rmse;
-                if (avg == null && rmse == null) return null;
-                return (
-                  <div key={s.key} className="text-nexus-text-muted">
-                    <span style={{ color: s.color }}>{s.label}</span>
-                    {" · "}
-                    avg {avg != null ? avg.toFixed(2) : "--"}
-                    {unit} / rmse {rmse != null ? rmse.toFixed(2) : "--"}
-                    {unit}
-                  </div>
-                );
-              })}
-            </div>
-          </li>
+      <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-nexus-text-muted">
+        {series.map((s) => (
+          <span key={s.key} className="inline-flex items-center gap-1">
+            <span
+              className="inline-block h-0.5 w-4"
+              style={{
+                backgroundColor: s.color,
+                borderTop: s.dash ? `1px dashed ${s.color}` : undefined,
+              }}
+            />
+            {s.label}
+          </span>
         ))}
-      </ul>
+      </div>
+
+      <div className="mt-2 overflow-x-auto rounded border border-nexus-border/50">
+        <table className="w-full min-w-[360px] border-collapse text-[10px]">
+          <thead>
+            <tr className="bg-nexus-bg-elevated/60 text-nexus-text-muted">
+              <th className="px-2 py-1 text-left">参考 ID</th>
+              {series.map((s) => (
+                <th key={s.key} className="px-2 py-1 text-right">
+                  {s.label}均值
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it) => (
+              <tr key={it.id} className="odd:bg-nexus-bg-base/20">
+                <td className="px-2 py-1 font-mono text-nexus-text-primary">{it.id}</td>
+                {series.map((s) => {
+                  const v = seriesValue(it, s.key);
+                  return (
+                    <td key={s.key} className="px-2 py-1 text-right font-mono text-nexus-text-secondary">
+                      {v != null ? v.toFixed(2) : "—"}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

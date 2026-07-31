@@ -85,6 +85,44 @@ class RadarTrainLabelStore:
         out.sort(key=lambda x: int(x.get("pihao", 0)))
         return out
 
+    @staticmethod
+    def _is_manual_row(row: Dict[str, Any]) -> bool:
+        if row.get("manual") is True:
+            return True
+        src = str(row.get("label_source") or "")
+        return src.startswith("manual")
+
+    def list_uav_pihaos_for_csv(self, fresh_sec: float) -> List[int]:
+        """
+        CSV is_uav 用批号集合：
+        - 自动真值：仅 fresh_sec 内仍刷新的（自报位+探鸟）
+        - 手动「标为无人机」：在 TTL 内始终生效（不按 20s 踢出）
+        """
+        self.prune_expired()
+        pihaos: set[int] = set()
+        for item in self.list_fresh(fresh_sec):
+            if int(item.get("label_gt", -1)) == 1:
+                pihaos.add(int(item["pihao"]))
+        with self._lock:
+            for row in self._labels.values():
+                if int(row.get("label_gt", -1)) != 1:
+                    continue
+                if not self._is_manual_row(row):
+                    continue
+                pihaos.add(int(row["pihao"]))
+        return sorted(pihaos)
+
+    def clear_manual(self, pihao: int) -> Optional[Dict[str, Any]]:
+        """取消手动无人机标记；非手动条目不删除。"""
+        p = int(pihao)
+        with self._lock:
+            row = self._labels.get(p)
+            if not row or not self._is_manual_row(row):
+                return None
+            removed = dict(row)
+            del self._labels[p]
+            return removed
+
     def lookup_batch(self, pihaos: List[int]) -> Dict[int, Dict[str, Any]]:
         out: Dict[int, Dict[str, Any]] = {}
         for p in pihaos:

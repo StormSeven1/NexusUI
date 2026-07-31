@@ -2,6 +2,10 @@ import { fetchAssetPanelEntityCatalog } from "@/lib/asset-panel-catalog";
 import { normalizeAssetType } from "@/lib/map-entity-model";
 import type { AssetData } from "@/stores/asset-store";
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
 /** 8090 `location.position` 解析后：0,0 视为未配置 */
 export function isValid8090GeoPosition(lat: unknown, lng: unknown): boolean {
   const la = Number(lat);
@@ -62,6 +66,34 @@ export function apply8090CameraPositionsToAssets(
         ? { ...(a.properties as Record<string, unknown>) }
         : {};
     props.catalog_source = "8090";
+    /* 能力扫描依赖 visibleP：camera WS 高频 patch 可能未带 sensorParameters，从 8090 目录补回 */
+    const catProps =
+      row8090.get(a.id)?.properties && typeof row8090.get(a.id)!.properties === "object"
+        ? (row8090.get(a.id)!.properties as Record<string, unknown>)
+        : null;
+    if (catProps) {
+      if (props.sensorParameters == null && catProps.sensorParameters != null) {
+        props.sensorParameters = catProps.sensorParameters;
+      } else if (
+        asRecord(props.sensorParameters) &&
+        asRecord(catProps.sensorParameters)?.fieldOfView != null &&
+        asRecord(props.sensorParameters)?.fieldOfView == null
+      ) {
+        props.sensorParameters = {
+          ...(props.sensorParameters as Record<string, unknown>),
+          fieldOfView: asRecord(catProps.sensorParameters)!.fieldOfView,
+        };
+      }
+      if (props.capabilities == null && catProps.capabilities != null) {
+        props.capabilities = catProps.capabilities;
+      }
+      if (props.visibleP == null && catProps.visibleP != null) {
+        props.visibleP = catProps.visibleP;
+      }
+      if (props.fieldOfView == null && catProps.fieldOfView != null) {
+        props.fieldOfView = catProps.fieldOfView;
+      }
+    }
     const name8090 = resolve8090CameraName(a.id);
     const next: AssetData = {
       ...a,

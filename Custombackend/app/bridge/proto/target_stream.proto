@@ -1,0 +1,874 @@
+syntax = "proto3";
+
+package trackmanager.grpc.new_track_struct;
+
+// Generated from DDSReferences/NewTrackStruct/NewTrackRealTimeStatus.idl.
+// The gRPC stream emits TargetFull::TargetOutputSet every 200ms.
+
+message SubscribeNewTrackStructRequest {}
+
+message KeyValuePair {
+  string key = 1;
+  string value = 2;
+}
+
+enum TargetState {
+  TargetState_STABLE = 0;
+  TargetState_COASTING = 1;
+  TargetState_LOST = 2;
+  TargetState_MERGED = 3;
+  TargetState_SPLIT = 4;
+}
+
+enum KillChainState {
+  KillChainState_DRAFT = 0;
+  KillChainState_PLAN_DEVELOPMENT = 1;
+  KillChainState_PLANNED = 2;
+  KillChainState_EXECUTION = 3;
+  KillChainState_CLOSED = 4;
+}
+
+enum UnitType {
+  UnitType_UNKNOWN = 0;
+  UnitType_DRONE = 1;
+  UnitType_BIRD = 2;
+  UnitType_HELICOPTER = 3;
+  UnitType_FIXED_WING = 4;
+  UnitType_MISSILE = 5;
+  UnitType_BUOY = 6;
+  UnitType_SURFACE_SHIP = 7;
+  UnitType_SUBMARINE = 8;
+  UnitType_GROUND_VEHICLE = 9;
+  UnitType_PERSON = 10;
+  UnitType_ANIMAL = 11;
+  UnitType_OTHER = 12;
+}
+
+enum ThreatLevel {
+  ThreatLevel_LOW = 0;
+  ThreatLevel_MEDIUM = 1;
+  ThreatLevel_HIGH = 2;
+}
+
+enum RadarMotionStatus {
+  RadarMotionStatus_UNKNOWN = 0;
+  RadarMotionStatus_MOVING = 1;
+  RadarMotionStatus_HOVERING = 2;
+  RadarMotionStatus_STATIONARY = 3;
+  RadarMotionStatus_MANEUVERING = 4;
+}
+
+enum RadarTrackStatus {
+  RadarTrackStatus_TRACK_UNKNOWN = 0;
+  RadarTrackStatus_TRACK_ACTIVE = 1;
+  RadarTrackStatus_TRACK_COASTING = 2;
+  RadarTrackStatus_TRACK_LOST = 3;
+  RadarTrackStatus_TRACK_DROPPED = 4;
+}
+
+enum DesiredEffect {
+  DesiredEffect_DESTROY = 0;
+  DesiredEffect_NEUTRALIZE = 1;
+  DesiredEffect_SUPPRESS = 2;
+  DesiredEffect_DENY = 3;
+}
+
+enum CollateralRisk {
+  CollateralRisk_LOW = 0;
+  CollateralRisk_MEDIUM = 1;
+  CollateralRisk_HIGH = 2;
+}
+
+enum DetectionType {
+  DetectionType_AI_AUTO_DETECTION = 0;
+  DetectionType_HUMAN_CONFIRMED = 1;
+  DetectionType_SENSOR_FUSION = 2;
+  DetectionType_INTEL_REPORT = 3;
+}
+
+enum ClassificationLevel {
+  ClassificationLevel_UNCLASSIFIED = 0;
+  ClassificationLevel_CONFIDENTIAL = 1;
+  ClassificationLevel_SECRET = 2;
+  ClassificationLevel_TOP_SECRET = 3;
+}
+
+enum FriendFoeType {
+  FriendFoeType_FRIEND = 0;
+  FriendFoeType_FOE = 1;
+  FriendFoeType_OWN = 2;
+  FriendFoeType_NEUTRAL = 3;
+  FriendFoeType_UNKNOWN = 4;
+}
+
+enum RealityType {
+  RealityType_UNKNOWN_REALITY = 0;
+  RealityType_REAL = 1;
+  RealityType_VIRTUAL = 2;
+}
+
+enum EnvironmentType {
+  EnvironmentType_UNKNOWN = 0;
+  EnvironmentType_LAND = 1;
+  EnvironmentType_AIR = 2;
+  EnvironmentType_SURFACE = 3;
+  EnvironmentType_SUBSURFACE = 4;
+  EnvironmentType_SPACE = 5;
+  EnvironmentType_MARITIME = 6;
+}
+
+enum PlatformType {
+  PlatformType_UNKNOWN = 0;
+  PlatformType_FIXED_GROUND = 1;
+  PlatformType_FIXED_TOWER = 2;
+  PlatformType_FIXED_BUILDING = 3;
+  PlatformType_MOBILE_VEHICLE = 4;
+  PlatformType_MOBILE_VESSEL = 5;
+  PlatformType_MOBILE_UAV = 6;
+  PlatformType_MOBILE_USV = 7;
+  PlatformType_MOBILE_PORTABLE = 8;
+}
+
+enum SensorCategory {
+  SensorCategory_GEOMETRIC = 0;
+  SensorCategory_RADAR = 1;
+  SensorCategory_THERMAL = 2;
+  SensorCategory_EOPT = 3;
+  SensorCategory_ESM = 4;
+  SensorCategory_IFF = 5;
+  SensorCategory_VISUAL = 6;
+  SensorCategory_ACOUSTIC_ACTIVE = 7;
+  SensorCategory_ACOUSTIC_PASSIVE = 8;
+  SensorCategory_MAGNETIC = 9;
+  SensorCategory_LASER = 10;
+  SensorCategory_TDOA = 11;
+  SensorCategory_INTELLIGENCE = 12;
+  SensorCategory_ADSB = 13;
+  SensorCategory_AIS = 14;
+  SensorCategory_UAV = 15;
+  SensorCategory_EXTERNAL_TRACK = 16;
+  SensorCategory_FUSION = 17;
+}
+
+enum SourcePresenceStatus {
+  SourcePresenceStatus_ACTIVE = 0;
+  SourcePresenceStatus_COASTING = 1;
+  SourcePresenceStatus_INACTIVE = 2;
+  SourcePresenceStatus_LOST = 3;
+  SourcePresenceStatus_DISABLED = 4;
+}
+
+enum AltitudeReference {
+  AltitudeReference_INVALID = 0;
+  AltitudeReference_HEIGHT_ABOVE_WGS84 = 1;
+  AltitudeReference_HEIGHT_ABOVE_EGM96 = 2;
+  AltitudeReference_UNKNOWN = 3;
+  AltitudeReference_BAROMETRIC = 4;
+  AltitudeReference_ABOVE_SEA_FLOOR = 5;
+  AltitudeReference_BELOW_SEA_SURFACE = 6;
+}
+
+message Measurement {
+  double value = 1;
+  double sigma = 2;
+}
+
+message GeoPosition {
+  double longitude = 1;
+  double latitude = 2;
+  double altitude = 3;
+  double altitude_agl_m = 4;
+  double altitude_afs_m = 5;
+  double pressure_depth_m = 6;
+  bool is_2d = 7;
+  AltitudeReference altitude_ref = 8;
+}
+
+message EntityRef {
+  string entity_type = 1;
+  string entity_id = 2;
+  string entity_name = 3;
+}
+
+message AlternateId {
+  string type = 1;
+  string id = 2;
+}
+
+message Orientation {
+  double yaw = 1;
+  double pitch = 2;
+  double roll = 3;
+}
+
+message VectorEnu {
+  double e = 1;
+  double n = 2;
+  double u = 3;
+}
+
+message AttitudeEnu {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double w = 4;
+}
+
+message EnuCovariance {
+  double mxx = 1;
+  double mxy = 2;
+  double mxz = 3;
+  double myy = 4;
+  double myz = 5;
+  double mzz = 6;
+}
+
+message PositionErrorEllipse {
+  double probability = 1;
+  double semi_major_axis_m = 2;
+  double semi_minor_axis_m = 3;
+  double orientation_deg = 4;
+}
+
+message SecurityMarking {
+  ClassificationLevel classification = 1;
+  repeated string portion_markings = 2;
+  repeated string dissemination_controls = 3;
+  repeated string releasable_to = 4;
+}
+
+message Aimpoint {
+  string aimpoint_id = 1;
+  uint32 number = 2;
+  string name = 3;
+  string description = 4;
+  GeoPosition center = 5;
+  double radius_m = 6;
+  string shape = 7;
+  EntityRef geotime_track = 8;
+  EntityRef entity = 9;
+  DesiredEffect desired_effect = 10;
+  ThreatLevel lethality = 11;
+  CollateralRisk collateral_risk = 12;
+}
+
+message AIReasoningInfo {
+  string model = 1;
+  string model_version = 2;
+  string system_prompt = 3;
+  string task_prompt = 4;
+  EntityRef input_data = 5;
+  string debug_logs = 6;
+  repeated double feature_vector = 7;
+}
+
+message DetectionReasoning {
+  string reasoning_id = 1;
+  string algorithm_name = 2;
+  DetectionType detection_type = 3;
+  double confidence = 4;
+  string reasoning = 5;
+  double timestamp = 6;
+  string agent_version = 7;
+  AIReasoningInfo ai_reasoning = 8;
+  repeated EntityRef source_entities = 9;
+  GeoPosition inferred_position = 10;
+  double inferred_radius_m = 11;
+}
+
+message StateHistoryRecord {
+  KillChainState from_state = 1;
+  KillChainState to_state = 2;
+  double timestamp = 3;
+  EntityRef operator_ref = 4;
+  string reason = 5;
+  repeated EntityRef assigned_weapons = 6;
+  double pk_estimate = 7;
+  repeated KeyValuePair details = 8;
+}
+
+message EmitterNotation {
+  string emitter_notation = 1;
+  double confidence = 2;
+}
+
+message SignalInfo {
+  Measurement frequency_center_hz = 1;
+  Measurement minimum_frequency_hz = 2;
+  Measurement maximum_frequency_hz = 3;
+  double bandwidth_hz = 4;
+  double signal_to_noise_ratio = 5;
+  GeoPosition observer_position = 6;
+  double bearing_deg = 7;
+  double elevation_deg = 8;
+  double bearing_sigma_rad = 9;
+  double elevation_sigma_rad = 10;
+  Measurement range_estimate_m = 11;
+  Measurement max_range_m = 12;
+  bool is_fixed_emitter = 13;
+  repeated EmitterNotation emitter_notations = 14;
+  double pulse_width_s = 15;
+  Measurement pulse_repetition_interval_s = 16;
+  double scan_period_s = 17;
+}
+
+message RadarStaticProfile {
+  string profile_id = 1;
+  string sensor_model = 2;
+  string manufacturer = 3;
+  PlatformType platform_type = 4;
+  string deployment_site_id = 5;
+  string deployment_site_name = 6;
+  GeoPosition fixed_position = 7;
+  double install_height_m = 8;
+  string radar_band = 9;
+  string radar_mode = 10;
+  double detection_range_min_m = 11;
+  double detection_range_max_m = 12;
+  double azimuth_coverage_start_deg = 13;
+  double azimuth_coverage_end_deg = 14;
+  double elevation_coverage_min_deg = 15;
+  double elevation_coverage_max_deg = 16;
+  double range_accuracy_m = 17;
+  double azimuth_accuracy_deg = 18;
+  double elevation_accuracy_deg = 19;
+  double radial_velocity_accuracy_mps = 20;
+  repeated AlternateId alternate_ids = 21;
+}
+
+message RadarObservationContext {
+  uint32 radar_runtime_id = 1;
+  string radar_name = 2;
+  string radar_role = 3;
+  bool is_transmitting = 4;
+  double working_range_m = 5;
+  double pulse_width_us = 6;
+  double azimuth_offset_deg = 7;
+  double range_offset_m = 8;
+  double sample_rate_hz = 9;
+  double receiver_gain_db = 10;
+  double sea_clutter_suppression_level = 11;
+  double rain_clutter_suppression_level = 12;
+  bool inhibit_zone_1_enabled = 13;
+  double inhibit_zone_1_start_azi_deg = 14;
+  double inhibit_zone_1_end_azi_deg = 15;
+  bool inhibit_zone_2_enabled = 16;
+  double inhibit_zone_2_start_azi_deg = 17;
+  double inhibit_zone_2_end_azi_deg = 18;
+}
+
+message EOStaticProfile {
+  string profile_id = 1;
+  string sensor_model = 2;
+  string manufacturer = 3;
+  PlatformType platform_type = 4;
+  string deployment_site_id = 5;
+  string deployment_site_name = 6;
+  GeoPosition fixed_position = 7;
+  double install_height_m = 8;
+  string optical_band = 9;
+  double fov_horizontal_min_deg = 10;
+  double fov_horizontal_max_deg = 11;
+  double fov_vertical_min_deg = 12;
+  double fov_vertical_max_deg = 13;
+  double pan_left_limit_deg = 14;
+  double pan_right_limit_deg = 15;
+  double tilt_down_limit_deg = 16;
+  double tilt_up_limit_deg = 17;
+  double angle_accuracy_deg = 18;
+  repeated AlternateId alternate_ids = 19;
+}
+
+message ESMStaticProfile {
+  string profile_id = 1;
+  string sensor_model = 2;
+  string manufacturer = 3;
+  PlatformType platform_type = 4;
+  string deployment_site_id = 5;
+  string deployment_site_name = 6;
+  GeoPosition fixed_position = 7;
+  double install_height_m = 8;
+  Measurement frequency_min_hz = 9;
+  Measurement frequency_max_hz = 10;
+  Measurement bandwidth_max_hz = 11;
+  double azimuth_accuracy_deg = 12;
+  double elevation_accuracy_deg = 13;
+  bool supports_tdoa = 14;
+  bool supports_fdoa = 15;
+  repeated string emitter_libraries = 16;
+  repeated AlternateId alternate_ids = 17;
+}
+
+message RadarPlotObservedProfile {
+  double plot_range_m = 1;
+  double plot_azimuth_deg = 2;
+  double start_range_m = 3;
+  double end_range_m = 4;
+  double start_azimuth_deg = 5;
+  double end_azimuth_deg = 6;
+  uint32 weight = 7;
+  uint32 strength = 8;
+  uint32 component_count = 9;
+  double radial_speed_mps = 10;
+  double confidence = 11;
+  repeated KeyValuePair attributes = 12;
+}
+
+message FusionSourceItem {
+  string sourceName = 1;
+  string dataSourceId = 2;
+  uint32 trackId = 3;
+}
+
+message RadarObservedTargetProfile {
+  uint32 track_id = 1;
+  uint32 unique_id = 2;
+  double longDegs = 3;
+  double latDegs = 4;
+  double altitudeMetres = 5;
+  double range_m = 6;
+  double azimuth_deg = 7;
+  double elevation_deg = 8;
+  double range_rate_mps = 9;
+  double range_rate_sigma_mps = 10;
+  double rcs_sqm = 11;
+  double rcs_length_m = 12;
+  double snr_db = 13;
+  double range_accuracy_m = 14;
+  double azimuth_accuracy_deg = 15;
+  double elevation_accuracy_deg = 16;
+  EnvironmentType reported_environment = 17;
+  UnitType reported_target_type = 18;
+  double reported_target_type_confidence = 19;
+  FriendFoeType reported_friend_foe = 20;
+  RealityType reported_reality_type = 21;
+  uint32 coast_count = 22;
+  double accel_mps2 = 23;
+  double turn_rate_dps = 24;
+  RadarMotionStatus motionStatus = 25;
+  RadarTrackStatus status = 26;
+  uint32 numCoasts = 27;
+  repeated FusionSourceItem fusionSources = 28;
+  double cpa_m = 29;
+  double tcpa_s = 30;
+  ThreatLevel threat_level = 31;
+  string threat = 32;
+  string description = 33;
+  string trackAlias = 34;
+  double first_detect_time = 35;
+  double last_active_time = 36;
+  RadarPlotObservedProfile plot_profile = 37;
+  repeated KeyValuePair attributes = 38;
+}
+
+message PTZStatus {
+  double pan_deg = 1;
+  double tilt_deg = 2;
+  double zoom = 3;
+}
+
+message FOVStatus {
+  double horizontal_deg = 1;
+  double vertical_deg = 2;
+}
+
+message EOObservationContext {
+  PTZStatus ptz = 1;
+  PTZStatus origin_ptz = 2;
+  double focus_value = 3;
+  FOVStatus fov = 4;
+  string optical_band = 5;
+  double pano_offset_deg = 6;
+  uint32 bound_track_id = 7;
+  double visibility_level = 8;
+  double speed_param = 9;
+  double root_pos = 10;
+}
+
+message EODetectionBox {
+  string camera_id = 1;
+  uint32 sync_header = 2;
+  uint32 box_id = 3;
+  uint32 track_id = 4;
+  int32 class_id = 5;
+  int32 behavior_id = 6;
+  double x = 7;
+  double y = 8;
+  double width = 9;
+  double height = 10;
+  double center_x = 11;
+  double center_y = 12;
+  double confidence = 13;
+}
+
+message EOObservedTargetProfile {
+  uint32 eo_track_id = 1;
+  uint32 primary_detection_box_id = 2;
+  repeated EODetectionBox detection_boxes = 3;
+  Measurement range_estimate_min_m = 4;
+  Measurement range_estimate_max_m = 5;
+  double pixel_x = 6;
+  double pixel_y = 7;
+  double pixel_span_x = 8;
+  double pixel_span_y = 9;
+  string classified_type = 10;
+  EnvironmentType reported_environment = 11;
+  UnitType reported_target_type = 12;
+  double classification_confidence = 13;
+  FriendFoeType reported_friend_foe = 14;
+  RealityType reported_reality_type = 15;
+  string visual_description = 16;
+  repeated KeyValuePair attributes = 17;
+}
+
+message ESMObservedTargetProfile {
+  double azimuth_deg = 1;
+  double elevation_deg = 2;
+  double azimuth_accuracy_deg = 3;
+  Measurement frequency_hz = 4;
+  Measurement pri_s = 5;
+  Measurement pulse_width_s = 6;
+  double signal_strength_dbm = 7;
+  double bandwidth_hz = 8;
+  string emitter_type = 9;
+  string emitter_identification = 10;
+  double emitter_match_confidence = 11;
+  RealityType reported_reality_type = 12;
+  string platform_inference = 13;
+  double platform_inference_confidence = 14;
+  bool tdoa_value_present = 15;
+  double tdoa_value_ns = 16;
+  bool fdoa_value_present = 17;
+  double fdoa_value_hz = 18;
+  GeoPosition tdoa_position_estimate = 19;
+  repeated KeyValuePair attributes = 20;
+}
+
+message AISObservedTargetProfile {
+  string mmsi = 1;
+  uint32 msg_type = 2;
+  string vessel_name = 3;
+  string call_sign = 4;
+  string imo_number = 5;
+  GeoPosition reported_position = 6;
+  double heading_deg = 7;
+  double speed_knots = 8;
+  double turn_rate_deg_per_min = 9;
+  double course_over_ground_deg = 10;
+  string navigation_status = 11;
+  string vessel_type = 12;
+  RealityType reported_reality_type = 13;
+  double length_m = 14;
+  double beam_m = 15;
+  string flag_country = 16;
+  string destination = 17;
+  double draught_m = 18;
+}
+
+message SelfReportedObservedTargetProfile {
+  string report_id = 1;
+  string sn = 2;
+  string device_name = 3;
+  GeoPosition reported_position = 4;
+  VectorEnu reported_velocity_enu = 5;
+  double reported_speed = 6;
+  double reported_heading_deg = 7;
+  double reported_climb_rate_mps = 8;
+  Orientation attitude = 9;
+  Orientation gimbal_attitude = 10;
+  double height_m = 11;
+  int32 reported_type_code = 12;
+  int32 reported_side_code = 13;
+  FriendFoeType reported_friend_foe = 14;
+  RealityType reported_reality_type = 15;
+  string reported_type = 16;
+  string callsign = 17;
+  string registration_id = 18;
+  string source_system_name = 19;
+  int32 report_time_sec = 20;
+  int32 report_time_usec = 21;
+  repeated KeyValuePair attributes = 22;
+}
+
+message RadarSourceProfile {
+  RadarStaticProfile hardware_profile = 1;
+  RadarObservationContext observation_context = 2;
+  RadarObservedTargetProfile target_profile = 3;
+}
+
+message EOSourceProfile {
+  EOStaticProfile hardware_profile = 1;
+  EOObservationContext observation_context = 2;
+  EOObservedTargetProfile target_profile = 3;
+}
+
+message ESMSourceProfile {
+  ESMStaticProfile hardware_profile = 1;
+  ESMObservedTargetProfile target_profile = 2;
+}
+
+message SourceProfile {
+  bool radar_source_present = 1;
+  bool eo_source_present = 2;
+  bool esm_source_present = 3;
+  bool ais_source_present = 4;
+  bool self_reported_source_present = 5;
+  RadarSourceProfile radar_source = 6;
+  EOSourceProfile eo_source = 7;
+  ESMSourceProfile esm_source = 8;
+  AISObservedTargetProfile ais_target_profile = 9;
+  SelfReportedObservedTargetProfile self_reported_target_profile = 10;
+}
+
+message CorrelationMetadata {
+  EntityRef source = 1;
+  string correlation_type = 2;
+  string copy_mode = 3;
+  double update_time = 4;
+  repeated KeyValuePair details = 5;
+}
+
+message DecorrelatedEntity {
+  EntityRef entity = 1;
+  CorrelationMetadata metadata = 2;
+}
+
+message TargetCorrelationInfo {
+  bool is_primary = 1;
+  repeated EntityRef secondary_entities = 2;
+  bool is_secondary = 3;
+  EntityRef primary_entity = 4;
+  string correlation_set_id = 5;
+  bool is_primary_member = 6;
+  CorrelationMetadata metadata = 7;
+  bool decorrelate_all = 8;
+  repeated DecorrelatedEntity decorrelated_entities = 9;
+}
+
+message ThreatAssessment {
+  bool is_threat = 1;
+  ThreatLevel threat_level = 2;
+  double confidence = 3;
+  string reason = 4;
+}
+
+message HighValueTargetMatch {
+  string high_value_target_list_id = 1;
+  string high_value_target_description_id = 2;
+}
+
+message HighValueTargetInfo {
+  bool is_high_value_target = 1;
+  uint32 target_priority = 2;
+  repeated HighValueTargetMatch target_matches = 3;
+  bool is_high_payoff_target = 4;
+}
+
+message TargetPriorityInfo {
+  HighValueTargetInfo high_value_target = 1;
+  ThreatAssessment threat = 2;
+  double engagement_priority = 3;
+}
+
+message Kinematics {
+  GeoPosition position = 1;
+  Orientation target_orientation = 2;
+  VectorEnu velocity_enu = 3;
+  double speed = 4;
+  VectorEnu acceleration_enu = 5;
+  AttitudeEnu attitude_enu = 6;
+  EnuCovariance position_enu_cov = 7;
+  EnuCovariance velocity_enu_cov = 8;
+  PositionErrorEllipse position_error_ellipse = 9;
+}
+
+message TargetSourceItem {
+  string entity_id = 1;
+  string source_track_id = 2;
+  double first_detect_time = 3;
+  double last_active_time = 4;
+  double confidence = 5;
+  SourcePresenceStatus status = 6;
+  SourceProfile source_profile = 7;
+  repeated KeyValuePair identity_attributes = 8;
+}
+
+enum EvidenceEventType {
+  EvidenceEventType_DETECTED = 0;
+  EvidenceEventType_ASSOCIATED = 1;
+  EvidenceEventType_ASSOCIATION_REJECTED = 2;
+  EvidenceEventType_STATE_CHANGED = 3;
+  EvidenceEventType_GROUP_CHANGED = 4;
+  EvidenceEventType_RECLASSIFIED = 5;
+  EvidenceEventType_THREAT_EVALUATED = 6;
+  EvidenceEventType_ENGAGE_ASSIGNED = 7;
+  EvidenceEventType_ENGAGE_UPDATED = 8;
+  EvidenceEventType_LOST = 9;
+  EvidenceEventType_MANUAL_OVERRIDE = 10;
+}
+
+message EvidenceEvent {
+  double timestamp = 1;
+  EntityRef source = 2;
+  EvidenceEventType event_type = 3;
+  string summary = 4;
+  double confidence = 5;
+  repeated EntityRef related_entities = 6;
+  repeated KeyValuePair details = 7;
+}
+
+enum FormationType {
+  FormationType_UNKNOWN = 0;
+  FormationType_LINE = 1;
+  FormationType_TRIANGLE = 2;
+  FormationType_V_SHAPE = 3;
+  FormationType_CLUSTER = 4;
+}
+
+enum GroupState {
+  GroupState_STABLE = 0;
+  GroupState_SPLITTING = 1;
+  GroupState_MERGING = 2;
+  GroupState_PARTIAL_OBSERVED = 3;
+  GroupState_LOST = 4;
+}
+
+message GroupObject {
+  string group_id = 1;
+  EntityRef leader_target = 2;
+  repeated EntityRef member_targets = 3;
+  Kinematics group_center_kinematics = 4;
+  double spatial_extent_major = 5;
+  double spatial_extent_minor = 6;
+  double formation_heading = 7;
+  FormationType formation_type = 8;
+  GroupState group_state = 9;
+  repeated string split_merge_hypotheses = 10;
+}
+
+enum AlarmCategory {
+  AlarmCategory_TRACK_AREA = 0;
+  AlarmCategory_TARGET_BEHAVIOR = 1;
+  AlarmCategory_TARGET_ATTR = 2;
+  AlarmCategory_DEVICE = 3;
+  AlarmCategory_EO_DETECTION = 4;
+  AlarmCategory_RADAR_DETECTION = 5;
+  AlarmCategory_RF_DETECTION = 6;
+  AlarmCategory_BEARING_ONLY = 7;
+  AlarmCategory_BEARING_RANGE_ESTIMATE = 8;
+  AlarmCategory_CUSTOM1 = 9;
+}
+
+enum AlarmLifecycleStatus {
+  AlarmLifecycleStatus_ACTIVE = 0;
+  AlarmLifecycleStatus_CANCELED = 1;
+  AlarmLifecycleStatus_DELETED = 2;
+  AlarmLifecycleStatus_FOCUS = 3;
+  AlarmLifecycleStatus_AUTO_RESOLVED = 4;
+}
+
+enum AlarmDispositionStatus {
+  AlarmDispositionStatus_UNASSIGNED = 0;
+  AlarmDispositionStatus_ASSIGNED = 1;
+  AlarmDispositionStatus_VERIFY_FAILED = 2;
+  AlarmDispositionStatus_VERIFY_SUCCESS = 3;
+}
+
+message AlarmAreaRef {
+  string area_id = 1;
+  string area_name = 2;
+}
+
+enum AlarmLocationType {
+  AlarmLocationType_POINT = 0;
+  AlarmLocationType_BEARING_ONLY_LOCATION = 1;
+  AlarmLocationType_BEARING_RANGE_LOCATION = 2;
+  AlarmLocationType_AREA_LOCATION = 3;
+  AlarmLocationType_UNKNOWN_LOCATION = 4;
+}
+
+message AlarmSpatialInfo {
+  AlarmLocationType location_type = 1;
+  bool point_position_present = 2;
+  GeoPosition point_position = 3;
+  bool reference_position_present = 4;
+  GeoPosition reference_position = 5;
+  double bearing_deg = 6;
+  double bearing_sigma_deg = 7;
+  bool range_estimate_present = 8;
+  Measurement range_estimate_m = 9;
+  bool range_min_present = 10;
+  Measurement range_min_m = 11;
+  bool range_max_present = 12;
+  Measurement range_max_m = 13;
+  double sector_start_deg = 14;
+  double sector_end_deg = 15;
+  double spatial_confidence = 16;
+  EntityRef source_sensor = 17;
+}
+
+message TargetAlarmItem {
+  string alarm_id = 1;
+  repeated AlarmCategory categories = 2;
+  AlarmLifecycleStatus status = 3;
+  AlarmDispositionStatus disposition = 4;
+  string content = 5;
+  ThreatLevel level = 6;
+  AlarmAreaRef area = 7;
+  int32 class_id = 8;
+  int32 behavior_id = 9;
+  GeoPosition position = 10;
+  AlarmSpatialInfo spatial_info = 11;
+  double raised_time = 12;
+  double updated_time = 13;
+  double resolved_time = 14;
+  string resolved_by = 15;
+  string resolution_details = 16;
+  repeated string rule_ids = 17;
+  bool detection_box_present = 18;
+  EODetectionBox detection_box = 19;
+}
+
+message TargetObject {
+  string target_id = 1;
+  string name = 2;
+  string description = 3;
+  repeated AlternateId alternate_ids = 4;
+  string external_target_id = 5;
+  EntityRef target_board = 6;
+  string group_id = 7;
+  TargetState state = 8;
+  KillChainState kill_chain_state = 9;
+  double existence_confidence = 10;
+  int32 lost_frame_count = 11;
+  double created_time = 12;
+  double last_update_time = 13;
+  UnitType classified_type = 14;
+  double type_confidence = 15;
+  FriendFoeType friend_foe = 16;
+  RealityType reality_type = 17;
+  EnvironmentType environment = 18;
+  double fused_azimuth_deg = 19;
+  double fused_elevation_deg = 20;
+  double fused_range_m = 21;
+  Kinematics target_kinematics = 22;
+  TargetPriorityInfo priority = 23;
+  repeated SignalInfo signals = 24;
+  repeated Aimpoint aimpoints = 25;
+  repeated DetectionReasoning detection_reasonings = 26;
+  repeated TargetSourceItem sources = 27;
+  TargetCorrelationInfo correlation = 28;
+  SecurityMarking security = 29;
+  repeated StateHistoryRecord state_history = 30;
+  repeated EvidenceEvent evidence_chain = 31;
+  repeated TargetAlarmItem alarms = 32;
+}
+
+message TargetOutputSet {
+  repeated TargetObject targets = 1;
+  repeated GroupObject groups = 2;
+}
+
+service NewTrackStructStreamService {
+  rpc Subscribe(SubscribeNewTrackStructRequest) returns (stream TargetOutputSet);
+}

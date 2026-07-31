@@ -11,7 +11,8 @@ import { useTrackStore } from "@/stores/track-store";
 import { useVerifiedTrackStore } from "@/stores/verified-track-store";
 
 /**
- * 查证完成标黄：智能助手 SSE 收到图片 → unique_id 标黄；页面刷新后按 minio_multi_metadata 恢复。
+ * 查证完成同步：智能助手 SSE 收到图片 → 记录 unique_id；页面刷新后按 minio_multi_metadata 恢复。
+ * 态势已不再对查证目标标黄。
  */
 export function VerifiedTrackSyncHost() {
   const dbSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

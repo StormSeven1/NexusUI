@@ -19,29 +19,39 @@
  * - 影子层就地更新（不被 React 订阅，无需 immutable）
  * - 渲染缓存用模块级 Map（避免每次 new Map 从数组重建）
  * - historyTrail 累积直接基于 _renderCache，省掉外部 getState().tracks + new Map
- * - 对外 `tracks` = 渲染层 + 影子层合并（地图/列表显示全部航迹）；仅影子变化也会 set 触发订阅
- *
+ * - 对外 `tracks` = 渲染层 + 影子层合并（地图/列表显示全部航迹）
+ * - 仅「当前图层面板不可见」的影子层更新时不重建 `tracks`、不通知订阅（避免雷达等洪峰刷对海融合）
+ * - 图层显隐变更时调用 `rebuildDisplayTracksFromCaches` 把影子补回列表
+ */
+
+import { create } from "zustand";
+import type { Track } from "@/lib/map-entity-model";
+import type { ForceDisposition } from "@/lib/theme-colors";
+import { refreshAlarmTrackMapDebugSnapshot } from "@/lib/alarm-track-map-debug";
+import { isTrackMatchedByAlarmKeys } from "@/lib/alarm-track-match";
+import { maxStoredTrailPointsPerTrack, mergeIncomingTrackWithStickyAirClassification } from "@/lib/ws-track-normalize";
+import { getTrackRenderingConfig, getTrackStaleTimeoutMs } from "@/lib/map-app-config";
+import { shouldResetHistoryTrailOnStep } from "@/lib/track-display-trail";
+import { isTrackVisibleBySubtype } from "@/lib/track-layer-visibility";
+import { markTrackPhase } from "@/lib/track-perf";
+import { useDisposedStore } from "@/stores/disposed-store";
+import { useTrackDisplayStore } from "@/stores/track-display-store";
+
+/** 地图右键设置的演练方 / 判定：用于覆盖默认敌我着色逻辑 */
+export type ManualTrackAffiliation = "unknown" | "red" | "blue" | "white";
+
+/**
  * 【模式配置】
  * - trackIdMode.distinguishSeaAir 从 app-config.json 读
  *   - false = 18.141 模式：告警 trackId 匹配航迹 trackId
  *   - true  = 28.9 模式：对海用 uniqueID（=showID），对空用 trackId
  */
 
-import { create } from "zustand";
-import type { Track } from "@/lib/map-entity-model";
-import type { ForceDisposition } from "@/lib/theme-colors";
-
-/** 地图右键设置的演练方 / 判定：用于覆盖默认告警着色逻辑 */
-export type ManualTrackAffiliation = "unknown" | "red" | "blue" | "white";
-import { refreshAlarmTrackMapDebugSnapshot } from "@/lib/alarm-track-map-debug";
-import { isTrackMatchedByAlarmKeys } from "@/lib/alarm-track-match";
-import { maxStoredTrailPointsPerTrack, mergeIncomingTrackWithStickyAirClassification } from "@/lib/ws-track-normalize";
-import { getTrackRenderingConfig, getTrackStaleTimeoutMs } from "@/lib/map-app-config";
-import { shouldResetHistoryTrailOnStep } from "@/lib/track-display-trail";
-import { useDisposedStore } from "@/stores/disposed-store";
-
 /** 模块级渲染缓存 — 避免每次调用从 tracks 数组重建 Map */
 const _renderCache = new Map<string, Track>();
+
+/** 仅不可见影子层有更新时置位；图层显隐变化时需重建 `tracks` */
+let _shadowOnlyDirty = false;
 
 /**
  * 每条航迹最近一次被 WS 摄入（`setTracks`）的墙上时钟，用于超时剔除。
@@ -129,6 +139,10 @@ interface TrackState {
     classifiedType: number,
   ) => boolean;
   clearAllTracks: () => void;
+  /**
+   * 图层显隐变化时：若此前跳过了不可见影子层的 `tracks` 重建，则补建一次。
+   */
+  rebuildDisplayTracksFromCaches: () => void;
 
   /** showID → 右键手动属性 */
   manualAffiliationByShowId: Record<string, ManualTrackAffiliation>;
@@ -171,6 +185,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
   },
 
   setTracks: (incoming, options) => {
+    markTrackPhase("store.setTracks", `in=${incoming.length},cache=${_renderCache.size},shadow=${get().shadowTracks.size}`);
     const alarmTrackIds = getCurrentAlarmTrackIds();
     const disposedStore = useDisposedStore.getState();
     // 影子不被 React 订阅，就地更新即可
@@ -235,6 +250,19 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     }
 
     if (needsRenderUpdate || shadowMutated) {
+      // 仅不可见图层的影子更新：影子 Map 已就地写好，跳过重建 tracks[]，避免雷达洪峰刷地图/列表
+      if (!needsRenderUpdate && shadowMutated) {
+        const td = useTrackDisplayStore.getState();
+        const anyVisibleIncoming = incoming.some((t) =>
+          isTrackVisibleBySubtype(t, td.trackSubtypeVisible, td.airFusionSubtypeVisible),
+        );
+        if (!anyVisibleIncoming) {
+          _shadowOnlyDirty = true;
+          if (options?.lastUpdate !== undefined) set({ lastUpdate: options.lastUpdate });
+          return;
+        }
+      }
+      _shadowOnlyDirty = false;
       const partial: Partial<TrackState> = { tracks: buildDisplayTracks(shadow) };
       if (options?.lastUpdate !== undefined) partial.lastUpdate = options.lastUpdate;
       set(partial);
@@ -246,6 +274,12 @@ export const useTrackStore = create<TrackState>((set, get) => ({
 
   setConnected: (v) => set({ connected: v }),
   setLastUpdate: (ts) => set({ lastUpdate: ts }),
+
+  rebuildDisplayTracksFromCaches: () => {
+    if (!_shadowOnlyDirty) return;
+    _shadowOnlyDirty = false;
+    set({ tracks: buildDisplayTracks(get().shadowTracks) });
+  },
 
   syncWithAlarms: (alarmTrackIds) => {
     const shadow = get().shadowTracks;
@@ -367,6 +401,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
   clearAllTracks: () => {
     _renderCache.clear();
     _lastIngestMsByShowId.clear();
+    _shadowOnlyDirty = false;
     get().shadowTracks.clear();
     set({ tracks: [], manualAffiliationByShowId: {}, mapManualAffiliationRev: 0 });
   },

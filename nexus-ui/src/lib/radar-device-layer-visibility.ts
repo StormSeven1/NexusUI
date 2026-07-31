@@ -1,18 +1,23 @@
-/** 单台雷达在图层面板下的子项显隐；缺省均为 true */
+/** 单台雷达在图层面板下的子项显隐；图标缺省 true，能力缺省 false（需点开）。距离环已取消。 */
 export type RadarDeviceVisibilityEntry = {
-  /** 距离环、环间填充、十字线、距离/角度标签、中心名称 */
+  /**
+   * @deprecated 距离环已下线，忽略此字段；保留仅为兼容 localStorage 旧数据。
+   */
   coverage?: boolean;
   /** 雷达站中心 GIS 图标 */
   icon?: boolean;
+  /** 能力扫描（360° 旋转亮带）；缺省关闭 */
+  capability?: boolean;
 };
 
 export type RadarDeviceVisibilityMap = Record<string, RadarDeviceVisibilityEntry>;
 
+/** @deprecated 距离环已下线，恒为 false */
 export function isRadarDeviceCoverageVisible(
-  radarId: string,
-  map: Readonly<RadarDeviceVisibilityMap>,
+  _radarId: string,
+  _map: Readonly<RadarDeviceVisibilityMap>,
 ): boolean {
-  return map[radarId]?.coverage !== false;
+  return false;
 }
 
 export function isRadarDeviceIconVisible(
@@ -22,11 +27,20 @@ export function isRadarDeviceIconVisible(
   return map[radarId]?.icon !== false;
 }
 
-export function shouldRenderRadarCoverage(
+/** 能力扫描：显式 true 才开启 */
+export function isRadarDeviceCapabilityVisible(
   radarId: string,
   map: Readonly<RadarDeviceVisibilityMap>,
 ): boolean {
-  return isRadarDeviceCoverageVisible(radarId, map);
+  return map[radarId]?.capability === true;
+}
+
+/** @deprecated 距离环已下线，恒为 false */
+export function shouldRenderRadarCoverage(
+  _radarId: string,
+  _map: Readonly<RadarDeviceVisibilityMap>,
+): boolean {
+  return false;
 }
 
 export function shouldRenderRadarIcon(
@@ -36,7 +50,7 @@ export function shouldRenderRadarIcon(
   return isRadarDeviceIconVisible(radarId, map);
 }
 
-/** 图层面板「已开启」：总开关开时，每台雷达距离环 + GIS 图标各计 1 项 */
+/** 图层面板「已开启」：总开关开时，每台雷达 GIS 图标 + 能力 各计 1 项 */
 export function countVisibleRadarDeviceLeaves(
   radarIds: ReadonlyArray<string>,
   map: Readonly<RadarDeviceVisibilityMap>,
@@ -45,13 +59,13 @@ export function countVisibleRadarDeviceLeaves(
   if (!masterOn) return 0;
   let n = 0;
   for (const id of radarIds) {
-    if (isRadarDeviceCoverageVisible(id, map)) n += 1;
     if (isRadarDeviceIconVisible(id, map)) n += 1;
+    if (isRadarDeviceCapabilityVisible(id, map)) n += 1;
   }
   return n;
 }
 
-/** 图层面板 UI 行数：每台雷达 2 行（距离环、GIS 图标） */
+/** 图层面板 UI 行数：每台雷达 2 行（GIS 图标、能力） */
 export function countRadarDevicePanelUiRows(radarCount: number): number {
   return radarCount > 0 ? radarCount * 2 : 0;
 }
@@ -66,7 +80,7 @@ export function pruneRadarDeviceVisibility(
     if (valid.has(id)) next[id] = map[id]!;
   }
   for (const id of radarIds) {
-    if (!(id in next)) next[id] = { coverage: false, icon: false };
+    if (!(id in next)) next[id] = { icon: false, capability: false };
   }
   return next;
 }

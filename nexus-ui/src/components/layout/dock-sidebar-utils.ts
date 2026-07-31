@@ -12,7 +12,6 @@ export const RIGHT_DOCK_TOOL_IDS = [
   "target-profile",
   "system-evaluation",
   "chat",
-  "knowledge-base",
 ] as const satisfies readonly PanelId[];
 
 /** 旧版 cleanup 曾写入 left-default/right-default，UI 只认 left-0/right-0 等 */

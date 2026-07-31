@@ -28,7 +28,7 @@ type ForceDisposition = "friendly" | "hostile" | "neutral";
 type TrackKind = "air" | "sea" | "underwater";
 
 /** 与主线程 `TRACK_LAYER_KEY_BY_DDS_SOURCE_ID` / Custombackend 接收器 id 一致（Worker 不能 import 带 @/ 的模块） */
-type LayerKey = "fuse_sea" | "fuse_air" | "bird_radar" | "fanwu_car_radar" | "radar_wharf" | "radar_jingzi" | "ais_track" | "uav_pose_track" | "boat_self_track" | "xpf_track";
+type LayerKey = "fuse_sea" | "fuse_air" | "bird_radar" | "auto_bird_radar" | "fanwu_car_radar" | "radar_wharf" | "radar_jingzi" | "ais_track" | "uav_pose_track" | "boat_self_track" | "xpf_track";
 
 type FusionSourceItem = {
   sourceName?: string;
@@ -61,12 +61,30 @@ function _parseFusionSourcesFromRec(rec: Record<string, unknown>): FusionSourceI
 
 const DDS_TO_LAYER: Record<string, LayerKey> = {
   dds_forward_fuse_track: "fuse_sea",
+  dds_forward_fuse_track_virtual: "fuse_sea",
+  grpc_new_track_struct_fuse_sea: "fuse_sea",
+  grpc_virtual_blue_fuse_sea: "fuse_sea",
   dds_forward_fuse_bird_radar_track: "fuse_air",
+  dds_forward_fuse_bird_radar_track_virtual: "fuse_air",
+  grpc_new_track_struct_fuse_air: "fuse_air",
+  grpc_virtual_blue_fuse_air: "fuse_air",
   dds_forward_bird_radar_track: "bird_radar",
+  udp_auto_bird_radar: "auto_bird_radar",
+  dds_forward_auto_bird_radar_track: "auto_bird_radar",
   dds_forward_fanwu_car_track: "fanwu_car_radar",
   dds_udp_fanwucar_track: "fanwu_car_radar",
   dds_forward_radar_track1: "radar_wharf",
   dds_forward_radar_track2: "radar_jingzi",
+  grpc_fusion_track_radar_wharf: "radar_wharf",
+  grpc_fusion_track_radar_jingzi: "radar_jingzi",
+  grpc_fusion_track_xpf: "xpf_track",
+  grpc_fusion_track_boatself: "boat_self_track",
+  grpc_fusion_track_ais: "ais_track",
+  grpc_fusion_track_bird: "bird_radar",
+  grpc_fusion_track_uav_pose: "uav_pose_track",
+  grpc_fusion_track_fanwu: "fanwu_car_radar",
+  grpc_fusion_track_ku: "fanwu_car_radar",
+  grpc_fusion_track_auto_bird: "auto_bird_radar",
   dds_forward_ais_track: "ais_track",
   dds_forward_uav_pose_track: "uav_pose_track",
   dds_udp_boatself_track: "boat_self_track",
@@ -97,7 +115,7 @@ function _layerKeyFromDds(dds: string | undefined): LayerKey | undefined {
 function _surfaceKindFromDdsOrLayer(rec: Record<string, unknown>): TrackKind | undefined {
   const dds = _ddsSourceStr(rec)?.toLowerCase();
   const lk = _layerKeyFromDds(dds) ?? _readTrackLayerKeyFromRec(rec);
-  if (lk === "fuse_air" || lk === "bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track") return "air";
+  if (lk === "fuse_air" || lk === "bird_radar" || lk === "auto_bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track") return "air";
   if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track" || lk === "boat_self_track" || lk === "xpf_track") {
     return "sea";
   }
@@ -122,6 +140,11 @@ interface WorkerTrack {
   classifiedType?: number;
   realityType?: number;
   targetState?: "STABLE" | "COASTING" | "LOST" | "MERGED" | "SPLIT";
+  trackCreatedMs?: number;
+  trackSourceRecvMs?: number;
+  trackGrpcSendMs?: number;
+  backendRecvMs?: number;
+  wsRecvMs?: number;
 }
 
 export interface TrackWorkerResult {
@@ -258,6 +281,16 @@ function _uid(rec: Record<string, unknown>): string {
   return u != null && String(u).trim() ? String(u).trim() : "";
 }
 
+/**
+ * store 主键命名空间（与主线程 `ws-track-normalize.namespacedStoreKey` 完全一致）。
+ * 原始传感器点（雷达/探鸟/AIS…）与其融合航迹共用发布端全局唯一 id → showID 撞键、交替显示；
+ * 仅对**非融合图层**的 store key 加 `图层:` 前缀使二者并存同显，uniqueID/trackId 保持原值。
+ */
+function _storeKey(rawKey: string, layer: LayerKey | undefined): string {
+  if (!layer || layer === "fuse_sea" || layer === "fuse_air") return rawKey;
+  return `${layer}:${rawKey}`;
+}
+
 function _disp(rec: Record<string, unknown>): ForceDisposition {
   const top = rec.disposition ?? rec.affiliation ?? rec.forceDisposition ?? rec["敌我"];
   if (typeof top === "string") return _parseDisp(top, "hostile");
@@ -351,9 +384,10 @@ function _normalize(raw: unknown): WorkerTrack | null {
   const tlkFromDds = _layerKeyFromDds(ddsStr);
   const resolvedLayerKey = tlkFromDds ?? tlkPayload;
   const targetState = readTargetStateFromRecord(rec);
+  const storeKey = _storeKey(showID, resolvedLayerKey);
 
   return {
-    id: showID, showID, uniqueID,
+    id: storeKey, showID: storeKey, uniqueID,
     ...(trackIdStr  ? { trackId: trackIdStr }   : {}),
     ...(externalTargetIdStr ? { externalTargetId: externalTargetIdStr } : {}),
     ...(trackAliasStr ? { trackAlias: trackAliasStr } : {}),
@@ -388,13 +422,34 @@ function _normalize(raw: unknown): WorkerTrack | null {
     ...(trackCategoryId !== undefined ? { trackCategoryId } : {}),
     ...(classifiedType !== undefined ? { classifiedType } : {}),
     ...(targetState ? { targetState } : {}),
+    ...((): Record<string, unknown> => {
+      const pick = (...keys: string[]): number | undefined => {
+        for (const k of keys) {
+          const v = rec[k];
+          if (v == null) continue;
+          const n = typeof v === "number" ? v : Number(v);
+          if (Number.isFinite(n) && n > 0) return n;
+        }
+        return undefined;
+      };
+      const created = pick("track_created_time_ms", "trackCreatedMs");
+      const sourceRecv = pick("track_source_recv_time_ms", "trackSourceRecvMs");
+      const grpcSend = pick("track_grpc_send_time_ms", "trackGrpcSendMs");
+      const backend = pick("backend_recv_ms", "backendRecvMs");
+      return {
+        ...(created !== undefined ? { trackCreatedMs: created } : {}),
+        ...(sourceRecv !== undefined ? { trackSourceRecvMs: sourceRecv } : {}),
+        ...(grpcSend !== undefined ? { trackGrpcSendMs: grpcSend } : {}),
+        ...(backend !== undefined ? { backendRecvMs: backend } : {}),
+      };
+    })(),
   };
 }
 
 // ── 消息处理 ─────────────────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-(self as any).onmessage = function (e: MessageEvent<{ type: string; config?: TrackWorkerConfig; raw?: string }>) {
+(self as any).onmessage = function (e: MessageEvent<{ type: string; config?: TrackWorkerConfig; raw?: string; wsRecvMs?: number }>) {
   const msg = e.data;
 
   if (msg.type === "init") {
@@ -408,6 +463,7 @@ function _normalize(raw: unknown): WorkerTrack | null {
     const parsed = JSON.parse(msg.raw) as Record<string, unknown>;
     const msgType  = String((parsed.type as string | undefined) ?? "").toLowerCase();
     const timestamp = parsed.timestamp ? String(parsed.timestamp) : undefined;
+    const wsRecvMs = typeof msg.wsRecvMs === "number" && Number.isFinite(msg.wsRecvMs) ? msg.wsRecvMs : undefined;
     const tracks: WorkerTrack[] = [];
 
     if (msgType === "trackbatch") {
@@ -417,7 +473,10 @@ function _normalize(raw: unknown): WorkerTrack | null {
           if (!item || typeof item !== "object") continue;
           const envelope = item as Record<string, unknown>;
           const t = _normalize(envelope.data ?? envelope);
-          if (t) tracks.push(t);
+          if (t) {
+            if (wsRecvMs !== undefined) t.wsRecvMs = wsRecvMs;
+            tracks.push(t);
+          }
         }
       }
     } else if (msgType === "track_update" || msgType === "track_snapshot") {
@@ -425,7 +484,10 @@ function _normalize(raw: unknown): WorkerTrack | null {
       if (Array.isArray(arr)) {
         for (const item of arr) {
           const t = _normalize(item);
-          if (t) tracks.push(t);
+          if (t) {
+            if (wsRecvMs !== undefined) t.wsRecvMs = wsRecvMs;
+            tracks.push(t);
+          }
         }
       }
     }

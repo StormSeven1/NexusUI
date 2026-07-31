@@ -25,8 +25,16 @@ import {
 import { resolveTrackMapHighlightFill } from "@/lib/track-map-highlight-color";
 import { useTrackMarkerSymbolUrl } from "@/components/military/TrackMarkerIcon";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
-import { isVirtualFromProperties, normalizeAssetType, type AssetStatus, type Track } from "@/lib/map-entity-model";
+import {
+  isVirtualFromProperties,
+  normalizeAssetType,
+  trackMapDisplayId,
+  trackTargetIdDisplay,
+  type AssetStatus,
+  type Track,
+} from "@/lib/map-entity-model";
 import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
+import { formatTrackUnitTypeZh } from "@/lib/track-category-id-parse";
 import { useAssetStore } from "@/stores/asset-store";
 import {
   useTrackStore,
@@ -51,6 +59,23 @@ function formatLatLng(lat: number | null | undefined, lng: number | null | undef
   const ns = lat >= 0 ? "N" : "S";
   const ew = lng >= 0 ? "E" : "W";
   return `${Math.abs(lat).toFixed(4)}°${ns}, ${Math.abs(lng).toFixed(4)}°${ew}`;
+}
+
+/** epoch ms 或 ISO 字符串 → 本地 HH:MM:SS.mmm；无效返回 "-"。 */
+function formatClockMs(input: number | string | null | undefined): string {
+  if (input == null) return "-";
+  let ms: number;
+  if (typeof input === "number") {
+    ms = input;
+  } else {
+    const p = Date.parse(input);
+    if (!Number.isFinite(p)) return String(input) || "-";
+    ms = p;
+  }
+  if (!Number.isFinite(ms) || ms <= 0) return "-";
+  const d = new Date(ms);
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
 }
 
 function DispositionBadge({ d }: { d: ForceDisposition }) {
@@ -86,9 +111,14 @@ function SectionTitle({ children, accent }: { children: string; accent?: boolean
   );
 }
 
-function Row({ k, v, nowrap }: { k: string; v: React.ReactNode; nowrap?: boolean }) {
+function Row({ k, v, nowrap, labelWide }: { k: string; v: React.ReactNode; nowrap?: boolean; labelWide?: boolean }) {
   return (
-    <div className="grid grid-cols-[56px_1fr] gap-x-2 gap-y-1 text-[11px]">
+    <div
+      className={cn(
+        "grid gap-x-2 gap-y-1 text-[11px]",
+        labelWide ? "grid-cols-[5.5rem_1fr]" : "grid-cols-[56px_1fr]",
+      )}
+    >
       <div className="text-nexus-text-muted">{k}</div>
       <div className={cn("min-w-0 text-nexus-text-primary", nowrap && "whitespace-nowrap")}>{v}</div>
     </div>
@@ -111,9 +141,9 @@ export function TargetPlacard(props: TargetPlacardProps) {
     if (kind === "asset" && !asset) onClose();
   }, [kind, track, asset, onClose]);
 
-  /** 机场/无人机的 name 在入资产时已解析好，直接用 */
+  /** 航迹：TargetObject.name（trackAlias）；资产：机场/光电等既有解析 */
   const mapDisplayName = useMemo(() => {
-    if (kind === "track") return track?.name ?? id;
+    if (kind === "track") return track ? trackMapDisplayId(track) : id;
     if (!asset) return id;
     const t = normalizeAssetType(asset.asset_type);
     if (t === "camera") return formatCameraTowerMapLabel(asset.id);
@@ -123,6 +153,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
   const title = mapDisplayName;
   const subtitle = kind === "track" ? "航迹" : "资产";
+  const trackTypeZh = kind === "track" && track ? formatTrackUnitTypeZh(track) : "-";
+  const trackTargetId = kind === "track" && track ? trackTargetIdDisplay(track) : id;
 
   const trackSymbolUrl = useTrackMarkerSymbolUrl(kind === "track" ? track : null);
 
@@ -239,8 +271,8 @@ export function TargetPlacard(props: TargetPlacardProps) {
             <div className="mt-0.5 font-mono text-[10px] text-nexus-text-muted">
               {kind === "track" ? (
                 <span>
-                  <span className="text-nexus-text-secondary">showID:</span> {track?.showID ?? id}
-                  {track?.trackId && track.trackId !== track.showID && (
+                  <span className="text-nexus-text-secondary">target_id:</span> {trackTargetId}
+                  {track?.trackId && track.trackId !== trackTargetId && (
                     <span className="ml-2"><span className="text-nexus-text-secondary">trackId:</span> {track.trackId}</span>
                   )}
                 </span>
@@ -263,10 +295,19 @@ export function TargetPlacard(props: TargetPlacardProps) {
         <>
           <SectionTitle accent>概况</SectionTitle>
           <div className="mt-1 flex flex-col gap-y-1.5">
-            <Row k="名称" v={track?.trackAlias?.trim() || "-"} />
+            <Row k="名称" v={track ? trackMapDisplayId(track) : "-"} />
+            <Row k="类型" v={trackTypeZh} />
             <Row k="来源" v={track?.sensor ?? "-"} />
-            <Row k="最后更新" v={track?.lastUpdate ?? "-"} />
             <Row k="坐标" v={formatLatLng(track?.lat, track?.lng)} />
+          </div>
+
+          <SectionTitle accent>时间</SectionTitle>
+          <div className="mt-1 flex flex-col gap-y-1.5">
+            <Row labelWide k="航迹创建" nowrap v={formatClockMs(track?.trackCreatedMs)} />
+            <Row labelWide k="航迹接收" nowrap v={formatClockMs(track?.trackSourceRecvMs)} />
+            <Row labelWide k="航迹发送" nowrap v={formatClockMs(track?.trackGrpcSendMs)} />
+            <Row labelWide k="后端接收" nowrap v={formatClockMs(track?.backendRecvMs)} />
+            <Row labelWide k="前端接收" nowrap v={formatClockMs(track?.wsRecvMs)} />
           </div>
 
           <SectionTitle accent>运动</SectionTitle>

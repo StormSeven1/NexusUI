@@ -15,15 +15,22 @@ import {
   PictureInPicture2,
   Radar,
   RefreshCw,
+  RotateCcw,
   SlidersHorizontal,
   SquareCheck,
   SunMedium,
   Video,
   Volume2,
+  Route,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { postUavPsdkPayload, uploadUavPsdkAudio } from "@/lib/eo-video/postUavPsdkPayload";
+import {
+  postUavPsdkPayload,
+  setUavSpeakerVolume,
+  UAV_SPEAKER_FORCE_VOLUME,
+  uploadUavPsdkAudio,
+} from "@/lib/eo-video/postUavPsdkPayload";
 import type { ThirdPartyCamTaskKind } from "@/lib/eo-video/thirdPartyCamTaskClient";
 
 export interface EoVideoFloatingToolsProps {
@@ -46,6 +53,9 @@ export interface EoVideoFloatingToolsProps {
   isRecording: boolean;
   onSnapshot: () => void;
   onToggleRecord: () => void;
+  /** 重新拉流 / 重连 WebRTC（或第三方 WS） */
+  onReconnectStream?: () => void;
+  reconnectStreamBusy?: boolean;
   /** 形态切换：默认态<->放大态 */
   onToggleExpand?: () => void;
   expandedMode?: boolean;
@@ -90,7 +100,7 @@ export interface EoVideoFloatingToolsProps {
   aimCollectChecked?: boolean;
   aimCollectBusy?: boolean;
   onToggleAimCollect?: () => void;
-  /** 主 PTZ 且无 parent / 非第三方：更新对准参数到 camServer 测试 ini */
+  /** 主 PTZ 且无 parent / 非第三方：从 TrackService 拉对准参数并写入正式 ConfigAIM{N}.ini */
   aimUpdateSupported?: boolean;
   aimUpdateBusy?: boolean;
   onAimUpdate?: () => void;
@@ -101,6 +111,27 @@ export interface EoVideoFloatingToolsProps {
   showUavExpandedDebugToggle?: boolean;
   uavExpandedDebugOpen?: boolean;
   onToggleUavExpandedDebug?: () => void;
+  /** 经典布局小窗：仅录屏 + 截图 */
+  captureOnly?: boolean;
+  /**
+   * 无人机放大：载荷四键（云台回中/向下、喊话、探照）改由父级放在画面左侧时，
+   * 本列不再渲染这四键。
+   */
+  omitUavPayloadTools?: boolean;
+  /** 仅渲染载荷四键（供左侧栏复用） */
+  uavPayloadToolsOnly?: boolean;
+  /**
+   * 喊话/探照弹层相对按钮的开口方向。
+   * left = 弹在按钮左侧（右侧工具栏默认）；right = 弹在按钮右侧（左侧工具栏）。
+   */
+  uavPopPanelSide?: "left" | "right";
+  /**
+   * 无人机：航线 + 对海融合航迹画面投影显隐（默认开启；起飞后才实际投影）。
+   */
+  uavTrackProjectVisible?: boolean;
+  onToggleUavTrackProject?: () => void;
+  /** 舱内时禁用投影开关（或仅提示需起飞） */
+  uavTrackProjectDisabled?: boolean;
 }
 
 const uavOverlayToolClass =
@@ -117,8 +148,10 @@ const LIGHT_WIDGET: Record<Exclude<LightMode, "off">, number> = {
   warning: 13,
 };
 
-const popPanelClass =
+const popPanelClassLeftOfBtn =
   "absolute right-[calc(100%+8px)] top-0 z-[100] w-[220px] rounded-md border border-white/15 bg-[rgb(22,27,34)] p-2.5 shadow-[0_8px_20px_rgba(0,0,0,0.45)]";
+const popPanelClassRightOfBtn =
+  "absolute left-[calc(100%+8px)] top-0 z-[100] w-[220px] rounded-md border border-white/15 bg-[rgb(22,27,34)] p-2.5 shadow-[0_8px_20px_rgba(0,0,0,0.45)]";
 
 const popBtnClass =
   "rounded border border-white/15 bg-[#1E2329] px-1.5 py-1 text-[10px] text-white/90 hover:bg-[#2D3339] active:bg-[#4A4F55] data-[on=1]:border-sky-500/60 data-[on=1]:bg-sky-950/40 disabled:opacity-45";
@@ -143,6 +176,8 @@ export function EoVideoFloatingTools({
   isRecording,
   onSnapshot,
   onToggleRecord,
+  onReconnectStream,
+  reconnectStreamBusy = false,
   onToggleExpand,
   expandedMode = false,
   onUavClientLog,
@@ -176,6 +211,13 @@ export function EoVideoFloatingTools({
   showUavExpandedDebugToggle = false,
   uavExpandedDebugOpen = false,
   onToggleUavExpandedDebug,
+  captureOnly = false,
+  omitUavPayloadTools = false,
+  uavPayloadToolsOnly = false,
+  uavPopPanelSide = "left",
+  uavTrackProjectVisible = true,
+  onToggleUavTrackProject,
+  uavTrackProjectDisabled = false,
 }: EoVideoFloatingToolsProps) {
   const log = useCallback((s: string) => onUavClientLog?.(`${new Date().toLocaleTimeString()} ${s}`), [onUavClientLog]);
   const notify = useCallback(
@@ -290,6 +332,12 @@ export function EoVideoFloatingTools({
     if (!gateway || psdkBlocked) return;
     setSpeakerBusy(true);
     try {
+      // 对齐 Qt `onDroneSpeakText`→`onVolumeChanged(100)`：喊话前强制音量
+      const vol = await setUavSpeakerVolume(gateway, UAV_SPEAKER_FORCE_VOLUME);
+      log(`[喊话音量] ${UAV_SPEAKER_FORCE_VOLUME} → ${JSON.stringify(vol).slice(0, 320)}`);
+      if (!vol.ok) {
+        log(`[喊话音量] 设置失败，仍继续下发文字：${vol.message || vol.detail || ""}`);
+      }
       const ret = await postUavPsdkPayload({
         gatewaySn: gateway,
         cmd: "psdk_input_box_text_set",
@@ -340,6 +388,12 @@ export function EoVideoFloatingTools({
       if (!up.ok || !up.fileId || !up.md5) {
         notify(up.message || up.detail || "音频上传失败", "error");
         return;
+      }
+      // 对齐 Qt `onDroneSpeakText`→`onVolumeChanged(100)`：播放前强制音量
+      const vol = await setUavSpeakerVolume(gateway, UAV_SPEAKER_FORCE_VOLUME);
+      log(`[喊话音量] ${UAV_SPEAKER_FORCE_VOLUME} → ${JSON.stringify(vol).slice(0, 320)}`);
+      if (!vol.ok) {
+        log(`[喊话音量] 设置失败，仍继续播放：${vol.message || vol.detail || ""}`);
       }
       const ret = await postUavPsdkPayload({
         gatewaySn: gateway,
@@ -401,6 +455,209 @@ export function EoVideoFloatingTools({
     log("[喊话面板] 设置：聚焦文字输入");
   };
 
+  const popPanelClass =
+    uavPopPanelSide === "right" ? popPanelClassRightOfBtn : popPanelClassLeftOfBtn;
+
+  const showUavPayloadTools =
+    variant === "uav" && expandedMode && (uavPayloadToolsOnly || !omitUavPayloadTools);
+
+  const uavPayloadToolsBlock =
+    showUavPayloadTools ? (
+      <>
+        {!uavPayloadToolsOnly ? (
+          <div className="my-0.5 h-px w-6 bg-gradient-to-r from-transparent via-white/35 to-transparent" aria-hidden />
+        ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className={uavOverlayToolClass}
+          title="云台回中（gimbal_reset · reset_mode=0）"
+          aria-label="云台回中"
+          disabled={uavGimbalDisabled || !onUavGimbalCenter}
+          onClick={() => void onUavGimbalCenter?.()}
+        >
+          <Crosshair className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className={uavOverlayToolClass}
+          title="云台向下（gimbal_reset · reset_mode=1）"
+          aria-label="云台向下"
+          disabled={uavGimbalDisabled || !onUavGimbalDown}
+          onClick={() => void onUavGimbalDown?.()}
+        >
+          <ChevronDown className="size-3.5" />
+        </Button>
+        <div className="relative" ref={speakerWrapRef}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className={cn(
+              uavOverlayToolClass,
+              uavPop === "speaker" ? "border-sky-400/45 bg-sky-950/50 text-sky-300" : "",
+            )}
+            title="喊话"
+            aria-label="喊话"
+            aria-expanded={uavPop === "speaker"}
+            onClick={() => {
+              setUavPop((cur) => (cur === "speaker" ? null : "speaker"));
+            }}
+          >
+            <Volume2 className="size-3.5" />
+          </Button>
+          {uavPop === "speaker" ? (
+            <div
+              role="dialog"
+              aria-label="无人机喊话"
+              className={popPanelClass}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  className={popBtnClass}
+                  disabled={psdkBlocked || speakerBusy || !gateway}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    void startQuickRecording();
+                  }}
+                  onPointerUp={(e) => {
+                    e.preventDefault();
+                    void stopQuickRecording();
+                  }}
+                  onPointerLeave={() => void stopQuickRecording()}
+                >
+                  按住录音
+                </button>
+                <button
+                  type="button"
+                  className={popBtnClass}
+                  onClick={() => focusSpeakerTextSetting()}
+                >
+                  设置
+                </button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="secondary"
+                  className="h-6 px-2 bg-sky-900/65 text-[10px] text-white hover:bg-sky-800/85"
+                  disabled={psdkBlocked || speakerBusy || !gateway.trim()}
+                  onClick={() => void sendSpeakerText()}
+                >
+                  发送
+                </Button>
+                {speakerBusy ? <Loader2 className="size-3.5 animate-spin text-white/60" aria-hidden /> : null}
+              </div>
+              <textarea
+                ref={textAreaRef}
+                value={speakerText}
+                onChange={(e) => setSpeakerText(e.target.value)}
+                placeholder="输入文字后发送（对应 UAVSpeakerWidget 文本喊话）"
+                rows={2}
+                className="mb-2 w-full resize-none rounded border border-white/15 bg-black/35 px-2 py-1 text-[10px] text-white placeholder:text-white/35 focus:border-sky-500/55 focus:outline-none"
+              />
+              {!gateway ? <p className="mt-1 text-[9px] text-amber-200/85">缺少网关 SN</p> : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="relative" ref={lightWrapRef}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className={cn(
+              uavOverlayToolClass,
+              uavPop === "light" ? "border-sky-400/45 bg-sky-950/50 text-sky-300" : "",
+            )}
+            title="探照灯"
+            aria-label="探照灯"
+            aria-expanded={uavPop === "light"}
+            onClick={() => {
+              setUavPop((cur) => (cur === "light" ? null : "light"));
+            }}
+          >
+            <SunMedium className="size-3.5" />
+          </Button>
+          {uavPop === "light" ? (
+            <div
+              role="dialog"
+              aria-label="探照灯"
+              className={popPanelClass}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="mb-2 flex items-center justify-end">
+                {lightBusy ? <Loader2 className="size-3 animate-spin text-white/60" aria-hidden /> : null}
+              </div>
+              <div className="mb-2 grid grid-cols-3 gap-1.5">
+                <button
+                  type="button"
+                  data-on={lightMode === "strong" ? 1 : 0}
+                  className={popBtnClass}
+                  disabled={lightBusy || psdkBlocked || !gateway}
+                  onClick={() => onPickLightMode("strong")}
+                >
+                  强闪
+                </button>
+                <button
+                  type="button"
+                  data-on={lightMode === "constant" ? 1 : 0}
+                  className={popBtnClass}
+                  disabled={lightBusy || psdkBlocked || !gateway}
+                  onClick={() => onPickLightMode("constant")}
+                >
+                  常亮
+                </button>
+                <button
+                  type="button"
+                  data-on={lightMode === "warning" ? 1 : 0}
+                  className={popBtnClass}
+                  disabled={lightBusy || psdkBlocked || !gateway}
+                  onClick={() => onPickLightMode("warning")}
+                >
+                  警示
+                </button>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] text-white/85">
+                <span className="shrink-0 text-white/60">亮度</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={lightBrightness}
+                  disabled={lightMode === "off" || psdkBlocked || !gateway || lightBusy}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setLightBrightness(v);
+                    if (lightMode !== "off") void syncPayloadLight(lightMode, v, { quiet: true });
+                  }}
+                  className="h-1 flex-1 accent-sky-500 disabled:opacity-40"
+                />
+                <span className="w-6 tabular-nums text-white/50">{lightBrightness}</span>
+              </div>
+              {!gateway ? <p className="mt-1 text-[9px] text-amber-200/85">缺少网关 SN</p> : null}
+            </div>
+          ) : null}
+        </div>
+      </>
+    ) : null;
+
+  if (uavPayloadToolsOnly) {
+    return (
+      <div
+        className={cn(
+          "flex flex-col items-center gap-1.5 px-0.5 py-1 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]",
+          className,
+        )}
+      >
+        {uavPayloadToolsBlock}
+      </div>
+    );
+  }
+
   const pipCornerHint = expandedMode ? "右上小窗" : "左上小窗";
   const pipButtonTitle = pipOpen
     ? "关闭画中画小窗"
@@ -425,6 +682,73 @@ export function EoVideoFloatingTools({
       <PictureInPicture2 className="size-3.5" />
     </Button>
   ) : null;
+
+  const recordButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      className={cn(
+        "border border-white/25 bg-transparent text-white/90 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
+        isRecording ? "text-red-400" : "text-white/85",
+      )}
+      disabled={!isRecording && !captureReady}
+      title={isRecording ? "停止录屏" : "开始录屏"}
+      aria-label={isRecording ? "停止录屏" : "开始录屏"}
+      onClick={onToggleRecord}
+    >
+      <Video className={cn("size-3.5", isRecording && "animate-pulse")} />
+    </Button>
+  );
+
+  const snapshotButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      className="border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white"
+      disabled={!captureReady}
+      title="截图（PNG）"
+      aria-label="截图"
+      onClick={onSnapshot}
+    >
+      <Camera className="size-3.5" />
+    </Button>
+  );
+
+  const reconnectButton = onReconnectStream ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      className="border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white disabled:opacity-50"
+      disabled={reconnectStreamBusy}
+      title="重连：重新拉流"
+      aria-label="重连"
+      onClick={onReconnectStream}
+    >
+      {reconnectStreamBusy ? (
+        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+      ) : (
+        <RotateCcw className="size-3.5" />
+      )}
+    </Button>
+  ) : null;
+
+  if (captureOnly) {
+    return (
+      <div
+        className={cn(
+          "flex flex-col items-center gap-1.5 px-0.5 py-1 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]",
+          className,
+        )}
+      >
+        {recordButton}
+        {snapshotButton}
+        {reconnectButton}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -510,33 +834,9 @@ export function EoVideoFloatingTools({
           ) : null}
         </div>
       ) : null}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        className={cn(
-          "border border-white/25 bg-transparent text-white/90 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white",
-          isRecording ? "text-red-400" : "text-white/85",
-        )}
-        disabled={!isRecording && !captureReady}
-        title={isRecording ? "停止录屏" : "开始录屏"}
-        aria-label={isRecording ? "停止录屏" : "开始录屏"}
-        onClick={onToggleRecord}
-      >
-        <Video className={cn("size-3.5", isRecording && "animate-pulse")} />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        className="border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white"
-        disabled={!captureReady}
-        title="截图（PNG）"
-        aria-label="截图"
-        onClick={onSnapshot}
-      >
-        <Camera className="size-3.5" />
-      </Button>
+      {recordButton}
+      {snapshotButton}
+      {reconnectButton}
 
       {variant === "camera" && pidSettingsSupported ? (
         <Button
@@ -545,7 +845,7 @@ export function EoVideoFloatingTools({
           size="icon-xs"
           title="PID 参数设置（读/写 camServer ConfigPID.ini）"
           aria-label="PID 参数设置"
-          className="border border-amber-400/40 bg-amber-950/35 text-amber-100 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-amber-900/45 hover:text-amber-50"
+          className="border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white"
           onClick={() => onOpenPidSettings?.()}
         >
           <SlidersHorizontal className="size-3.5" />
@@ -601,7 +901,7 @@ export function EoVideoFloatingTools({
           variant="ghost"
           size="icon-xs"
           disabled={aimUpdateBusy}
-          title="更新对准参数（写入 camServer aimConf/ConfigAIM{N}_test.ini）"
+          title="更新对准参数（写入 camServer aimConf/ConfigAIM{N}.ini 并热更新）"
           aria-label="更新对准参数"
           className="border border-white/25 bg-transparent text-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white disabled:opacity-50"
           onClick={() => onAimUpdate?.()}
@@ -611,6 +911,33 @@ export function EoVideoFloatingTools({
           ) : (
             <RefreshCw className="size-3.5" />
           )}
+        </Button>
+      ) : null}
+
+      {variant === "uav" && onToggleUavTrackProject ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          disabled={uavTrackProjectDisabled}
+          title={
+            uavTrackProjectDisabled
+              ? "起飞后可用：在画面投影航线与对海融合航迹"
+              : uavTrackProjectVisible
+                ? "隐藏航线/对海融合航迹投影"
+                : "显示航线/对海融合航迹投影（1s 刷新）"
+          }
+          aria-label="航迹投影显隐"
+          aria-pressed={uavTrackProjectVisible}
+          className={cn(
+            "border border-white/25 bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white disabled:opacity-45",
+            uavTrackProjectVisible
+              ? "border-cyan-400/55 bg-cyan-950/45 text-cyan-200"
+              : "text-white/85",
+          )}
+          onClick={() => onToggleUavTrackProject()}
+        >
+          <Route className="size-3.5" />
         </Button>
       ) : null}
 
@@ -740,182 +1067,7 @@ export function EoVideoFloatingTools({
               <Bug className="size-3.5" />
             </Button>
           ) : null}
-          <div className="my-0.5 h-px w-6 bg-gradient-to-r from-transparent via-white/35 to-transparent" aria-hidden />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className={uavOverlayToolClass}
-            title="云台回中（gimbal_reset · reset_mode=0）"
-            aria-label="云台回中"
-            disabled={uavGimbalDisabled || !onUavGimbalCenter}
-            onClick={() => void onUavGimbalCenter?.()}
-          >
-            <Crosshair className="size-3.5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className={uavOverlayToolClass}
-            title="云台向下（gimbal_reset · reset_mode=1）"
-            aria-label="云台向下"
-            disabled={uavGimbalDisabled || !onUavGimbalDown}
-            onClick={() => void onUavGimbalDown?.()}
-          >
-            <ChevronDown className="size-3.5" />
-          </Button>
-          <div className="relative" ref={speakerWrapRef}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className={cn(
-                uavOverlayToolClass,
-                uavPop === "speaker" ? "border-sky-400/45 bg-sky-950/50 text-sky-300" : "",
-              )}
-              title="喊话"
-              aria-label="喊话"
-              aria-expanded={uavPop === "speaker"}
-              onClick={() => {
-                setUavPop((cur) => (cur === "speaker" ? null : "speaker"));
-              }}
-            >
-              <Volume2 className="size-3.5" />
-            </Button>
-            {uavPop === "speaker" ? (
-              <div
-                role="dialog"
-                aria-label="无人机喊话"
-                className={popPanelClass}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    className={popBtnClass}
-                    disabled={psdkBlocked || speakerBusy || !gateway}
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      void startQuickRecording();
-                    }}
-                    onPointerUp={(e) => {
-                      e.preventDefault();
-                      void stopQuickRecording();
-                    }}
-                    onPointerLeave={() => void stopQuickRecording()}
-                  >
-                    按住录音
-                  </button>
-                  <button
-                    type="button"
-                    className={popBtnClass}
-                    onClick={() => focusSpeakerTextSetting()}
-                  >
-                    设置
-                  </button>
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="secondary"
-                    className="h-6 px-2 bg-sky-900/65 text-[10px] text-white hover:bg-sky-800/85"
-                    disabled={psdkBlocked || speakerBusy || !gateway.trim()}
-                    onClick={() => void sendSpeakerText()}
-                  >
-                    发送
-                  </Button>
-                  {speakerBusy ? <Loader2 className="size-3.5 animate-spin text-white/60" aria-hidden /> : null}
-                </div>
-                <textarea
-                  ref={textAreaRef}
-                  value={speakerText}
-                  onChange={(e) => setSpeakerText(e.target.value)}
-                  placeholder="输入文字后发送（对应 UAVSpeakerWidget 文本喊话）"
-                  rows={2}
-                  className="mb-2 w-full resize-none rounded border border-white/15 bg-black/35 px-2 py-1 text-[10px] text-white placeholder:text-white/35 focus:border-sky-500/55 focus:outline-none"
-                />
-                {!gateway ? <p className="mt-1 text-[9px] text-amber-200/85">缺少网关 SN</p> : null}
-              </div>
-            ) : null}
-          </div>
-          <div className="relative" ref={lightWrapRef}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className={cn(
-                uavOverlayToolClass,
-                uavPop === "light" ? "border-sky-400/45 bg-sky-950/50 text-sky-300" : "",
-              )}
-              title="探照灯"
-              aria-label="探照灯"
-              aria-expanded={uavPop === "light"}
-              onClick={() => {
-                setUavPop((cur) => (cur === "light" ? null : "light"));
-              }}
-            >
-              <SunMedium className="size-3.5" />
-            </Button>
-            {uavPop === "light" ? (
-              <div
-                role="dialog"
-                aria-label="探照灯"
-                className={popPanelClass}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <div className="mb-2 flex items-center justify-end">
-                  {lightBusy ? <Loader2 className="size-3 animate-spin text-white/60" aria-hidden /> : null}
-                </div>
-                <div className="mb-2 grid grid-cols-3 gap-1.5">
-                  <button
-                    type="button"
-                    data-on={lightMode === "strong" ? 1 : 0}
-                    className={popBtnClass}
-                    disabled={lightBusy || psdkBlocked || !gateway}
-                    onClick={() => onPickLightMode("strong")}
-                  >
-                    强闪
-                  </button>
-                  <button
-                    type="button"
-                    data-on={lightMode === "constant" ? 1 : 0}
-                    className={popBtnClass}
-                    disabled={lightBusy || psdkBlocked || !gateway}
-                    onClick={() => onPickLightMode("constant")}
-                  >
-                    常亮
-                  </button>
-                  <button
-                    type="button"
-                    data-on={lightMode === "warning" ? 1 : 0}
-                    className={popBtnClass}
-                    disabled={lightBusy || psdkBlocked || !gateway}
-                    onClick={() => onPickLightMode("warning")}
-                  >
-                    警示
-                  </button>
-                </div>
-                <div className="flex items-center gap-2 text-[10px] text-white/85">
-                  <span className="shrink-0 text-white/60">亮度</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={lightBrightness}
-                    disabled={lightMode === "off" || psdkBlocked || !gateway || lightBusy}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      setLightBrightness(v);
-                      if (lightMode !== "off") void syncPayloadLight(lightMode, v, { quiet: true });
-                    }}
-                    className="h-1 flex-1 accent-sky-500 disabled:opacity-40"
-                  />
-                  <span className="w-6 tabular-nums text-white/50">{lightBrightness}</span>
-                </div>
-                {!gateway ? <p className="mt-1 text-[9px] text-amber-200/85">缺少网关 SN</p> : null}
-              </div>
-            ) : null}
-          </div>
+          {uavPayloadToolsBlock}
         </>
       ) : null}
     </div>

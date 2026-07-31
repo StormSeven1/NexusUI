@@ -1,10 +1,12 @@
 "use client";
 
 import {
+  LYR_AIRPORT,
   LYR_DB_AREAS,
   LYR_DISTANCE_RINGS,
   LYR_DRONES,
   LYR_LASER,
+  LYR_MEASURE,
   LYR_OPTO_FOV,
   LYR_RADAR_COVERAGE,
   LYR_TDOA,
@@ -22,20 +24,28 @@ export type TaskManagerMapCommandResult = {
   data?: unknown;
 };
 
+/** 与任务管理 map-tool-v1 `layer_id` 枚举对齐，映射到 Nexus 内部图层 id */
 const LAYER_ID_ALIASES: Record<string, string> = {
   drones: LYR_DRONES,
   drone: LYR_DRONES,
   tracks: LYR_TRACKS,
   track: LYR_TRACKS,
+  tracks_air: LYR_TRACKS,
+  tracks_sea: LYR_TRACKS,
   radar: LYR_RADAR_COVERAGE,
   opto: LYR_OPTO_FOV,
   camera: LYR_OPTO_FOV,
   tower: LYR_TOWER,
+  airport: LYR_AIRPORT,
   laser: LYR_LASER,
   tdoa: LYR_TDOA,
   areas: LYR_DB_AREAS,
   db_areas: LYR_DB_AREAS,
+  measure: LYR_MEASURE,
   distance_rings: LYR_DISTANCE_RINGS,
+  // 当前地图尚未拆独立图层时，先落到最接近的业务图层
+  usv: LYR_TRACKS,
+  missile: LYR_TRACKS,
 };
 
 function findTrackById(trackId: string): Track | null {
@@ -114,6 +124,43 @@ export function executeTaskManagerMapCommand(
         ok: true,
         message: formatBasemapListResult(basemaps),
         data: basemaps,
+      };
+    }
+
+    case "map.get_basemap": {
+      const basemaps = getAvailableBasemaps();
+      const visibleRaster = app.basemapRasterLayers.find(
+        (l) => app.basemapRasterVisibility[l.id] !== false,
+      );
+      const current =
+        visibleRaster != null
+          ? { id: visibleRaster.id, name: visibleRaster.name, kind: "raster" as const }
+          : app.basemapStyleName?.trim()
+            ? {
+                id: app.basemapStyleName.trim(),
+                name: app.basemapStyleName.trim(),
+                kind: "vector" as const,
+              }
+            : null;
+      return {
+        ok: true,
+        message: current
+          ? `当前底图：${current.name}（${current.id}，${current.kind}）`
+          : "当前未检测到激活底图。",
+        data: { current, available: basemaps },
+      };
+    }
+
+    case "map.get_view": {
+      const center = app.mapCenter;
+      const zoom = app.zoomLevel;
+      if (!center) {
+        return { ok: false, message: "当前地图视角尚未同步到前端状态。" };
+      }
+      return {
+        ok: true,
+        message: `当前视角：经度 ${center.lng.toFixed(6)}，纬度 ${center.lat.toFixed(6)}，缩放 ${zoom}`,
+        data: { lng: center.lng, lat: center.lat, zoom },
       };
     }
 

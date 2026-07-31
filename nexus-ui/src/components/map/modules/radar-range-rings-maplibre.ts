@@ -24,6 +24,9 @@
  *      │   ├─ 角度标签 (kind="angle-label"): "0°" / "30°" / ...
  *      │   ├─ 十字线 (kind="crosshair"): 南北 + 东西
  *      │   └─ 中心名称 (kind="radar-name"): 雷达名称标签
+ *      ├─ 扫描扇形 (独立 RADAR_SWEEP_SOURCE，radar.scan):
+ *      │   ├─ 前缘射线 + 拖尾多片薄扇区（solidDeg 实心 + fadeDeg 二次渐隐）
+ *      │   └─ setInterval(tickMs) 按 cycleMs 顺时针旋转（默认 2.5s / 30°）
  *      ├─ 颜色决策:
  *      │   ├─ 环线色: p.ring_color → defaults.assetFriendlyColor(friendly) / defaults.ringLineFallbackColor → "#FF0000"
  *      │   ├─ 名称色: assetMapLabelTextColor() → defaults.assetFriendlyColor(friendly) / FORCE_COLORS
@@ -45,15 +48,19 @@ import { mergeRootAndDeviceVisible } from "@/lib/utils";
 import type { AssetDispositionIconAccent, AssetStatus } from "@/lib/map-icons";
 import {
   assetMapLabelTextColor,
+  formatCapabilityRangeM,
   geoCircleCoords,
+  geoSectorCoords,
   getAssetSymbolId,
   MAP_FRIENDLY_COLOR_PROP,
   MAP_LABEL_FONT_COLOR_PROP,
   MAPLIBRE_ASSET_CENTER_ICON_SIZE,
+  sweepPhaseOffsetDeg,
 } from "@/lib/map-icons";
 import type { Asset } from "@/lib/map-entity-model";
 import { getRadarConfigDefaults } from "@/lib/map-app-config";
 import {
+  isRadarDeviceCapabilityVisible,
   shouldRenderRadarCoverage,
   shouldRenderRadarIcon,
   type RadarDeviceVisibilityMap,
@@ -61,6 +68,7 @@ import {
 
 /**
  * 雷达距离环覆盖：构建 GeoJSON，行为对齐 V2 `RangeRingManager` 与 `map-app-config`。
+ * 另含独立 source 的旋转扫描扇形（前缘实心 + 拖尾渐隐）。
  */
 
 export const RADAR_COVERAGE_SOURCE = "radar-coverage-source";
@@ -70,6 +78,18 @@ export const RADAR_CROSSHAIR = "radar-crosshair";
 export const RADAR_DIST_LABEL = "radar-dist-label";
 export const RADAR_ANGLE_LABEL = "radar-angle-label";
 export const RADAR_CENTER_NAME = "radar-center-name";
+
+/** 扫描亮带（独立 source，按 tick 刷新，不重算距离环） */
+export const RADAR_SWEEP_SOURCE = "radar-sweep-source";
+export const RADAR_SWEEP_FILL = "radar-sweep-fill";
+export const RADAR_SWEEP_EDGE = "radar-sweep-edge";
+export const RADAR_SWEEP_OUTER = "radar-sweep-outer";
+export const RADAR_SWEEP_LABEL = "radar-sweep-label";
+
+/** 能力扫描固定绿色（与雷达 assetFriendlyColor 一致） */
+export const RADAR_CAP_SWEEP_COLOR = "#34d399";
+/** 1 海里 = 1852 米 */
+const NM_TO_M = 1852;
 
 /** 雷达中心资产图标 GeoJSON 的 source / layer id，由本文件内 `RadarCoverageModule` 挂载 */
 export const RADAR_ASSET_ICON_SOURCE = "radar-asset-icon-src";
@@ -83,6 +103,233 @@ export const RADAR_COVERAGE_LAYER_IDS = [
   RADAR_ANGLE_LABEL,
   RADAR_CENTER_NAME,
 ] as const;
+
+/** `app-config.json` → `radar.scan`：PPI 式旋转扫描（前缘实心、拖尾渐隐） */
+export type RadarScanParams = {
+  enabled: boolean;
+  /** 旋转一周毫秒数，默认 2500 */
+  cycleMs: number;
+  /** 拖尾渐隐总张角（度），默认 30 */
+  fadeDeg: number;
+  /** 前缘近似实心段（度），其后才开始衰减 */
+  solidDeg: number;
+  /** 动画刷新间隔（毫秒） */
+  tickMs: number;
+  /** 渐隐扇面切成的单片张角（度），越小越平滑 */
+  sliceDeg: number;
+  /** 前缘峰值透明度 0–1 */
+  peakOpacity: number;
+};
+
+export type RadarSweepStation = {
+  id: string;
+  lng: number;
+  lat: number;
+  radiusKm: number;
+  color: string;
+  /** 相对全局时钟的起始相位（度），避免多站前缘同步 */
+  phaseOffsetDeg: number;
+};
+
+const DEFAULT_RADAR_SCAN: RadarScanParams = {
+  enabled: true,
+  cycleMs: 2500,
+  fadeDeg: 30,
+  solidDeg: 3,
+  tickMs: 40,
+  sliceDeg: 1.5,
+  peakOpacity: 0.45,
+};
+
+function clamp01(n: number): number {
+  return Math.min(1, Math.max(0, n));
+}
+
+/** 从 `radar.scan` / 代码默认合并扫描参数 */
+export function resolveRadarScanParams(raw?: unknown): RadarScanParams {
+  const fromRoot = asRecord(getRadarDefaults().scan);
+  const o = asRecord(raw) ?? fromRoot ?? {};
+  const num = (v: unknown, d: number, min: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= min ? n : d;
+  };
+  return {
+    enabled: o.enabled !== false,
+    cycleMs: num(o.cycleMs, DEFAULT_RADAR_SCAN.cycleMs, 200),
+    fadeDeg: num(o.fadeDeg, DEFAULT_RADAR_SCAN.fadeDeg, 1),
+    solidDeg: num(o.solidDeg, DEFAULT_RADAR_SCAN.solidDeg, 0),
+    tickMs: num(o.tickMs, DEFAULT_RADAR_SCAN.tickMs, 16),
+    sliceDeg: num(o.sliceDeg, DEFAULT_RADAR_SCAN.sliceDeg, 0.25),
+    peakOpacity: clamp01(num(o.peakOpacity, DEFAULT_RADAR_SCAN.peakOpacity, 0)),
+  };
+}
+
+/**
+ * 距前缘 `behindDeg` 处的片透明度：前 `solidDeg` 近似实心，其后二次衰减到 0。
+ */
+function sweepOpacityAt(behindDeg: number, fadeDeg: number, solidDeg: number, peak: number): number {
+  if (!(fadeDeg > 0) || behindDeg >= fadeDeg || peak <= 0) return 0;
+  if (behindDeg <= solidDeg) return peak;
+  const span = Math.max(1e-6, fadeDeg - solidDeg);
+  const u = clamp01((behindDeg - solidDeg) / span);
+  return peak * (1 - u) * (1 - u);
+}
+
+/**
+ * 扫描半径（公里）：优先 `radarParameters.range` / `properties.range`（海里），
+ * 否则 `max_range_m`，再否则根默认。
+ */
+export function resolveRadarSweepRadiusKm(props: Record<string, unknown>, defaults: Record<string, unknown>): number | null {
+  const radarParams = asRecord(props.radarParameters);
+  const rangeNm = Number(radarParams?.range ?? props.range);
+  if (Number.isFinite(rangeNm) && rangeNm > 0) {
+    return (rangeNm * NM_TO_M) / 1000;
+  }
+  const maxRangeM = Number(props.max_range_m ?? defaults.defaultMaxRange);
+  if (Number.isFinite(maxRangeM) && maxRangeM > 0) return maxRangeM / 1000;
+  return null;
+}
+
+/**
+ * 由可见雷达站 + 当前前缘方位，生成渐变扫描扇面 + 前缘射线 + 外接圆。
+ * 顺时针扫描：拖尾在前缘逆时针一侧（leading − behind）。
+ */
+export function buildRadarSweepGeoJSON(
+  stations: readonly RadarSweepStation[],
+  leadingDeg: number,
+  scan: RadarScanParams,
+): GeoJSON.FeatureCollection {
+  const features: GeoJSON.Feature[] = [];
+  if (!scan.enabled || stations.length === 0) {
+    return { type: "FeatureCollection", features };
+  }
+  const fadeDeg = Math.min(180, scan.fadeDeg);
+  const sliceDeg = Math.min(fadeDeg, Math.max(0.25, scan.sliceDeg));
+  const solidDeg = Math.min(fadeDeg, Math.max(0, scan.solidDeg));
+  const n = Math.max(1, Math.ceil(fadeDeg / sliceDeg));
+
+  for (const st of stations) {
+    if (!(st.radiusKm > 0)) continue;
+    const leading = leadingDeg + (st.phaseOffsetDeg || 0);
+
+    /* 外接圆：能力扫描最大距离 */
+    const outer = geoCircleCoords(st.lng, st.lat, st.radiusKm, 72);
+    if (outer.length >= 4) {
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "sweep-outer",
+          radarId: st.id,
+          lineColor: st.color,
+          lineOpacity: 0.55,
+          lineWidth: 1.5,
+        },
+        geometry: {
+          type: "LineString",
+          coordinates: outer.map(([x, y]) => [x, y] as GeoJSON.Position),
+        },
+      });
+    }
+
+    for (let i = 0; i < n; i++) {
+      const startBehind = i * sliceDeg;
+      const endBehind = Math.min(fadeDeg, (i + 1) * sliceDeg);
+      const fov = endBehind - startBehind;
+      if (fov < 0.05) continue;
+      const midBehind = (startBehind + endBehind) / 2;
+      const op = sweepOpacityAt(midBehind, fadeDeg, solidDeg, scan.peakOpacity);
+      if (op < 0.01) continue;
+      const heading = leading - midBehind;
+      const segs = Math.max(2, Math.ceil(fov));
+      const ring = geoSectorCoords(st.lng, st.lat, st.radiusKm, heading, fov, segs);
+      if (ring.length < 4) continue;
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "sweep-band",
+          radarId: st.id,
+          fillColor: st.color,
+          fillOpacity: op,
+        },
+        geometry: { type: "Polygon", coordinates: [ring] },
+      });
+    }
+    const tip = pointAtBearingMeters(st.lng, st.lat, st.radiusKm * 1000, leading);
+    features.push({
+      type: "Feature",
+      properties: {
+        kind: "sweep-edge",
+        radarId: st.id,
+        lineColor: st.color,
+        lineOpacity: Math.min(1, scan.peakOpacity + 0.35),
+        lineWidth: 1.5,
+      },
+      geometry: {
+        type: "LineString",
+        coordinates: [
+          [st.lng, st.lat],
+          tip,
+        ],
+      },
+    });
+    const rangeLabel = formatCapabilityRangeM(st.radiusKm);
+    if (rangeLabel) {
+      features.push({
+        type: "Feature",
+        properties: {
+          kind: "sweep-label",
+          radarId: st.id,
+          labelText: rangeLabel,
+          fontColor: st.color,
+          haloColor: "#09090b",
+          haloWidth: 1.5,
+          fontSize: 11,
+        },
+        geometry: { type: "Point", coordinates: tip },
+      });
+    }
+  }
+  return { type: "FeatureCollection", features };
+}
+
+/** 从资产行提取参与扫描动画的雷达站；半径优先 radarParameters.range（海里）；离线/降级/HOME虚兵不画 */
+export function collectRadarSweepStations(
+  rows: AssetData[],
+  perDevice?: Readonly<RadarDeviceVisibilityMap>,
+): RadarSweepStation[] {
+  const defaults = getRadarDefaults();
+  const vis = perDevice ?? {};
+  const out: RadarSweepStation[] = [];
+  for (const row of rows) {
+    if (String(row.asset_type ?? "").toLowerCase() !== "radar") continue;
+    if (!isRadarEligibleForCapabilitySweep(row)) continue;
+    if (!isRadarDeviceCapabilityVisible(row.id, vis)) continue;
+    if (!Number.isFinite(row.lng) || !Number.isFinite(row.lat)) continue;
+    if (row.lng === 0 && row.lat === 0) continue;
+    const p = (row.properties ?? {}) as Record<string, unknown>;
+    const radiusKm = resolveRadarSweepRadiusKm(p, defaults);
+    if (radiusKm == null || !(radiusKm > 0)) continue;
+    out.push({
+      id: row.id,
+      lng: row.lng,
+      lat: row.lat,
+      radiusKm,
+      color: RADAR_CAP_SWEEP_COLOR,
+      phaseOffsetDeg: sweepPhaseOffsetDeg(row.id),
+    });
+  }
+  return out;
+}
+
+/** 能力扫描：仅真实在线雷达；排除 HOME / 虚兵，以及 offline、degraded */
+export function isRadarEligibleForCapabilitySweep(
+  row: Pick<AssetData, "id" | "status" | "properties">,
+): boolean {
+  if (row.id.trim().toLowerCase() === "home") return false;
+  const p = (row.properties ?? null) as Record<string, unknown> | null;
+  if (p?.virtual_troop === true || p?.is_virtual === true) return false;
+  return String(row.status ?? "").trim().toLowerCase() === "online";
+}
 
 export type RadarTextBlock = {
   fontSize?: number;
@@ -722,6 +969,7 @@ const radarVisDefault: RadarCoverageVisibility = {
 
 /**
  * 雷达距离环覆盖 + 雷达中心图标：MapLibre source/layer 生命周期与数据更新（与纯 GeoJSON 构建函数同文件）。
+ * 扫描扇形用独立 source，按 `radar.scan.tickMs` 刷新，避免每帧重算距离环。
  */
 export class RadarCoverageModule {
   private map: maplibregl.Map;
@@ -731,6 +979,9 @@ export class RadarCoverageModule {
   private assetDispositionAccent: AssetDispositionIconAccent | null = null;
   private lastAssets: Asset[] | null = null;
   private lastRawAssets: AssetData[] | null = null;
+  private sweepStations: RadarSweepStation[] = [];
+  private scanParams: RadarScanParams = { ...DEFAULT_RADAR_SCAN };
+  private scanTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(map: maplibregl.Map, options?: { insertBeforeLayerId?: string }) {
     this.map = map;
@@ -740,9 +991,13 @@ export class RadarCoverageModule {
   install() {
     const m = this.map;
     const b = this.beforeId;
+    this.scanParams = resolveRadarScanParams();
 
     if (!m.getSource(RADAR_COVERAGE_SOURCE)) {
       m.addSource(RADAR_COVERAGE_SOURCE, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    }
+    if (!m.getSource(RADAR_SWEEP_SOURCE)) {
+      m.addSource(RADAR_SWEEP_SOURCE, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     }
     if (!m.getLayer(RADAR_BAND_FILL)) {
       m.addLayer(
@@ -754,6 +1009,79 @@ export class RadarCoverageModule {
           paint: {
             "fill-color": ["get", "fillColor"],
             "fill-opacity": 1,
+          },
+        },
+        b,
+      );
+    }
+    if (!m.getLayer(RADAR_SWEEP_FILL)) {
+      m.addLayer(
+        {
+          id: RADAR_SWEEP_FILL,
+          type: "fill",
+          source: RADAR_SWEEP_SOURCE,
+          filter: ["==", ["get", "kind"], "sweep-band"],
+          paint: {
+            "fill-color": ["get", "fillColor"],
+            "fill-opacity": ["get", "fillOpacity"],
+          },
+        },
+        b,
+      );
+    }
+    if (!m.getLayer(RADAR_SWEEP_EDGE)) {
+      m.addLayer(
+        {
+          id: RADAR_SWEEP_EDGE,
+          type: "line",
+          source: RADAR_SWEEP_SOURCE,
+          filter: ["==", ["get", "kind"], "sweep-edge"],
+          paint: {
+            "line-color": ["get", "lineColor"],
+            "line-opacity": ["get", "lineOpacity"],
+            "line-width": ["get", "lineWidth"],
+          },
+        },
+        b,
+      );
+    }
+    if (!m.getLayer(RADAR_SWEEP_OUTER)) {
+      m.addLayer(
+        {
+          id: RADAR_SWEEP_OUTER,
+          type: "line",
+          source: RADAR_SWEEP_SOURCE,
+          filter: ["==", ["get", "kind"], "sweep-outer"],
+          paint: {
+            "line-color": ["get", "lineColor"],
+            "line-opacity": ["get", "lineOpacity"],
+            "line-width": ["get", "lineWidth"],
+            "line-dasharray": [2, 2],
+          },
+        },
+        b,
+      );
+    }
+    if (!m.getLayer(RADAR_SWEEP_LABEL)) {
+      m.addLayer(
+        {
+          id: RADAR_SWEEP_LABEL,
+          type: "symbol",
+          source: RADAR_SWEEP_SOURCE,
+          filter: ["==", ["get", "kind"], "sweep-label"],
+          layout: {
+            "text-field": ["get", "labelText"],
+            "text-font": ["Open Sans Regular"],
+            "text-size": ["coalesce", ["get", "fontSize"], 11],
+            "text-anchor": "left",
+            "text-offset": [0.6, 0],
+            "text-allow-overlap": true,
+            "text-ignore-placement": true,
+          },
+          paint: {
+            "text-color": ["coalesce", ["get", "fontColor"], RADAR_CAP_SWEEP_COLOR],
+            "text-halo-color": ["coalesce", ["get", "haloColor"], "#09090b"],
+            "text-halo-width": ["coalesce", ["get", "haloWidth"], 1.5],
           },
         },
         b,
@@ -906,11 +1234,10 @@ export class RadarCoverageModule {
     this.perDeviceVisibility = { ...map };
     const m = this.map;
     const rc = m.getSource(RADAR_COVERAGE_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (rc && this.lastRawAssets) {
-      rc.setData(
-        buildRadarCoverageGeoJSON(this.lastRawAssets, this.assetDispositionAccent, this.perDeviceVisibility) as GeoJSON.FeatureCollection,
-      );
+    if (rc) {
+      rc.setData({ type: "FeatureCollection", features: [] });
     }
+    this.refreshSweepStations();
     this.refreshRadarIcons();
   }
 
@@ -920,23 +1247,69 @@ export class RadarCoverageModule {
       if (!m.getLayer(id)) return;
       m.setLayoutProperty(id, "visibility", show ? "visible" : "none");
     };
-    setVis(RADAR_BAND_FILL, this.vis.radarFillVisible);
+    setVis(RADAR_BAND_FILL, false);
+    const sweepOn = this.scanParams.enabled && this.sweepStations.length > 0;
+    setVis(RADAR_SWEEP_FILL, sweepOn);
+    setVis(RADAR_SWEEP_EDGE, sweepOn);
+    setVis(RADAR_SWEEP_OUTER, sweepOn);
+    setVis(RADAR_SWEEP_LABEL, sweepOn);
+    /* 距离环/十字丝/刻度标签已下线，仅保留能力扫描 + 独立图标层 */
     for (const id of [RADAR_RING_LINE, RADAR_CROSSHAIR, RADAR_DIST_LABEL, RADAR_ANGLE_LABEL, RADAR_CENTER_NAME]) {
-      setVis(id, this.vis.radarLineVisible);
+      setVis(id, false);
     }
     setVis(RADAR_ASSET_ICON_LAYER, this.vis.radarLineVisible);
+    this.syncScanTimer();
   }
 
   setAssetDispositionAccent(accent: AssetDispositionIconAccent | null) {
     this.assetDispositionAccent = accent;
     const m = this.map;
     const rc = m.getSource(RADAR_COVERAGE_SOURCE) as maplibregl.GeoJSONSource | undefined;
-    if (rc && this.lastRawAssets) {
-      rc.setData(
-        buildRadarCoverageGeoJSON(this.lastRawAssets, accent, this.perDeviceVisibility) as GeoJSON.FeatureCollection,
-      );
+    if (rc) {
+      rc.setData({ type: "FeatureCollection", features: [] });
     }
+    this.refreshSweepStations();
     this.refreshRadarIcons();
+  }
+
+  private refreshSweepStations() {
+    this.scanParams = resolveRadarScanParams();
+    this.sweepStations = this.lastRawAssets
+      ? collectRadarSweepStations(this.lastRawAssets, this.perDeviceVisibility)
+      : [];
+    this.flushSweep();
+    this.syncScanTimer();
+    /* 能力开关变化时 stations 从空→有，须同步 layout.visibility，否则会一直停在 install 时的 none */
+    this.applyVisibility();
+  }
+
+  private flushSweep() {
+    const m = this.map;
+    const src = m.getSource(RADAR_SWEEP_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+    if (!this.scanParams.enabled || this.sweepStations.length === 0) {
+      src.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+    const leadingDeg = ((Date.now() % this.scanParams.cycleMs) / this.scanParams.cycleMs) * 360;
+    src.setData(buildRadarSweepGeoJSON(this.sweepStations, leadingDeg, this.scanParams));
+  }
+
+  private syncScanTimer() {
+    const need = this.scanParams.enabled && this.sweepStations.length > 0;
+    if (!need) {
+      if (this.scanTimer != null) {
+        clearInterval(this.scanTimer);
+        this.scanTimer = null;
+      }
+      const src = this.map.getSource(RADAR_SWEEP_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      src?.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+    const tick = Math.max(16, Math.floor(this.scanParams.tickMs));
+    if (this.scanTimer != null) return;
+    this.flushSweep();
+    this.scanTimer = setInterval(() => this.flushSweep(), tick);
   }
 
   private refreshRadarIcons() {
@@ -991,19 +1364,31 @@ export class RadarCoverageModule {
 
     const rc = m.getSource(RADAR_COVERAGE_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (rc) {
-      rc.setData(
-        buildRadarCoverageGeoJSON(rawAssets, this.assetDispositionAccent, this.perDeviceVisibility) as GeoJSON.FeatureCollection,
-      );
+      /* 距离环已下线：清空环线/填充/十字丝/刻度，仅保留能力扫描 + 图标 */
+      rc.setData({ type: "FeatureCollection", features: [] });
     }
+    this.refreshSweepStations();
     this.refreshRadarIcons();
   }
 
   dispose() {
+    if (this.scanTimer != null) {
+      clearInterval(this.scanTimer);
+      this.scanTimer = null;
+    }
     const m = this.map;
-    for (const id of [RADAR_ASSET_ICON_LAYER, ...[...RADAR_COVERAGE_LAYER_IDS].reverse()]) {
+    for (const id of [
+      RADAR_ASSET_ICON_LAYER,
+      RADAR_SWEEP_LABEL,
+      RADAR_SWEEP_OUTER,
+      RADAR_SWEEP_EDGE,
+      RADAR_SWEEP_FILL,
+      ...[...RADAR_COVERAGE_LAYER_IDS].reverse(),
+    ]) {
       if (m.getLayer(id)) m.removeLayer(id);
     }
     if (m.getSource(RADAR_ASSET_ICON_SOURCE)) m.removeSource(RADAR_ASSET_ICON_SOURCE);
+    if (m.getSource(RADAR_SWEEP_SOURCE)) m.removeSource(RADAR_SWEEP_SOURCE);
     if (m.getSource(RADAR_COVERAGE_SOURCE)) m.removeSource(RADAR_COVERAGE_SOURCE);
   }
 }

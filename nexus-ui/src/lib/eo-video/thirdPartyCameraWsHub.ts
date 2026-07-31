@@ -134,6 +134,31 @@ function teardownHubIfIdle() {
   hub.ws = null;
 }
 
+/** 主动断开并重连共享第三方相机 WS（光电界面「重连」） */
+export function forceReconnectThirdPartyCameraWsHub(): void {
+  if (hub.listeners.size === 0) return;
+  hub.closed = false;
+  hub.retries = 0;
+  if (hub.timer) {
+    clearTimeout(hub.timer);
+    hub.timer = null;
+  }
+  const ws = hub.ws;
+  hub.ws = null;
+  if (ws) {
+    // 去掉 onclose，避免 close 后再 scheduleReconnect 与下面 connectHub 双重建连
+    ws.onclose = null;
+    ws.onerror = null;
+    ws.onmessage = null;
+    try {
+      ws.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  connectHub();
+}
+
 /** 全局共享第三方相机 WS；多订阅方复用单连接 */
 export function subscribeThirdPartyCameraWsHub(listener: HubListener): () => void {
   hub.listeners.add(listener);

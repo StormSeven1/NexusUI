@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { LYR_RADAR_COVERAGE } from "@/lib/map-entity-model";
 import {
-  isRadarDeviceCoverageVisible,
+  isRadarDeviceCapabilityVisible,
   isRadarDeviceIconVisible,
   pruneRadarDeviceVisibility,
   type RadarDeviceVisibilityMap,
@@ -14,13 +14,13 @@ import { useAppStore } from "@/stores/app-store";
 const RADAR_DEVICE_LAYER_STORAGE_KEY = "nexus-ui-radar-device-layer-v1";
 
 interface RadarDeviceLayerState {
-  /** 雷达 id → 距离环 / GIS 图标；缺省 true */
+  /** 雷达 id → GIS 图标 / 能力（距离环已下线） */
   deviceVisibility: RadarDeviceVisibilityMap;
   syncRadarIds: (radarIds: string[]) => void;
-  setDeviceCoverageVisible: (radarId: string, visible: boolean) => void;
   setDeviceIconVisible: (radarId: string, visible: boolean) => void;
-  toggleDeviceCoverage: (radarId: string) => void;
+  setDeviceCapabilityVisible: (radarId: string, visible: boolean) => void;
   toggleDeviceIcon: (radarId: string) => void;
+  toggleDeviceCapability: (radarId: string) => void;
   setDeviceAllVisible: (radarId: string, visible: boolean) => void;
 }
 
@@ -38,24 +38,16 @@ export const useRadarDeviceLayerStore = create<RadarDeviceLayerState>()(
             const next = { ...deviceVisibility };
             for (const id of radarIds) {
               if (
-                isRadarDeviceCoverageVisible(id, next) ||
-                isRadarDeviceIconVisible(id, next)
+                isRadarDeviceIconVisible(id, next) ||
+                isRadarDeviceCapabilityVisible(id, next)
               ) {
-                next[id] = { coverage: false, icon: false };
+                next[id] = { icon: false, capability: false };
               }
             }
             deviceVisibility = next;
           }
           return { deviceVisibility };
         }),
-
-      setDeviceCoverageVisible: (radarId, visible) =>
-        set((s) => ({
-          deviceVisibility: {
-            ...s.deviceVisibility,
-            [radarId]: { ...s.deviceVisibility[radarId], coverage: visible },
-          },
-        })),
 
       setDeviceIconVisible: (radarId, visible) =>
         set((s) => ({
@@ -65,21 +57,32 @@ export const useRadarDeviceLayerStore = create<RadarDeviceLayerState>()(
           },
         })),
 
-      toggleDeviceCoverage: (radarId) => {
-        const { deviceVisibility } = get();
-        get().setDeviceCoverageVisible(radarId, !isRadarDeviceCoverageVisible(radarId, deviceVisibility));
-      },
+      setDeviceCapabilityVisible: (radarId, visible) =>
+        set((s) => ({
+          deviceVisibility: {
+            ...s.deviceVisibility,
+            [radarId]: { ...s.deviceVisibility[radarId], capability: visible },
+          },
+        })),
 
       toggleDeviceIcon: (radarId) => {
         const { deviceVisibility } = get();
         get().setDeviceIconVisible(radarId, !isRadarDeviceIconVisible(radarId, deviceVisibility));
       },
 
+      toggleDeviceCapability: (radarId) => {
+        const { deviceVisibility } = get();
+        get().setDeviceCapabilityVisible(
+          radarId,
+          !isRadarDeviceCapabilityVisible(radarId, deviceVisibility),
+        );
+      },
+
       setDeviceAllVisible: (radarId, visible) =>
         set((s) => ({
           deviceVisibility: {
             ...s.deviceVisibility,
-            [radarId]: { coverage: visible, icon: visible },
+            [radarId]: { icon: visible, capability: visible },
           },
         })),
     }),

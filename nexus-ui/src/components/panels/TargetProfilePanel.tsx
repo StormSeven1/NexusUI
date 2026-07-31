@@ -15,10 +15,28 @@ import { pickTaskStatusImageUrl } from "@/lib/task-status-chat-format";
 import { resolveVerifyUniqueId } from "@/lib/verified-track-from-task-status";
 import { useTrackStore } from "@/stores/track-store";
 import { useTargetProfileStore } from "@/stores/target-profile-store";
+import { useAssetStore } from "@/stores/asset-store";
+import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
+import { canonicalEntityId } from "@/lib/camera-entity-id";
 import { resolveTrackLayerKey, TRACK_SUBTYPE_LABELS } from "@/lib/track-layer-visibility";
 import { formatTrackSpeed } from "@/lib/track-speed-format";
 
 const PROFILE_POLL_MS = 5000;
+
+/** `camera_index` 存的是 entity_id，据此解析展示用相机名称 */
+function resolveCameraSourceName(
+  entityIdRaw: string,
+  cameraRows: ReadonlyArray<{ entityId: string; label: string }>,
+  assets: ReadonlyArray<{ id: string; name: string }>,
+): string {
+  const id = canonicalEntityId(entityIdRaw.trim());
+  if (!id) return "";
+  const fromMenu = cameraRows.find((r) => canonicalEntityId(r.entityId) === id)?.label?.trim();
+  if (fromMenu) return fromMenu;
+  const fromAsset = assets.find((a) => canonicalEntityId(a.id) === id)?.name?.trim();
+  if (fromAsset) return fromAsset;
+  return id;
+}
 
 function formatDistanceM(m: number | undefined): string {
   if (m == null || !Number.isFinite(m)) return "—";
@@ -37,8 +55,6 @@ function formatAlt(v: number | undefined): string {
 }
 
 function displayTitle(t: Track): string {
-  const alias = t.trackAlias?.trim();
-  if (alias) return alias;
   return trackMapDisplayId(t);
 }
 
@@ -47,9 +63,33 @@ function isDigitsUniqueId(s: string | undefined | null): boolean {
   return t.length > 0 && /^\d+$/.test(t);
 }
 
-function urlsEqual(a: readonly string[], b: readonly string[]): boolean {
+type ProfileShot = { url: string; cameraIndex: string; uploadedAt: string };
+
+function shotsEqual(a: readonly ProfileShot[], b: readonly ProfileShot[]): boolean {
   if (a.length !== b.length) return false;
-  return a.every((u, i) => u === b[i]);
+  return a.every(
+    (s, i) =>
+      s.url === b[i]!.url &&
+      s.cameraIndex === b[i]!.cameraIndex &&
+      s.uploadedAt === b[i]!.uploadedAt,
+  );
+}
+
+/** 库表 uploaded_at → 本地可读拍摄时间 */
+function formatShotUploadedAt(iso: string | undefined): string {
+  const raw = (iso ?? "").trim();
+  if (!raw) return "";
+  const d = new Date(raw);
+  if (!Number.isFinite(d.getTime())) return raw;
+  return d.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 }
 
 /** 半宽一格：一行里展示「一项」信息（两列并排即一行两项） */
@@ -76,6 +116,17 @@ export function TargetProfilePanel() {
   const focusedShowId = useTargetProfileStore((s) => s.focusedShowId);
   const liveTrack = useTrackStore((s) =>
     focusedShowId ? s.tracks.find((t) => t.showID === focusedShowId) : undefined,
+  );
+  const assets = useAssetStore((s) => s.assets);
+  const cameraRows = useMapGisCameraMenuStore((s) => s.rows);
+
+  useEffect(() => {
+    void useMapGisCameraMenuStore.getState().ensureLoaded();
+  }, []);
+
+  const resolveSourceName = useCallback(
+    (entityId: string) => resolveCameraSourceName(entityId, cameraRows, assets),
+    [cameraRows, assets],
   );
 
   const [snapTrack, setSnapTrack] = useState<Track | null>(null);
@@ -113,24 +164,24 @@ export function TargetProfilePanel() {
     });
   }, [focusedShowId]);
 
-  const [urls, setUrls] = useState<string[]>([]);
+  const [shots, setShots] = useState<ProfileShot[]>([]);
   const [imgLoading, setImgLoading] = useState(false);
   const [imgIdx, setImgIdx] = useState(0);
-  const urlsRef = useRef<string[]>([]);
-  urlsRef.current = urls;
+  const shotsRef = useRef<ProfileShot[]>([]);
+  shotsRef.current = shots;
   const touchStartX = useRef<number | null>(null);
   const thumbStripRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (urls.length < 2) return;
+    if (shots.length < 2) return;
     const strip = thumbStripRef.current;
     if (!strip) return;
     const el = strip.querySelector(`[data-thumb-idx="${imgIdx}"]`);
     el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-  }, [imgIdx, urls.length]);
+  }, [imgIdx, shots.length]);
 
   useEffect(() => {
-    setUrls([]);
+    setShots([]);
     setImgIdx(0);
     setImgLoading(false);
   }, [focusedShowId]);
@@ -155,7 +206,7 @@ export function TargetProfilePanel() {
 
     const uid = displayTrack.uniqueID?.trim() ?? "";
     if (!isDigitsUniqueId(uid)) {
-      setUrls([]);
+      setShots([]);
       return;
     }
 
@@ -169,18 +220,32 @@ export function TargetProfilePanel() {
     q.set("limit", "10");
 
     fetch(`/api/track-screenshots?${q.toString()}`, { cache: "no-store" })
-      .then((r) => r.json() as Promise<{ ok?: boolean; items?: { url: string }[] }>)
+      .then(
+        (r) =>
+          r.json() as Promise<{
+            ok?: boolean;
+            items?: { url?: string; cameraIndex?: string; uploadedAt?: string }[];
+          }>,
+      )
       .then((j) => {
         if (cancelled) return;
-        const list = Array.isArray(j.items) ? j.items.map((x) => x.url).filter(Boolean) : [];
-        if (urlsEqual(urlsRef.current, list)) {
+        const list: ProfileShot[] = Array.isArray(j.items)
+          ? j.items
+              .map((x) => ({
+                url: (x.url ?? "").trim(),
+                cameraIndex: (x.cameraIndex ?? "").trim(),
+                uploadedAt: (x.uploadedAt ?? "").trim(),
+              }))
+              .filter((x) => Boolean(x.url))
+          : [];
+        if (shotsEqual(shotsRef.current, list)) {
           return;
         }
-        setUrls(list);
+        setShots(list);
         setImgIdx((i) => (list.length === 0 ? 0 : Math.min(i, list.length - 1)));
       })
       .catch(() => {
-        if (!cancelled && !silentPoll) setUrls([]);
+        if (!cancelled && !silentPoll) setShots([]);
       })
       .finally(() => {
         if (!cancelled && !silentPoll) setImgLoading(false);
@@ -192,12 +257,12 @@ export function TargetProfilePanel() {
   }, [focusedShowId, displayTrack?.showID, displayTrack?.uniqueID, imagePollGen]);
 
   const prevPic = useCallback(() => {
-    setImgIdx((i) => (urls.length ? (i <= 0 ? urls.length - 1 : i - 1) : 0));
-  }, [urls.length]);
+    setImgIdx((i) => (shots.length ? (i <= 0 ? shots.length - 1 : i - 1) : 0));
+  }, [shots.length]);
 
   const nextPic = useCallback(() => {
-    setImgIdx((i) => (urls.length ? (i + 1 >= urls.length ? 0 : i + 1) : 0));
-  }, [urls.length]);
+    setImgIdx((i) => (shots.length ? (i + 1 >= shots.length ? 0 : i + 1) : 0));
+  }, [shots.length]);
 
   const onTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.changedTouches[0]?.clientX ?? null;
@@ -206,12 +271,19 @@ export function TargetProfilePanel() {
   const onTouchEnd = (e: React.TouchEvent) => {
     const start = touchStartX.current;
     touchStartX.current = null;
-    if (start == null || urls.length < 2) return;
+    if (start == null || shots.length < 2) return;
     const end = e.changedTouches[0]?.clientX ?? start;
     const dx = end - start;
     if (dx > 40) prevPic();
     else if (dx < -40) nextPic();
   };
+
+  const currentShot = shots[imgIdx];
+  const sourceEntityId = currentShot?.cameraIndex?.trim() || "";
+  const sourceLabel = sourceEntityId ? resolveSourceName(sourceEntityId) : "";
+  const shotTimeLabel = currentShot?.uploadedAt
+    ? formatShotUploadedAt(currentShot.uploadedAt)
+    : "";
 
   if (!focusedShowId) {
     return (
@@ -295,7 +367,7 @@ export function TargetProfilePanel() {
             onTouchStart={onTouchStart}
             onTouchEnd={onTouchEnd}
           >
-            {urls.length > 1 ? (
+            {shots.length > 0 ? (
               <>
                 <div
                   className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-8 bg-gradient-to-b from-black/45 to-transparent"
@@ -312,20 +384,49 @@ export function TargetProfilePanel() {
               <div className="relative z-0 flex h-full items-center justify-center text-[11px] text-nexus-text-muted">
                 加载中…
               </div>
-            ) : urls.length === 0 ? (
+            ) : shots.length === 0 ? (
               <div className="h-full w-full bg-black/25" aria-hidden />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                key={urls[imgIdx]}
-                src={urls[imgIdx]}
+                key={currentShot!.url}
+                src={currentShot!.url}
                 alt=""
                 className="relative z-0 h-full w-full object-contain"
                 draggable={false}
               />
             )}
 
-            {urls.length > 1 ? (
+            {sourceLabel || shotTimeLabel ? (
+              <div
+                className="pointer-events-none absolute left-2 top-2 z-[2] max-w-[calc(100%-4.5rem)] rounded border border-white/15 bg-black/55 px-1.5 py-1 text-[10px] font-medium leading-snug text-cyan-100/95 shadow-sm backdrop-blur-sm"
+                title={[
+                  sourceLabel
+                    ? sourceEntityId && sourceEntityId !== sourceLabel
+                      ? `来源 ${sourceLabel}（${sourceEntityId}）`
+                      : `来源 ${sourceLabel}`
+                    : "",
+                  shotTimeLabel ? `拍摄时间 ${shotTimeLabel}` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              >
+                {sourceLabel ? (
+                  <div className="truncate">
+                    <span className="text-white/45">来源 </span>
+                    {sourceLabel}
+                  </div>
+                ) : null}
+                {shotTimeLabel ? (
+                  <div className={cn("truncate [font-variant-numeric:tabular-nums]", sourceLabel && "mt-0.5")}>
+                    <span className="text-white/45">拍摄时间 </span>
+                    {shotTimeLabel}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {shots.length > 1 ? (
               <>
                 <button
                   type="button"
@@ -348,19 +449,28 @@ export function TargetProfilePanel() {
           </div>
 
           {/* 右侧：纵向缩略图 */}
-          {urls.length > 1 ? (
+          {shots.length > 1 ? (
             <div className="flex min-h-0 w-[52px] shrink-0 flex-col border-l border-white/[0.1] bg-black/50 backdrop-blur-sm">
               <div
                 ref={thumbStripRef}
                 className="flex min-h-0 flex-1 flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden px-1 py-1.5 [scrollbar-width:thin]"
                 style={{ scrollbarColor: "rgba(255,255,255,0.2) transparent" }}
               >
-                {urls.map((u, i) => (
+                {shots.map((shot, i) => {
+                  const thumbSource = shot.cameraIndex
+                    ? resolveSourceName(shot.cameraIndex)
+                    : "";
+                  return (
                   <button
-                    key={`${i}:${u}`}
+                    key={`${i}:${shot.url}`}
                     type="button"
                     data-thumb-idx={i}
-                    aria-label={`查看第 ${i + 1} 张`}
+                    aria-label={
+                      thumbSource
+                        ? `查看第 ${i + 1} 张，来源 ${thumbSource}`
+                        : `查看第 ${i + 1} 张`
+                    }
+                    title={thumbSource ? `来源 ${thumbSource}` : undefined}
                     aria-current={i === imgIdx ? "true" : undefined}
                     onClick={() => setImgIdx(i)}
                     className={cn(
@@ -371,12 +481,13 @@ export function TargetProfilePanel() {
                     )}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={u} alt="" className="h-full w-full object-cover" draggable={false} />
+                    <img src={shot.url} alt="" className="h-full w-full object-cover" draggable={false} />
                     {i === imgIdx ? (
                       <span className="pointer-events-none absolute inset-0 bg-cyan-400/10" aria-hidden />
                     ) : null}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : null}

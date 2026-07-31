@@ -30,6 +30,12 @@ export const CLASSIC_SUB_EO_PANEL_IDS: PanelId[] = [
   "electro-optical-4",
 ];
 
+/** 经典布局：右侧小窗是否属于可「设为主屏」的副光电位 */
+export function isClassicSubEoPanelId(panelId: string | undefined | null): boolean {
+  const id = (panelId ?? "").trim();
+  return CLASSIC_SUB_EO_PANEL_IDS.some((p) => p === id);
+}
+
 export const MIN_CLASSIC_RATIO = 0.12;
 
 /** 经典布局右侧栏最小宽度（像素） */

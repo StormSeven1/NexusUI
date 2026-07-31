@@ -119,7 +119,12 @@ MQTT_CONFIG = {
 
 ## WebSocket
 
-连接地址：`ws://{HOST}:{PORT}/ws`
+连接地址：
+
+- 主通道：`ws://{HOST}:{PORT}/ws`（告警、实体、非对海融合航迹等）
+- 对海融合：`ws://{HOST}:{PORT}/ws/fuse-sea`（仅 `fuse_sea` / `dds_forward_fuse_track*`）
+
+对海融合与其它航迹拆开独立 `trackBatch`，避免大流量挤兑导致前端对海融合闪烁。
 
 ### 消息格式
 
@@ -147,7 +152,7 @@ MQTT_CONFIG = {
 }
 ```
 
-**区域数据**（连接后自动发送）：
+**区域数据**（连接后自动发送，仅主 `/ws`）：
 ```json
 {
     "type": "AreaData",

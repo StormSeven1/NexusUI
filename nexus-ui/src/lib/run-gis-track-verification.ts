@@ -1,6 +1,7 @@
 import type { Track } from "@/lib/map-entity-model";
 import {
   buildImportantTrackTaskBody,
+  buildLookAtChildTaskBody,
   CameraManagementClient,
 } from "@/lib/camera-management-client";
 import {
@@ -10,20 +11,66 @@ import {
 import {
   buildImportantTrackTargetFromTrack,
   buildThirdPartyPosFieldsFromTrack,
+  isMapTrackDblClickLookAtOnlyEligible,
+  resolveCamServerSelfPosMapId,
+  resolveCamServerShipTaskIds,
 } from "@/lib/map-gis-camera-task";
 import { postThirdPartyPosTask } from "@/lib/eo-video/thirdPartyPosTaskClient";
+import { postEoBurnInPlacard } from "@/lib/eo-video/eoBurnInPlacardClient";
 import { evaluateThirdPartyTaskHttpResponse } from "@/lib/thirdPartyTaskServiceResponse";
 import { resolveShowIdFromAlarm } from "@/lib/alarm-track-match";
 import { getDefaultEoCameraTaskBackendBaseUrl, getTrackIdModeConfig } from "@/lib/map-app-config";
 import type { AlertData } from "@/stores/alert-store";
-import { getRenderCache } from "@/stores/track-store";
+import { getRenderCache, useTrackStore } from "@/stores/track-store";
 import { useTargetProfileStore } from "@/stores/target-profile-store";
 import { useDockStore } from "@/stores/dock-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import { resolveTrackForDroneSelfReport } from "@/lib/resolve-track-for-drone-self-report";
-import { resolveCamServerSelfPosMapId } from "@/lib/map-gis-camera-task";
 import { dispatchAimTrackCollectMapDblClick } from "@/lib/eo-aim-collect/dispatchAimTrackCollectMapDblClick";
 
+async function dispatchBurnInPlacardForOwners(
+  track: Track,
+  owners: readonly string[],
+): Promise<void> {
+  if (owners.length === 0) return;
+  const allTracks = useTrackStore.getState().tracks;
+  const shipTask = resolveCamServerShipTaskIds(track, allTracks);
+  // 无有效航迹 ID（空白对准 / 合成自报位等）不画标牌
+  if (!(shipTask.targetId > 0)) {
+    console.log("[map-track-dblclick] ④ burn-in placard 跳过：无有效 trackId", {
+      showID: track.showID,
+      uniqueID: track.uniqueID,
+      trackId: track.trackId,
+    });
+    return;
+  }
+  const isAir =
+    track.type === "air" ||
+    track.trackLayerKey === "fuse_air" ||
+    track.trackLayerKey === "bird_radar" ||
+    track.trackLayerKey === "auto_bird_radar";
+
+  await Promise.all(
+    owners.map(async (ownerId) => {
+      try {
+        const r = await postEoBurnInPlacard({
+          entityId: ownerId,
+          trackId: shipTask.targetId,
+          isAir,
+        });
+        if (!r.ok) {
+          console.warn("[map-track-dblclick] ④ burn-in placard 失败", ownerId, r.error ?? "", r.detail ?? "");
+        } else {
+          console.log("[map-track-dblclick] ④ burn-in placard ok", ownerId, {
+            trackId: shipTask.targetId,
+          });
+        }
+      } catch (err: unknown) {
+        console.warn("[map-track-dblclick] ④ burn-in placard 异常", ownerId, err);
+      }
+    }),
+  );
+}
 /**
  * 告警 trackId → 航迹 showID（与 AlertPanel / 地图选中一致）。
  */
@@ -104,7 +151,17 @@ export async function runGisDroneSelfReportVerification(sn: string): Promise<voi
     console.warn("[map-drone-dblclick] 未找到无人机遥测或有效坐标", { sn });
     return;
   }
-  console.info("[map-drone-dblclick] 命中无人机自报位", sn, track.showID, track.uniqueID);
+  const selfPosId = resolveCamServerSelfPosMapId(track);
+  console.info("[map-drone-dblclick] 命中高频三角", {
+    sn,
+    showID: track.showID,
+    uniqueID: track.uniqueID,
+    camServerSelfPosMapId: selfPosId,
+    syntheticNoTargetId: selfPosId == null && String(track.showID).startsWith("drone-self-report:"),
+    lat: track.lat,
+    lng: track.lng,
+    altitude: track.altitude,
+  });
   await runGisTrackVerification(track);
 }
 
@@ -114,7 +171,8 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
   dock.assignPanelToPartition("target-profile", "right-0");
 
   const cfg = await useAppConfigStore.getState().ensureLoaded();
-  const target = buildImportantTrackTargetFromTrack(track);
+  const allTracks = useTrackStore.getState().tracks;
+  const target = buildImportantTrackTargetFromTrack(track, allTracks);
   const posBackend = getDefaultEoCameraTaskBackendBaseUrl();
   const posFields = buildThirdPartyPosFieldsFromTrack(track);
 
@@ -127,15 +185,27 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
     type: track.type,
     trackLayerKey: track.trackLayerKey,
     trackType: posFields?.trackType ?? null,
+    shipTask: resolveCamServerShipTaskIds(track, allTracks),
     lat: track.lat,
     lng: track.lng,
     speed: track.speed,
     course: track.course ?? track.heading,
   });
+  const lookAtOnly =
+    cfg.cameraManagement?.mapTrackDblClickLookAtOnly === true &&
+    isMapTrackDblClickLookAtOnlyEligible(track);
+
   console.log(
-    "[map-track-dblclick] 分路说明：① ThirdPartyCamPosTask=第三方高速相机 POS（targetId=uniqueID）；② TargetCollectionIMChildTask=光电 PTZ 主相机（hasPtz、无 parent、非第三方）；③ 对准采集 StreamTrack triggerType=3",
+    "[map-track-dblclick] 分路说明：① ThirdPartyCamPosTask=第三方高速相机 POS（targetId=uniqueID）；② 光电 PTZ（默认 TargetCollectionIMChildTask；mapTrackDblClickLookAtOnly 时融合/雷达改 LookAtChildTask）；③ 对准采集 StreamTrack triggerType=3；④ burn-in placard 标牌",
   );
-  console.log("[map-track-dblclick] ② IM 任务 targetcollection 预览", target);
+  console.log("[map-track-dblclick] ② 模式", lookAtOnly ? "LookAtChild（仅转到位置）" : "TargetCollectionIM", {
+    mapTrackDblClickLookAtOnly: cfg.cameraManagement?.mapTrackDblClickLookAtOnly === true,
+    eligible: isMapTrackDblClickLookAtOnlyEligible(track),
+    trackLayerKey: track.trackLayerKey,
+  });
+  if (!lookAtOnly) {
+    console.log("[map-track-dblclick] ② IM 任务 targetcollection 预览", target);
+  }
 
   let posPromise: Promise<void>;
   if (posFields) {
@@ -158,22 +228,25 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
   }
 
   const owners = listTrackTaskOwnerEntityIds();
+  const placardPromise = dispatchBurnInPlacardForOwners(track, owners).catch((err: unknown) => {
+    console.warn("[map-track-dblclick] ④ burn-in placard 异常", err);
+  });
   const aimCollectPromise = dispatchAimTrackCollectMapDblClick(track).catch((err: unknown) => {
     console.warn("[map-track-dblclick] ③ 对准采集 triggerType=3 异常", err);
   });
 
   const cm = cfg.cameraManagement;
   if (!cm) {
-    console.warn("[map-track-dblclick] ② cameraManagement 未配置，未发送 TargetCollectionIMChildTask");
-    await Promise.all([posPromise, aimCollectPromise]);
+    console.warn("[map-track-dblclick] ② cameraManagement 未配置，未发送光电任务");
+    await Promise.all([posPromise, aimCollectPromise, placardPromise]);
     console.groupEnd();
     return;
   }
   if (owners.length === 0) {
     console.warn(
-      "[map-track-dblclick] ② 无可用光电 PTZ 主相机（需 hasPtz、无 parent、非第三方），未发送 IM 任务",
+      "[map-track-dblclick] ② 无可用光电 PTZ 主相机（需 hasPtz、无 parent、非第三方），未发送光电任务",
     );
-    await Promise.all([posPromise, aimCollectPromise]);
+    await Promise.all([posPromise, aimCollectPromise, placardPromise]);
     console.groupEnd();
     return;
   }
@@ -181,41 +254,85 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
   const client = CameraManagementClient.fromConfig(cm);
   if (!client) {
     console.warn("[map-track-dblclick] ② CameraManagementClient 初始化失败");
-    await Promise.all([posPromise, aimCollectPromise]);
+    await Promise.all([posPromise, aimCollectPromise, placardPromise]);
     console.groupEnd();
     return;
   }
-  console.log(
-    "[map-track-dblclick] ② TargetCollectionIMChildTask（光电 PTZ 主相机）",
-    `共 ${owners.length} 台 → ${client.publishUrl}`,
-    owners,
-  );
 
-  for (const ownerId of owners) {
-    const body = buildImportantTrackTaskBody(cm, ownerId, target, { taskIdSuffix: ownerId });
+  if (lookAtOnly) {
+    const checkTime =
+      cm.mapTrackDblClickLookAtCheckTime !== undefined ? cm.mapTrackDblClickLookAtCheckTime : 0;
+    const shipTask = resolveCamServerShipTaskIds(track, allTracks);
+    const lookAt = {
+      latitude: Number.isFinite(track.lat) ? track.lat : 0,
+      longitude: Number.isFinite(track.lng) ? track.lng : 0,
+      trackID: shipTask.targetId,
+      shipType: shipTask.shipType,
+      checkTime,
+    };
     console.log(
-      `[map-track-dblclick] ② TargetCollectionIMChildTask owner=${ownerId}\n`,
-      JSON.stringify(body, null, 2),
+      "[map-track-dblclick] ② LookAtChildTask（仅转到位置，跳过单目标/左右搜）",
+      `共 ${owners.length} 台 → ${client.publishUrl}`,
+      owners,
+      lookAt,
     );
-    const res = await client.publishTask(body);
-    if (res.networkError) {
-      console.warn("[map-track-dblclick] ② IM 请求失败", {
+    for (const ownerId of owners) {
+      const body = buildLookAtChildTaskBody(cm, ownerId, lookAt, { taskIdSuffix: ownerId });
+      console.log(
+        `[map-track-dblclick] ② LookAtChildTask owner=${ownerId}\n`,
+        JSON.stringify(body, null, 2),
+      );
+      const res = await client.publishTask(body);
+      if (res.networkError) {
+        console.warn("[map-track-dblclick] ② LookAt 请求失败", {
+          ownerId,
+          url: client.publishUrl,
+          networkError: res.networkError,
+        });
+        continue;
+      }
+      console.log("[map-track-dblclick] ② LookAt 响应", {
         ownerId,
-        url: client.publishUrl,
-        networkError: res.networkError,
+        status: res.status,
+        ok: res.ok,
+        executionState: res.executionState ?? "",
+        errorMessage: res.errorMessage ?? "",
+        bodyPreview: (res.rawText ?? "").slice(0, 600),
       });
-      continue;
     }
-    console.log("[map-track-dblclick] ② IM 响应", {
-      ownerId,
-      status: res.status,
-      ok: res.ok,
-      executionState: res.executionState ?? "",
-      errorMessage: res.errorMessage ?? "",
-      bodyPreview: (res.rawText ?? "").slice(0, 600),
-    });
+  } else {
+    console.log(
+      "[map-track-dblclick] ② TargetCollectionIMChildTask（光电 PTZ 主相机）",
+      `共 ${owners.length} 台 → ${client.publishUrl}`,
+      owners,
+    );
+
+    for (const ownerId of owners) {
+      const body = buildImportantTrackTaskBody(cm, ownerId, target, { taskIdSuffix: ownerId });
+      console.log(
+        `[map-track-dblclick] ② TargetCollectionIMChildTask owner=${ownerId}\n`,
+        JSON.stringify(body, null, 2),
+      );
+      const res = await client.publishTask(body);
+      if (res.networkError) {
+        console.warn("[map-track-dblclick] ② IM 请求失败", {
+          ownerId,
+          url: client.publishUrl,
+          networkError: res.networkError,
+        });
+        continue;
+      }
+      console.log("[map-track-dblclick] ② IM 响应", {
+        ownerId,
+        status: res.status,
+        ok: res.ok,
+        executionState: res.executionState ?? "",
+        errorMessage: res.errorMessage ?? "",
+        bodyPreview: (res.rawText ?? "").slice(0, 600),
+      });
+    }
   }
 
-  await Promise.all([posPromise, aimCollectPromise]);
+  await Promise.all([posPromise, aimCollectPromise, placardPromise]);
   console.groupEnd();
 }

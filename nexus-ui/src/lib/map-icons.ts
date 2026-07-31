@@ -6,7 +6,6 @@ import type { Track, PublicMapAssetType, AssetStatus } from "./map-entity-model.
 import {
   isAirTrackBirdGlyphFromClassification,
   isSeaTrackBuoyFromClassification,
-  isSeaTrackReefFromClassification,
 } from "./track-category-id-parse.ts";
 import { PUBLIC_MAP_ASSET_TYPES } from "./map-entity-model.ts";
 
@@ -195,7 +194,8 @@ export function isAirTrackBirdGlyph(
 }
 
 /**
- * 对海航迹图标：手动类型优先；否则 UnitType **BUOY(6)** → 浮标；**SURFACE_SHIP(7)** → 船；其余 → 礁石。
+ * 对海航迹图标：手动类型优先；否则 UnitType **BUOY(6)** → 浮标；
+ * **SURFACE_SHIP(7) / OTHER / 其余** → 船。态势不再绘制礁石。
  */
 export function isSeaTrackBuoyGlyph(
   t: Pick<Track, "type" | "classifiedType" | "targetType" | "trackAlias" | "manualTargetType">,
@@ -206,13 +206,11 @@ export function isSeaTrackBuoyGlyph(
   return isSeaTrackBuoyFromClassification(t.classifiedType, t.targetType, t.trackAlias);
 }
 
+/** 态势不画礁石；`other` 与未知类型由调用方走船军标（`seaReefGlyph=false` → 船） */
 export function isSeaTrackReefGlyph(
-  t: Pick<Track, "type" | "classifiedType" | "targetType" | "trackAlias" | "manualTargetType">,
+  _t: Pick<Track, "type" | "classifiedType" | "targetType" | "trackAlias" | "manualTargetType">,
 ): boolean {
-  if (t.type !== "sea") return false;
-  if (t.manualTargetType === "other") return true;
-  if (t.manualTargetType === "ship" || t.manualTargetType === "buoy") return false;
-  return isSeaTrackReefFromClassification(t.classifiedType, t.targetType, t.trackAlias);
+  return false;
 }
 
 /**
@@ -220,9 +218,9 @@ export function isSeaTrackReefGlyph(
  *
  * Get a stable marker image ID for MapLibre/Cesium caches.
  */
-/** 光电查证完成：军标 id 后缀（与态势色独立，统一黄色填充） */
+/** 光电查证完成：军标 id 后缀（态势已不再用查证标黄，后缀保留兼容缓存键） */
 export const OPTICALLY_VERIFIED_SYMBOL_SUFFIX = "-ov";
-/** 可疑目标：军标 id 后缀（态势绿色） */
+/** 重点关注目标：军标 id 后缀（态势黄色） */
 export const SUSPICIOUS_TARGET_SYMBOL_SUFFIX = "-sp";
 /** COASTING 预测目标：军标虚线外框 */
 export const COASTING_TARGET_SYMBOL_SUFFIX = "-co";
@@ -975,6 +973,38 @@ export const DRONE_FLEET_MAP_IMAGE_NEUTRAL = "nexus-drone-fleet-neutral";
 export const DRONE_FLEET_MAP_IMAGE_NEUTRAL_DASH = "nexus-drone-fleet-neutral-dash";
 
 const DRONE_TRIANGLE_CANVAS_PX = 72;
+const AIS_HOLLOW_TRIANGLE_CANVAS_PX = 64;
+
+/** AIS 航迹：空心三角图标 id（按描边色区分，供 MapLibre `addImage`） */
+export function aisHollowTriangleImageId(strokeColor: string): string {
+  const key = strokeColor.trim().toLowerCase().replace(/[^a-z0-9#]/g, "");
+  return `ais-hollow-tri-${key || "default"}`;
+}
+
+/** AIS 航迹：向上空心等腰三角（仅描边，无填充） */
+export function buildAisHollowTriangleDataUrl(strokeColor: string): string {
+  const size = AIS_HOLLOW_TRIANGLE_CANVAS_PX;
+  if (typeof document === "undefined") {
+    throw new Error("[map-icons] buildAisHollowTriangleDataUrl 仅在浏览器环境可用");
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("[map-icons] Canvas 2D 不可用");
+  const pad = 6;
+  ctx.strokeStyle = strokeColor || "#71717a";
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(size / 2, pad);
+  ctx.lineTo(size - pad, size - pad);
+  ctx.lineTo(pad, size - pad);
+  ctx.closePath();
+  ctx.stroke();
+  return canvas.toDataURL("image/png");
+}
 
 /** V2 `DroneRenderer.loadDroneIcon`：向上三角 + 白描边，虚兵为虚线描边 */
 export function buildDroneTriangleDataUrl(fillColor: string, dashedStroke: boolean): string {
@@ -1486,6 +1516,31 @@ export function geoSectorRingCoords(
     innerPts.push(offsetPoint(centerLng, centerLat, inner, ang));
   }
   return [...outerPts, ...innerPts, outerPts[0]!];
+}
+
+/**
+ * 能力扫描稳定相位偏移（0–359°），按实体 id 散列，避免多站前缘整齐对齐。
+ */
+export function sweepPhaseOffsetDeg(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 360;
+}
+
+/** 能力半径（公里）→ 前缘终点标签，如 `12000 m`（取整到米） */
+export function formatCapabilityRangeM(radiusKm: number): string {
+  const meters = radiusKm * 1000;
+  if (!(meters > 0) || !Number.isFinite(meters)) return "";
+  const rounded = Math.round(meters);
+  return `${rounded} m`;
+}
+
+/** @deprecated 使用 formatCapabilityRangeM */
+export function formatCapabilityRangeNm(radiusKm: number): string {
+  return formatCapabilityRangeM(radiusKm);
 }
 
 /**

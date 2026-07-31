@@ -48,7 +48,7 @@ export function DisplayControlPanel() {
         {tab === "tracks" ? (
           <>
             <p className="mb-3 text-[10px] leading-snug text-nexus-text-muted">
-              选择航迹类型后分别调整矢量与尾迹；融合航迹可改中立色。
+              选择航迹类型后分别调整颜色、矢量与尾迹；各类型配色相互独立。
             </p>
             <TrackDisplayPanel embedded />
           </>

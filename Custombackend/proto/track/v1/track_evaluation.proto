@@ -65,11 +65,15 @@ message GeoPoint {
   double latitude = 2;
 }
 
+// 显示筛选：四类航迹 ID（可多选；同类为 OR，异类为 AND）
 message TrackIdFilter {
-  oneof id {
-    int64 fused_track_id = 1;
-    int64 unique_id = 2;
-  }
+  reserved 1, 2;
+  reserved "fused_track_id", "unique_id";
+  // 前端「融合航迹 ID」= target_id / unique_id（不是库表 fused_track_id）
+  repeated int64 fusion_unique_ids = 3;
+  repeated int64 radar_track_ids = 4;   // 雷达批号（鹏飞/码头/探鸟等）
+  repeated int64 ais_ids = 5;           // 对海 AIS / MMSI
+  repeated int64 self_report_ids = 6;   // 自报位（对海船自报 / 对空自报）
 }
 
 message AttributeRangeFilter {
@@ -188,6 +192,9 @@ message ContinuityMetrics {
   double air_change_batch_count_avg = 12;
   double sea_max_tracking_duration_avg = 13;
   double air_max_tracking_duration_avg = 14;
+  // 融合航迹覆盖率：按融合批号断段累计有雷达时长 / 参考源整段时长
+  StabilityDurationSummary sea_fusion_track_coverage = 15;
+  StabilityDurationSummary air_fusion_track_coverage = 16;
 }
 
 message StabilityDurationSummary {
@@ -226,14 +233,26 @@ message ErrorMetrics {
   repeated ErrorByReferenceItem air_speed = 12;
 }
 
+message SourceErrorStat {
+  string source_key = 1;   // dataSourceId，如 udp_xpf_track
+  string source_name = 2;  // 展示名，如 鹏飞
+  double avg = 3;
+  double rmse = 4;
+}
+
 message ErrorByReferenceItem {
   string reference_id = 1;
   double fusion_avg = 2;
   double fusion_rmse = 3;
-  double radar1_avg = 4;
+  double radar1_avg = 4;         // 兼容：第一个非 AIS 评估源
   double radar1_rmse = 5;
-  double radar2_avg = 6;
+  double radar2_avg = 6;         // 兼容：第二个非 AIS 评估源
   double radar2_rmse = 7;
+  string radar1_key = 8;
+  string radar1_name = 9;
+  string radar2_key = 10;
+  string radar2_name = 11;
+  repeated SourceErrorStat source_errors = 12;
 }
 
 message ProgressEvent {

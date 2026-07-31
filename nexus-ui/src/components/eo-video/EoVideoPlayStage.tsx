@@ -18,15 +18,19 @@ import {
   cameraIndexFromOwnerEntityId,
   maxZoomForCameraIndex,
 } from "@/lib/camera-management-client";
-import { isCameraSingleTrackDetectionActive } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import { isCameraTrackingExecutionActive } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import { isEoBurnInPlaybackUrl } from "@/lib/eo-video/eoBurnInPlayback";
 import {
   armEoSingleTrackUserLatch,
   clearEoSingleTrackUserLatch,
+  isEoSingleTrackUserLatchActive,
 } from "@/lib/eo-video/eoSingleTrackUserLatch";
 import { getVideoContentRect, resolveEoVideoIntrinsicSize } from "@/lib/eo-video/videoContentRect";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
+import type { UavMqttTelemetry } from "@/hooks/useUavMqttDockState";
 import { EoDetectionOverlay } from "./EoDetectionOverlay";
 import { EoPtzDragArrowOverlay, type EoPtzDragArrowBox } from "./EoPtzDragArrowOverlay";
+import { EoUavTrackProjectOverlay } from "./EoUavTrackProjectOverlay";
 import { EoVideoDetectionLayer } from "./EoVideoDetectionLayer";
 import { resolveEoVideoObjectFit } from "@/lib/eo-video/eoVideoObjectFit";
 import { EoVideoViewport } from "./EoVideoViewport";
@@ -117,6 +121,11 @@ export interface EoVideoPlayStageProps {
   exposePeerForDetection?: boolean;
   entityId?: string;
   detectionEnabled?: boolean;
+  /**
+   * 烧录流：画面已含框/标牌，前端隐藏绘制，但仍订检测 WS + 点击命中，
+   * 以便 burn-in-select 让后端烧录框变色。
+   */
+  bareVideoPlayback?: boolean;
   onDetectionDiagnostic?: (line: string, hoverDetail?: string) => void;
   selectedBoxId?: string | null;
   onSelectBox?: (boxId: string | null) => void;
@@ -175,6 +184,23 @@ export interface EoVideoPlayStageProps {
   uavTrackingActive?: boolean;
   /** 递增时强制重建 WebRTC（私有云 start 推流后重连 ZLM） */
   webRtcKickEpoch?: number;
+  /** 停帧看门狗间隔（ms）；无人机场景传 6000 与 poke 恢复配合，缺省用相机默认 4000 */
+  stallWatchIntervalMs?: number;
+  /** 停帧恢复前回调（如无人机 poke 重新拉流），随后自动 WebRTC restart */
+  onStallRecover?: () => void;
+  /** 放大窗复用小窗 MediaStream，不再二次协商 */
+  sharedMediaStream?: MediaStream | null;
+  /** 放大窗模式：流未到齐时也不要本窗自建 WebRTC */
+  sharedPlaybackOnly?: boolean;
+  /**
+   * 无人机：航线 + 对海融合航迹画面投影（周士胜算法）。
+   * 默认关闭；起飞后由右侧工具栏开关控制。
+   */
+  uavTrackProjectVisible?: boolean;
+  /** 舱外（已起飞）才跑投影 */
+  uavTrackProjectAfterTakeoff?: boolean;
+  uavTrackProjectDroneSn?: string | null;
+  uavTrackProjectMqttTelemetry?: UavMqttTelemetry | null;
 }
 
 /**
@@ -190,6 +216,7 @@ export function EoVideoPlayStage({
   exposePeerForDetection,
   entityId,
   detectionEnabled,
+  bareVideoPlayback = false,
   onDetectionDiagnostic,
   selectedBoxId,
   onSelectBox,
@@ -212,6 +239,14 @@ export function EoVideoPlayStage({
   onUavStopTrackingTask,
   uavTrackingActive = false,
   webRtcKickEpoch,
+  stallWatchIntervalMs,
+  onStallRecover,
+  sharedMediaStream = null,
+  sharedPlaybackOnly = false,
+  uavTrackProjectVisible = true,
+  uavTrackProjectAfterTakeoff = false,
+  uavTrackProjectDroneSn = null,
+  uavTrackProjectMqttTelemetry = null,
 }: EoVideoPlayStageProps) {
   const [taskBusy, setTaskBusy] = useState(false);
   const [taskHint, setTaskHint] = useState("");
@@ -223,8 +258,10 @@ export function EoVideoPlayStage({
     return canonicalEntityId(raw) || raw;
   }, [ddsCameraEntityId, trimmedEntityId]);
   const ddsSingleTrackActive = useEoCameraDdsStatusStore((s) =>
-    ddsLookupKey ? isCameraSingleTrackDetectionActive(s.byEntityId[ddsLookupKey]) : false,
+    ddsLookupKey ? isCameraTrackingExecutionActive(s.byEntityId[ddsLookupKey]) : false,
   );
+  /** 烧录流：隐藏前端框绘制，保留检测数据与点击选中 */
+  const isBurnInPlayback = bareVideoPlayback || isEoBurnInPlaybackUrl(signalingUrl);
   const showDetection = Boolean(trimmedEntityId && detectionEnabled);
   const isUavEntity = /^uav-/i.test(trimmedEntityId);
   /** 与 Qt 一致：相机实体即可双击发任务；检测 WS 关闭时仍要有叠层接收双击 */
@@ -854,10 +891,20 @@ export function EoVideoPlayStage({
   }, [canSendSingleTrack, logClient, stageRef, taskBackendBaseUrl, trimmedEntityId]);
 
   const handleDoubleClickPoint = useCallback(
-    async (payload: { normalizedX: number; normalizedY: number; hitBoxId: string | null; hitBox: EoDetectionBox | null }) => {
+    async (payload: {
+      normalizedX: number;
+      normalizedY: number;
+      hitBoxId: string | null;
+      hitBox: EoDetectionBox | null;
+      drawnBoxes?: EoDetectionBox[];
+    }) => {
       logClient(
         `双击命中 norm=(${payload.normalizedX.toFixed(4)},${payload.normalizedY.toFixed(4)}) box=${payload.hitBoxId ?? "无"}`,
       );
+
+      /** 优先用叠层当前帧框，避免父级 detectionBoxes setState 滞后把单目标态误判成发跟踪 */
+      const boxesForDecision =
+        payload.drawnBoxes && payload.drawnBoxes.length > 0 ? payload.drawnBoxes : detectionBoxes;
 
       if (canSendUavImgTrack) {
         if (taskBusy) {
@@ -865,7 +912,7 @@ export function EoVideoPlayStage({
           return;
         }
         const nearMulti = pickMultiTargetBoxNearPoint(
-          detectionBoxes,
+          boxesForDecision,
           payload.normalizedX,
           payload.normalizedY,
         );
@@ -891,7 +938,7 @@ export function EoVideoPlayStage({
 
         let hit = payload.hitBox ?? nearMulti;
         if (!hit && selectedBoxId) {
-          hit = detectionBoxes.find((b) => b.id === selectedBoxId) ?? null;
+          hit = boxesForDecision.find((b) => b.id === selectedBoxId) ?? null;
         }
         if (!hit) {
           setTaskHint("当前无检测框，无法发起无人机跟踪");
@@ -943,19 +990,30 @@ export function EoVideoPlayStage({
       }
 
       const inSingleTrackUi =
-        ddsSingleTrackActive || detectionBoxes.some((b) => b.variant === "singleTrack");
+        ddsSingleTrackActive ||
+        boxesForDecision.some((b) => b.variant === "singleTrack") ||
+        payload.hitBox?.variant === "singleTrack" ||
+        isEoSingleTrackUserLatchActive(trimmedEntityId);
       const nearMulti = pickMultiTargetBoxNearPoint(
-        detectionBoxes,
+        boxesForDecision,
         payload.normalizedX,
         payload.normalizedY,
       );
-      const hitIsMultiTargetBox =
-        (payload.hitBox != null && payload.hitBox.variant !== "singleTrack") || nearMulti != null;
+      const explicitMultiHit =
+        payload.hitBox != null && payload.hitBox.variant !== "singleTrack";
+      /**
+       * 非烧录：nearMulti 补全漏检，避免跟踪态误点成取消。
+       * 烧录：码流已是单目标时，框层/父态偶发仍带多目标，nearMulti 会把「应取消」
+       * 误判成「发跟踪」；取消门禁只认显式命中多目标框（不改非烧录画框逻辑）。
+       */
+      const hitIsMultiTargetBox = isBurnInPlayback
+        ? explicitMultiHit
+        : explicitMultiHit || nearMulti != null;
       const shouldCancelSingleTrack = inSingleTrackUi && !hitIsMultiTargetBox;
 
       if (shouldCancelSingleTrack) {
         logClient(
-          `已在单目标跟踪：双击${payload.hitBox ? `框 ${payload.hitBox.id}` : "空白"} -> 发送取消跟踪（trackAction=0）`,
+          `已在单目标跟踪：双击${payload.hitBox ? `框 ${payload.hitBox.id}` : "空白"} -> 发送取消跟踪（trackAction=0）${isBurnInPlayback ? " [burn-in]" : ""}`,
         );
         setTaskBusy(true);
         setTaskHint("正在取消目标跟踪…");
@@ -983,11 +1041,11 @@ export function EoVideoPlayStage({
 
       let hit = payload.hitBox ?? nearMulti;
       if (!hit && selectedBoxId) {
-        hit = detectionBoxes.find((b) => b.id === selectedBoxId) ?? null;
+        hit = boxesForDecision.find((b) => b.id === selectedBoxId) ?? null;
       }
       if (!hit) {
         const near = pickDetectionBoxClosestToVideoCenter(
-          detectionBoxes.filter((b) => b.variant !== "singleTrack"),
+          boxesForDecision.filter((b) => b.variant !== "singleTrack"),
         );
         if (near) {
           hit = near;
@@ -1092,20 +1150,31 @@ export function EoVideoPlayStage({
         setTaskBusy(false);
       }
     },
-    [canSendSingleTrack, canSendUavImgTrack, ddsSingleTrackActive, detectionBoxes, logClient, onSingleTrackTask, onUavImgTrackingTask, onUavStopTrackingTask, overlayIntrinsic.h, overlayIntrinsic.w, rectTypeFromDetectionBox, selectedBoxId, taskBusy, trimmedEntityId, uavAirportSn, uavTrackingActive, videoRef],
+    [canSendSingleTrack, canSendUavImgTrack, ddsSingleTrackActive, detectionBoxes, isBurnInPlayback, logClient, onSingleTrackTask, onUavImgTrackingTask, onUavStopTrackingTask, overlayIntrinsic.h, overlayIntrinsic.w, rectTypeFromDetectionBox, selectedBoxId, taskBusy, trimmedEntityId, uavAirportSn, uavTrackingActive, videoRef],
   );
 
+  const onBottomCenterToastRef = useRef(onBottomCenterToast);
+  onBottomCenterToastRef.current = onBottomCenterToast;
+  const lastBottomToastKeyRef = useRef("");
+
   useEffect(() => {
-    if (!onBottomCenterToast) return;
+    const toast = onBottomCenterToastRef.current;
+    if (!toast) return;
     const text = taskBusy ? taskHint.trim() || "任务处理中…" : taskHint.trim();
-    if (!text) return;
+    if (!text) {
+      lastBottomToastKeyRef.current = "";
+      return;
+    }
     const tone: "success" | "error" | "warn" = /失败|错误|取消失败|HTTP/i.test(text)
       ? "error"
       : /正在|处理中|…|\.\.\./.test(text)
         ? "warn"
         : "success";
-    onBottomCenterToast({ text, tone });
-  }, [taskHint, taskBusy, onBottomCenterToast]);
+    const key = `${tone}\0${text}`;
+    if (key === lastBottomToastKeyRef.current) return;
+    lastBottomToastKeyRef.current = key;
+    toast({ text, tone });
+  }, [taskHint, taskBusy]);
 
   return (
     <div
@@ -1115,13 +1184,6 @@ export function EoVideoPlayStage({
         uavAimInteractionsEnabled && "touch-manipulation",
         className,
       )}
-      onContextMenu={
-        uavAimInteractionsEnabled
-          ? (ev) => {
-              ev.preventDefault();
-            }
-          : undefined
-      }
     >
       <EoVideoViewport
         signalingUrl={signalingUrl}
@@ -1129,12 +1191,20 @@ export function EoVideoPlayStage({
         enabled
         videoRef={videoRef}
         peerConnectionRef={exposePeerForDetection ? peerConnectionRef : undefined}
-        encodedSyncHub={showDetection ? encodedSyncHub : undefined}
-        videoReceiverRef={showDetection ? videoReceiverRef : undefined}
+        encodedSyncHub={
+          showDetection && !sharedMediaStream && !sharedPlaybackOnly ? encodedSyncHub : undefined
+        }
+        videoReceiverRef={
+          showDetection && !sharedMediaStream && !sharedPlaybackOnly ? videoReceiverRef : undefined
+        }
         streamLabel={streamLabel}
         webCodecsPresentationRef={webCodecsPresentationRef}
         videoObjectFit={videoObjectFit}
-        webRtcKickEpoch={webRtcKickEpoch}
+        webRtcKickEpoch={sharedMediaStream || sharedPlaybackOnly ? 0 : webRtcKickEpoch}
+        stallWatchIntervalMs={sharedMediaStream || sharedPlaybackOnly ? undefined : stallWatchIntervalMs}
+        onStallRecover={sharedMediaStream || sharedPlaybackOnly ? undefined : onStallRecover}
+        sharedMediaStream={sharedMediaStream}
+        sharedPlaybackOnly={sharedPlaybackOnly}
       />
       {ptzDragArrow ? <EoPtzDragArrowOverlay box={ptzDragArrow} /> : null}
       {!onOverlayTaskLine && !onBottomCenterToast && taskHint ? (
@@ -1167,6 +1237,7 @@ export function EoVideoPlayStage({
           expandedMode={expandedMode}
           ddsCameraEntityId={ddsCameraEntityId}
           interactive={detectionInteractive}
+          hideDrawnBoxes={isBurnInPlayback}
         />
       ) : showTrackHitLayer ? (
         <EoDetectionOverlay
@@ -1183,6 +1254,19 @@ export function EoVideoPlayStage({
           videoIntrinsicWidth={overlayIntrinsic.w}
           videoIntrinsicHeight={overlayIntrinsic.h}
           interactive
+        />
+      ) : null}
+      {uavTrackProjectVisible && uavTrackProjectAfterTakeoff ? (
+        <EoUavTrackProjectOverlay
+          enabled
+          afterTakeoff
+          droneSn={uavTrackProjectDroneSn}
+          mqttTelemetry={uavTrackProjectMqttTelemetry}
+          containerRef={stageRef as React.RefObject<HTMLElement | null>}
+          videoRef={videoRef}
+          videoObjectFit={videoObjectFit}
+          videoIntrinsicWidth={overlayIntrinsic.w}
+          videoIntrinsicHeight={overlayIntrinsic.h}
         />
       ) : null}
       {taskBusy ? <div className="pointer-events-none absolute inset-0 z-20" /> : null}

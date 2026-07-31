@@ -12,23 +12,45 @@ export type UavSpotFlyResult = {
   specification?: unknown;
 };
 
-const SPOT_FLY_RELATIVE_PATH = "/api/uav-task/spot-fly";
-
-/** WatchSys `uavctrlboard::sendSpotFlightRequest3`：POST `{NEXUS_UAV_TASK_API_BASE_URL}/api/v1/tasks`，DroneFlyTo；`specification.deviceSn` 为机场 SN */
-export async function postUavSpotFlyToTask(args: {
+export type UavSpotFlyWaypoint = {
   latitude: number;
   longitude: number;
+  height?: number;
+  speed?: number;
+};
+
+const SPOT_FLY_RELATIVE_PATH = "/api/uav-task/spot-fly";
+
+type SpotFlyArgs = {
   /** 机巢 / 机场 gateway SN（写入任务 JSON 的 `deviceSn` 字段） */
   airportSN: string;
-}): Promise<UavSpotFlyResult> {
+} & (
+  | { latitude: number; longitude: number; waypoints?: undefined }
+  | { waypoints: UavSpotFlyWaypoint[]; latitude?: undefined; longitude?: undefined }
+);
+
+/** WatchSys `uavctrlboard::sendSpotFlightRequest3`：POST `{NEXUS_UAV_TASK_API_BASE_URL}/api/v1/tasks`，DroneFlyTo；`specification.deviceSn` 为机场 SN */
+export async function postUavSpotFlyToTask(args: SpotFlyArgs): Promise<UavSpotFlyResult> {
   const { flightSpeed, flightHeight } = getDroneTaskFlightParams();
-  const clientBody = {
-    latitude: args.latitude,
-    longitude: args.longitude,
+  const clientBody: Record<string, unknown> = {
     airportSN: args.airportSN.trim(),
     speed: flightSpeed,
     height: flightHeight,
   };
+  if (args.waypoints && args.waypoints.length > 0) {
+    clientBody.waypoints = args.waypoints.map((w) => ({
+      latitude: w.latitude,
+      longitude: w.longitude,
+      ...(w.height != null ? { height: w.height } : {}),
+      ...(w.speed != null ? { speed: w.speed } : {}),
+    }));
+  } else if (args.latitude != null && args.longitude != null) {
+    clientBody.latitude = args.latitude;
+    clientBody.longitude = args.longitude;
+  } else {
+    throw new Error("uav_spot_fly_missing_waypoints");
+  }
+
   const abs = typeof window !== "undefined" ? `${window.location.origin}${SPOT_FLY_RELATIVE_PATH}` : SPOT_FLY_RELATIVE_PATH;
   console.info("[uav-spot-fly] 浏览器 → Next API\n  URL:", abs, "\n  Body:", JSON.stringify(clientBody));
 

@@ -107,17 +107,17 @@ class CaptureManager:
         self._last_uav_refresh_at: float = 0.0
 
     def _refresh_uav_pihaos(self) -> Set[int]:
-        """仅保留当前仍鲜活的「自报位+探鸟」批号。"""
-        pihaos: Set[int] = set()
-        for item in label_store.list_fresh(self.qualifying_fresh_sec):
-            if int(item.get("label_gt", -1)) == 1:
-                pihaos.add(int(item["pihao"]))
+        """自动鲜活真值 + 手动「标为无人机」批号。"""
+        pihaos = set(label_store.list_uav_pihaos_for_csv(self.qualifying_fresh_sec))
         self._uav_pihaos = pihaos
         self._last_uav_refresh_at = time.time()
+        # 有可用 UAV 真值（含手动标记）时刷新活跃时钟，避免仅手动标记时 1min 误停
+        if pihaos:
+            self._last_qualifying_at = time.time()
         return pihaos
 
     def touch_qualifying_track(self, pihao: Optional[int] = None) -> None:
-        """对空融合命中自报位+探鸟时刷新活跃时间与当前 UAV 批号集合。"""
+        """对空融合命中自报位+探鸟，或手动标为无人机时刷新活跃时间与当前 UAV 批号集合。"""
         with self._lock:
             self._last_qualifying_at = time.time()
             self._refresh_uav_pihaos()
@@ -126,25 +126,29 @@ class CaptureManager:
                 self._uav_pihaos.add(int(pihao))
 
     def check_can_start(self) -> Dict[str, Any]:
-        uav_items = [
-            x
-            for x in label_store.list_fresh(self.qualifying_fresh_sec)
-            if int(x.get("label_gt", -1)) == 1
-        ]
-        if not uav_items:
+        """可采集：鲜活「自报位+探鸟」自动真值，或 TTL 内手动「标为无人机」。"""
+        pihaos = label_store.list_uav_pihaos_for_csv(self.qualifying_fresh_sec)
+        if not pihaos:
             return {
                 "ok": False,
-                "message": "当前没有同时含自报位与探鸟雷达的对空融合航迹，无法开始采集",
+                "message": "当前没有可用的无人机真值（自报位+探鸟融合，或右键「标为无人机」），无法开始采集",
                 "qualifying_count": 0,
                 "items": [],
                 "fresh_sec": self.qualifying_fresh_sec,
             }
+        items = []
+        for p in pihaos:
+            row = label_store.get(int(p))
+            if row:
+                items.append(row)
+            else:
+                items.append({"pihao": int(p), "label_gt": 1, "label_str": "无人机"})
         return {
             "ok": True,
             "message": "可以开始采集",
-            "qualifying_count": len(uav_items),
-            "items": uav_items,
-            "pihaos": sorted(int(x["pihao"]) for x in uav_items),
+            "qualifying_count": len(pihaos),
+            "items": items,
+            "pihaos": list(pihaos),
             "fresh_sec": self.qualifying_fresh_sec,
         }
 

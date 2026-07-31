@@ -138,16 +138,35 @@ export function coordsFromAreaPoints(areaPoints: string | null | undefined, minN
   return out;
 }
 
+/** 去掉折线中相邻几乎重合的点（双击结束常见叠点；约 0.5m） */
+export function dedupeConsecutiveRouteCoords(
+  coords: [number, number][],
+  epsDeg = 5e-6,
+): [number, number][] {
+  if (coords.length <= 1) return coords;
+  const out: [number, number][] = [coords[0]!];
+  for (let i = 1; i < coords.length; i++) {
+    const prev = out[out.length - 1]!;
+    const cur = coords[i]!;
+    if (Math.abs(prev[0] - cur[0]) <= epsDeg && Math.abs(prev[1] - cur[1]) <= epsDeg) continue;
+    out.push(cur);
+  }
+  return out;
+}
+
 /** 多边形：N,lat1,lng1,... */
 export function ringFromAreaPoints(areaPoints: string | null | undefined): [number, number][] | null {
   const open = coordsFromAreaPoints(areaPoints, 3);
   return open ? closeRing(open) : null;
 }
 
-/** 航线（area_type 4）：折线，不闭合 */
+/** 航线（area_type 4）：折线，不闭合；自动去掉相邻叠点 */
 export function lineFromAreaRoute(row: AreaTableRow): [number, number][] | null {
   const fromPoints = coordsFromAreaPoints(row.area_points, 2);
-  if (fromPoints && fromPoints.length >= 2) return fromPoints;
+  if (fromPoints && fromPoints.length >= 2) {
+    const deduped = dedupeConsecutiveRouteCoords(fromPoints);
+    return deduped.length >= 2 ? deduped : fromPoints;
+  }
   const start = parseLatLngPair(row.start_point);
   return start ? [[start.lng, start.lat]] : null;
 }

@@ -1,6 +1,8 @@
 /**
  * 知识库问答请求体规范化（客户端 / 服务端代理共用）。
- * 上游为任务管理 `POST /api/v1/chat/stream`：`messages` / `thread_id` / `user_context` / `debug`。
+ * 上游为任务管理 `POST /api/v1/chat/stream`：
+ * - 普通：`messages` / `thread_id` / `user_context`
+ * - 中断恢复：`thread_id` / `interrupt_id` / `interrupt_feedback`（不要带 `messages`）
  */
 
 export function extractLastUserMessageText(body: Record<string, unknown>): string {
@@ -17,18 +19,32 @@ export function extractLastUserMessageText(body: Record<string, unknown>): strin
   return "";
 }
 
-/** 转发前补齐 `messages`，去掉 react-agent 遗留字段 */
+/** 转发前补齐 `messages`（恢复请求除外），去掉 react-agent 遗留字段 */
 export function normalizeKnowledgeBaseUpstreamBody(bodyText: string): string {
   try {
     const o = JSON.parse(bodyText) as Record<string, unknown>;
-    const text =
-      extractLastUserMessageText(o) ||
-      (typeof o.question === "string" && o.question.trim() ? o.question.trim() : "");
-    if (text && (!Array.isArray(o.messages) || o.messages.length === 0)) {
-      o.messages = [{ role: "user", content: text }];
+    const isResume =
+      typeof o.interrupt_id === "string" &&
+      o.interrupt_id.trim() !== "" &&
+      o.interrupt_feedback != null &&
+      typeof o.interrupt_feedback === "object";
+
+    if (!isResume) {
+      const text =
+        extractLastUserMessageText(o) ||
+        (typeof o.question === "string" && o.question.trim() ? o.question.trim() : "");
+      if (text && (!Array.isArray(o.messages) || o.messages.length === 0)) {
+        o.messages = [{ role: "user", content: text }];
+      }
+    } else {
+      // 恢复请求不得携带原始自然语言
+      delete o.messages;
+      delete o.question;
     }
+
     delete o.question;
     delete o.stream;
+    delete o.debug;
     return JSON.stringify(o);
   } catch {
     return bodyText;

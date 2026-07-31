@@ -63,8 +63,8 @@ export async function POST(req: NextRequest) {
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(payload),
       cache: "no-store",
-      // 对海训练可能较久
-      signal: AbortSignal.timeout(120_000),
+      // 对海/对空各最多 180s；默认两者串行，BFF 放宽到 400s
+      signal: AbortSignal.timeout(400_000),
     });
     const text = await upstream.text();
     let data: unknown = null;

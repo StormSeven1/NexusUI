@@ -9,6 +9,7 @@ message SeaAim {
   float maxDis = 4;
   string seamParamP = 5;
   string seamParamT = 6;
+  int32 Tparam_type = 7;
 }
 
 message SkyAim {

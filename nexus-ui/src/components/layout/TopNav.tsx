@@ -242,7 +242,7 @@ function UserAvatarMenu() {
             onClick={() => setOpen(false)}
           >
             <LogOut size={13} className="shrink-0 opacity-80" />
-            Log Out
+            登出
           </button>
         </li>
       </ul>,

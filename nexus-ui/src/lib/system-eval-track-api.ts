@@ -16,9 +16,11 @@ export interface TrackEvalGrpcRequest {
     max_latitude: number;
   };
   polygon?: { points: Array<{ longitude: number; latitude: number }> };
-  /** 显示筛选：单条 fused_track_id（proto oneof；多条由前端再滤） */
-  fused_track_id?: number;
-  unique_id?: number;
+  /** 显示筛选：四类航迹 ID（可多值）；融合 ID = unique_id/target_id */
+  fusion_unique_ids?: number[];
+  radar_track_ids?: number[];
+  ais_ids?: number[];
+  self_report_ids?: number[];
   attr_range?: {
     min_azimuth?: number;
     max_azimuth?: number;
@@ -77,8 +79,10 @@ export async function fetchTrackEvalQuality(
       region_type: body.region_type ?? "",
       bounding_box: body.bounding_box,
       polygon: body.polygon,
-      fused_track_id: body.fused_track_id,
-      unique_id: body.unique_id,
+      fusion_unique_ids: body.fusion_unique_ids,
+      radar_track_ids: body.radar_track_ids,
+      ais_ids: body.ais_ids,
+      self_report_ids: body.self_report_ids,
       attr_range: body.attr_range,
       sea_fusion_filter: body.sea_fusion_filter,
       air_fusion_filter: body.air_fusion_filter,

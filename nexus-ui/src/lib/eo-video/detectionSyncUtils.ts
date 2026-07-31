@@ -428,6 +428,14 @@ export function resolveDetectionFrameSize(
 
   const inferred = inferFrameSizeFromPixelRects(rects);
   if (inferred) {
+    // 推断为算法默认 1920×1080 时不要用呈现尺寸顶替：第三方相机 WS 常缺 videoWidth，
+    // 呈现尺寸（解码/画布）与检测坐标系不一致时会把框归一化飞出画面。
+    if (
+      inferred.w === DEFAULT_DETECTION_FRAME_W &&
+      inferred.h === DEFAULT_DETECTION_FRAME_H
+    ) {
+      return inferred;
+    }
     if (presW > 0 && presH > 0) return { w: presW, h: presH };
     if (videoW > 0 && videoH > 0) return { w: videoW, h: videoH };
     return inferred;

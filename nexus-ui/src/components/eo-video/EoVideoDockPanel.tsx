@@ -15,6 +15,10 @@ export interface EoVideoDockPanelProps {
   disableExpand?: boolean;
   /** 经典布局主窗：固定放大态，可直接键盘手控无人机 */
   classicFixedExpanded?: boolean;
+  /** 经典布局小窗：工具栏仅录屏/截图 */
+  classicToolsCaptureOnly?: boolean;
+  /** 经典布局小窗：右键「设为主屏」 */
+  onClassicSetAsMain?: () => void;
 }
 
 export function EoVideoDockPanel({
@@ -24,6 +28,8 @@ export function EoVideoDockPanel({
   expandedMode = false,
   disableExpand = false,
   classicFixedExpanded = false,
+  classicToolsCaptureOnly = false,
+  onClassicSetAsMain,
 }: EoVideoDockPanelProps) {
   return (
     <div className={cn("h-full min-h-0 w-full overflow-hidden bg-black", className)}>
@@ -35,6 +41,8 @@ export function EoVideoDockPanel({
         expandedMode={expandedMode}
         disableExpand={disableExpand}
         classicFixedExpanded={classicFixedExpanded}
+        classicToolsCaptureOnly={classicToolsCaptureOnly}
+        onClassicSetAsMain={onClassicSetAsMain}
       />
     </div>
   );

@@ -1,5 +1,9 @@
 import type { AreaTableRow } from "@/lib/area-table-geometry";
 import { areaRowToPolygonRing, dbAreaVisibilityKey, lineFromAreaRoute } from "@/lib/area-table-geometry";
+import {
+  dbAreaTargetVisibilityKey,
+  isDbAreaTargetListable,
+} from "@/lib/db-area-target-geometry";
 import { syncMasterOffWhenAllLeavesOff } from "@/lib/panel-tree-visibility";
 
 /** Postgres 区域子项是否可见（缺省 false，须用户在图层面板显式开启） */
@@ -41,9 +45,34 @@ export function countVisibleDbAreaLeaves(
   return n;
 }
 
+/** 总开关开时，当前应绘制的固定目标条数 */
+export function countVisibleDbAreaTargetLeaves(
+  rows: ReadonlyArray<{
+    id: string;
+    area_type: number;
+    start_point?: string | null;
+    end_point?: string | null;
+    area_rect?: string | null;
+    area_points?: string | null;
+    target_id?: number;
+    area_name?: string;
+  }>,
+  targetVisibility: Readonly<Record<string, boolean>>,
+  layerMasterOn: boolean,
+): number {
+  if (!layerMasterOn) return 0;
+  let n = 0;
+  for (const r of rows) {
+    if (!isDbAreaTargetListable(r)) continue;
+    if (targetVisibility[dbAreaTargetVisibilityKey(r.id)] !== true) continue;
+    n += 1;
+  }
+  return n;
+}
+
 /**
  * 区域图层母开关与子项双向同步：
- * - 任一子项开启 → 打开母开关（否则地图 `lyr-db-areas` 总闸会挡住 GeoJSON）
+ * - 任一子项开启（含固定目标）→ 打开母开关（否则地图 `lyr-db-areas` 总闸会挡住 GeoJSON）
  * - 全部子项关闭 → 关闭母开关
  */
 export function syncDbAreaLayerMasterFromLeaves(
@@ -51,18 +80,30 @@ export function syncDbAreaLayerMasterFromLeaves(
   rows: ReadonlyArray<AreaTableRow>,
   areaVisibility: Readonly<Record<string, boolean>>,
   setMasterOn: (on: boolean) => void,
+  fixedTargetRows?: ReadonlyArray<{ id: string; area_type: number }>,
+  targetVisibility?: Readonly<Record<string, boolean>>,
 ): void {
   const listable = rows.filter(isDbAreaListable);
-  if (listable.length === 0) return;
-  const anyOn = listable.some((r) =>
+  const anyAreaOn = listable.some((r) =>
     isDbAreaLeafVisible(r.group_id, r.area_id, areaVisibility),
   );
+  let anyFixedOn = false;
+  if (fixedTargetRows && targetVisibility) {
+    for (const r of fixedTargetRows) {
+      if (targetVisibility[dbAreaTargetVisibilityKey(r.id)] === true) {
+        anyFixedOn = true;
+        break;
+      }
+    }
+  }
+  const anyOn = anyAreaOn || anyFixedOn;
+  if (listable.length === 0 && !(fixedTargetRows && fixedTargetRows.length > 0)) return;
   if (anyOn && !masterOn) setMasterOn(true);
   else syncMasterOffWhenAllLeavesOff(masterOn, anyOn, setMasterOn);
 }
 
 /**
- * 图层面板「区域图层」块行数：总开关 1 + 每组 1 行 + 每条可绘区域 1 行。
+ * 图层面板「区域图层」块行数：总开关 1 + 每组 1 行 + 每条可绘区域 1 行（不含固定目标）。
  */
 export function countDbAreaPanelUiRows(rows: ReadonlyArray<AreaTableRow>): number {
   const listable = rows.filter(isDbAreaListable);
@@ -70,3 +111,4 @@ export function countDbAreaPanelUiRows(rows: ReadonlyArray<AreaTableRow>): numbe
   const groupCount = new Set(listable.map((r) => r.group_id)).size;
   return 1 + groupCount + listable.length;
 }
+

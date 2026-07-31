@@ -3,7 +3,9 @@
 /**
  * 告警面板 — 消费 alert-store 的实时数据。
  *
- * 【数据流】`useUnifiedWsFeed`（`alert_batch` / `map_command` alert / `alert`）经 `ws-alert-normalize` 归一化 → `addAlerts` → 本列表。
+ * 【数据流】
+ * - 航迹类：`useUnifiedWsFeed` → `ws-alert-normalize` → upsert
+ * - 系统类：`useSystemAlarmPoll`（2s）→ `/api/system-alarms` → syncSystemAlarms
  */
 
 import { useAppStore } from "@/stores/app-store";
@@ -20,16 +22,65 @@ import { dismissAlarmByTargetId, dismissAlarmForTrack } from "@/lib/dismiss-alar
 import {
   resolveUniqueIdForAlert,
   sendAlarmConfirmRequest,
+  buildAlarmConfirmTrackHint,
 } from "@/lib/alarm-confirm-api";
 import { resolveAlertFuseType } from "@/lib/alarm-track-match";
+import { sendSystemAlarmCancelRequest } from "@/lib/system-alarm-cancel-api";
+import {
+  ALERT_FILTER_OPTIONS,
+  ALERT_SEVERITY_FILTER_OPTIONS,
+  ALERT_SYSTEM_FILTER_OPTIONS,
+  ALL_ALERT_FILTER_KEYS,
+  ALL_ALERT_SEVERITY_KEYS,
+  ALL_ALERT_SYSTEM_FILTER_KEYS,
+  alertMatchesFilters,
+  compareAlertForAlarmCenter,
+  isSystemAlarm,
+  type AlertFilterKey,
+  type AlertSeverityFilterKey,
+  type AlertSystemFilterKey,
+} from "@/lib/system-alarm";
 import { AlertTriangle, AlertCircle, Info, Plane, ScanSearch, Ship, Trash2, Video, CheckCircle2 } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { THIRD_PARTY_DETECT_ALERT_TYPE } from "@/lib/third-party-ptz-fov";
-import { AlertScreenshotThumb } from "@/components/panels/AlertScreenshotThumb";
+import { AlertEvidenceHoverHost } from "@/components/panels/AlertEvidenceHoverCard";
+import { alarmEvidenceSummaryText } from "@/lib/alarm-evidence-content";
 
 const ALERT_ACTION_BTN =
   "inline-flex h-6 shrink-0 items-center gap-0.5 rounded border px-1.5 text-[10px] font-medium leading-none transition-colors";
+
+const ALERT_FILTER_STORAGE_KEY = "nexus.alert.selectedFilters";
+const ALERT_SEVERITY_STORAGE_KEY = "nexus.alert.selectedSeverities";
+const ALERT_SYSTEM_STORAGE_KEY = "nexus.alert.selectedSystems";
+
+function loadPersistedFilterSet<T extends string>(
+  storageKey: string,
+  validKeys: readonly T[],
+  fallback: readonly T[],
+): Set<T> {
+  if (typeof window === "undefined") return new Set(fallback);
+  try {
+    const raw = window.localStorage.getItem(storageKey)?.trim();
+    if (!raw) return new Set(fallback);
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set(fallback);
+    const valid = new Set(validKeys);
+    const next = parsed.filter((x): x is T => typeof x === "string" && valid.has(x as T));
+    return new Set(next);
+  } catch {
+    return new Set(fallback);
+  }
+}
+
+function persistFilterSet(storageKey: string, keys: ReadonlySet<string>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify([...keys]));
+  } catch {
+    /* noop */
+  }
+}
 
 const SEVERITY_STYLES = {
   critical: {
@@ -76,6 +127,7 @@ function resolveAlertVisualStyle(alert: AlertData) {
 }
 
 function isTrackAlarmItem(alert: AlertData): boolean {
+  if (isSystemAlarm(alert)) return false;
   return Boolean(alert.trackId?.trim()) && alert.type !== THIRD_PARTY_DETECT_ALERT_TYPE;
 }
 
@@ -83,13 +135,25 @@ function isVerifiedAlarmItem(alert: AlertData): boolean {
   return alert.alarmType !== "threat";
 }
 
-function alarmKindLabel(alert: AlertData): "威胁" | "告警" {
+function alarmKindLabel(alert: AlertData): string {
+  if (isSystemAlarm(alert)) return alert.title || alert.type || "系统";
   return isVerifiedAlarmItem(alert) ? "告警" : "威胁";
 }
 
-/** 列表时间：优先首次发现，避免 updateTime 每秒刷新跳动 */
+/** 列表时间：航迹类锁首次发现；系统告警用最新 timestamp（gRPC timestamp_ms） */
 function formatAlertDisplayTime(alert: AlertData): string {
-  const ms = alert.firstSeenTime;
+  const ms =
+    alert.source === "SystemAlarm"
+      ? (() => {
+          // timestamp 已是可读串时优先解析；否则 firstSeenTime（已对齐 timestamp_ms）
+          const raw = alert.timestamp?.trim() ?? "";
+          if (raw.includes("-") || raw.includes("T")) {
+            const d = new Date(raw.includes("T") ? raw : raw.replace(" ", "T"));
+            if (!Number.isNaN(d.getTime())) return d.getTime();
+          }
+          return alert.firstSeenTime ?? alert.lastUpdateTime ?? 0;
+        })()
+      : alert.firstSeenTime;
   if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) {
     const d = new Date(ms);
     if (!Number.isNaN(d.getTime())) {
@@ -99,7 +163,6 @@ function formatAlertDisplayTime(alert: AlertData): string {
   }
   const raw = alert.timestamp?.trim() ?? "";
   if (!raw) return "";
-  // ISO → 本地可读
   if (raw.includes("T")) {
     const d = new Date(raw);
     if (!Number.isNaN(d.getTime())) {
@@ -107,7 +170,6 @@ function formatAlertDisplayTime(alert: AlertData): string {
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     }
   }
-  // 已是 "yyyy-MM-dd hh:mm:ss(.zzz)" 则去掉毫秒，减少视觉抖动观感
   return raw.replace(/\.\d{1,3}$/, "");
 }
 
@@ -132,24 +194,139 @@ export function AlertPanel() {
   const { selectTrack, requestFlyTo } = useAppStore();
   const alerts = useAlertStore((s) => s.alerts);
   const removeAlarmItemsByTrackId = useAlertStore((s) => s.removeAlarmItemsByTrackId);
+  const removeAlarmById = useAlertStore((s) => s.removeAlarmById);
   const upsertAlarm = useAlertStore((s) => s.upsertAlarm);
   const shadowTracks = useTrackStore((s) => s.shadowTracks);
+  /** 多选过滤；默认全选，刷新后从 localStorage 恢复 */
+  const [selectedFilters, setSelectedFilters] = useState<Set<AlertFilterKey>>(() =>
+    loadPersistedFilterSet(ALERT_FILTER_STORAGE_KEY, ALL_ALERT_FILTER_KEYS, ALL_ALERT_FILTER_KEYS),
+  );
+  const [selectedSeverities, setSelectedSeverities] = useState<Set<AlertSeverityFilterKey>>(() =>
+    loadPersistedFilterSet(
+      ALERT_SEVERITY_STORAGE_KEY,
+      ALL_ALERT_SEVERITY_KEYS,
+      ALL_ALERT_SEVERITY_KEYS,
+    ),
+  );
+  const [selectedSystems, setSelectedSystems] = useState<Set<AlertSystemFilterKey>>(() =>
+    loadPersistedFilterSet(
+      ALERT_SYSTEM_STORAGE_KEY,
+      ALL_ALERT_SYSTEM_FILTER_KEYS,
+      ALL_ALERT_SYSTEM_FILTER_KEYS,
+    ),
+  );
+
+  useEffect(() => {
+    persistFilterSet(ALERT_FILTER_STORAGE_KEY, selectedFilters);
+  }, [selectedFilters]);
+
+  useEffect(() => {
+    persistFilterSet(ALERT_SEVERITY_STORAGE_KEY, selectedSeverities);
+  }, [selectedSeverities]);
+
+  useEffect(() => {
+    persistFilterSet(ALERT_SYSTEM_STORAGE_KEY, selectedSystems);
+  }, [selectedSystems]);
+
+  const allSelected = selectedFilters.size === ALL_ALERT_FILTER_KEYS.length;
+  const allSeveritySelected = selectedSeverities.size === ALL_ALERT_SEVERITY_KEYS.length;
+  const allSystemSelected = selectedSystems.size === ALL_ALERT_SYSTEM_FILTER_KEYS.length;
+
+  const toggleFilter = useCallback((key: AlertFilterKey) => {
+    setSelectedFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const toggleAllFilters = useCallback(() => {
+    setSelectedFilters((prev) => {
+      if (prev.size === ALL_ALERT_FILTER_KEYS.length) return new Set();
+      return new Set(ALL_ALERT_FILTER_KEYS);
+    });
+  }, []);
+
+  const toggleSeverity = useCallback((key: AlertSeverityFilterKey) => {
+    setSelectedSeverities((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const toggleAllSeverities = useCallback(() => {
+    setSelectedSeverities((prev) => {
+      if (prev.size === ALL_ALERT_SEVERITY_KEYS.length) return new Set();
+      return new Set(ALL_ALERT_SEVERITY_KEYS);
+    });
+  }, []);
+
+  const toggleSystem = useCallback((key: AlertSystemFilterKey) => {
+    setSelectedSystems((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const toggleAllSystems = useCallback(() => {
+    setSelectedSystems((prev) => {
+      if (prev.size === ALL_ALERT_SYSTEM_FILTER_KEYS.length) return new Set();
+      return new Set(ALL_ALERT_SYSTEM_FILTER_KEYS);
+    });
+  }, []);
 
   const resolveShowId = useCallback(
     (alarmTrackId: string) => resolveShowIdFromAlarmTrackId(alarmTrackId, shadowTracks),
     [shadowTracks],
   );
 
-  const allAlerts = alerts.map((a: AlertData) => ({
-    ...a,
-    severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
-  }));
+  const allAlerts = useMemo(() => {
+    return alerts
+      .filter((a) =>
+        alertMatchesFilters(a, selectedFilters, selectedSeverities, selectedSystems),
+      )
+      .map((a: AlertData) => ({
+        ...a,
+        severity: (a.severity in SEVERITY_STYLES ? a.severity : "info") as SeverityKey,
+      }))
+      .sort(compareAlertForAlarmCenter);
+  }, [alerts, selectedFilters, selectedSeverities, selectedSystems]);
 
   const criticalCount = allAlerts.filter((a) => a.severity === "critical").length;
 
   const handleDelete = useCallback(
     async (e: React.MouseEvent, alert: (typeof allAlerts)[number]) => {
       e.stopPropagation();
+
+      if (isSystemAlarm(alert)) {
+        const alarmId = alert.id?.trim();
+        const systemId = alert.systemId?.trim();
+        if (!alarmId || !systemId) {
+          toast.error("无法删除：系统告警缺少 id 或 systemId");
+          return;
+        }
+        try {
+          const result = await sendSystemAlarmCancelRequest({ alarmId, systemId });
+          if (!result.ok) {
+            toast.error("删除系统告警失败", {
+              description: result.error ?? result.message ?? "告警服务无响应",
+            });
+            return;
+          }
+          removeAlarmById(alarmId);
+          toast.success("已取消系统告警");
+        } catch (err) {
+          console.error("[AlertPanel] 取消系统告警失败:", err);
+          toast.error(`删除失败: ${err instanceof Error ? err.message : "未知错误"}`);
+        }
+        return;
+      }
+
       const trackId = alert.trackId?.trim();
       if (!trackId) {
         toast.error("无法删除：告警缺少 track_id");
@@ -171,7 +348,7 @@ export function AlertPanel() {
         toast.error(`删除失败: ${err instanceof Error ? err.message : "未知错误"}`);
       }
     },
-    [shadowTracks, removeAlarmItemsByTrackId],
+    [shadowTracks, removeAlarmItemsByTrackId, removeAlarmById],
   );
 
   const handleVerify = useCallback(
@@ -206,7 +383,12 @@ export function AlertPanel() {
         return;
       }
       try {
-        const result = await sendAlarmConfirmRequest(uniqueId);
+        const track =
+          resolveTrackFromAlarmTrackId(alert.trackId?.trim() || String(uniqueId), shadowTracks, alert) ??
+          getRenderCache().get(String(uniqueId)) ??
+          null;
+        const hint = track ? buildAlarmConfirmTrackHint(track) : null;
+        const result = await sendAlarmConfirmRequest(uniqueId, hint);
         if (!result.ok) {
           toast.error("确认告警失败", { description: result.message ?? "告警服务无响应" });
           return;
@@ -228,17 +410,175 @@ export function AlertPanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-white/[0.06] p-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-semibold tracking-wider text-nexus-text-secondary">
             告警中心
           </span>
-          <span className="text-[10px] font-medium text-red-400">
-            {criticalCount} 条严重
+          <span className="shrink-0 text-[10px] font-medium text-red-400">
+            {criticalCount} 条严重 · {allAlerts.length} 条
           </span>
+        </div>
+        <div className="mt-2 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="shrink-0 text-[10px] text-nexus-text-muted">类型</span>
+            <label
+              className={cn(
+                "inline-flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors",
+                allSelected
+                  ? "border-sky-500/50 bg-sky-500/15 text-sky-300"
+                  : "border-white/[0.08] bg-white/[0.03] text-nexus-text-muted hover:border-white/[0.14]",
+              )}
+            >
+              <input
+                type="checkbox"
+                className="size-3 accent-sky-400"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) {
+                    el.indeterminate =
+                      selectedFilters.size > 0 && selectedFilters.size < ALL_ALERT_FILTER_KEYS.length;
+                  }
+                }}
+                onChange={toggleAllFilters}
+              />
+              全部
+            </label>
+            {ALERT_FILTER_OPTIONS.map((opt) => {
+              const active = selectedFilters.has(opt.key);
+              return (
+                <label
+                  key={opt.key}
+                  className={cn(
+                    "inline-flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors",
+                    active
+                      ? "border-sky-500/50 bg-sky-500/15 text-sky-300"
+                      : "border-white/[0.08] bg-white/[0.03] text-nexus-text-muted hover:border-white/[0.14] hover:text-nexus-text-secondary",
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="size-3 accent-sky-400"
+                    checked={active}
+                    onChange={() => toggleFilter(opt.key)}
+                  />
+                  {opt.label}
+                </label>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="shrink-0 text-[10px] text-nexus-text-muted">级别</span>
+            <label
+              className={cn(
+                "inline-flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors",
+                allSeveritySelected
+                  ? "border-sky-500/50 bg-sky-500/15 text-sky-300"
+                  : "border-white/[0.08] bg-white/[0.03] text-nexus-text-muted hover:border-white/[0.14]",
+              )}
+            >
+              <input
+                type="checkbox"
+                className="size-3 accent-sky-400"
+                checked={allSeveritySelected}
+                ref={(el) => {
+                  if (el) {
+                    el.indeterminate =
+                      selectedSeverities.size > 0 &&
+                      selectedSeverities.size < ALL_ALERT_SEVERITY_KEYS.length;
+                  }
+                }}
+                onChange={toggleAllSeverities}
+              />
+              全部
+            </label>
+            {ALERT_SEVERITY_FILTER_OPTIONS.map((opt) => {
+              const active = selectedSeverities.has(opt.key);
+              const accent =
+                opt.key === "critical"
+                  ? active
+                    ? "border-red-500/50 bg-red-500/15 text-red-300"
+                    : "border-white/[0.08] bg-white/[0.03] text-nexus-text-muted hover:border-white/[0.14]"
+                  : opt.key === "warning"
+                    ? active
+                      ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
+                      : "border-white/[0.08] bg-white/[0.03] text-nexus-text-muted hover:border-white/[0.14]"
+                    : active
+                      ? "border-zinc-400/50 bg-zinc-500/15 text-zinc-300"
+                      : "border-white/[0.08] bg-white/[0.03] text-nexus-text-muted hover:border-white/[0.14]";
+              return (
+                <label
+                  key={opt.key}
+                  className={cn(
+                    "inline-flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors",
+                    accent,
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="size-3 accent-sky-400"
+                    checked={active}
+                    onChange={() => toggleSeverity(opt.key)}
+                  />
+                  {opt.label}
+                </label>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="shrink-0 text-[10px] text-nexus-text-muted">系统</span>
+            <label
+              className={cn(
+                "inline-flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors",
+                allSystemSelected
+                  ? "border-sky-500/50 bg-sky-500/15 text-sky-300"
+                  : "border-white/[0.08] bg-white/[0.03] text-nexus-text-muted hover:border-white/[0.14]",
+              )}
+            >
+              <input
+                type="checkbox"
+                className="size-3 accent-sky-400"
+                checked={allSystemSelected}
+                ref={(el) => {
+                  if (el) {
+                    el.indeterminate =
+                      selectedSystems.size > 0 &&
+                      selectedSystems.size < ALL_ALERT_SYSTEM_FILTER_KEYS.length;
+                  }
+                }}
+                onChange={toggleAllSystems}
+              />
+              全部
+            </label>
+            {ALERT_SYSTEM_FILTER_OPTIONS.map((opt) => {
+              const active = selectedSystems.has(opt.key);
+              return (
+                <label
+                  key={opt.key}
+                  className={cn(
+                    "inline-flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors",
+                    active
+                      ? "border-sky-500/50 bg-sky-500/15 text-sky-300"
+                      : "border-white/[0.08] bg-white/[0.03] text-nexus-text-muted hover:border-white/[0.14] hover:text-nexus-text-secondary",
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="size-3 accent-sky-400"
+                    checked={active}
+                    onChange={() => toggleSystem(opt.key)}
+                  />
+                  {opt.label}
+                </label>
+              );
+            })}
+          </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {allAlerts.length === 0 ? (
+          <p className="px-3 py-6 text-center text-[10px] text-nexus-text-muted">暂无告警</p>
+        ) : null}
         {allAlerts.map((alert) => {
           const style = resolveAlertVisualStyle(alert);
           const Icon = style.icon;
@@ -246,25 +586,27 @@ export function AlertPanel() {
           const fuseType = isTrackAlarmItem(alert)
             ? resolveAlertFuseType(alert, shadowTracks)
             : undefined;
-          const kindLabel = isTrackAlarmItem(alert) ? alarmKindLabel(alert) : style.label;
-          const kindColor =
-            kindLabel === "威胁"
-              ? "text-amber-400"
-              : kindLabel === "告警"
-                ? "text-emerald-400"
-                : style.labelColor;
-          const summaryLine = `目标：${summary.target}, 位置：${summary.position}, 区域：${summary.area}, 等级：${summary.level}`;
-          const alarmTrackId = isTrackAlarmItem(alert) ? alert.trackId?.trim() ?? null : null;
+          const kindLabel = isSystemAlarm(alert)
+            ? alarmKindLabel(alert)
+            : null;
+          const kindColor = isSystemAlarm(alert)
+            ? "text-violet-300"
+            : style.labelColor;
+          const targetNo =
+            (summary.target && summary.target !== "-"
+              ? summary.target
+              : alert.trackId?.trim() || alert.uniqueID?.trim() || "") || "-";
 
           return (
+            <AlertEvidenceHoverHost key={alert.id} content={alert.content}>
             <div
-              key={alert.id}
               className={cn(
                 "cursor-pointer border-b border-white/[0.03] border-l-2 px-2.5 py-2 transition-colors hover:bg-white/[0.03]",
                 style.border,
                 style.bg,
               )}
               onClick={() => {
+                if (isSystemAlarm(alert)) return;
                 if (alert.type === THIRD_PARTY_DETECT_ALERT_TYPE && alert.lat != null && alert.lng != null) {
                   requestFlyTo(alert.lat, alert.lng);
                   return;
@@ -278,37 +620,52 @@ export function AlertPanel() {
               }}
             >
               <div className="flex items-start gap-1.5">
-                <Icon size={13} className={cn("mt-0.5 shrink-0", style.iconColor)} />
+                {alert.severity === "critical" &&
+                alert.type !== THIRD_PARTY_DETECT_ALERT_TYPE ? (
+                  <span className="alert-critical-icon-breathe mt-0.5 inline-flex shrink-0 items-center justify-center">
+                    <Icon size={14} className="relative z-[1] text-[#ff3b3b]" aria-hidden />
+                  </span>
+                ) : (
+                  <Icon
+                    size={13}
+                    className={cn("mt-0.5 shrink-0", style.iconColor)}
+                    aria-hidden
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
-                      <span className={cn("shrink-0 text-[10px] font-bold", kindColor)}>
-                        {kindLabel}
-                      </span>
-                      {isTrackAlarmItem(alert) && kindLabel !== style.label && (
-                        <span className={cn("shrink-0 text-[10px] font-medium opacity-70", style.labelColor)}>
-                          {style.label}
+                      {isTrackAlarmItem(alert) ? (
+                        <span className="shrink-0 text-[10px] font-bold text-nexus-text-primary">
+                          目标
+                        </span>
+                      ) : (
+                        <span className={cn("shrink-0 text-[10px] font-bold", kindColor)}>
+                          {kindLabel}
                         </span>
                       )}
+                      <span className={cn("shrink-0 text-[10px] font-medium", style.labelColor)}>
+                        {style.label}
+                      </span>
                       <span className="truncate font-mono text-[10px] text-nexus-text-muted">
                         {formatAlertDisplayTime(alert)}
                       </span>
                     </div>
-                    {isTrackAlarmItem(alert) && (
-                      <div className="flex shrink-0 items-center gap-1">
-                        {!isVerifiedAlarmItem(alert) && (
-                          <button
-                            type="button"
-                            onClick={(e) => void handleConfirmAlarm(e, alert)}
-                            className={cn(
-                              ALERT_ACTION_BTN,
-                              "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:border-emerald-500/60 hover:bg-emerald-500/20",
-                            )}
-                          >
-                            <CheckCircle2 size={10} />
-                            确认告警
-                          </button>
-                        )}
+                    <div className="flex shrink-0 items-center gap-1">
+                      {isTrackAlarmItem(alert) && !isVerifiedAlarmItem(alert) && (
+                        <button
+                          type="button"
+                          onClick={(e) => void handleConfirmAlarm(e, alert)}
+                          className={cn(
+                            ALERT_ACTION_BTN,
+                            "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:border-emerald-500/60 hover:bg-emerald-500/20",
+                          )}
+                        >
+                          <CheckCircle2 size={10} />
+                          确认告警
+                        </button>
+                      )}
+                      {(isTrackAlarmItem(alert) || isSystemAlarm(alert)) && (
                         <button
                           type="button"
                           onClick={(e) => void handleDelete(e, alert)}
@@ -320,63 +677,81 @@ export function AlertPanel() {
                           <Trash2 size={10} />
                           删除
                         </button>
-                        <button
-                          type="button"
-                          onClick={(e) => void handleVerify(e, alert)}
-                          className={cn(
-                            ALERT_ACTION_BTN,
-                            "border-sky-500/40 bg-sky-500/10 text-sky-400 hover:border-sky-500/60 hover:bg-sky-500/20",
-                          )}
-                        >
-                          <ScanSearch size={10} />
-                          查证
-                        </button>
-                        {alarmTrackId ? (
-                          <AlertScreenshotThumb
-                            key={alarmTrackId}
-                            trackId={alarmTrackId}
-                            preferredUniqueId={alert.uniqueID}
-                          />
-                        ) : null}
-                      </div>
-                    )}
+                      )}
+                      {isTrackAlarmItem(alert) && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(e) => void handleVerify(e, alert)}
+                            className={cn(
+                              ALERT_ACTION_BTN,
+                              "border-sky-500/40 bg-sky-500/10 text-sky-400 hover:border-sky-500/60 hover:bg-sky-500/20",
+                            )}
+                          >
+                            <ScanSearch size={10} />
+                            查证
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
 
-                  <p
-                    className="mt-0.5 break-words text-[10px] leading-snug text-nexus-text-primary"
-                    title={summaryLine}
-                  >
-                    <span className="inline-flex flex-wrap items-center gap-0.5">
-                      目标：
-                      {fuseType === 0 || fuseType === 1 ? (
-                        <AlertTrackFuseIcon fuseType={fuseType} />
+                  {isSystemAlarm(alert) ? (
+                    <>
+                      <p
+                        className="mt-0.5 break-words text-[10px] leading-snug text-nexus-text-primary"
+                        title={alert.message}
+                      >
+                        {alert.message}
+                      </p>
+                      {alert.detail ? (
+                        <p
+                          className="mt-0.5 truncate text-[10px] text-nexus-text-secondary/80"
+                          title={alert.detail}
+                        >
+                          {alert.detail}
+                        </p>
                       ) : null}
-                      <span>{summary.target}</span>
-                    </span>
-                    , 位置：{summary.position}, 区域：{summary.area}, 等级：{summary.level}
-                  </p>
+                    </>
+                  ) : (
+                    <>
+                      <p
+                        className="mt-0.5 break-words text-[10px] leading-snug text-nexus-text-primary"
+                        title={`目标编号：${targetNo}, 位置：${summary.position}, 区域：${summary.area}`}
+                      >
+                        <span className="inline-flex flex-wrap items-center gap-0.5">
+                          目标编号：
+                          {fuseType === 0 || fuseType === 1 ? (
+                            <AlertTrackFuseIcon fuseType={fuseType} />
+                          ) : null}
+                          <span className="font-mono">{targetNo}</span>
+                        </span>
+                        , 位置：{summary.position}, 区域：{summary.area}
+                      </p>
 
-                  {isTrackAlarmItem(alert) && alert.content?.trim() ? (
-                    <p
-                      className="mt-0.5 break-words text-[10px] leading-snug text-nexus-text-secondary/90"
-                      title={alert.content}
-                    >
-                      证据链：{alert.content}
-                    </p>
-                  ) : null}
+                      {isTrackAlarmItem(alert) && alert.content?.trim() ? (
+                        <p
+                          className="mt-0.5 break-words text-[10px] leading-snug text-nexus-text-secondary/90"
+                          title={alarmEvidenceSummaryText(alert.content) || alert.content}
+                        >
+                          证据链：{alarmEvidenceSummaryText(alert.content) || alert.content}
+                        </p>
+                      ) : null}
 
-                  {alert.detail && (
-                    <p
-                      className="mt-0.5 truncate text-[10px] text-nexus-text-secondary/80"
-                      title={alert.detail}
-                    >
-                      {alert.detail}
-                    </p>
+                      {alert.detail && (
+                        <p
+                          className="mt-0.5 truncate text-[10px] text-nexus-text-secondary/80"
+                          title={alert.detail}
+                        >
+                          {alert.detail}
+                        </p>
+                      )}
+                    </>
                   )}
-
                 </div>
               </div>
             </div>
+            </AlertEvidenceHoverHost>
           );
         })}
       </div>

@@ -36,6 +36,7 @@ import { useTrackDisplayStore } from "@/stores/track-display-store";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import {
   countVisibleOptoDeviceLeaves,
+  isOptoDeviceCapabilityVisible,
   isOptoDeviceFovVisible,
   isOptoDeviceIconVisible,
 } from "@/lib/opto-device-layer-visibility";
@@ -47,7 +48,7 @@ import {
 } from "@/lib/drone-device-layer-visibility";
 import {
   countVisibleRadarDeviceLeaves,
-  isRadarDeviceCoverageVisible,
+  isRadarDeviceCapabilityVisible,
   isRadarDeviceIconVisible,
 } from "@/lib/radar-device-layer-visibility";
 import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
@@ -60,9 +61,16 @@ import {
 } from "@/lib/map-2d-basemap-layer-panel";
 import { useAppStore, isLayerPanelDynamicExpanded } from "@/stores/app-store";
 import { useDbAreaStore } from "@/stores/db-area-store";
+import { useDbAreaTargetStore } from "@/stores/db-area-target-store";
 import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
 import { mapAreaFallbackLabel } from "@/lib/area-table-serialize";
-import { countVisibleDbAreaLeaves, isDbAreaListable, isDbAreaLeafVisible, syncDbAreaLayerMasterFromLeaves } from "@/lib/db-area-panel-helpers";
+import { countVisibleDbAreaLeaves, countVisibleDbAreaTargetLeaves, isDbAreaListable, isDbAreaLeafVisible, syncDbAreaLayerMasterFromLeaves } from "@/lib/db-area-panel-helpers";
+import {
+  dbAreaTargetVisibilityKey,
+  isDbAreaTargetLeafVisible,
+  isDbAreaTargetListable,
+} from "@/lib/db-area-target-geometry";
+import { refetchDbAreaTargets } from "@/lib/refetch-db-area-targets";
 import { collectMapGisDroneRowsSync, isStandaloneMapGisDrone, mapGisDroneSyncSignature } from "@/lib/map-gis-drone-rows";
 import { useDroneStore } from "@/stores/drone-store";
 import {
@@ -106,10 +114,15 @@ export function LayerPanel() {
   const setGroupAllAreasVisible = useDbAreaStore((s) => s.setGroupAllAreasVisible);
   const setAllDrawableAreasVisible = useDbAreaStore((s) => s.setAllDrawableAreasVisible);
   const setAreaVisible = useDbAreaStore((s) => s.setAreaVisible);
+  const dbAreaTargetRows = useDbAreaTargetStore((s) => s.rows);
+  const dbAreaTargetVisibility = useDbAreaTargetStore((s) => s.targetVisibility);
+  const setTargetVisible = useDbAreaTargetStore((s) => s.setTargetVisible);
+  const setAllTargetsVisible = useDbAreaTargetStore((s) => s.setAllTargetsVisible);
 
   const optoDeviceVisibility = useOptoDeviceLayerStore((s) => s.deviceVisibility);
   const toggleOptoDeviceFov = useOptoDeviceLayerStore((s) => s.toggleDeviceFov);
   const toggleOptoDeviceIcon = useOptoDeviceLayerStore((s) => s.toggleDeviceIcon);
+  const toggleOptoDeviceCapability = useOptoDeviceLayerStore((s) => s.toggleDeviceCapability);
   const setOptoDeviceAllVisible = useOptoDeviceLayerStore((s) => s.setDeviceAllVisible);
   const droneDeviceVisibility = useDroneDeviceLayerStore((s) => s.deviceVisibility);
   const toggleDroneDevicePosition = useDroneDeviceLayerStore((s) => s.toggleDevicePosition);
@@ -118,8 +131,8 @@ export function LayerPanel() {
   const setDroneDeviceAllVisible = useDroneDeviceLayerStore((s) => s.setDeviceAllVisible);
   const syncDroneDeviceSns = useDroneDeviceLayerStore((s) => s.syncDroneSns);
   const radarDeviceVisibility = useRadarDeviceLayerStore((s) => s.deviceVisibility);
-  const toggleRadarDeviceCoverage = useRadarDeviceLayerStore((s) => s.toggleDeviceCoverage);
   const toggleRadarDeviceIcon = useRadarDeviceLayerStore((s) => s.toggleDeviceIcon);
+  const toggleRadarDeviceCapability = useRadarDeviceLayerStore((s) => s.toggleDeviceCapability);
   const setRadarDeviceAllVisible = useRadarDeviceLayerStore((s) => s.setDeviceAllVisible);
   const syncRadarDeviceIds = useRadarDeviceLayerStore((s) => s.syncRadarIds);
   const cameraMenuRows = useMapGisCameraMenuStore((s) => s.rows);
@@ -199,7 +212,6 @@ export function LayerPanel() {
 
   const trackSubtypeVisible = useTrackDisplayStore((s) => s.trackSubtypeVisible);
   const airFusionSubtypeVisible = useTrackDisplayStore((s) => s.airFusionSubtypeVisible);
-  const toggleTrackSubtype = useTrackDisplayStore((s) => s.toggleTrackSubtype);
   const toggleAirFusionSubtype = useTrackDisplayStore((s) => s.toggleAirFusionSubtype);
   const setAllTrackSubtypesVisible = useTrackDisplayStore((s) => s.setAllTrackSubtypesVisible);
   const setTrackSubtypeVisible = useTrackDisplayStore((s) => s.setTrackSubtypeVisible);
@@ -252,7 +264,15 @@ export function LayerPanel() {
   useEffect(() => {
     const flags = collectTargetLayerLeafFlags(true, trackSubtypeVisible, airFusionSubtypeVisible);
     const anyOn = flags.some(Boolean);
-    syncMasterOffWhenAllLeavesOff(tracksMasterOn, anyOn, (on) => setLayerVisibility(LYR_TRACKS, on));
+    // 与区域图层一致：有子项开 → 开母开关；全关 → 关母开关。
+    // 否则「全部目标」关后点开单个子项时，母开关仍关，地图过滤为空，且 UI 因母关显示为关。
+    if (anyOn && !tracksMasterOn) {
+      setLayerVisibility(LYR_TRACKS, true);
+    } else {
+      syncMasterOffWhenAllLeavesOff(tracksMasterOn, anyOn, (on) =>
+        setLayerVisibility(LYR_TRACKS, on),
+      );
+    }
   }, [
     trackSubtypeVisible,
     airFusionSubtypeVisible,
@@ -268,8 +288,8 @@ export function LayerPanel() {
       radarPanelDevices.map((d) => d.id),
       radarDeviceVisibility,
       (id) =>
-        isRadarDeviceCoverageVisible(id, radarDeviceVisibility) ||
-        isRadarDeviceIconVisible(id, radarDeviceVisibility),
+        isRadarDeviceIconVisible(id, radarDeviceVisibility) ||
+        isRadarDeviceCapabilityVisible(id, radarDeviceVisibility),
       (on) => setLayerVisibility(LYR_RADAR_COVERAGE, on),
     );
   }, [
@@ -315,7 +335,8 @@ export function LayerPanel() {
       optoDeviceVisibility,
       (id) =>
         isOptoDeviceFovVisible(id, optoDeviceVisibility) ||
-        isOptoDeviceIconVisible(id, optoDeviceVisibility),
+        isOptoDeviceIconVisible(id, optoDeviceVisibility) ||
+        isOptoDeviceCapabilityVisible(id, optoDeviceVisibility),
       (on) => setLayerVisibility(LYR_OPTO_FOV, on),
     );
   }, [
@@ -328,13 +349,27 @@ export function LayerPanel() {
   ]);
 
   useEffect(() => {
+    if (!openDbAreaSection) return;
+    void refetchDbAreaTargets();
+  }, [openDbAreaSection]);
+
+  useEffect(() => {
     syncDbAreaLayerMasterFromLeaves(
       dbAreaMasterOn,
       dbAreaRows,
       dbAreaVisibility,
       (on) => setLayerVisibility(LYR_DB_AREAS, on),
+      dbAreaTargetRows,
+      dbAreaTargetVisibility,
     );
-  }, [dbAreaRows, dbAreaVisibility, dbAreaMasterOn, setLayerVisibility]);
+  }, [
+    dbAreaRows,
+    dbAreaVisibility,
+    dbAreaTargetRows,
+    dbAreaTargetVisibility,
+    dbAreaMasterOn,
+    setLayerVisibility,
+  ]);
 
   const toggleVectorGroup = useCallback(
     (gk: string) => toggleLayerPanelDynamic("vectorGroup", gk),
@@ -370,11 +405,22 @@ export function LayerPanel() {
   );
 
   const dbAreaMasterVisibility = useMemo(() => {
-    const flags = dbAreaRows
+    const areaFlags = dbAreaRows
       .filter(isDbAreaListable)
       .map((r) => isDbAreaLeafVisible(r.group_id, r.area_id, dbAreaVisibility));
-    return aggregatePanelVisibility(flags);
-  }, [dbAreaRows, dbAreaVisibility]);
+    const targetFlags = dbAreaTargetRows
+      .filter(isDbAreaTargetListable)
+      .map((r) => isDbAreaTargetLeafVisible(r.id, dbAreaTargetVisibility));
+    return aggregatePanelVisibility([...areaFlags, ...targetFlags]);
+  }, [dbAreaRows, dbAreaVisibility, dbAreaTargetRows, dbAreaTargetVisibility]);
+
+  const fixedTargetGroupVisibility = useMemo(() => {
+    const list = dbAreaTargetRows.filter(isDbAreaTargetListable);
+    if (list.length === 0) return "all" as const;
+    return aggregatePanelVisibility(
+      list.map((r) => isDbAreaTargetLeafVisible(r.id, dbAreaTargetVisibility)),
+    );
+  }, [dbAreaTargetRows, dbAreaTargetVisibility]);
 
   const basemapLocalVisibility = useMemo(() => {
     const vectorFlags = basemapVectorLayers.map(
@@ -422,15 +468,22 @@ export function LayerPanel() {
 
   const toggleTargetMasterVisibility = useCallback(() => {
     const turnOn = parentToggleTurnOn(targetMasterVisibility);
-    setLayerVisibility(LYR_TRACKS, turnOn);
-    setAllTrackSubtypesVisible(turnOn);
+    if (turnOn) {
+      // 先开母开关再开子项，避免「子项全 false」时被 sync 立刻关掉母开关
+      setLayerVisibility(LYR_TRACKS, true);
+      setAllTrackSubtypesVisible(true);
+    } else {
+      // 先关子项再关母开关，避免 sync「有子项开→强开母开关」把关闭冲掉
+      setAllTrackSubtypesVisible(false);
+      setLayerVisibility(LYR_TRACKS, false);
+    }
   }, [targetMasterVisibility, setLayerVisibility, setAllTrackSubtypesVisible]);
 
   const radarLayerVisibility = useMemo(() => {
     const flags: boolean[] = [];
     for (const dev of radarPanelDevices) {
-      flags.push(isRadarDeviceCoverageVisible(dev.id, radarDeviceVisibility));
       flags.push(isRadarDeviceIconVisible(dev.id, radarDeviceVisibility));
+      flags.push(isRadarDeviceCapabilityVisible(dev.id, radarDeviceVisibility));
     }
     return aggregatePanelVisibility(flags.length > 0 ? flags : [true]);
   }, [radarPanelDevices, radarDeviceVisibility]);
@@ -452,6 +505,7 @@ export function LayerPanel() {
     for (const dev of optoCameraDevices) {
       flags.push(isOptoDeviceFovVisible(dev.id, optoDeviceVisibility));
       flags.push(isOptoDeviceIconVisible(dev.id, optoDeviceVisibility));
+      flags.push(isOptoDeviceCapabilityVisible(dev.id, optoDeviceVisibility));
     }
     return aggregatePanelVisibility(flags.length > 0 ? flags : [true]);
   }, [optoCameraDevices, optoDeviceVisibility]);
@@ -482,8 +536,8 @@ export function LayerPanel() {
   const radarDeviceVisibilityState = useCallback(
     (devId: string) =>
       aggregatePanelVisibility([
-        isRadarDeviceCoverageVisible(devId, radarDeviceVisibility),
         isRadarDeviceIconVisible(devId, radarDeviceVisibility),
+        isRadarDeviceCapabilityVisible(devId, radarDeviceVisibility),
       ]),
     [radarDeviceVisibility],
   );
@@ -507,6 +561,7 @@ export function LayerPanel() {
       aggregatePanelVisibility([
         isOptoDeviceFovVisible(devId, optoDeviceVisibility),
         isOptoDeviceIconVisible(devId, optoDeviceVisibility),
+        isOptoDeviceCapabilityVisible(devId, optoDeviceVisibility),
       ]),
     [optoDeviceVisibility],
   );
@@ -515,7 +570,13 @@ export function LayerPanel() {
     const turnOn = parentToggleTurnOn(dbAreaMasterVisibility);
     setLayerVisibility(LYR_DB_AREAS, turnOn);
     setAllDrawableAreasVisible(turnOn);
-  }, [dbAreaMasterVisibility, setLayerVisibility, setAllDrawableAreasVisible]);
+    setAllTargetsVisible(turnOn);
+  }, [
+    dbAreaMasterVisibility,
+    setLayerVisibility,
+    setAllDrawableAreasVisible,
+    setAllTargetsVisible,
+  ]);
 
   const toggleDbAreaGroupVisibility = useCallback(
     (groupId: number, gVis: PanelTreeVisibilityState) => {
@@ -533,6 +594,21 @@ export function LayerPanel() {
       if (next && !dbAreaMasterOn) setLayerVisibility(LYR_DB_AREAS, true);
     },
     [setAreaVisible, dbAreaMasterOn, setLayerVisibility],
+  );
+
+  const toggleFixedTargetGroupVisibility = useCallback(() => {
+    const turnOn = parentToggleTurnOn(fixedTargetGroupVisibility);
+    setAllTargetsVisible(turnOn);
+    if (turnOn && !dbAreaMasterOn) setLayerVisibility(LYR_DB_AREAS, true);
+  }, [fixedTargetGroupVisibility, setAllTargetsVisible, dbAreaMasterOn, setLayerVisibility]);
+
+  const toggleFixedTargetLeafVisibility = useCallback(
+    (id: string, currentlyVisible: boolean) => {
+      const next = !currentlyVisible;
+      setTargetVisible(id, next);
+      if (next && !dbAreaMasterOn) setLayerVisibility(LYR_DB_AREAS, true);
+    },
+    [setTargetVisible, dbAreaMasterOn, setLayerVisibility],
   );
 
   const groupDisplayName = useCallback(
@@ -557,6 +633,11 @@ export function LayerPanel() {
       airFusionSubtypeVisible,
     );
     n += countVisibleDbAreaLeaves(dbAreaRows, dbAreaVisibility, dbAreaMasterOn);
+    n += countVisibleDbAreaTargetLeaves(
+      dbAreaTargetRows,
+      dbAreaTargetVisibility,
+      dbAreaMasterOn,
+    );
     n += countVisibleOptoDeviceLeaves(
       optoCameraDevices.map((c) => c.id),
       optoDeviceVisibility,
@@ -585,6 +666,8 @@ export function LayerPanel() {
     airFusionSubtypeVisible,
     dbAreaRows,
     dbAreaVisibility,
+    dbAreaTargetRows,
+    dbAreaTargetVisibility,
     dbAreaMasterOn,
     optoCameraDevices,
     optoDeviceVisibility,
@@ -725,7 +808,6 @@ export function LayerPanel() {
                   ? TRACK_LAYER_KEYS_ORDERED.map((key) => {
                       const on = trackSubtypeVisible[key] !== false;
                       const showAirChildren = key === "fuse_air";
-                      const subtypeDisabled = !tracksMasterOn;
                       if (showAirChildren) {
                         const subOpen = isLayerPanelDynamicExpanded(
                           layerPanelExpand,
@@ -749,28 +831,46 @@ export function LayerPanel() {
                                 const turnOn = parentToggleTurnOn(fuseAirVis);
                                 setTrackSubtypeVisible(key, turnOn);
                                 setAirFusionSubtypesVisible(turnOn);
+                                if (turnOn) setLayerVisibility(LYR_TRACKS, true);
                               }}
-                              disabled={subtypeDisabled}
                             />
                             {subOpen ? (
-                              <div className={cn((!on || subtypeDisabled) && "opacity-75")}>
+                              <div className={cn(!on && "opacity-75")}>
                                 <PanelTreeToggleRow
                                   depth={2}
                                   visibility={visibilityFromBoolean(
                                     airFusionSubtypeVisible.uav !== false,
                                   )}
-                                  onToggle={() => toggleAirFusionSubtype("uav")}
+                                  onToggle={() => {
+                                    const turnOn = airFusionSubtypeVisible.uav === false;
+                                    toggleAirFusionSubtype("uav");
+                                    if (turnOn) {
+                                      setLayerVisibility(LYR_TRACKS, true);
+                                      if (trackSubtypeVisible.fuse_air === false) {
+                                        setTrackSubtypeVisible("fuse_air", true);
+                                      }
+                                    }
+                                  }}
                                   label="无人机"
-                                  disabled={!on || subtypeDisabled}
+                                  disabled={!on}
                                 />
                                 <PanelTreeToggleRow
                                   depth={2}
                                   visibility={visibilityFromBoolean(
                                     airFusionSubtypeVisible.bird !== false,
                                   )}
-                                  onToggle={() => toggleAirFusionSubtype("bird")}
+                                  onToggle={() => {
+                                    const turnOn = airFusionSubtypeVisible.bird === false;
+                                    toggleAirFusionSubtype("bird");
+                                    if (turnOn) {
+                                      setLayerVisibility(LYR_TRACKS, true);
+                                      if (trackSubtypeVisible.fuse_air === false) {
+                                        setTrackSubtypeVisible("fuse_air", true);
+                                      }
+                                    }
+                                  }}
                                   label="鸟"
-                                  disabled={!on || subtypeDisabled}
+                                  disabled={!on}
                                 />
                               </div>
                             ) : null}
@@ -786,9 +886,12 @@ export function LayerPanel() {
                             key,
                             trackSubtypeVisible,
                           )}
-                          onToggle={() => toggleTrackSubtype(key)}
+                          onToggle={() => {
+                            const turnOn = !on;
+                            setTrackSubtypeVisible(key, turnOn);
+                            if (turnOn) setLayerVisibility(LYR_TRACKS, true);
+                          }}
                           label={TRACK_SUBTYPE_LABELS[key]}
-                          disabled={subtypeDisabled}
                         />
                       );
                     })
@@ -857,18 +960,18 @@ export function LayerPanel() {
                                       <PanelTreeToggleRow
                                         depth={2}
                                         visibility={visibilityFromBoolean(
-                                          isRadarDeviceCoverageVisible(dev.id, radarDeviceVisibility),
-                                        )}
-                                        onToggle={() => toggleRadarDeviceCoverage(dev.id)}
-                                        label="距离环"
-                                      />
-                                      <PanelTreeToggleRow
-                                        depth={2}
-                                        visibility={visibilityFromBoolean(
                                           isRadarDeviceIconVisible(dev.id, radarDeviceVisibility),
                                         )}
                                         onToggle={() => toggleRadarDeviceIcon(dev.id)}
                                         label="GIS 图标"
+                                      />
+                                      <PanelTreeToggleRow
+                                        depth={2}
+                                        visibility={visibilityFromBoolean(
+                                          isRadarDeviceCapabilityVisible(dev.id, radarDeviceVisibility),
+                                        )}
+                                        onToggle={() => toggleRadarDeviceCapability(dev.id)}
+                                        label="能力"
                                       />
                                     </>
                                   ) : null}
@@ -1050,6 +1153,14 @@ export function LayerPanel() {
                                       onToggle={() => toggleOptoDeviceIcon(dev.id)}
                                       label="GIS 图标"
                                     />
+                                    <PanelTreeToggleRow
+                                      depth={2}
+                                      visibility={visibilityFromBoolean(
+                                        isOptoDeviceCapabilityVisible(dev.id, optoDeviceVisibility),
+                                      )}
+                                      onToggle={() => toggleOptoDeviceCapability(dev.id)}
+                                      label="能力"
+                                    />
                                   </>
                                 ) : null}
                               </div>
@@ -1125,6 +1236,47 @@ export function LayerPanel() {
                       );
                     })
                   : null}
+                {/* 固定目标：与「全部区域」同级展示，不依赖展开树，避免看不到 */}
+                <div>
+                  <PanelTreeBranchRow
+                    depth={0}
+                    open={isLayerPanelDynamicExpanded(
+                      layerPanelExpand,
+                      "dbGroup",
+                      "fixed-targets",
+                    )}
+                    onToggleOpen={() => toggleLayerPanelDynamic("dbGroup", "fixed-targets")}
+                    label="固定目标"
+                    visibility={fixedTargetGroupVisibility}
+                    onToggleVisible={toggleFixedTargetGroupVisibility}
+                  />
+                  {isLayerPanelDynamicExpanded(layerPanelExpand, "dbGroup", "fixed-targets") ? (
+                    dbAreaTargetRows.filter(isDbAreaTargetListable).length === 0 ? (
+                      <div
+                        className="border-b border-nexus-border/30 py-2 pr-2 text-[10px] leading-relaxed text-nexus-text-muted last:border-b-0"
+                        style={{ paddingLeft: panelTreePaddingLeft(1) }}
+                      >
+                        暂无固定目标（area_table_target）
+                      </div>
+                    ) : (
+                      dbAreaTargetRows.filter(isDbAreaTargetListable).map((r) => {
+                        const v = isDbAreaTargetLeafVisible(r.id, dbAreaTargetVisibility);
+                        const label =
+                          (r.area_name && String(r.area_name).trim()) ||
+                          `固定目标-${r.target_id}`;
+                        return (
+                          <PanelTreeToggleRow
+                            key={dbAreaTargetVisibilityKey(r.id)}
+                            depth={1}
+                            visibility={visibilityFromBoolean(v)}
+                            onToggle={() => toggleFixedTargetLeafVisibility(r.id, v)}
+                            label={label}
+                          />
+                        );
+                      })
+                    )
+                  ) : null}
+                </div>
               </PanelTreeGroup>
             </div>
           ) : null}

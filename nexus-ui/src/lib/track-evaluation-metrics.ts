@@ -14,6 +14,13 @@ import {
   listAirFusionRadars,
   parseAirFusionSources,
 } from "@/lib/air-fusion-source";
+import {
+  fusionSourceSeriesKey,
+  fusionSourceSeriesLabel,
+  listFusionEvalSources,
+  parseFusionSourcesFromTrackOriginal,
+  pickFusionReferenceSource,
+} from "@/lib/fusion-source-catalog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -145,6 +152,16 @@ export interface AirFusionStabilityDurationEntry {
   selfReportDuration: number;
 }
 
+export interface SeaFusionTrackCoverageByAisItem {
+  aisId: string;
+  coverage: number;
+}
+
+export interface AirFusionTrackCoverageBySelfReportItem {
+  selfReportId: string;
+  coverage: number;
+}
+
 export interface SeaMaxTrackingDurationItem {
   aisId: string;
   maxDuration: number;
@@ -185,17 +202,33 @@ export interface AirChangeBatchCountItem {
   changeBatchCount: number;
 }
 
+export interface TrackErrorSourceStat {
+  key: string;
+  label: string;
+  avg: number | null;
+  rmse: number | null;
+  errors: number[];
+}
+
 export interface TrackErrorStatsItem {
   id: string;
   fusionAvg: number | null;
   fusionRmse: number | null;
+  /** @deprecated 兼容旧图：对应 sourceErrors[0] */
   radar1Avg: number | null;
   radar1Rmse: number | null;
+  /** @deprecated 兼容旧图：对应 sourceErrors[1] */
   radar2Avg: number | null;
   radar2Rmse: number | null;
+  radar1Key?: string;
+  radar1Name?: string;
+  radar2Key?: string;
+  radar2Name?: string;
   fusionErrors: number[];
   radar1Errors: number[];
   radar2Errors: number[];
+  /** 非 AIS 航迹源误差（鹏飞/码头/靖子头/船自报位等） */
+  sourceErrors: TrackErrorSourceStat[];
 }
 
 export interface TrackEvalMetricsResult {
@@ -217,6 +250,11 @@ export interface TrackEvalMetricsResult {
   airFusionStabilityDurationAvg: number | null;
   seaFusionStabilityDurationByAis: SeaFusionStabilityByAisItem[];
   airFusionStabilityDurationBySelfReport: AirFusionStabilityBySelfReportItem[];
+  /** 融合航迹稳定性：按融合批号断段累计 / 参考源时长 */
+  seaFusionTrackCoverageAvg: number | null;
+  airFusionTrackCoverageAvg: number | null;
+  seaFusionTrackCoverageByAis: SeaFusionTrackCoverageByAisItem[];
+  airFusionTrackCoverageBySelfReport: AirFusionTrackCoverageBySelfReportItem[];
   seaMaxTrackingDuration: SeaMaxTrackingDurationItem[];
   airMaxTrackingDuration: AirMaxTrackingDurationItem[];
   seaMaxTrackingDurationAvg: number | null;
@@ -350,6 +388,10 @@ function emptyTrackEvalMetricsResult(): TrackEvalMetricsResult {
     airFusionStabilityDurationAvg: null,
     seaFusionStabilityDurationByAis: [],
     airFusionStabilityDurationBySelfReport: [],
+    seaFusionTrackCoverageAvg: null,
+    airFusionTrackCoverageAvg: null,
+    seaFusionTrackCoverageByAis: [],
+    airFusionTrackCoverageBySelfReport: [],
     seaMaxTrackingDuration: [],
     airMaxTrackingDuration: [],
     seaMaxTrackingDurationAvg: null,
@@ -782,6 +824,10 @@ function calculateTrackingStability(
   | "airFusionStabilityDurationAvg"
   | "seaFusionStabilityDurationByAis"
   | "airFusionStabilityDurationBySelfReport"
+  | "seaFusionTrackCoverageAvg"
+  | "airFusionTrackCoverageAvg"
+  | "seaFusionTrackCoverageByAis"
+  | "airFusionTrackCoverageBySelfReport"
   | "seaMaxTrackingDuration"
   | "airMaxTrackingDuration"
   | "seaMaxTrackingDurationAvg"
@@ -797,10 +843,18 @@ function calculateTrackingStability(
 > {
   const pointStability = calculateTrackingStabilityPoints(features);
   const duration = calculateTrackingStabilityDuration(features);
+  const fusionCoverage = calculateFusionTrackCoverage(features);
   const maxDuration = calculateMaxTrackingDuration(features, radarChannels);
   const breakCounts = calculateBreakCount(features);
   const changeBatch = calculateChangeBatchCount(features, radarChannels);
-  return { ...pointStability, ...duration, ...maxDuration, ...breakCounts, ...changeBatch };
+  return {
+    ...pointStability,
+    ...duration,
+    ...fusionCoverage,
+    ...maxDuration,
+    ...breakCounts,
+    ...changeBatch,
+  };
 }
 
 function calculateTrackingStabilityPoints(
@@ -911,6 +965,44 @@ function calculateTrackingStabilityPoints(
   };
 }
 
+function clamp01(v: number): number {
+  if (Number.isNaN(v)) return 0;
+  return Math.max(0, Math.min(v, 1));
+}
+
+/**
+ * 跟踪稳定性（时长）覆盖率：
+ * 按时间排序后，对「连续有雷达关联」的各段分别累计 (末−首)，再 / 参考源整段时长。
+ * 中间无雷达的空洞不计入分子，避免首末跨度虚高成 100%。
+ */
+function coveredRadarDurationMs(
+  samples: Array<{ timestamp: number; hasRadar: boolean }>,
+): { refDuration: number; coveredDuration: number } {
+  if (samples.length === 0) return { refDuration: 0, coveredDuration: 0 };
+  const sorted = [...samples].sort((a, b) => a.timestamp - b.timestamp);
+  const refDuration = sorted[sorted.length - 1]!.timestamp - sorted[0]!.timestamp;
+  let coveredDuration = 0;
+  let runStart = -1;
+  let runEnd = -1;
+  const flush = () => {
+    if (runStart >= 0 && runEnd >= runStart) {
+      coveredDuration += runEnd - runStart;
+    }
+    runStart = -1;
+    runEnd = -1;
+  };
+  for (const s of sorted) {
+    if (s.hasRadar) {
+      if (runStart < 0) runStart = s.timestamp;
+      runEnd = s.timestamp;
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return { refDuration, coveredDuration };
+}
+
 function calculateTrackingStabilityDuration(
   features: EvalTrackFeature[],
 ): Pick<
@@ -926,8 +1018,7 @@ function calculateTrackingStabilityDuration(
   const airFusionStabilityDuration = new Map<number | string, AirFusionStabilityDurationEntry>();
 
   const seaFusionTracks = features.filter((f) => f.sensorId === 0);
-  const seaAisTimeRanges = new Map<string, { min: number; max: number }>();
-  const seaAisRadarTimeRanges = new Map<string, { min: number; max: number }>();
+  const seaAisSamples = new Map<string, Array<{ timestamp: number; hasRadar: boolean }>>();
   const seaAisToFusionTrackIds = new Map<string, Set<number | string>>();
 
   seaFusionTracks.forEach((f) => {
@@ -939,59 +1030,42 @@ function calculateTrackingStabilityDuration(
     const timestamp = getFeatureTimestamp(f);
     if (timestamp === 0) return;
 
-    if (!seaAisTimeRanges.has(aisIdStr)) {
-      seaAisTimeRanges.set(aisIdStr, { min: timestamp, max: timestamp });
-    } else {
-      const range = seaAisTimeRanges.get(aisIdStr)!;
-      range.min = Math.min(range.min, timestamp);
-      range.max = Math.max(range.max, timestamp);
-    }
     if (!seaAisToFusionTrackIds.has(aisIdStr)) {
       seaAisToFusionTrackIds.set(aisIdStr, new Set());
     }
     seaAisToFusionTrackIds.get(aisIdStr)!.add(fusionTrackId);
 
-    const hasYuanYao = isValidOriginalId(originalData.original_track_id1);
-    const hasJingZiTou = isValidOriginalId(originalData.original_track_id3);
-    if (hasYuanYao || hasJingZiTou) {
-      if (!seaAisRadarTimeRanges.has(aisIdStr)) {
-        seaAisRadarTimeRanges.set(aisIdStr, { min: timestamp, max: timestamp });
-      } else {
-        const range = seaAisRadarTimeRanges.get(aisIdStr)!;
-        range.min = Math.min(range.min, timestamp);
-        range.max = Math.max(range.max, timestamp);
-      }
-    }
+    const hasRadar =
+      isValidOriginalId(originalData.original_track_id1) ||
+      isValidOriginalId(originalData.original_track_id3);
+    if (!seaAisSamples.has(aisIdStr)) seaAisSamples.set(aisIdStr, []);
+    seaAisSamples.get(aisIdStr)!.push({ timestamp, hasRadar });
   });
 
   const seaDurationStabilityByAisData: SeaFusionStabilityByAisItem[] = [];
   let seaDurationStabilitySum = 0;
   let seaDurationStabilityCount = 0;
-  seaAisTimeRanges.forEach((aisRange, aisIdStr) => {
-    const aisDuration = aisRange.max - aisRange.min;
-    const radarRange = seaAisRadarTimeRanges.get(aisIdStr);
-    if (radarRange && aisDuration > 0) {
-      const radarDuration = radarRange.max - radarRange.min;
-      const stability = aisDuration > 0 ? radarDuration / aisDuration : 0;
-      const stabilityValue = Number.isNaN(stability) ? 0 : Math.max(0, Math.min(stability, 1));
-      const fusionTrackIds = seaAisToFusionTrackIds.get(aisIdStr);
-      fusionTrackIds?.forEach((fusionTrackId) => {
-        seaFusionStabilityDuration.set(fusionTrackId, {
-          stability: stabilityValue,
-          fusionDuration: radarDuration,
-          aisDuration,
-        });
+  seaAisSamples.forEach((samples, aisIdStr) => {
+    const { refDuration: aisDuration, coveredDuration } = coveredRadarDurationMs(samples);
+    if (aisDuration <= 0) return;
+    if (!samples.some((s) => s.hasRadar)) return;
+    const stabilityValue = clamp01(coveredDuration / aisDuration);
+    const fusionTrackIds = seaAisToFusionTrackIds.get(aisIdStr);
+    fusionTrackIds?.forEach((fusionTrackId) => {
+      seaFusionStabilityDuration.set(fusionTrackId, {
+        stability: stabilityValue,
+        fusionDuration: coveredDuration,
+        aisDuration,
       });
-      seaDurationStabilityByAisData.push({ aisId: aisIdStr, stability: stabilityValue });
-      seaDurationStabilitySum += stabilityValue;
-      seaDurationStabilityCount++;
-    }
+    });
+    seaDurationStabilityByAisData.push({ aisId: aisIdStr, stability: stabilityValue });
+    seaDurationStabilitySum += stabilityValue;
+    seaDurationStabilityCount++;
   });
   seaDurationStabilityByAisData.sort((a, b) => b.stability - a.stability);
 
   const airFusionTracks = features.filter((f) => f.sensorId === 6);
-  const airSelfReportTimeRanges = new Map<string, { min: number; max: number }>();
-  const airSelfReportRadarTimeRanges = new Map<string, { min: number; max: number }>();
+  const airSelfReportSamples = new Map<string, Array<{ timestamp: number; hasRadar: boolean }>>();
   const airSelfReportToFusionTrackIds = new Map<string, Set<number | string>>();
 
   airFusionTracks.forEach((f) => {
@@ -1003,54 +1077,38 @@ function calculateTrackingStabilityDuration(
     const timestamp = getFeatureTimestamp(f);
     if (timestamp === 0) return;
 
-    if (!airSelfReportTimeRanges.has(selfReportIdStr)) {
-      airSelfReportTimeRanges.set(selfReportIdStr, { min: timestamp, max: timestamp });
-    } else {
-      const range = airSelfReportTimeRanges.get(selfReportIdStr)!;
-      range.min = Math.min(range.min, timestamp);
-      range.max = Math.max(range.max, timestamp);
-    }
     if (!airSelfReportToFusionTrackIds.has(selfReportIdStr)) {
       airSelfReportToFusionTrackIds.set(selfReportIdStr, new Set());
     }
     airSelfReportToFusionTrackIds.get(selfReportIdStr)!.add(fusionTrackId);
 
-    if (hasAirRadarBesidesSelfReport(sources)) {
-      if (!airSelfReportRadarTimeRanges.has(selfReportIdStr)) {
-        airSelfReportRadarTimeRanges.set(selfReportIdStr, { min: timestamp, max: timestamp });
-      } else {
-        const range = airSelfReportRadarTimeRanges.get(selfReportIdStr)!;
-        range.min = Math.min(range.min, timestamp);
-        range.max = Math.max(range.max, timestamp);
-      }
-    }
+    const hasRadar = hasAirRadarBesidesSelfReport(sources);
+    if (!airSelfReportSamples.has(selfReportIdStr)) airSelfReportSamples.set(selfReportIdStr, []);
+    airSelfReportSamples.get(selfReportIdStr)!.push({ timestamp, hasRadar });
   });
 
   const airDurationStabilityBySelfReportData: AirFusionStabilityBySelfReportItem[] = [];
   let airDurationStabilitySum = 0;
   let airDurationStabilityCount = 0;
-  airSelfReportTimeRanges.forEach((selfReportRange, selfReportIdStr) => {
-    const selfReportDuration = selfReportRange.max - selfReportRange.min;
-    const radarRange = airSelfReportRadarTimeRanges.get(selfReportIdStr);
-    if (radarRange && selfReportDuration > 0) {
-      const radarDuration = radarRange.max - radarRange.min;
-      const stability = selfReportDuration > 0 ? radarDuration / selfReportDuration : 0;
-      const stabilityValue = Number.isNaN(stability) ? 0 : Math.max(0, Math.min(stability, 1));
-      const fusionTrackIds = airSelfReportToFusionTrackIds.get(selfReportIdStr);
-      fusionTrackIds?.forEach((fusionTrackId) => {
-        airFusionStabilityDuration.set(fusionTrackId, {
-          stability: stabilityValue,
-          fusionDuration: radarDuration,
-          selfReportDuration,
-        });
-      });
-      airDurationStabilityBySelfReportData.push({
-        selfReportId: selfReportIdStr,
+  airSelfReportSamples.forEach((samples, selfReportIdStr) => {
+    const { refDuration: selfReportDuration, coveredDuration } = coveredRadarDurationMs(samples);
+    if (selfReportDuration <= 0) return;
+    if (!samples.some((s) => s.hasRadar)) return;
+    const stabilityValue = clamp01(coveredDuration / selfReportDuration);
+    const fusionTrackIds = airSelfReportToFusionTrackIds.get(selfReportIdStr);
+    fusionTrackIds?.forEach((fusionTrackId) => {
+      airFusionStabilityDuration.set(fusionTrackId, {
         stability: stabilityValue,
+        fusionDuration: coveredDuration,
+        selfReportDuration,
       });
-      airDurationStabilitySum += stabilityValue;
-      airDurationStabilityCount++;
-    }
+    });
+    airDurationStabilityBySelfReportData.push({
+      selfReportId: selfReportIdStr,
+      stability: stabilityValue,
+    });
+    airDurationStabilitySum += stabilityValue;
+    airDurationStabilityCount++;
   });
   airDurationStabilityBySelfReportData.sort((a, b) => b.stability - a.stability);
 
@@ -1063,6 +1121,143 @@ function calculateTrackingStabilityDuration(
       airDurationStabilityCount > 0 ? airDurationStabilitySum / airDurationStabilityCount : null,
     seaFusionStabilityDurationByAis: seaDurationStabilityByAisData,
     airFusionStabilityDurationBySelfReport: airDurationStabilityBySelfReportData,
+  };
+}
+
+/**
+ * 融合航迹稳定性：有雷达关联的连续段按融合批号断开后累计 / 参考源整段时长。
+ * 换融合批会断开，避免「跟踪稳定性（时长）」把批间空洞算进分子。
+ */
+function coveredFusionTrackDurationMs(
+  samples: Array<{ timestamp: number; hasRadar: boolean; fusionTrackId: string }>,
+): { refDuration: number; coveredDuration: number } {
+  if (samples.length === 0) return { refDuration: 0, coveredDuration: 0 };
+  const sorted = [...samples].sort((a, b) => a.timestamp - b.timestamp);
+  const refDuration = sorted[sorted.length - 1]!.timestamp - sorted[0]!.timestamp;
+  let coveredDuration = 0;
+  let runStart = -1;
+  let runEnd = -1;
+  let runFusionId = "";
+  const flush = () => {
+    if (runStart >= 0 && runEnd >= runStart) {
+      coveredDuration += runEnd - runStart;
+    }
+    runStart = -1;
+    runEnd = -1;
+    runFusionId = "";
+  };
+  for (const s of sorted) {
+    if (s.hasRadar) {
+      if (runStart < 0) {
+        runStart = s.timestamp;
+        runEnd = s.timestamp;
+        runFusionId = s.fusionTrackId;
+      } else if (s.fusionTrackId !== runFusionId) {
+        flush();
+        runStart = s.timestamp;
+        runEnd = s.timestamp;
+        runFusionId = s.fusionTrackId;
+      } else {
+        runEnd = s.timestamp;
+      }
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return { refDuration, coveredDuration };
+}
+
+function calculateFusionTrackCoverage(
+  features: EvalTrackFeature[],
+): Pick<
+  TrackEvalMetricsResult,
+  | "seaFusionTrackCoverageAvg"
+  | "airFusionTrackCoverageAvg"
+  | "seaFusionTrackCoverageByAis"
+  | "airFusionTrackCoverageBySelfReport"
+> {
+  const seaFusionTracks = features.filter((f) => f.sensorId === 0);
+  const seaAisSamples = new Map<
+    string,
+    Array<{ timestamp: number; hasRadar: boolean; fusionTrackId: string }>
+  >();
+
+  seaFusionTracks.forEach((f) => {
+    const originalData = f.originalData;
+    const aisId = originalData.original_track_id2;
+    if (!isValidOriginalId(aisId)) return;
+    const timestamp = getFeatureTimestamp(f);
+    if (timestamp === 0) return;
+    const aisIdStr = String(aisId);
+    const hasRadar =
+      isValidOriginalId(originalData.original_track_id1) ||
+      isValidOriginalId(originalData.original_track_id3);
+    if (!seaAisSamples.has(aisIdStr)) seaAisSamples.set(aisIdStr, []);
+    seaAisSamples.get(aisIdStr)!.push({
+      timestamp,
+      hasRadar,
+      fusionTrackId: String(f.trackId),
+    });
+  });
+
+  const seaFusionTrackCoverageByAis: SeaFusionTrackCoverageByAisItem[] = [];
+  let seaSum = 0;
+  let seaCount = 0;
+  seaAisSamples.forEach((samples, aisIdStr) => {
+    const { refDuration, coveredDuration } = coveredFusionTrackDurationMs(samples);
+    if (refDuration <= 0) return;
+    if (!samples.some((s) => s.hasRadar)) return;
+    const coverage = clamp01(coveredDuration / refDuration);
+    seaFusionTrackCoverageByAis.push({ aisId: aisIdStr, coverage });
+    seaSum += coverage;
+    seaCount++;
+  });
+  seaFusionTrackCoverageByAis.sort((a, b) => b.coverage - a.coverage);
+
+  const airFusionTracks = features.filter((f) => f.sensorId === 6);
+  const airSelfReportSamples = new Map<
+    string,
+    Array<{ timestamp: number; hasRadar: boolean; fusionTrackId: string }>
+  >();
+
+  airFusionTracks.forEach((f) => {
+    const sources = parseAirFusionSources(f.originalData);
+    const selfReportId = sources.selfReport;
+    if (selfReportId === undefined) return;
+    const timestamp = getFeatureTimestamp(f);
+    if (timestamp === 0) return;
+    const selfReportIdStr = String(selfReportId);
+    if (!airSelfReportSamples.has(selfReportIdStr)) airSelfReportSamples.set(selfReportIdStr, []);
+    airSelfReportSamples.get(selfReportIdStr)!.push({
+      timestamp,
+      hasRadar: hasAirRadarBesidesSelfReport(sources),
+      fusionTrackId: String(f.trackId),
+    });
+  });
+
+  const airFusionTrackCoverageBySelfReport: AirFusionTrackCoverageBySelfReportItem[] = [];
+  let airSum = 0;
+  let airCount = 0;
+  airSelfReportSamples.forEach((samples, selfReportIdStr) => {
+    const { refDuration, coveredDuration } = coveredFusionTrackDurationMs(samples);
+    if (refDuration <= 0) return;
+    if (!samples.some((s) => s.hasRadar)) return;
+    const coverage = clamp01(coveredDuration / refDuration);
+    airFusionTrackCoverageBySelfReport.push({
+      selfReportId: selfReportIdStr,
+      coverage,
+    });
+    airSum += coverage;
+    airCount++;
+  });
+  airFusionTrackCoverageBySelfReport.sort((a, b) => b.coverage - a.coverage);
+
+  return {
+    seaFusionTrackCoverageAvg: seaCount > 0 ? seaSum / seaCount : null,
+    airFusionTrackCoverageAvg: airCount > 0 ? airSum / airCount : null,
+    seaFusionTrackCoverageByAis,
+    airFusionTrackCoverageBySelfReport,
   };
 }
 
@@ -1528,16 +1723,21 @@ interface PerPointErrorSample {
   radar1Error: number | null;
   radar2Error: number | null;
   timestamp: number;
+  /** dataSourceId → 误差 */
+  bySource?: Record<string, number | null>;
+  sourceMeta?: Record<string, { label: string }>;
 }
 
 function buildTrackIndex(tracks: EvalTrackFeature[]): TrackIndex {
   const idMap = new Map<string, EvalTrackFeature[]>();
   tracks.forEach((track) => {
     const trackId = String(track.trackId ?? "");
+    const uniqueId = String(track.uniqueId ?? "");
     const originalId1 = String(track.originalData?.original_track_id1 ?? "");
     const originalId2 = String(track.originalData?.original_track_id2 ?? "");
-    const ids = [trackId, originalId1, originalId2].filter(
-      (id) => id && id !== "undefined" && id !== "null",
+    // uniqueId：船自报位常见 track_id=平台号、unique_id=会话批号（如 3006 / 157700331）
+    const ids = [trackId, uniqueId, originalId1, originalId2].filter(
+      (id) => id && id !== "undefined" && id !== "null" && id !== "0",
     );
     ids.forEach((id) => {
       if (!idMap.has(id)) idMap.set(id, []);
@@ -1659,10 +1859,11 @@ function findClosestTrackByTimeIndexed(
   trackIndex: TrackIndex,
   targetId: string | number | unknown,
   targetTime: number,
+  maxTimeDiff = 1000,
 ): EvalTrackFeature | null {
   const sortedTracks = trackIndex.get(String(targetId));
   if (!sortedTracks?.length) return null;
-  return binarySearchClosest(sortedTracks, targetTime, 1000);
+  return binarySearchClosest(sortedTracks, targetTime, maxTimeDiff);
 }
 
 function findTwoClosestTracksByTimeIndexed(
@@ -1682,26 +1883,70 @@ function processDistanceErrorData(
   const result: TrackErrorStatsItem[] = [];
   errorMap.forEach((errors, id) => {
     const fusionErrors = errors.map((e) => e.fusionError).filter((e) => e != null);
-    const radar1Errors = errors
-      .filter((e) => e.radar1Error != null)
-      .map((e) => e.radar1Error as number);
-    const radar2Errors = errors
-      .filter((e) => e.radar2Error != null)
-      .map((e) => e.radar2Error as number);
     const fusionStats = calculateAvgAndRmse(fusionErrors);
-    const radar1Stats = calculateAvgAndRmse(radar1Errors);
-    const radar2Stats = calculateAvgAndRmse(radar2Errors);
+
+    const sourceKeySet = new Set<string>();
+    const sourceLabel = new Map<string, string>();
+    for (const e of errors) {
+      if (!e.bySource) continue;
+      for (const [k, v] of Object.entries(e.bySource)) {
+        if (v == null) continue;
+        sourceKeySet.add(k);
+        if (e.sourceMeta?.[k]?.label) sourceLabel.set(k, e.sourceMeta[k].label);
+      }
+    }
+    if (sourceKeySet.size === 0) {
+      if (errors.some((e) => e.radar1Error != null)) {
+        sourceKeySet.add("radar1");
+        sourceLabel.set("radar1", "远遥码头");
+      }
+      if (errors.some((e) => e.radar2Error != null)) {
+        sourceKeySet.add("radar2");
+        sourceLabel.set("radar2", "靖子头");
+      }
+    }
+
+    const sourceErrors: TrackErrorSourceStat[] = [];
+    for (const key of sourceKeySet) {
+      const vals = errors
+        .map((e) => {
+          if (e.bySource && Object.prototype.hasOwnProperty.call(e.bySource, key)) {
+            return e.bySource[key];
+          }
+          if (key === "radar1") return e.radar1Error;
+          if (key === "radar2") return e.radar2Error;
+          return null;
+        })
+        .filter((v): v is number => v != null);
+      const st = calculateAvgAndRmse(vals);
+      sourceErrors.push({
+        key,
+        label: sourceLabel.get(key) ?? key,
+        avg: st.avg,
+        rmse: st.rmse,
+        errors: vals,
+      });
+    }
+    sourceErrors.sort((a, b) => a.label.localeCompare(b.label, "zh"));
+
+    const s0 = sourceErrors[0];
+    const s1 = sourceErrors[1];
     result.push({
       id,
       fusionAvg: fusionStats.avg,
       fusionRmse: fusionStats.rmse,
-      radar1Avg: radar1Stats.avg,
-      radar1Rmse: radar1Stats.rmse,
-      radar2Avg: radar2Stats.avg,
-      radar2Rmse: radar2Stats.rmse,
+      radar1Avg: s0?.avg ?? null,
+      radar1Rmse: s0?.rmse ?? null,
+      radar2Avg: s1?.avg ?? null,
+      radar2Rmse: s1?.rmse ?? null,
+      radar1Key: s0?.key,
+      radar1Name: s0?.label,
+      radar2Key: s1?.key,
+      radar2Name: s1?.label,
       fusionErrors,
-      radar1Errors,
-      radar2Errors,
+      radar1Errors: s0?.errors ?? [],
+      radar2Errors: s1?.errors ?? [],
+      sourceErrors,
     });
   });
   result.sort((a, b) => String(a.id).localeCompare(String(b.id)));
@@ -1718,13 +1963,30 @@ function processErrorData(errorMap: Map<string, PerPointErrorSample[]>): TrackEr
   return processDistanceErrorData(errorMap);
 }
 
+function resolveTrackIndexForSource(
+  src: { dataSourceId: string; catalog: { sensorId: number | null } | null },
+  indexesBySensor: Map<number, TrackIndex>,
+  aisIndex: TrackIndex,
+): TrackIndex | null {
+  const sid = src.catalog?.sensorId;
+  if (sid === 3) return aisIndex;
+  if (sid != null && indexesBySensor.has(sid)) return indexesBySensor.get(sid)!;
+  // 常见别名兜底
+  const id = src.dataSourceId.toLowerCase();
+  if (id === "ais") return aisIndex;
+  if (id === "udp_xpf_track" && indexesBySensor.has(204)) return indexesBySensor.get(204)!;
+  if (id === "yuan_yao" && indexesBySensor.has(1)) return indexesBySensor.get(1)!;
+  if (id === "jing_zi_tou" && indexesBySensor.has(2)) return indexesBySensor.get(2)!;
+  if (id === "udp_boatself_track" && indexesBySensor.has(202)) return indexesBySensor.get(202)!;
+  return null;
+}
+
 function calculateSeaFusionErrors(
   fusionTracks: EvalTrackFeature[],
   yuanYaoRadar: TrackEvalRadarChannel,
   jingZiTouRadar: TrackEvalRadarChannel,
+  indexesBySensor: Map<number, TrackIndex>,
   aisIndex: TrackIndex,
-  yuanYaoIndex: TrackIndex,
-  jingZiTouIndex: TrackIndex,
 ): Pick<
   TrackEvalMetricsResult,
   | "seaDistanceError"
@@ -1740,12 +2002,38 @@ function calculateSeaFusionErrors(
   const courseErrorMap = new Map<string, PerPointErrorSample[]>();
   const speedErrorMap = new Map<string, PerPointErrorSample[]>();
 
+  const lookupRef = (refId: string, fusionTime: number, preferredIndex: TrackIndex | null) => {
+    const tryIndex = (idx: TrackIndex | null) => {
+      if (!idx) return null;
+      const two = findTwoClosestTracksByTimeIndexed(idx, refId, fusionTime, 120000);
+      if (two && (two.before || two.after)) return interpolatePosition(two.before, two.after, fusionTime);
+      return null;
+    };
+    return (
+      tryIndex(preferredIndex) ||
+      tryIndex(indexesBySensor.get(202) ?? null) ||
+      tryIndex(aisIndex)
+    );
+  };
+
   fusionTracks.forEach((fusionTrack) => {
-    const aisId = fusionTrack.originalData?.original_track_id2;
-    if (!isValidOriginalId(aisId)) return;
-    const aisIdStr = String(aisId);
+    const sources = parseFusionSourcesFromTrackOriginal(fusionTrack.originalData, "sea");
+    if (sources.length === 0) return;
+    const reference = pickFusionReferenceSource(sources);
+    if (!reference) return;
     const fusionTime = getFeatureTimestamp(fusionTrack);
     if (!fusionTime) return;
+
+    const refIndex = resolveTrackIndexForSource(reference, indexesBySensor, aisIndex);
+    const refInfo = lookupRef(String(reference.trackId), fusionTime, refIndex);
+    if (!refInfo || refInfo.lat === undefined || refInfo.lon === undefined) return;
+
+    const refIdStr = String(reference.trackId);
+    const refLat = refInfo.lat;
+    const refLon = refInfo.lon;
+    const refHeight = refInfo.height ?? 0;
+    const refCourse = refInfo.course;
+    const refSpeed = refInfo.speed;
 
     const fusionLat = fusionTrack.latitude;
     const fusionLon = fusionTrack.longitude;
@@ -1753,261 +2041,108 @@ function calculateSeaFusionErrors(
     const fusionCourse = fusionTrack.course;
     const fusionSpeed = fusionTrack.speed;
 
-    const twoClosest = findTwoClosestTracksByTimeIndexed(aisIndex, aisIdStr, fusionTime, 120000);
-    const aisInfo =
-      twoClosest && (twoClosest.before || twoClosest.after)
-        ? interpolatePosition(twoClosest.before, twoClosest.after, fusionTime)
-        : null;
-    if (!aisInfo || aisInfo.lat === undefined || aisInfo.lon === undefined) return;
+    const evalSources = listFusionEvalSources(sources, reference);
+    const bySourceDist: Record<string, number | null> = {};
+    const bySourceAz: Record<string, number | null> = {};
+    const bySourceEl: Record<string, number | null> = {};
+    const bySourceCourse: Record<string, number | null> = {};
+    const bySourceSpeed: Record<string, number | null> = {};
+    const sourceMeta: Record<string, { label: string }> = {};
 
-    const aisLat = aisInfo.lat;
-    const aisLon = aisInfo.lon;
-    const aisHeight = aisInfo.height ?? 0;
-    const aisCourse = aisInfo.course;
-    const aisSpeed = aisInfo.speed;
-
-    const yuanYaoId = fusionTrack.originalData?.original_track_id1;
-    const jingZiTouId = fusionTrack.originalData?.original_track_id3;
-
-    const fusionError = calculateGeoDistance(fusionLat, fusionLon, aisLat, aisLon);
-    let radar1Error: number | null = null;
-    let radar2Error: number | null = null;
-
-    if (isValidOriginalId(yuanYaoId)) {
-      const yuanYaoTrack = findClosestTrackByTimeIndexed(yuanYaoIndex, yuanYaoId, fusionTime);
-      if (yuanYaoTrack) {
-        radar1Error = calculateGeoDistance(
-          yuanYaoTrack.latitude,
-          yuanYaoTrack.longitude,
-          aisLat,
-          aisLon,
-        );
+    for (const src of evalSources) {
+      const key = fusionSourceSeriesKey(src);
+      const label = fusionSourceSeriesLabel(src);
+      sourceMeta[key] = { label };
+      const idx = resolveTrackIndexForSource(src, indexesBySensor, aisIndex);
+      const pt = idx ? findClosestTrackByTimeIndexed(idx, src.trackId, fusionTime, 10000) : null;
+      if (!pt) {
+        bySourceDist[key] = null;
+        bySourceAz[key] = null;
+        bySourceEl[key] = null;
+        bySourceCourse[key] = null;
+        bySourceSpeed[key] = null;
+        continue;
       }
+      bySourceDist[key] = calculateGeoDistance(pt.latitude, pt.longitude, refLat, refLon);
+      const center =
+        src.dataSourceId === "jing_zi_tou" ? jingZiTouRadar.center : yuanYaoRadar.center;
+      const refAz = calculateAzimuth(center.lat, center.lon, refLat, refLon);
+      const srcAz = calculateAzimuth(center.lat, center.lon, pt.latitude, pt.longitude);
+      bySourceAz[key] = calculateAngleDifference(srcAz, refAz);
+      const refEl = calculateElevation(center.lat, center.lon, 0, refLat, refLon, refHeight);
+      const srcEl = calculateElevation(
+        center.lat,
+        center.lon,
+        0,
+        pt.latitude,
+        pt.longitude,
+        pt.altitude ?? 0,
+      );
+      bySourceEl[key] = calculateAngleDifference(srcEl, refEl);
+      bySourceCourse[key] =
+        pt.course !== undefined && refCourse !== undefined
+          ? calculateAngleDifference(pt.course, refCourse)
+          : null;
+      bySourceSpeed[key] =
+        pt.speed !== undefined && refSpeed !== undefined ? pt.speed - refSpeed : null;
     }
-    if (isValidOriginalId(jingZiTouId)) {
-      const jingZiTouTrack = findClosestTrackByTimeIndexed(jingZiTouIndex, jingZiTouId, fusionTime);
-      if (jingZiTouTrack) {
-        radar2Error = calculateGeoDistance(
-          jingZiTouTrack.latitude,
-          jingZiTouTrack.longitude,
-          aisLat,
-          aisLon,
-        );
-      }
-    }
 
-    if (!distanceErrorMap.has(aisIdStr)) distanceErrorMap.set(aisIdStr, []);
-    distanceErrorMap.get(aisIdStr)!.push({
-      fusionError,
-      radar1Error,
-      radar2Error,
-      timestamp: fusionTime,
-    });
+    const fusionDist = calculateGeoDistance(fusionLat, fusionLon, refLat, refLon);
+    const fusionAz = calculateAngleDifference(
+      calculateAzimuth(yuanYaoRadar.center.lat, yuanYaoRadar.center.lon, fusionLat, fusionLon),
+      calculateAzimuth(yuanYaoRadar.center.lat, yuanYaoRadar.center.lon, refLat, refLon),
+    );
+    const fusionEl = calculateAngleDifference(
+      calculateElevation(
+        yuanYaoRadar.center.lat,
+        yuanYaoRadar.center.lon,
+        0,
+        fusionLat,
+        fusionLon,
+        fusionHeight,
+      ),
+      calculateElevation(yuanYaoRadar.center.lat, yuanYaoRadar.center.lon, 0, refLat, refLon, refHeight),
+    );
 
-    const aisAzimuthFromYuanYao = calculateAzimuth(
-      yuanYaoRadar.center.lat,
-      yuanYaoRadar.center.lon,
-      aisLat,
-      aisLon,
-    );
-    const fusionAzimuthFromYuanYao = calculateAzimuth(
-      yuanYaoRadar.center.lat,
-      yuanYaoRadar.center.lon,
-      fusionLat,
-      fusionLon,
-    );
-    const fusionAzimuthError = calculateAngleDifference(
-      fusionAzimuthFromYuanYao,
-      aisAzimuthFromYuanYao,
-    );
-    let radar1AzimuthError: number | null = null;
-    let radar2AzimuthError: number | null = null;
-
-    if (isValidOriginalId(yuanYaoId)) {
-      const yuanYaoTrack = findClosestTrackByTimeIndexed(yuanYaoIndex, yuanYaoId, fusionTime);
-      if (yuanYaoTrack) {
-        const radarAzimuthFromYuanYao = calculateAzimuth(
-          yuanYaoRadar.center.lat,
-          yuanYaoRadar.center.lon,
-          yuanYaoTrack.latitude,
-          yuanYaoTrack.longitude,
-        );
-        radar1AzimuthError = calculateAngleDifference(radarAzimuthFromYuanYao, aisAzimuthFromYuanYao);
-      }
-    }
-    if (isValidOriginalId(jingZiTouId)) {
-      const jingZiTouTrack = findClosestTrackByTimeIndexed(jingZiTouIndex, jingZiTouId, fusionTime);
-      if (jingZiTouTrack) {
-        const radarAzimuthFromJingZiTou = calculateAzimuth(
-          jingZiTouRadar.center.lat,
-          jingZiTouRadar.center.lon,
-          jingZiTouTrack.latitude,
-          jingZiTouTrack.longitude,
-        );
-        const aisAzimuthFromJingZiTou = calculateAzimuth(
-          jingZiTouRadar.center.lat,
-          jingZiTouRadar.center.lon,
-          aisLat,
-          aisLon,
-        );
-        radar2AzimuthError = calculateAngleDifference(
-          radarAzimuthFromJingZiTou,
-          aisAzimuthFromJingZiTou,
-        );
-      }
-    }
-    if (!azimuthErrorMap.has(aisIdStr)) azimuthErrorMap.set(aisIdStr, []);
-    azimuthErrorMap.get(aisIdStr)!.push({
-      fusionError: fusionAzimuthError,
-      radar1Error: radar1AzimuthError,
-      radar2Error: radar2AzimuthError,
-      timestamp: fusionTime,
-    });
-
-    const aisElevationFromYuanYao = calculateElevation(
-      yuanYaoRadar.center.lat,
-      yuanYaoRadar.center.lon,
-      0,
-      aisLat,
-      aisLon,
-      aisHeight,
-    );
-    const fusionElevationFromYuanYao = calculateElevation(
-      yuanYaoRadar.center.lat,
-      yuanYaoRadar.center.lon,
-      0,
-      fusionLat,
-      fusionLon,
-      fusionHeight,
-    );
-    const fusionElevationError = calculateAngleDifference(
-      fusionElevationFromYuanYao,
-      aisElevationFromYuanYao,
-    );
-    let radar1ElevationError: number | null = null;
-    let radar2ElevationError: number | null = null;
-
-    if (isValidOriginalId(yuanYaoId)) {
-      const yuanYaoTrack = findClosestTrackByTimeIndexed(yuanYaoIndex, yuanYaoId, fusionTime);
-      if (yuanYaoTrack) {
-        const radarElevationFromYuanYao = calculateElevation(
-          yuanYaoRadar.center.lat,
-          yuanYaoRadar.center.lon,
-          0,
-          yuanYaoTrack.latitude,
-          yuanYaoTrack.longitude,
-          yuanYaoTrack.altitude ?? 0,
-        );
-        radar1ElevationError = calculateAngleDifference(
-          radarElevationFromYuanYao,
-          aisElevationFromYuanYao,
-        );
-      }
-    }
-    if (isValidOriginalId(jingZiTouId)) {
-      const jingZiTouTrack = findClosestTrackByTimeIndexed(jingZiTouIndex, jingZiTouId, fusionTime);
-      if (jingZiTouTrack) {
-        const aisElevationFromJingZiTou = calculateElevation(
-          jingZiTouRadar.center.lat,
-          jingZiTouRadar.center.lon,
-          0,
-          aisLat,
-          aisLon,
-          aisHeight,
-        );
-        const radarElevationFromJingZiTou = calculateElevation(
-          jingZiTouRadar.center.lat,
-          jingZiTouRadar.center.lon,
-          0,
-          jingZiTouTrack.latitude,
-          jingZiTouTrack.longitude,
-          jingZiTouTrack.altitude ?? 0,
-        );
-        radar2ElevationError = calculateAngleDifference(
-          radarElevationFromJingZiTou,
-          aisElevationFromJingZiTou,
-        );
-      }
-    }
-    if (!elevationErrorMap.has(aisIdStr)) elevationErrorMap.set(aisIdStr, []);
-    elevationErrorMap.get(aisIdStr)!.push({
-      fusionError: fusionElevationError,
-      radar1Error: radar1ElevationError,
-      radar2Error: radar2ElevationError,
-      timestamp: fusionTime,
-    });
-
-    if (fusionCourse !== undefined && aisCourse !== undefined) {
-      const fusionCourseError = calculateAngleDifference(fusionCourse, aisCourse);
-      let radar1CourseError: number | null = null;
-      let radar2CourseError: number | null = null;
-      if (isValidOriginalId(yuanYaoId)) {
-        const yuanYaoTrack = findClosestTrackByTimeIndexed(yuanYaoIndex, yuanYaoId, fusionTime);
-        if (yuanYaoTrack?.course !== undefined) {
-          radar1CourseError = calculateAngleDifference(yuanYaoTrack.course, aisCourse);
-        }
-      }
-      if (isValidOriginalId(jingZiTouId)) {
-        const jingZiTouTrack = findClosestTrackByTimeIndexed(jingZiTouIndex, jingZiTouId, fusionTime);
-        if (jingZiTouTrack?.course !== undefined) {
-          radar2CourseError = calculateAngleDifference(jingZiTouTrack.course, aisCourse);
-        }
-      }
-      if (!courseErrorMap.has(aisIdStr)) courseErrorMap.set(aisIdStr, []);
-      courseErrorMap.get(aisIdStr)!.push({
-        fusionError: fusionCourseError,
-        radar1Error: radar1CourseError,
-        radar2Error: radar2CourseError,
+    const sourceKeys = Object.keys(sourceMeta);
+    const pushSample = (
+      map: Map<string, PerPointErrorSample[]>,
+      fusionError: number,
+      bySource: Record<string, number | null>,
+    ) => {
+      if (!map.has(refIdStr)) map.set(refIdStr, []);
+      map.get(refIdStr)!.push({
+        fusionError,
+        radar1Error: sourceKeys[0] ? bySource[sourceKeys[0]] ?? null : null,
+        radar2Error: sourceKeys[1] ? bySource[sourceKeys[1]] ?? null : null,
         timestamp: fusionTime,
+        bySource: { ...bySource },
+        sourceMeta: { ...sourceMeta },
       });
-    }
+    };
 
-    if (fusionSpeed !== undefined && aisSpeed !== undefined) {
-      const fusionSpeedError = fusionSpeed - aisSpeed;
-      let radar1SpeedError: number | null = null;
-      let radar2SpeedError: number | null = null;
-      if (isValidOriginalId(yuanYaoId)) {
-        const yuanYaoTrack = findClosestTrackByTimeIndexed(yuanYaoIndex, yuanYaoId, fusionTime);
-        if (yuanYaoTrack?.speed !== undefined) {
-          radar1SpeedError = yuanYaoTrack.speed - aisSpeed;
-        }
-      }
-      if (isValidOriginalId(jingZiTouId)) {
-        const jingZiTouTrack = findClosestTrackByTimeIndexed(jingZiTouIndex, jingZiTouId, fusionTime);
-        if (jingZiTouTrack?.speed !== undefined) {
-          radar2SpeedError = jingZiTouTrack.speed - aisSpeed;
-        }
-      }
-      if (!speedErrorMap.has(aisIdStr)) speedErrorMap.set(aisIdStr, []);
-      speedErrorMap.get(aisIdStr)!.push({
-        fusionError: fusionSpeedError,
-        radar1Error: radar1SpeedError,
-        radar2Error: radar2SpeedError,
-        timestamp: fusionTime,
-      });
+    pushSample(distanceErrorMap, fusionDist, bySourceDist);
+    pushSample(azimuthErrorMap, fusionAz, bySourceAz);
+    pushSample(elevationErrorMap, fusionEl, bySourceEl);
+    if (fusionCourse !== undefined && refCourse !== undefined) {
+      pushSample(
+        courseErrorMap,
+        calculateAngleDifference(fusionCourse, refCourse),
+        bySourceCourse,
+      );
     }
-
-    const courseErr =
-      fusionCourse !== undefined && aisCourse !== undefined
-        ? calculateAngleDifference(fusionCourse, aisCourse)
-        : null;
-    const speedErr =
-      fusionSpeed !== undefined && aisSpeed !== undefined ? fusionSpeed - aisSpeed : null;
+    if (fusionSpeed !== undefined && refSpeed !== undefined) {
+      pushSample(speedErrorMap, fusionSpeed - refSpeed, bySourceSpeed);
+    }
 
     fusionTrack.originalData.errorInfo = {
-      distance: { fusion: fusionError, radar1: radar1Error, radar2: radar2Error },
-      azimuth: {
-        fusion: fusionAzimuthError,
-        radar1: radar1AzimuthError,
-        radar2: radar2AzimuthError,
-      },
-      elevation: {
-        fusion: fusionElevationError,
-        radar1: radar1ElevationError,
-        radar2: radar2ElevationError,
-      },
-      ...(courseErr != null ? { course: { fusion: courseErr } } : {}),
-      ...(speedErr != null ? { speed: { fusion: speedErr } } : {}),
+      distance: { fusion: fusionDist, sources: bySourceDist },
+      reference: { id: refIdStr, dataSourceId: reference.dataSourceId },
+      sources: evalSources.map((s) => ({
+        key: fusionSourceSeriesKey(s),
+        label: fusionSourceSeriesLabel(s),
+        trackId: s.trackId,
+      })),
     };
   });
 
@@ -2408,15 +2543,27 @@ function calculateErrors(
   const airFusionTracks = features.filter((t) => t.sensorId === 6);
   const aisTracks = features.filter((t) => t.sensorId === 3);
   const selfReportTracks = features.filter((t) => t.sensorId === 4);
-  const yuanYaoTracks = features.filter((t) => t.sensorId === 1);
-  const jingZiTouTracks = features.filter((t) => t.sensorId === 2);
   const tanNiaoTracks = features.filter((t) => t.sensorId === 5);
   const secondaryRadarTracks = features.filter((t) => t.sensorId === 7 || t.sensorId === 203);
 
+  const indexesBySensor = new Map<number, TrackIndex>();
+  for (const f of features) {
+    if (f.sensorId === 0 || f.sensorId === 6 || f.sensorId === 3) continue;
+    if (!indexesBySensor.has(f.sensorId)) indexesBySensor.set(f.sensorId, new Map());
+  }
+  // 按 sensor 重建索引
+  const buckets = new Map<number, EvalTrackFeature[]>();
+  for (const f of features) {
+    if (f.sensorId === 0 || f.sensorId === 6) continue;
+    if (!buckets.has(f.sensorId)) buckets.set(f.sensorId, []);
+    buckets.get(f.sensorId)!.push(f);
+  }
+  buckets.forEach((list, sid) => {
+    indexesBySensor.set(sid, buildTrackIndex(list));
+  });
+
   const aisIndex = buildTrackIndex(aisTracks);
   const selfReportIndex = buildTrackIndex(selfReportTracks);
-  const yuanYaoIndex = buildTrackIndex(yuanYaoTracks);
-  const jingZiTouIndex = buildTrackIndex(jingZiTouTracks);
   const tanNiaoIndex = buildTrackIndex(tanNiaoTracks);
   const kuIndex = buildTrackIndex(secondaryRadarTracks);
 
@@ -2424,9 +2571,8 @@ function calculateErrors(
     seaFusionTracks,
     yuanYaoRadar,
     jingZiTouRadar,
+    indexesBySensor,
     aisIndex,
-    yuanYaoIndex,
-    jingZiTouIndex,
   );
   const air = calculateAirFusionErrors(
     airFusionTracks,

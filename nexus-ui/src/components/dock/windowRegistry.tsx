@@ -28,19 +28,18 @@ import {
   Server,
   Activity,
   FileCode,
-  Database,
   Map,
   ScanLine,
   Gauge,
 } from "lucide-react";
 import { TrackListPanel } from "@/components/panels/TrackListPanel";
 import { SystemEvaluationPanel } from "@/components/panels/SystemEvaluationPanel";
+import { EvalReportPanel } from "@/components/panels/EvalReportPanel";
 import { LayerPanel } from "@/components/panels/LayerPanel";
 import { AssetPanel } from "@/components/panels/AssetPanel";
 import { AlertPanel } from "@/components/panels/AlertPanel";
 import { DisplayControlPanel } from "@/components/panels/DisplayControlPanel";
 import { ChatPanel } from "@/components/panels/ChatPanel";
-import { KnowledgeBasePanel } from "@/components/panels/KnowledgeBasePanel";
 import { TargetProfilePanel } from "@/components/panels/TargetProfilePanel";
 import { EoVideoDockPanel } from "@/components/eo-video/EoVideoDockPanel";
 import { EO_ELECTRO_OPTICAL_PANEL_IDS } from "@/lib/eo-video/eoElectroOpticalDockPool";
@@ -238,6 +237,21 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
     description: "系统、航迹、相机、算法评估",
   },
   {
+    id: "eval-report",
+    title: "评估报告",
+    capability: "dockable",
+    category: "system",
+    menuLabel: "评估报告",
+    icon: FileText,
+    component: EvalReportPanel,
+    defaultLocation: "right-bottom",
+    defaultSize: { width: 720, height: 680 },
+    closable: true,
+    draggable: true,
+    resizable: true,
+    description: "系统 / 航迹 / 光电评估报告预览",
+  },
+  {
     id: "chat",
     title: "智能助手",
     capability: "dockable",
@@ -250,22 +264,7 @@ const DOCKABLE_WINDOWS: WindowConfig[] = [
     closable: true,
     draggable: true,
     resizable: true,
-    description: "AI智能助手对话面板",
-  },
-  {
-    id: "knowledge-base",
-    title: "知识库查询",
-    capability: "dockable",
-    category: "other",
-    menuLabel: "知识库查询",
-    icon: Database,
-    component: KnowledgeBasePanel,
-    defaultLocation: "right-bottom",
-    defaultSize: { width: 440, height: 400 },
-    closable: true,
-    draggable: true,
-    resizable: true,
-    description: "watchsystem 数据库自然语言问答",
+    description: "AI智能助手对话面板（含知识库模式切换）",
   },
   {
     id: "overview",

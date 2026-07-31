@@ -19,9 +19,11 @@ import {
   openDockPanelFromMenu,
 } from "@/lib/dock/open-dock-panel-from-menu";
 import { openElectroOpticalDockPopup } from "@/components/eo-video/EoVideoTopLauncher";
+import { EoMotionParamsDialog } from "@/components/eo-video/EoMotionParamsDialog";
 import { DroneSettingsDialog, type DroneSettingsPanelAnchor } from "@/components/layout/DroneSettingsDialog";
 import { NetworkStatsDialog } from "@/components/layout/NetworkStatsDialog";
 import { useDockLayoutSubmenu } from "@/components/layout/DockLayoutSubmenu";
+import { openEvalReportPreview } from "@/lib/eval-report/open-eval-report-preview";
 
 type DockMenuItem = {
   kind: "dock";
@@ -80,6 +82,7 @@ const MENU_CATEGORIES: MenuCategory[] = [
     description: "光电视频窗口与相机任务",
     items: [
       { kind: "action", label: "新建光电窗口", title: "打开新的光电视频窗口" },
+      { kind: "action", label: "运动参数", title: "光电运动参数 / 对准参数（ConfigMotion · aimConf）" },
       { kind: "action", label: "停止全部相机任务", title: "对所有 hasPtz 相机下发 CancelAllMetaTasks" },
     ],
   },
@@ -91,6 +94,7 @@ const MENU_CATEGORIES: MenuCategory[] = [
     items: [
       { kind: "action", label: "无人机飞行设置", title: "无人机参数与飞行控制" },
       { kind: "action", label: "一键热备", title: "对全部机场依次下发热备" },
+      { kind: "action", label: "一键取消热备", title: "对全部机场依次下发取消热备（debug_mode_close）" },
       { kind: "action", label: "一键返航", title: "对全部机场依次下发返航" },
     ],
   },
@@ -98,10 +102,9 @@ const MENU_CATEGORIES: MenuCategory[] = [
     id: "ai",
     label: "智能",
     icon: MessageSquare,
-    description: "智能助手与知识库",
+    description: "智能助手（含知识库模式）",
     items: [
       { kind: "dock", panelId: "chat", label: "智能助手" },
-      { kind: "dock", panelId: "knowledge-base", label: "知识库查询" },
     ],
   },
   {
@@ -112,6 +115,11 @@ const MENU_CATEGORIES: MenuCategory[] = [
     items: [
       { kind: "dock", panelId: "alerts", label: "告警" },
       { kind: "dock", panelId: "system-evaluation", label: "系统评估" },
+      {
+        kind: "action",
+        label: "生成评估报告",
+        title: "执行系统/航迹/光电评估并生成报告预览",
+      },
       { kind: "dock", panelId: "assets", label: "资产列表" },
       { kind: "action", label: "数据状态", title: "各数据源接收间隔" },
       { kind: "submenu", id: "layout", label: "布局", title: "保存或恢复窗口布局" },
@@ -169,9 +177,11 @@ export function TopNavCategoryMenu() {
   const [droneSettingsOpen, setDroneSettingsOpen] = useState(false);
   const [dronePanelAnchor, setDronePanelAnchor] = useState<DroneSettingsPanelAnchor | null>(null);
   const [networkStatsOpen, setNetworkStatsOpen] = useState(false);
+  const [motionParamsOpen, setMotionParamsOpen] = useState(false);
 
   const [returnBusy, setReturnBusy] = useState(false);
   const [hotbackBusy, setHotbackBusy] = useState(false);
+  const [hotbackCloseBusy, setHotbackCloseBusy] = useState(false);
   const [stopCameraBusy, setStopCameraBusy] = useState(false);
 
   const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -302,6 +312,26 @@ export function TopNavCategoryMenu() {
     }
   };
 
+  const onHotbackCloseAll = async () => {
+    const airports = getAllFleetAirportSNs(lastAirportSN).sort();
+    setHotbackCloseBusy(true);
+    try {
+      for (const ap of airports) {
+        const device =
+          primaryDroneSnForAirport(ap) ??
+          (lastAirportSN?.trim() === ap ? lastDeviceSN?.trim() || undefined : undefined);
+        try {
+          await postUavControlAction({ action: "hotback_close", airportSN: ap, deviceSN: device });
+        } catch {
+          /* 逐台执行，不中断 */
+        }
+      }
+      toast.success("一键取消热备成功");
+    } finally {
+      setHotbackCloseBusy(false);
+    }
+  };
+
   const onStopAllCameraTasks = async () => {
     if (stopCameraBusy) return;
     setStopCameraBusy(true);
@@ -361,6 +391,9 @@ export function TopNavCategoryMenu() {
       case "新建光电窗口":
         openElectroOpticalDockPopup();
         break;
+      case "运动参数":
+        setMotionParamsOpen(true);
+        break;
       case "停止全部相机任务":
         await onStopAllCameraTasks();
         break;
@@ -370,11 +403,17 @@ export function TopNavCategoryMenu() {
       case "一键热备":
         await onHotbackAll();
         break;
+      case "一键取消热备":
+        await onHotbackCloseAll();
+        break;
       case "一键返航":
         await onReturnAllDrones();
         break;
       case "数据状态":
         setNetworkStatsOpen(true);
+        break;
+      case "生成评估报告":
+        openEvalReportPreview();
         break;
       default:
         break;
@@ -479,14 +518,18 @@ export function TopNavCategoryMenu() {
           const busy =
             (item.label === "一键返航" && returnBusy) ||
             (item.label === "一键热备" && hotbackBusy) ||
+            (item.label === "一键取消热备" && hotbackCloseBusy) ||
             (item.label === "停止全部相机任务" && stopCameraBusy);
 
           let actionLabel = item.label;
           if (item.label === "一键返航" && returnBusy) actionLabel = "返航中…";
           if (item.label === "一键热备" && hotbackBusy) actionLabel = "热备中…";
+          if (item.label === "一键取消热备" && hotbackCloseBusy) actionLabel = "取消热备中…";
           if (item.label === "停止全部相机任务" && stopCameraBusy) actionLabel = "停止中…";
 
-          const dotActive = item.label === "数据状态" && networkStatsOpen;
+          const dotActive =
+            (item.label === "数据状态" && networkStatsOpen) ||
+            (item.label === "生成评估报告" && panelOpenMap("eval-report"));
 
           return (
             <li key={item.label} role="none">
@@ -600,6 +643,7 @@ export function TopNavCategoryMenu() {
         onClose={() => setDroneSettingsOpen(false)}
       />
       <NetworkStatsDialog open={networkStatsOpen} onClose={() => setNetworkStatsOpen(false)} />
+      <EoMotionParamsDialog open={motionParamsOpen} onClose={() => setMotionParamsOpen(false)} />
     </>
   );
 }

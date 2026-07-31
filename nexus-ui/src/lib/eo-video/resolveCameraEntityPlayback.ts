@@ -9,6 +9,7 @@ export async function fetchCameraEntityPlayback(entityId: string): Promise<Camer
   const id = entityId.trim();
   const res = await fetch(`/api/entity-v1/${encodeURIComponent(id)}`, {
     headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+    signal: AbortSignal.timeout(8_000),
   });
   if (!res.ok) {
     const t = await res.text().catch(() => "");

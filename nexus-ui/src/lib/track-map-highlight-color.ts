@@ -1,11 +1,9 @@
 import type { Track } from "@/lib/map-entity-model";
 import { isTrackAlarmLinked } from "@/stores/track-store";
 import { isTrackSuspicious } from "@/stores/suspicious-track-store";
-import { isTrackOpticallyVerified } from "@/stores/verified-track-store";
 import { SUSPICIOUS_TRACK_MAP_COLOR } from "@/lib/suspicious-track-constants";
-import { VERIFIED_TRACK_MAP_COLOR } from "@/lib/verified-track-constants";
 
-/** 可疑目标标绿：告警（蓝）已着色时不覆盖 */
+/** 重点关注标黄：告警（蓝）已着色时不覆盖 */
 export function shouldApplySuspiciousTrackGreen(
   track: Pick<Track, "uniqueID" | "showID" | "trackId">,
 ): boolean {
@@ -13,10 +11,10 @@ export function shouldApplySuspiciousTrackGreen(
   return isTrackSuspicious(track);
 }
 
-/** @deprecated 请用 shouldApplySuspiciousTrackGreen */
+/** @deprecated 请用 shouldApplySuspiciousTrackGreen（现为黄色重点关注） */
 export const shouldApplySuspiciousTrackYellow = shouldApplySuspiciousTrackGreen;
 
-/** 地图态势色优先级：蓝(告警) > 绿(可疑) > 黄(查证) > 默认 */
+/** 地图态势色优先级：蓝(威胁/告警) > 黄(重点关注) > 默认；查证不再单独着色 */
 export function resolveTrackMapHighlightFill(
   track: Pick<Track, "uniqueID" | "showID" | "trackId">,
   baseFill: string,
@@ -26,9 +24,6 @@ export function resolveTrackMapHighlightFill(
   }
   if (isTrackSuspicious(track)) {
     return SUSPICIOUS_TRACK_MAP_COLOR;
-  }
-  if (isTrackOpticallyVerified(track) && !isTrackAlarmLinked(track as Track)) {
-    return VERIFIED_TRACK_MAP_COLOR;
   }
   return baseFill;
 }

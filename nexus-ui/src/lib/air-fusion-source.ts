@@ -1,7 +1,9 @@
 /**
- * 对空融合航迹 fusion_type 位掩码与 original_track_id 槽位映射。
- * bit0(1)=探鸟, bit1(2)=自报位, bit2(4)=反无车雷达；槽位按置位顺序依次对应 original_track_id1/2/3…
+ * 对空融合航迹源解析：优先 extra_data.fusionSources，其次 fusion_type 位掩码槽位。
+ * 目录：0 探鸟 / 1 自报位 / 2 反无车 / 3 打击无人机（旧数据仍可能出现 KU）。
  */
+
+import { parseFusionSourcesFromExtraData } from "@/lib/fusion-source-catalog";
 
 export const AIR_FUSION_BIT_BIRD = 1;
 export const AIR_FUSION_BIT_SELF_REPORT = 2;
@@ -31,7 +33,40 @@ export function isValidAirFusionTrackId(id: unknown): boolean {
   return true;
 }
 
+function tryParseAirFromExtraData(originalData: Record<string, unknown>): AirFusionSources | null {
+  const parsed = parseFusionSourcesFromExtraData(
+    originalData.extra_data ?? originalData.extraData,
+    "air",
+  );
+  if (parsed.length === 0) return null;
+  const result: AirFusionSources = {
+    fusionType: Number(originalData.fusion_type ?? 0) || 0,
+  };
+  for (const src of parsed) {
+    const id = src.dataSourceId.toLowerCase();
+    if (id === "tan_niao") result.bird = src.trackId;
+    else if (id === "zi_bao_wei") result.selfReport = src.trackId;
+    else if (id === "udp_fanwucar_track") result.fanwu = src.trackId;
+    else if (id === "ku_lei_da") result.legacyKu = src.trackId;
+    else if (id === "udp_strike_uav_track" && result.fanwu === undefined) {
+      result.fanwu = src.trackId;
+    }
+  }
+  if (
+    result.bird === undefined &&
+    result.selfReport === undefined &&
+    result.fanwu === undefined &&
+    result.legacyKu === undefined
+  ) {
+    return null;
+  }
+  return result;
+}
+
 export function parseAirFusionSources(originalData: Record<string, unknown>): AirFusionSources {
+  const fromExtra = tryParseAirFromExtraData(originalData);
+  if (fromExtra) return fromExtra;
+
   const fusionType = Number(originalData.fusion_type ?? 0) || 0;
   const result: AirFusionSources = { fusionType };
 

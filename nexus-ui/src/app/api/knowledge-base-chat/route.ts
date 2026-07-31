@@ -5,9 +5,11 @@ import { resolveKnowledgeBaseChatStreamUrl } from "@/lib/knowledge-base-chat-url
 export const runtime = "nodejs";
 
 /**
- * 代理融控知识库问答 → `POST {upstream}/api/v1/chat/stream`
- * 请求体：`messages` / `thread_id` / `user_context` / `debug`（融控任务管理协议）
- * 地址：`NEXT_PUBLIC_NEXUS_KNOWLEDGE_BASE_URL` 或 `WatchSystemDbQaIp`+`WatchSystemDbQaPort`，默认 192.168.18.103:21914。
+ * 代理知识库入口 → `POST {WatchSystemDbQa 上游}/api/v1/chat/stream`
+ * 与智能助手 `/api/langgraph-chat` 入口分离；停止工作流仍走任务管理 terminate。
+ * 请求体：
+ * - 普通：`messages` / `thread_id` / `user_context`
+ * - 中断恢复：`thread_id` / `interrupt_id` / `interrupt_feedback`（无 messages）
  */
 export async function POST(req: Request) {
   let bodyText: string;

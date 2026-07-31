@@ -51,8 +51,13 @@ function pickArea(alert: AlertData): string {
 }
 
 function pickLevel(alert: AlertData): string {
-  if (alert.alarmLevel != null && Number.isFinite(alert.alarmLevel)) {
-    return String(alert.alarmLevel);
+  // 威胁度优先用稳定的 threatScore；勿用 AlarmSys Top5 排名写入的 alarmLevel(0↔5) 导致 0/25 闪烁
+  if (alert.threatScore != null && Number.isFinite(alert.threatScore) && alert.threatScore > 0) {
+    return String(Math.round(alert.threatScore));
+  }
+  if (alert.alarmLevel != null && Number.isFinite(alert.alarmLevel) && alert.alarmLevel > 5) {
+    // 少数链路把威胁分写在 alarmLevel，且明显不是 0~5 排名
+    return String(Math.round(alert.alarmLevel));
   }
   return SEVERITY_LEVEL_LABEL[alert.severity] ?? "-";
 }
@@ -91,12 +96,12 @@ export function buildAlertSummaryParts(
 }
 
 /**
- * 告警单行摘要：`目标：x, 位置：x, 区域：x, 等级：x`（逗号分隔，对齐 Qt 列表语义）
+ * 告警单行摘要：`目标：x, 位置：x, 区域：x`（威胁分改由证据链展示，不再带等级）
  */
 export function formatAlertSummaryLine(
   alert: AlertData,
   shadowTracks: ReadonlyMap<string, Track>,
 ): string {
-  const { target, position, area, level } = buildAlertSummaryParts(alert, shadowTracks);
-  return `目标：${target}, 位置：${position}, 区域：${area}, 等级：${level}`;
+  const { target, position, area } = buildAlertSummaryParts(alert, shadowTracks);
+  return `目标：${target}, 位置：${position}, 区域：${area}`;
 }

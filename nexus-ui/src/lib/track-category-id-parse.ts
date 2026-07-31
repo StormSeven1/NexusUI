@@ -3,7 +3,7 @@
  * - 旧 fusion：`trackCategoryId === 3` 为无人机
  * - NewTrackStruct `classified_type` / `trackType`（UnitType）：
  *   - 对空：`1 = DRONE` 无人机，其余多为鸟
-   *   - 对海：`6 = BUOY` 浮标，`7 = SURFACE_SHIP` 船，其余 → 礁石
+ *   - 对海：`6 = BUOY` 浮标，`7 = SURFACE_SHIP` / `OTHER` 等 → 船（态势不画礁石）
  */
 
 /** 与 NewTrackRealTimeStatus.idl `UnitType` 一致 */
@@ -202,6 +202,67 @@ export function readClassifiedTypeFromRecord(rec: Record<string, unknown>): numb
   return undefined;
 }
 
+/** NewTrackStruct UnitType / trackCategoryName → 标牌「类型」中文 */
+const UNIT_TYPE_ZH: Record<number, string> = {
+  [UNIT_TYPE_UNKNOWN]: "未知",
+  [UNIT_TYPE_DRONE]: "无人机",
+  [UNIT_TYPE_BIRD]: "鸟",
+  3: "直升机",
+  4: "固定翼",
+  5: "导弹",
+  [UNIT_TYPE_BUOY]: "浮标",
+  [UNIT_TYPE_SURFACE_SHIP]: "船",
+  8: "潜艇",
+  9: "地面车辆",
+  10: "人员",
+  11: "动物",
+  [UNIT_TYPE_OTHER]: "其他",
+};
+
+const CATEGORY_NAME_ZH: Record<string, string> = {
+  unknown: "未知",
+  uav: "无人机",
+  drone: "无人机",
+  bird: "鸟",
+  helicopter: "直升机",
+  aircraft: "固定翼",
+  fixed_wing: "固定翼",
+  missile: "导弹",
+  buoy: "浮标",
+  ship: "船",
+  surface_ship: "船",
+  submarine: "潜艇",
+  ground_vehicle: "地面车辆",
+  person: "人员",
+  animal: "动物",
+  other: "其他",
+};
+
+type TrackLikeForTypeZh = {
+  classifiedType?: number;
+  targetType?: string;
+  manualTargetType?: "ship" | "buoy" | "other";
+};
+
+/**
+ * 航迹类型中文（标牌「类型」）：优先 `classifiedType`，否则解析 `targetType` / 类别名字符串。
+ */
+export function formatTrackUnitTypeZh(
+  track: Pick<TrackLikeForTypeZh, "classifiedType" | "targetType" | "manualTargetType">,
+): string {
+  if (track.manualTargetType === "buoy") return "浮标";
+  if (track.manualTargetType === "ship") return "船";
+  if (track.manualTargetType === "other") return "其他";
+  const ct = track.classifiedType;
+  if (ct != null && Number.isFinite(ct) && UNIT_TYPE_ZH[ct] != null) {
+    return UNIT_TYPE_ZH[ct]!;
+  }
+  const raw = String(track.targetType ?? "").trim().toLowerCase();
+  if (raw && CATEGORY_NAME_ZH[raw]) return CATEGORY_NAME_ZH[raw]!;
+  if (raw) return raw;
+  return "-";
+}
+
 /** 对海航迹 UnitType 是否为 BUOY（6）→ 地图画浮标军标 */
 export function isSeaTrackBuoyFromClassification(
   classifiedType: number | undefined,
@@ -214,27 +275,32 @@ export function isSeaTrackBuoyFromClassification(
   return /\bbuoy\b/.test(blob);
 }
 
-/** 对海航迹 UnitType 是否为 SURFACE_SHIP（7）→ 地图画船军标 */
+/** 对海航迹 UnitType 是否为 SURFACE_SHIP（7）或 OTHER 等 → 地图画船军标（非浮标） */
 export function isSeaTrackShipFromClassification(
   classifiedType: number | undefined,
   targetType?: string | null,
   trackAlias?: string | null,
 ): boolean {
-  if (classifiedType === UNIT_TYPE_SURFACE_SHIP) return true;
-  if (classifiedType !== undefined) return false;
+  if (classifiedType === UNIT_TYPE_SURFACE_SHIP || classifiedType === UNIT_TYPE_OTHER) return true;
+  if (classifiedType !== undefined) {
+    /** 非浮标的已知 UnitType（含 unknown 等）态势一律按船 */
+    return classifiedType !== UNIT_TYPE_BUOY;
+  }
   const blob = `${targetType ?? ""} ${trackAlias ?? ""}`.trim().toLowerCase();
-  return /\b(ship|surface_ship)\b/.test(blob);
+  if (/\bbuoy\b/.test(blob)) return false;
+  return /\b(ship|surface_ship|other)\b/.test(blob) || !blob;
 }
 
-/** 对海融合：非 ship / 非 buoy → 礁石军标（unknown、submarine、other 等） */
+/** @deprecated 态势不画礁石；恒为 false，非浮标走船军标 */
 export function isSeaTrackReefFromClassification(
   classifiedType: number | undefined,
   targetType?: string | null,
   trackAlias?: string | null,
 ): boolean {
-  if (isSeaTrackBuoyFromClassification(classifiedType, targetType, trackAlias)) return false;
-  if (isSeaTrackShipFromClassification(classifiedType, targetType, trackAlias)) return false;
-  return true;
+  void classifiedType;
+  void targetType;
+  void trackAlias;
+  return false;
 }
 
 /**

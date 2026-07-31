@@ -27,6 +27,8 @@ export const DEFAULT_TRACK_SUBTYPE_VISIBLE: TrackSubtypeVisibility = {
   fuse_sea: true,
   fuse_air: true,
   bird_radar: false,
+  /** 探鸟雷达智能跟踪点迹 UDP；联调默认开 */
+  auto_bird_radar: true,
   fanwu_car_radar: false,
   radar_wharf: false,
   radar_jingzi: false,
@@ -40,12 +42,28 @@ export const DEFAULT_TRACK_SUBTYPE_VISIBLE: TrackSubtypeVisibility = {
 export const TRACK_LAYER_KEY_BY_DDS_SOURCE_ID: Record<string, TrackLayerKey> = {
   dds_forward_fuse_track: "fuse_sea",
   dds_forward_fuse_track_legacy: "fuse_sea",
+  dds_forward_fuse_track_virtual: "fuse_sea",
+  grpc_new_track_struct_fuse_sea: "fuse_sea",
   dds_forward_fuse_bird_radar_track: "fuse_air",
+  dds_forward_fuse_bird_radar_track_virtual: "fuse_air",
+  grpc_new_track_struct_fuse_air: "fuse_air",
   dds_forward_bird_radar_track: "bird_radar",
+  udp_auto_bird_radar: "auto_bird_radar",
+  dds_forward_auto_bird_radar_track: "auto_bird_radar",
   dds_forward_fanwu_car_track: "fanwu_car_radar",
   dds_udp_fanwucar_track: "fanwu_car_radar",
   dds_forward_radar_track1: "radar_wharf",
   dds_forward_radar_track2: "radar_jingzi",
+  grpc_fusion_track_radar_wharf: "radar_wharf",
+  grpc_fusion_track_radar_jingzi: "radar_jingzi",
+  grpc_fusion_track_xpf: "xpf_track",
+  grpc_fusion_track_boatself: "boat_self_track",
+  grpc_fusion_track_ais: "ais_track",
+  grpc_fusion_track_bird: "bird_radar",
+  grpc_fusion_track_uav_pose: "uav_pose_track",
+  grpc_fusion_track_fanwu: "fanwu_car_radar",
+  grpc_fusion_track_ku: "fanwu_car_radar",
+  grpc_fusion_track_auto_bird: "auto_bird_radar",
   dds_forward_ais_track: "ais_track",
   dds_forward_uav_pose_track: "uav_pose_track",
   dds_udp_boatself_track: "boat_self_track",
@@ -57,6 +75,7 @@ export const TRACK_SUBTYPE_LABELS: Record<TrackLayerKey, string> = {
   fuse_sea: "对海融合航迹",
   fuse_air: "对空融合航迹",
   bird_radar: "探鸟雷达航迹",
+  auto_bird_radar: "探鸟雷达智能跟踪点迹",
   fanwu_car_radar: "反无车雷达航迹",
   radar_wharf: "远遥码头雷达航迹",
   radar_jingzi: "靖子头雷达航迹",
@@ -68,18 +87,36 @@ export const TRACK_SUBTYPE_LABELS: Record<TrackLayerKey, string> = {
 
 /** 雷达类 DDS 来源：地图上用圆点而非军标 */
 export function isRadarTrackLayerKey(k: TrackLayerKey): boolean {
-  return k === "bird_radar" || k === "fanwu_car_radar" || k === "radar_wharf" || k === "radar_jingzi";
+  return (
+    k === "bird_radar" ||
+    k === "auto_bird_radar" ||
+    k === "fanwu_car_radar" ||
+    k === "radar_wharf" ||
+    k === "radar_jingzi"
+  );
 }
 
-/** 地图与目标列表上用圆点表示的航迹（雷达 + AIS + 自报位） */
+/** AIS 航迹：地图用空心三角（非军标、非圆点） */
+export function isAisTrackLayerKey(k: TrackLayerKey): boolean {
+  return k === "ais_track";
+}
+
+/**
+ * 地图与目标列表上用圆点表示的航迹（雷达 + 自报位）。
+ * AIS 单独走空心三角，见 `isAisTrackLayerKey`。
+ */
 export function isDotTrackLayerKey(k: TrackLayerKey): boolean {
   return (
     isRadarTrackLayerKey(k) ||
-    k === "ais_track" ||
     k === "uav_pose_track" ||
     k === "boat_self_track" ||
     k === "xpf_track"
   );
+}
+
+/** 非军标点状航迹（圆点或 AIS 三角），与融合军标相对 */
+export function isNonMilSymbolTrackLayerKey(k: TrackLayerKey): boolean {
+  return isDotTrackLayerKey(k) || isAisTrackLayerKey(k);
 }
 
 export type TrackLayerResolveInput = Pick<
@@ -99,11 +136,19 @@ function inferTrackLayerKeyFromText(track: TrackLayerResolveInput): TrackLayerKe
   /** 须先于 `dds_forward_bird_radar_track`：对空融合 id 含子串 bird_radar */
   if (/\bdds_forward_fuse_bird_radar_track\b/.test(textBlob)) return "fuse_air";
   if (/\bdds_forward_fuse_track\b/.test(textBlob)) return "fuse_sea";
+  if (/\budp_auto_bird_radar\b/.test(textBlob)) return "auto_bird_radar";
+  if (/\bdds_forward_auto_bird_radar_track\b/.test(textBlob)) return "auto_bird_radar";
   if (/\bdds_forward_bird_radar_track\b/.test(textBlob)) return "bird_radar";
   if (/\bdds_forward_fanwu_car_track\b/.test(textBlob)) return "fanwu_car_radar";
   if (/\bdds_udp_fanwucar_track\b/.test(textBlob)) return "fanwu_car_radar";
+  if (/\bgrpc_fusion_track_fanwu\b/.test(textBlob)) return "fanwu_car_radar";
+  if (/\bgrpc_fusion_track_ku\b/.test(textBlob)) return "fanwu_car_radar";
   if (/\bdds_forward_ais_track\b/.test(textBlob)) return "ais_track";
+  if (/\bgrpc_fusion_track_ais\b/.test(textBlob)) return "ais_track";
+  if (/\bgrpc_fusion_track_bird\b/.test(textBlob)) return "bird_radar";
   if (/\bdds_forward_uav_pose_track\b/.test(textBlob)) return "uav_pose_track";
+  if (/\bgrpc_fusion_track_uav_pose\b/.test(textBlob)) return "uav_pose_track";
+  if (/\bgrpc_fusion_track_auto_bird\b/.test(textBlob)) return "auto_bird_radar";
   if (/\bdds_udp_boatself_track\b/.test(textBlob)) return "boat_self_track";
   if (/\bdds_udp_xpf_track\b/.test(textBlob)) return "xpf_track";
   return undefined;

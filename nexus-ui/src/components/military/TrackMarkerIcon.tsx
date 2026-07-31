@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 import type { Track } from "@/lib/map-entity-model";
 import {
   buildMarkerSymbolDataUrl,
-  getFusionTrackMarkerFill,
   isAirTrackBirdGlyph,
   isSeaTrackBuoyGlyph,
   isSeaTrackReefGlyph,
@@ -13,6 +12,10 @@ import {
 import { getTrackRenderingConfig } from "@/lib/map-app-config";
 import { resolveTrackLayerKey } from "@/lib/track-layer-visibility";
 import { getTrackDispositionForRendering } from "@/stores/track-store";
+import {
+  neutralFusionColorForTrack,
+  useTrackDisplayStore,
+} from "@/stores/track-display-store";
 import { isTrackVirtualTroop } from "@/lib/track-reality-type";
 import { isTrackCoasting } from "@/lib/track-target-state";
 import { shouldApplyVerifiedTrackYellow } from "@/lib/verified-track-color";
@@ -20,6 +23,12 @@ import { shouldApplySuspiciousTrackGreen } from "@/lib/track-map-highlight-color
 
 /** 与 GIS 左键标牌、地图军标同源：{@link buildMarkerSymbolDataUrl} */
 export function useTrackMarkerSymbolUrl(track: Track | null | undefined): string | null {
+  const neutralColorByLayer = useTrackDisplayStore((s) => s.neutralColorByLayer);
+  const airFusionNeutralColorBySubtype = useTrackDisplayStore(
+    (s) => s.airFusionNeutralColorBySubtype,
+  );
+  const displayRevision = useTrackDisplayStore((s) => s.displayRevision);
+
   return useMemo(() => {
     if (!track) return null;
     const tr = getTrackRenderingConfig();
@@ -33,7 +42,9 @@ export function useTrackMarkerSymbolUrl(track: Track | null | undefined): string
       undefined,
       isTrackVirtualTroop(track),
       friendlyFill,
-      eff === "neutral" ? getFusionTrackMarkerFill(track) : undefined,
+      eff === "neutral"
+        ? neutralFusionColorForTrack(track, neutralColorByLayer, airFusionNeutralColorBySubtype)
+        : undefined,
       isAirTrackBirdGlyph(track),
       resolveTrackLayerKey(track) === "fuse_air" && isAirTrackBirdGlyph(track),
       shouldApplyVerifiedTrackYellow(track),
@@ -43,7 +54,7 @@ export function useTrackMarkerSymbolUrl(track: Track | null | undefined): string
       shouldApplySuspiciousTrackGreen(track),
       isTrackCoasting(track),
     );
-  }, [track]);
+  }, [track, neutralColorByLayer, airFusionNeutralColorBySubtype, displayRevision]);
 }
 
 /** 航迹军标（与 TargetPlacard 左上角、地图符号一致） */

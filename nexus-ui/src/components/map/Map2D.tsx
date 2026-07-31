@@ -29,8 +29,8 @@ import {
 } from "@/lib/map-entity-model";
 import type { Asset } from "@/lib/map-entity-model";
 import { useDbAreaStore } from "@/stores/db-area-store";
+import { useDbAreaTargetStore } from "@/stores/db-area-target-store";
 import { useTrackDisplayStore } from "@/stores/track-display-store";
-import { isDbAreaLeafVisible } from "@/lib/db-area-panel-helpers";
 import { dbAreaVisibilityKey } from "@/lib/area-table-geometry";
 import { useAssetStore, type AssetData } from "@/stores/asset-store";
 import { useAppConfigStore } from "@/stores/app-config-store";
@@ -94,8 +94,11 @@ import {
 } from "@/lib/map-app-config";
 import {
   RadarCoverageModule,
-  RADAR_COVERAGE_LAYER_IDS,
   RADAR_ASSET_ICON_LAYER,
+  RADAR_SWEEP_FILL,
+  RADAR_SWEEP_EDGE,
+  RADAR_SWEEP_OUTER,
+  RADAR_SWEEP_LABEL,
 } from "@/components/map/modules/radar-range-rings-maplibre";
 import {
   DistanceRingsMaplibre,
@@ -109,6 +112,13 @@ import {
   AIRPORT_LABEL_LAYER,
 } from "@/components/map/modules/airport-maplibre";
 import { OptoelectronicFovModule, FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER } from "@/components/map/modules/optoelectronic-fov-maplibre";
+import {
+  OptoCapabilitySweepModule,
+  OPTO_CAP_SWEEP_FILL,
+  OPTO_CAP_SWEEP_EDGE,
+  OPTO_CAP_SWEEP_OUTER,
+  OPTO_CAP_SWEEP_LABEL,
+} from "@/components/map/modules/opto-capability-sweep-maplibre";
 import {
   ThirdPartyPtzFovModule,
   THIRD_PARTY_PTZ_FOV_LAYER_IDS,
@@ -145,9 +155,11 @@ import {
   DB_AREAS_LAYER_IDS,
   DB_AREAS_LINE_LAYER,
   DB_AREAS_LABEL_LAYER,
+  DB_AREAS_ROUTE_WP_LAYER,
+  DB_AREAS_ROUTE_WP_LABEL_LAYER,
 } from "@/components/map/modules/db-areas-maplibre";
 import { AreaDbContextMenu, type AreaDbMenuState } from "@/components/map/AreaDbContextMenu";
-import { buildDbAreasFeatureCollection } from "@/lib/build-db-areas-geojson";
+import { buildCombinedDbAreasFeatureCollection } from "@/lib/build-combined-db-areas-geojson";
 import {
   buildDbAreasFlashFeatureCollection,
   computeAreaFlashPulseOpacity,
@@ -158,16 +170,23 @@ import { TdoaMaplibre, TDOA_CENTER, TDOA_LAYER_IDS, type TdoaDevice } from "@/co
 import {
   TracksMaplibre,
   TRACK_TRAIL,
+  TRACK_TRAIL_FUSE_SEA,
   TRACK_VECTOR,
+  TRACK_VECTOR_FUSE_SEA,
   TRACK_DOT,
+  TRACK_AIS,
   TRACK_SYMBOL,
+  TRACK_SYMBOL_FUSE_SEA,
   TRACK_LABEL,
+  TRACK_LABEL_FUSE_SEA,
   TRACK_LABEL_RADAR,
   TRACK_THREAT_RANK,
   TRACK_PICK_LAYERS,
   HIGHLIGHT_LAYER,
+  HIGHLIGHT_FUSE_SEA_LAYER,
   HIGHLIGHT_RADAR_LAYER,
   LOCK_ON,
+  LOCK_ON_FUSE_SEA,
   LOCK_ON_RADAR,
 } from "@/components/map/modules/tracks-maplibre";
 import {
@@ -194,8 +213,14 @@ import { isMapMeasureDrawActive, setMapDrawCursor } from "@/lib/map-draw-cursor"
 import { registerTrackEvalMap } from "@/lib/track-eval-map-bridge";
 import { useTrackEvaluationStore } from "@/stores/track-evaluation-store";
 import { MapGisContextMenu, type MapGisMenuState } from "@/components/map/MapGisContextMenu";
-import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
+import { AirRadarCollectDialog } from "@/components/map/AirRadarCollectDialog";
+import { useAirRadarCollectStore } from "@/stores/air-radar-collect-store";
 import { toast } from "sonner";
+import { TrackHistoryPanel } from "@/components/map/TrackHistoryPanel";
+import { TrackHistoryMaplibre } from "@/components/map/modules/track-history-maplibre";
+import { useTrackHistoryStore, TRACK_HISTORY_ALWAYS_SHOW_POLL_MS } from "@/stores/track-history-store";
+import { resolveUniqueIdFromTrack } from "@/lib/alarm-confirm-api";
+import { useDisposalPlanStore } from "@/stores/disposal-plan-store";
 
 /* 2D 地图：航迹 / 资产 + 测量与扇区工具 */
 
@@ -221,7 +246,7 @@ const ASSET_POINT_PICK_LAYERS = [
 ];
 
 /** 双击地图触发光电对准时排除：航迹符号 + 资产符号（与「空白处」语义一致） */
-const MAP_LOOK_AT_BLOCK_LAYERS = [TRACK_SYMBOL, TRACK_DOT, ...ASSET_POINT_PICK_LAYERS];
+const MAP_LOOK_AT_BLOCK_LAYERS = [TRACK_SYMBOL, TRACK_SYMBOL_FUSE_SEA, TRACK_DOT, TRACK_AIS, ...ASSET_POINT_PICK_LAYERS];
 
 /** 仅查询样式中已存在的 layer，避免 id 未就绪或空数组触发 MapLibre 运行时异常（如 refresh 后短时竞态） */
 function queryRenderedFeaturesSafe(
@@ -263,15 +288,22 @@ function ensureMap2dRasterLayersInstalled(map: maplibregl.Map): void {
 const LAYER_MAPPING: Record<string, string[]> = {
   [LYR_TRACKS]: [
     TRACK_TRAIL,
+    TRACK_TRAIL_FUSE_SEA,
     TRACK_VECTOR,
+    TRACK_VECTOR_FUSE_SEA,
     TRACK_DOT,
+    TRACK_AIS,
     TRACK_SYMBOL,
+    TRACK_SYMBOL_FUSE_SEA,
     TRACK_LABEL,
+    TRACK_LABEL_FUSE_SEA,
     TRACK_LABEL_RADAR,
     TRACK_THREAT_RANK,
     HIGHLIGHT_LAYER,
+    HIGHLIGHT_FUSE_SEA_LAYER,
     HIGHLIGHT_RADAR_LAYER,
     LOCK_ON,
+    LOCK_ON_FUSE_SEA,
     LOCK_ON_RADAR,
   ],
   [LYR_DRONES]: [
@@ -288,8 +320,22 @@ const LAYER_MAPPING: Record<string, string[]> = {
   [LYR_AIRPORT]: [AIRPORT_ICON_LAYER, AIRPORT_LABEL_LAYER],
   [LYR_LASER]: [...LASER_LAYER_IDS],
   [LYR_TDOA]: [...TDOA_LAYER_IDS],
-  [LYR_RADAR_COVERAGE]: [...RADAR_COVERAGE_LAYER_IDS, RADAR_ASSET_ICON_LAYER],
-  [LYR_OPTO_FOV]: [...FOV_LAYER_IDS, ...THIRD_PARTY_PTZ_FOV_LAYER_IDS, OPTO_ASSET_ICON_LAYER],
+  [LYR_RADAR_COVERAGE]: [
+    RADAR_SWEEP_FILL,
+    RADAR_SWEEP_EDGE,
+    RADAR_SWEEP_OUTER,
+    RADAR_SWEEP_LABEL,
+    RADAR_ASSET_ICON_LAYER,
+  ],
+  [LYR_OPTO_FOV]: [
+    ...FOV_LAYER_IDS,
+    ...THIRD_PARTY_PTZ_FOV_LAYER_IDS,
+    OPTO_CAP_SWEEP_FILL,
+    OPTO_CAP_SWEEP_EDGE,
+    OPTO_CAP_SWEEP_OUTER,
+    OPTO_CAP_SWEEP_LABEL,
+    OPTO_ASSET_ICON_LAYER,
+  ],
   [LYR_TOWER]: [...TOWER_LAYER_IDS],
   [LYR_MEASURE]: [...MEASURE_TOOL_LAYER_IDS],
   [LYR_DB_AREAS]: [...DB_AREAS_LAYER_IDS],
@@ -460,10 +506,12 @@ export function Map2D() {
   const radarCovRef = useRef<RadarCoverageModule | null>(null);
   const distanceRingsRef = useRef<DistanceRingsMaplibre | null>(null);
   const optoFovRef = useRef<OptoelectronicFovModule | null>(null);
+  const optoCapSweepRef = useRef<OptoCapabilitySweepModule | null>(null);
   const thirdPartyPtzFovRef = useRef<ThirdPartyPtzFovModule | null>(null);
   const towerModRef = useRef<TowerMaplibre | null>(null);
   const airportStaticRef = useRef<AirportStaticMaplibre | null>(null);
   const tracksRef = useRef<TracksMaplibre | null>(null);
+  const trackHistoryRef = useRef<TrackHistoryMaplibre | null>(null);
   /** 同帧内多次 `setTracks` 合并为一次 `requestAnimationFrame`，减轻 WS 突发压力 */
   const tracksPendingRef = useRef<Track[]>([]);
   const tracksFlushRafRef = useRef<number | null>(null);
@@ -532,6 +580,16 @@ export function Map2D() {
       zoom,
       pitch: 0, bearing: 0,
       attributionControl: false,
+      /**
+       * 重合点闪烁根因（回归）：对海融合独立源走 10Hz、雷达源走另一节奏，二者**错拍更新**。
+       * 旧版对海/对空/雷达点在同一 tick 一起 `setData`（同相位）故只偶尔闪；拆分后错拍暴露了
+       * MapLibre 的跨源/动画耦合，重合处彼此露底 → 频繁闪。对海独立快路径必须保留，
+       * 故在渲染层解耦而非改回同源：
+       * - `fadeDuration:0`：关符号淡入淡出（默认 300ms），更新即时切换、无淡变露底。
+       * - `crossSourceCollisions:false`：各源符号布局互不参与彼此避让，对海高频更新不再触发雷达源重布局。
+       */
+      fadeDuration: 0,
+      crossSourceCollisions: false,
     });
     map.doubleClickZoom.disable();
     map.setStyle(style, { transformStyle });
@@ -630,20 +688,28 @@ export function Map2D() {
         );
         tracksRef.current = tracksMod;
 
+        const trackHistoryMod = new TrackHistoryMaplibre(map, {
+          insertBeforeLayerId: HIGHLIGHT_LAYER,
+        });
+        trackHistoryMod.install();
+        trackHistoryMod.setFromEntries(Object.values(useTrackHistoryStore.getState().byUniqueId));
+        trackHistoryRef.current = trackHistoryMod;
+
         /* 数据库区域：须插在已存在的 `HIGHLIGHT_LAYER` 之下 */
         installDbAreasLayers(map, HIGHLIGHT_LAYER);
         removeLegacyDbAreasFillLayer(map);
         {
           const master = useAppStore.getState().layerVisibility[LYR_DB_AREAS] !== false;
           const { rows, areaVisibility } = useDbAreaStore.getState();
+          const { rows: targetRows, targetVisibility } = useDbAreaTargetStore.getState();
           setDbAreasGeoJSON(
             map,
-            buildDbAreasFeatureCollection(
+            buildCombinedDbAreasFeatureCollection(
               rows,
-              (row) => {
-                if (!master) return false;
-                return isDbAreaLeafVisible(row.group_id, row.area_id, areaVisibility);
-              },
+              areaVisibility,
+              targetRows,
+              targetVisibility,
+              master,
               pickSituationAreaLayerStyle(useDistanceRingStore.getState()),
             ),
           );
@@ -670,6 +736,10 @@ export function Map2D() {
         optoFov.applyCamerasBundle(preCfg?.cameras ?? null);
         optoFov.setFromAssets(_assetsEarly);
         optoFovRef.current = optoFov;
+        const optoCapSweep = new OptoCapabilitySweepModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
+        optoCapSweep.install();
+        optoCapSweep.setFromRawAssets(currentAssetDataEarly);
+        optoCapSweepRef.current = optoCapSweep;
 
         const thirdPartyPtzFov = new ThirdPartyPtzFovModule(map, { insertBeforeLayerId: HIGHLIGHT_LAYER });
         thirdPartyPtzFov.install();
@@ -710,6 +780,7 @@ export function Map2D() {
         airportStatic.applyAirportsBundle(appCfg.airports);
         radarCov.setFromAssets(_assets, currentAssetData);
         optoFov.setFromAssets(_assets);
+        optoCapSweepRef.current?.setFromRawAssets(currentAssetData);
         towerMod.setFromAssets(_assets);
         airportStatic.setFromAssets(
           filterAssetsByVisibleDroneAirports(_assets, getVisibleDroneAirportIdsFromStores()),
@@ -915,10 +986,29 @@ export function Map2D() {
               const c = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
               const { x, y } = projectPlacard(c[0], c[1]);
               setPlacard({ kind: "track", id, lng: c[0], lat: c[1], x, y });
+              /* 常显历史航迹：左键点航迹 → 热更新点位 */
+              const tr = useTrackStore.getState().tracks.find((t) => t.id === id);
+              const uid =
+                tr != null
+                  ? String(
+                      resolveUniqueIdFromTrack(tr) ??
+                        tr.uniqueID ??
+                        tr.showID ??
+                        "",
+                    ).trim()
+                  : "";
+              if (uid) {
+                const hist = useTrackHistoryStore.getState().byUniqueId[uid];
+                if (hist?.alwaysShow) {
+                  useTrackHistoryStore.getState().refreshEntry(uid, { silent: true });
+                }
+              }
             }
           };
           map.on("click", TRACK_SYMBOL, onTrackSymbolClick);
+          map.on("click", TRACK_SYMBOL_FUSE_SEA, onTrackSymbolClick);
           map.on("click", TRACK_DOT, onTrackSymbolClick);
+          map.on("click", TRACK_AIS, onTrackSymbolClick);
 
           /* 双击航迹：重点关注采集（TargetCollectionIMChildTask），控制台打印完整 POST JSON */
           const onTrackDblClick = (e: maplibregl.MapLayerMouseEvent) => {
@@ -935,7 +1025,9 @@ export function Map2D() {
             );
           };
           map.on("dblclick", TRACK_SYMBOL, onTrackDblClick);
+          map.on("dblclick", TRACK_SYMBOL_FUSE_SEA, onTrackDblClick);
           map.on("dblclick", TRACK_DOT, onTrackDblClick);
+          map.on("dblclick", TRACK_AIS, onTrackDblClick);
         }
 
         /* 双击无人机自报位/高频图标：与双击融合航迹一致，下发相机跟踪任务 */
@@ -961,16 +1053,22 @@ export function Map2D() {
           const areaFeats = queryRenderedFeaturesSafe(map, e.point, [
             DB_AREAS_LINE_LAYER,
             DB_AREAS_LABEL_LAYER,
+            DB_AREAS_ROUTE_WP_LAYER,
+            DB_AREAS_ROUTE_WP_LABEL_LAYER,
           ]);
           const areaFeat = areaFeats.find((f) => {
             const k = f.properties?._kind as string | undefined;
-            return k === "poly" || k === "route";
+            return k === "poly" || k === "route" || k === "route-wp" || k === "lbl";
           });
           if (areaFeat?.properties) {
             const gid = Number(areaFeat.properties.groupId);
             const aid = Number(areaFeat.properties.areaId);
             const areaType = Number(areaFeat.properties.areaType);
-            const name = String(areaFeat.properties.name ?? `${gid}_${aid}`);
+            const name = String(
+              areaFeat.properties.name ??
+                areaFeat.properties.labelText ??
+                `${gid}_${aid}`,
+            );
             if (Number.isFinite(gid) && Number.isFinite(aid)) {
               setGisMenu(null);
               setAreaDbMenu({
@@ -1099,6 +1197,16 @@ export function Map2D() {
          * 若仍未命中有效资产 id，则关闭标牌、清空航迹/资产选中及多选高亮（属性框与列表选中联动 store）。
          */
         map.on("click", (e) => {
+          /* 对空雷达手动采集：点选方位/距离中心（对齐 Widget m_bDrawAirRadarArea） */
+          if (useAirRadarCollectStore.getState().pickMode) {
+            const applied = useAirRadarCollectStore
+              .getState()
+              .applyMapClick(e.lngLat.lat, e.lngLat.lng);
+            if (applied) {
+              toast.success("已设置采集方位/距离中心");
+              return;
+            }
+          }
           if (queryRenderedFeaturesSafe(map, e.point, [...TRACK_PICK_LAYERS]).length) return;
           const hits = queryRenderedFeaturesSafe(map, e.point, ASSET_POINT_PICK_LAYERS);
           const raw = hits[0];
@@ -1179,6 +1287,8 @@ export function Map2D() {
       airportStaticRef.current = null;
       optoFovRef.current?.dispose();
       optoFovRef.current = null;
+      optoCapSweepRef.current?.dispose();
+      optoCapSweepRef.current = null;
       thirdPartyPtzFovRef.current?.dispose();
       thirdPartyPtzFovRef.current = null;
       towerModRef.current?.dispose();
@@ -1187,6 +1297,8 @@ export function Map2D() {
       dronesRef.current = null;
       tracksRef.current?.dispose();
       tracksRef.current = null;
+      trackHistoryRef.current?.destroy();
+      trackHistoryRef.current = null;
       map.off("style.load", onStyleLoad);
       map.off("styledata", onStyleData);
       map.remove();
@@ -1336,10 +1448,43 @@ export function Map2D() {
     };
   }, []);
 
+  /** 历史航迹点位（叉号）+ 航迹消失时清理常显 + 常显定时热更新 */
+  useEffect(() => {
+    const syncLayer = () => {
+      const mod = trackHistoryRef.current;
+      if (!mod) return;
+      mod.setFromEntries(Object.values(useTrackHistoryStore.getState().byUniqueId));
+    };
+    const pruneFromTracks = (tracks: Track[]) => {
+      const alive = new Set<string>();
+      for (const t of tracks) {
+        if (t.id) alive.add(String(t.id));
+        if (t.showID) alive.add(String(t.showID));
+        if (t.uniqueID) alive.add(String(t.uniqueID));
+      }
+      useTrackHistoryStore.getState().pruneMissingTracks(alive);
+    };
+    syncLayer();
+    const unsubHist = useTrackHistoryStore.subscribe(syncLayer);
+    const unsubTracks = useTrackStore.subscribe((s) => {
+      pruneFromTracks(s.tracks);
+    });
+    pruneFromTracks(useTrackStore.getState().tracks);
+    const poll = window.setInterval(() => {
+      useTrackHistoryStore.getState().refreshAlwaysShowEntries();
+    }, TRACK_HISTORY_ALWAYS_SHOW_POLL_MS);
+    return () => {
+      unsubHist();
+      unsubTracks();
+      window.clearInterval(poll);
+    };
+  }, []);
+
   /** 航迹显示面板：配色 / 矢量 / 尾迹秒数 → 刷新 GeoJSON */
   useEffect(() => {
     const flush = () => {
       if (!tracksRef.current) return;
+      useTrackStore.getState().rebuildDisplayTracksFromCaches();
       tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : useTrackStore.getState().tracks);
     };
     return useTrackDisplayStore.subscribe(flush);
@@ -1369,6 +1514,7 @@ export function Map2D() {
         return;
       }
       if (!tracksRef.current) return;
+      useTrackStore.getState().rebuildDisplayTracksFromCaches();
       tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : useTrackStore.getState().tracks);
     });
     return unsub;
@@ -1384,7 +1530,7 @@ export function Map2D() {
     return unsub;
   }, []);
 
-  /** 光电查证完成：unique_id 标黄后刷新航迹 GeoJSON */
+  /** 光电查证集合变化后刷新航迹 GeoJSON（查证已不再标黄） */
   useEffect(() => {
     const unsub = useVerifiedTrackStore.subscribe((s, p) => {
       if (s.mapVerifiedRev === p.mapVerifiedRev) return;
@@ -1394,7 +1540,7 @@ export function Map2D() {
     return unsub;
   }, []);
 
-  /** 可疑目标：unique_id 标绿后刷新航迹 GeoJSON */
+  /** 重点关注：unique_id 标黄后刷新航迹 GeoJSON */
   useEffect(() => {
     const unsub = useSuspiciousTrackStore.subscribe((s, p) => {
       if (s.mapSuspiciousRev === p.mapSuspiciousRev) return;
@@ -1404,7 +1550,7 @@ export function Map2D() {
     return unsub;
   }, []);
 
-  /** 告警航迹威胁度 Top5 → 地图航迹上方红底序号 1–5 */
+  /** 告警航迹威胁度 Top5 → 地图航迹上方红底序号 1–5（位置跟随由 setTracksAsync 分源刷新，勿订阅 tracks 全量） */
   useEffect(() => {
     const flushThreatRanks = () => {
       if (!tracksRef.current || DISABLE_MAP_TRACK_RENDERING) return;
@@ -1415,15 +1561,10 @@ export function Map2D() {
       tracksRef.current.setThreatRankByShowId(ranks);
     };
     flushThreatRanks();
-    const unsubAlert = useAlertStore.subscribe(flushThreatRanks);
-    const unsubTrack = useTrackStore.subscribe(flushThreatRanks);
-    return () => {
-      unsubAlert();
-      unsubTrack();
-    };
+    return useAlertStore.subscribe(flushThreatRanks);
   }, []);
 
-  /* Postgres 区域图层：总开关 `lyr-db-areas` + 各区域显隐 → GeoJSON */
+  /* Postgres 区域图层：总开关 `lyr-db-areas` + 各区域/固定目标显隐 → GeoJSON */
   useEffect(() => {
     const flushDbAreas = () => {
       const m = mapRef.current;
@@ -1431,14 +1572,15 @@ export function Map2D() {
       try {
         const master = useAppStore.getState().layerVisibility[LYR_DB_AREAS] !== false;
         const { rows, areaVisibility } = useDbAreaStore.getState();
+        const { rows: targetRows, targetVisibility } = useDbAreaTargetStore.getState();
         setDbAreasGeoJSON(
           m,
-          buildDbAreasFeatureCollection(
+          buildCombinedDbAreasFeatureCollection(
             rows,
-            (row) => {
-              if (!master) return false;
-              return isDbAreaLeafVisible(row.group_id, row.area_id, areaVisibility);
-            },
+            areaVisibility,
+            targetRows,
+            targetVisibility,
+            master,
             pickSituationAreaLayerStyle(useDistanceRingStore.getState()),
           ),
         );
@@ -1449,6 +1591,7 @@ export function Map2D() {
     };
 
     const unsubDb = useDbAreaStore.subscribe(flushDbAreas);
+    const unsubTargets = useDbAreaTargetStore.subscribe(flushDbAreas);
     const unsubMaster = useAppStore.subscribe((s, p) => {
       if ((s.layerVisibility[LYR_DB_AREAS] ?? true) === (p.layerVisibility[LYR_DB_AREAS] ?? true)) return;
       flushDbAreas();
@@ -1457,6 +1600,7 @@ export function Map2D() {
     flushDbAreas();
     return () => {
       unsubDb();
+      unsubTargets();
       unsubMaster();
       unsubSituation();
     };
@@ -1580,18 +1724,20 @@ export function Map2D() {
       const vis = useOptoDeviceLayerStore.getState().deviceVisibility;
       const cam = useMapGisCameraMenuStore.getState();
       const panelIds = cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
-      optoFovRef.current?.setExcludeFromOptoFovIds(
-        new Set(
-          collectThirdPartyEntityIdsForFov(
-            cam.rows,
-            useAssetStore.getState().assets,
-            useEoCameraDdsStatusStore.getState().byEntityId,
-            useEoThirdPartyUdpDevStatusStore.getState().byEntityId,
-          ),
+      const excludeIds = new Set(
+        collectThirdPartyEntityIdsForFov(
+          cam.rows,
+          useAssetStore.getState().assets,
+          useEoCameraDdsStatusStore.getState().byEntityId,
+          useEoThirdPartyUdpDevStatusStore.getState().byEntityId,
         ),
       );
+      optoFovRef.current?.setExcludeFromOptoFovIds(excludeIds);
       optoFovRef.current?.setPerDeviceVisibility(vis, panelIds);
       thirdPartyPtzFovRef.current?.setPerDeviceVisibility(vis, panelIds);
+      optoCapSweepRef.current?.setExcludeFromOptoFovIds(excludeIds);
+      optoCapSweepRef.current?.setPerDeviceVisibility(vis, panelIds);
+      optoCapSweepRef.current?.setFromRawAssets(useAssetStore.getState().assets);
     };
     const flushThirdPartyPtzFov = () => {
       const cam = useMapGisCameraMenuStore.getState();
@@ -1690,20 +1836,25 @@ export function Map2D() {
         {
           const cam = useMapGisCameraMenuStore.getState();
           const panelIds = cam.loaded ? new Set(cam.rows.map((r) => r.entityId)) : null;
-          optoFovRef.current?.setExcludeFromOptoFovIds(
-        new Set(
-          collectThirdPartyEntityIdsForFov(
-            cam.rows,
-            useAssetStore.getState().assets,
-            useEoCameraDdsStatusStore.getState().byEntityId,
-            useEoThirdPartyUdpDevStatusStore.getState().byEntityId,
-          ),
-        ),
-      );
+          const excludeIds = new Set(
+            collectThirdPartyEntityIdsForFov(
+              cam.rows,
+              useAssetStore.getState().assets,
+              useEoCameraDdsStatusStore.getState().byEntityId,
+              useEoThirdPartyUdpDevStatusStore.getState().byEntityId,
+            ),
+          );
+          optoFovRef.current?.setExcludeFromOptoFovIds(excludeIds);
           optoFovRef.current?.setPerDeviceVisibility(
             useOptoDeviceLayerStore.getState().deviceVisibility,
             panelIds,
           );
+          optoCapSweepRef.current?.setExcludeFromOptoFovIds(excludeIds);
+          optoCapSweepRef.current?.setPerDeviceVisibility(
+            useOptoDeviceLayerStore.getState().deviceVisibility,
+            panelIds,
+          );
+          optoCapSweepRef.current?.setFromRawAssets(assetSnap);
         }
         optoFovRef.current?.setCameraDdsStatus(useEoCameraDdsStatusStore.getState().byEntityId);
         optoFovRef.current?.setFromAssets(adapted);
@@ -1760,6 +1911,8 @@ export function Map2D() {
     <div className="relative h-full w-full">
       <div ref={mapContainer} className="h-full w-full" />
       {gisMenu ? <MapGisContextMenu open state={gisMenu} onClose={() => setGisMenu(null)} /> : null}
+      <AirRadarCollectDialog />
+      <TrackHistoryPanel />
       <AreaDbContextMenu
         open={areaDbMenu != null}
         state={areaDbMenu}

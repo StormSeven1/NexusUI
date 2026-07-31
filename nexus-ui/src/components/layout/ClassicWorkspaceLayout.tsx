@@ -14,6 +14,7 @@ import {
   MIN_CLASSIC_RATIO,
   clampClassicRightWidth,
 } from "@/lib/layout/classic-layout-config";
+import { swapClassicSubWithMain } from "@/lib/layout/classic-eo-swap";
 import type { PanelId } from "@/components/dock/types";
 import {
   isElectroOpticalDockPanel,
@@ -306,6 +307,10 @@ export function ClassicRightColumn(props: { workspaceRowRef: RefObject<HTMLDivEl
                         panelId={pid}
                         entityId={eoEntityMap[pid]}
                         disableExpand
+                        classicToolsCaptureOnly
+                        onClassicSetAsMain={() => {
+                          swapClassicSubWithMain(pid);
+                        }}
                       />
                     </ClassicPanelFrame>
                   </div>

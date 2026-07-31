@@ -1,23 +1,99 @@
 import type maplibregl from "maplibre-gl";
+import { DB_AREA_ROUTE_LINE_DASH } from "@/lib/build-db-areas-geojson";
 
 const SRC = "nexus-db-areas-src";
 const LINE = "nexus-db-areas-line";
 const LBL = "nexus-db-areas-lbl";
+const WP = "nexus-db-areas-route-wp";
+const WP_LBL = "nexus-db-areas-route-wp-lbl";
 const FLASH_SRC = "nexus-db-areas-flash-src";
 const FLASH_LINE = "nexus-db-areas-flash-line";
 const FLASH_LBL = "nexus-db-areas-flash-lbl";
+const FLASH_WP = "nexus-db-areas-flash-route-wp";
+const FLASH_WP_LBL = "nexus-db-areas-flash-route-wp-lbl";
 
 export const DB_AREAS_LINE_LAYER = LINE;
 export const DB_AREAS_LABEL_LAYER = LBL;
+export const DB_AREAS_ROUTE_WP_LAYER = WP;
+export const DB_AREAS_ROUTE_WP_LABEL_LAYER = WP_LBL;
 export const DB_AREAS_SOURCE = SRC;
 export const DB_AREAS_FLASH_SOURCE = FLASH_SRC;
 export const DB_AREAS_FLASH_LINE_LAYER = FLASH_LINE;
 export const DB_AREAS_FLASH_LABEL_LAYER = FLASH_LBL;
-/** 仅线框 + 名称，无填充 */
-export const DB_AREAS_LAYER_IDS = [LINE, LBL] as const;
-export const DB_AREAS_FLASH_LAYER_IDS = [FLASH_LINE, FLASH_LBL] as const;
+/** 仅线框 + 名称 + 航线折点序号，无填充 */
+export const DB_AREAS_LAYER_IDS = [LINE, LBL, WP, WP_LBL] as const;
+export const DB_AREAS_FLASH_LAYER_IDS = [FLASH_LINE, FLASH_LBL, FLASH_WP, FLASH_WP_LBL] as const;
 
 const emptyFc: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+
+const lineDashExpr: maplibregl.ExpressionSpecification = [
+  "match",
+  ["get", "lineStyle"],
+  "dashed",
+  ["literal", [8, 4]],
+  "dotted",
+  ["literal", [1, 3]],
+  "drone-route",
+  ["literal", [...DB_AREA_ROUTE_LINE_DASH]],
+  ["literal", [1, 0]],
+];
+
+function addRouteWaypointLayers(
+  map: maplibregl.Map,
+  opts: {
+    circleId: string;
+    labelId: string;
+    source: string;
+    beforeId?: string;
+    flash?: boolean;
+  },
+): void {
+  const { circleId, labelId, source, beforeId, flash } = opts;
+  if (!map.getLayer(circleId)) {
+    map.addLayer(
+      {
+        id: circleId,
+        type: "circle",
+        source,
+        filter: ["==", ["get", "_kind"], "route-wp"],
+        layout: flash ? { visibility: "none" } : {},
+        paint: {
+          "circle-radius": 7,
+          "circle-color": ["get", "lineColor"],
+          "circle-opacity": flash ? 1 : ["coalesce", ["get", "labelOpacity"], 0.95],
+          "circle-stroke-color": "#09090b",
+          "circle-stroke-width": 1.5,
+        },
+      },
+      beforeId,
+    );
+  }
+  if (!map.getLayer(labelId)) {
+    map.addLayer(
+      {
+        id: labelId,
+        type: "symbol",
+        source,
+        filter: ["==", ["get", "_kind"], "route-wp"],
+        layout: {
+          ...(flash ? { visibility: "none" as const } : {}),
+          "text-field": ["to-string", ["get", "wpIndex"]],
+          "text-font": ["Open Sans Semibold", "Open Sans Regular"],
+          "text-size": 11,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: {
+          "text-color": "#0a0a0a",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 0.5,
+          "text-opacity": flash ? 1 : ["coalesce", ["get", "labelOpacity"], 0.95],
+        },
+      },
+      beforeId,
+    );
+  }
+}
 
 export function installDbAreasLayers(map: maplibregl.Map, beforeId?: string): void {
   if (!map.getSource(SRC)) {
@@ -33,19 +109,12 @@ export function installDbAreasLayers(map: maplibregl.Map, beforeId?: string): vo
         type: "line",
         source: SRC,
         filter: ["in", ["get", "_kind"], ["literal", ["poly", "route"]]],
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": ["get", "lineColor"],
           "line-width": ["get", "lineWidth"],
           "line-opacity": ["coalesce", ["get", "lineOpacity"], 1],
-          "line-dasharray": [
-            "match",
-            ["get", "lineStyle"],
-            "dashed",
-            ["literal", [8, 4]],
-            "dotted",
-            ["literal", [1, 3]],
-            ["literal", [1, 0]],
-          ],
+          "line-dasharray": lineDashExpr,
         },
       },
       beforeId,
@@ -86,6 +155,12 @@ export function installDbAreasLayers(map: maplibregl.Map, beforeId?: string): vo
       beforeId,
     );
   }
+  addRouteWaypointLayers(map, {
+    circleId: WP,
+    labelId: WP_LBL,
+    source: SRC,
+    beforeId,
+  });
   if (!map.getLayer(FLASH_LINE)) {
     map.addLayer(
       {
@@ -93,20 +168,12 @@ export function installDbAreasLayers(map: maplibregl.Map, beforeId?: string): vo
         type: "line",
         source: FLASH_SRC,
         filter: ["in", ["get", "_kind"], ["literal", ["poly", "route"]]],
-        layout: { visibility: "none" },
+        layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": ["get", "lineColor"],
           "line-width": ["get", "lineWidth"],
           "line-opacity": 1,
-          "line-dasharray": [
-            "match",
-            ["get", "lineStyle"],
-            "dashed",
-            ["literal", [8, 4]],
-            "dotted",
-            ["literal", [1, 3]],
-            ["literal", [1, 0]],
-          ],
+          "line-dasharray": lineDashExpr,
         },
       },
       beforeId,
@@ -147,6 +214,13 @@ export function installDbAreasLayers(map: maplibregl.Map, beforeId?: string): vo
       beforeId,
     );
   }
+  addRouteWaypointLayers(map, {
+    circleId: FLASH_WP,
+    labelId: FLASH_WP_LBL,
+    source: FLASH_SRC,
+    beforeId,
+    flash: true,
+  });
 }
 
 export function setDbAreasGeoJSON(map: maplibregl.Map, data: GeoJSON.FeatureCollection): void {
@@ -172,10 +246,11 @@ export function setDbAreasFlashLayersVisible(map: maplibregl.Map, visible: boole
 }
 
 export function setDbAreasFlashPulseOpacity(map: maplibregl.Map, opacity: number): void {
-  for (const id of [FLASH_LINE, FLASH_LBL] as const) {
+  for (const id of [FLASH_LINE, FLASH_LBL, FLASH_WP, FLASH_WP_LBL] as const) {
     try {
       if (!map.getLayer(id)) continue;
-      const prop = id === FLASH_LINE ? "line-opacity" : "text-opacity";
+      const prop =
+        id === FLASH_LINE ? "line-opacity" : id === FLASH_WP ? "circle-opacity" : "text-opacity";
       map.setPaintProperty(id, prop, opacity);
     } catch {
       /* style 过渡 */

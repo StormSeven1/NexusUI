@@ -25,7 +25,10 @@ class Settings(BaseSettings):
     
     # WebSocket配置
     HEARTBEAT_INTERVAL: int = 10
+    # 广播节拍：保持较小以保航迹实时性；卡顿应靠并行发送/超时踢慢客户端，勿靠加大本值
     BROADCAST_INTERVAL: int = 100  # 毫秒
+    # 单客户端一拍发送超时（秒）。超时只踢该慢连接，不拖累其他前端实时性
+    WS_CLIENT_SEND_TIMEOUT_SEC: float = 0.15
     
     # 日志配置
     LOG_LEVEL: str = "INFO"
@@ -51,6 +54,13 @@ class Settings(BaseSettings):
     RADAR_TRAIN_CAPTURE_DURATION_SEC: float = 10.0
     BIRD_RADAR_CAPTURE_IDLE_SEC: int = 60
 
+    # 对空/探鸟雷达数据采集 UDP 下发（对齐 Widget SendAirRadarCollectDataIP/Port）
+    AIR_RADAR_COLLECT_SEND_IP: str = ""
+    AIR_RADAR_COLLECT_SEND_PORT: int = 0
+    # 探鸟雷达站址（手动点选方位/距离中心，对齐 Config_Radar RadarAttr2）
+    AIR_RADAR_COLLECT_RADAR_LAT: float = 37.54887
+    AIR_RADAR_COLLECT_RADAR_LON: float = 122.09432
+
     # 相机实时状态 DDS 订阅：legacy=domain149 | entity=domain200 | both=双路（见 NEXUS_DDS_CAMERA_STATUS_MODE）
     NEXUS_DDS_CAMERA_STATUS_MODE: str = "legacy"
 
@@ -58,6 +68,20 @@ class Settings(BaseSettings):
     NEXUS_DRONE_STATUS_TRANSPORT: str = "dds"
     NEXUS_DRONE_ENTITY_GRPC_URL: str = "192.168.18.103:51070"
     NEXUS_DRONE_HOSTILE_GRPC_URL: str = "192.168.18.141:50065"
+
+    # 对空/对海融合航迹：dds | grpc（见 NEXUS_FUSION_TRACK_TRANSPORT）
+    NEXUS_FUSION_TRACK_TRANSPORT: str = "dds"
+    NEXUS_NEW_TRACK_STRUCT_GRPC_URL: str = "192.168.18.141:60055"
+    # 航迹类告警：embedded=从 NewTrackStruct 目标.alarms 读（证据链同源）；dds=仍订 AlarmEventTopic
+    NEXUS_TRACK_ALARM_TRANSPORT: str = "embedded"
+    # 蓝方虚兵航迹：独立 NewTrackStruct gRPC 一路（不替代、不开关原有 DDS/虚兵融合）
+    NEXUS_VIRTUAL_NEW_TRACK_STRUCT_GRPC_URL: str = "192.168.18.116:50065"
+
+    # 传感器旁路航迹（雷达/AIS/探鸟/自报位/反无车/智能跟踪等）：dds | grpc
+    # grpc 时改从 FusionTrack 统一流(:60056)消费，用其全局唯一 uniqueId 做 showID，
+    # 与 NewTrackStruct(:60055) 融合 target_id 同池不撞 → 与融合可同时显示。
+    NEXUS_RADAR_TRACK_TRANSPORT: str = "dds"
+    NEXUS_FUSION_TRACK_STREAM_GRPC_URL: str = "192.168.18.141:60056"
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -73,6 +97,18 @@ class Settings(BaseSettings):
 
 # UDP接收配置
 UDP_RECEIVERS: List[Dict[str, Any]] = [
+    {
+        # 探鸟雷达「智能跟踪航迹」：与 Config_Radar [RadarAttr2] RadarNewTrackIP/Port 一致
+        "id": "udp_auto_bird_radar",
+        "name": "探鸟智能跟踪航迹(UDP)",
+        "type": "multicast",
+        "host": "224.0.1.162",
+        "port": 14444,
+        "enabled": True,
+        "data_format": "SPxTrackExt",
+        "buffer_size": 65536,
+        # 不写 local_interface 时用 Settings.LOCAL_INTERFACE（141 本机 ens22f0）
+    },
     {
         "id": "udp_bird_radar_ml",
         "name": "探鸟雷达ML原始点迹(UDP)",
@@ -184,6 +220,8 @@ MQTT_RECEIVERS: List[Dict[str, Any]] = [
 # 航迹 DDS 在独立子进程（dds_track_bridge），与 Entity/相机 彻底隔离；修改相机/target_id 勿动航迹项。
 DDS_RECEIVERS: List[Dict[str, Any]] = [
     {
+        # 航迹类告警：默认不再订阅（NEXUS_TRACK_ALARM_TRANSPORT=embedded），改从目标结构 alarms/embedded_alarms 读。
+        # 本项保留完整 DDS 形态，便于切回 dds 或对照现场。
         "id": "dds_alarm_event",
         "name": "DDS威胁告警列表",
         "enabled": True,
@@ -264,7 +302,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     {
         "id": "dds_shore_multi_detection",
         "name": "DDS岸基相机多目标检测框",
-        "enabled": True,
+        "enabled": False,  # 前端无消费者（检测框走 camServer ws:2088），禁用节省 ~154/s 无效推送
         "domain_id": 142,
         "topic_name": "MultiTrackResultTopic",
         "profile_name": "multi_track_subscriber_shore",
@@ -282,7 +320,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     {
         "id": "dds_shore_single_detection",
         "name": "DDS岸基相机单目标检测框",
-        "enabled": True,
+        "enabled": False,  # 前端无消费者（检测框走 camServer ws:2088），禁用节省 ~26/s 无效推送
         "domain_id": 143,
         "topic_name": "SingleTrackResultTopic",
         "profile_name": "single_track_subscriber_shore",
@@ -671,6 +709,31 @@ DDS_CAMERA_STATUS_MODE = apply_dds_camera_status_mode(DDS_RECEIVERS)
 
 _DRONE_DDS_RECEIVER_IDS = ("dds_drone_status", "dds_drone_task", "dds_high_freq")
 
+# 对空/对海融合 NewTrackStruct（含虚兵 topic）；切 gRPC 时关闭，其它航迹仍走 DDS
+_FUSION_DDS_RECEIVER_IDS = (
+    "dds_forward_fuse_track",
+    "dds_forward_fuse_track_virtual",
+    "dds_forward_fuse_bird_radar_track",
+    "dds_forward_fuse_bird_radar_track_virtual",
+)
+
+# FusionTrack gRPC 旁路源对应的 DDS 接收器；切 grpc 时关闭，避免双点
+_RADAR_DDS_RECEIVER_IDS = (
+    "dds_forward_radar_track1",  # 远遥码头雷达 → yuan_yao
+    "dds_forward_radar_track2",  # 靖子头雷达 → jing_zi_tou
+    "dds_udp_xpf_track",         # 远遥鹏飞 → udp_xpf_track
+    "dds_udp_boatself_track",    # 船只自报位 → udp_boatself_track
+    "dds_forward_ais_track",     # AIS → ais
+    "dds_forward_bird_radar_track",  # 探鸟雷达 → tan_niao
+    "dds_forward_uav_pose_track",    # 无人机自报位 → zi_bao_wei
+    "dds_forward_fanwu_car_track",   # 反无车 → udp_fanwucar_track
+)
+
+# FusionTrack gRPC 旁路源对应的 UDP 接收器；切 grpc 时关闭，避免双点
+_RADAR_UDP_RECEIVER_IDS = (
+    "udp_auto_bird_radar",  # 探鸟智能跟踪 → auto_bird
+)
+
 # 系统工作模式 DDS 发布（供前端 TopNav 下拉框调用 /api/system/work-mode）
 # 需先在 DDSReferences/WorkMode 下编译出 libWorkModeStatus.so 与 _WorkModeStatusWrapper.so
 WORK_MODE_DDS_PUBLISHER: Dict[str, Any] = {
@@ -789,4 +852,235 @@ def apply_drone_status_transport(
 DRONE_STATUS_GRPC_RECEIVERS = build_drone_status_grpc_receivers()
 DRONE_STATUS_TRANSPORT = apply_drone_status_transport(
     DDS_RECEIVERS, DRONE_STATUS_GRPC_RECEIVERS
+)
+
+
+# ──────────────────────────────────────────────────────────────────
+# 相机实时状态 EntityStatus gRPC（替代 dds_camera_status）
+# 需要 camServer SiteProfile.ini 中 UseEntityGrpc=1 + EntityStatusGrpcPort=8092
+# 环境变量 NEXUS_CAMERA_STATUS_TRANSPORT=grpc 才启用；默认 dds（保持现有 DDS 不动）
+# ──────────────────────────────────────────────────────────────────
+
+def resolve_camera_status_transport(raw: str | None = None) -> str:
+    """归一化相机状态通道：dds | grpc"""
+    mode = (
+        raw if raw is not None
+        else os.environ.get("NEXUS_CAMERA_STATUS_TRANSPORT", "dds")
+    ).strip().lower()
+    return "grpc" if mode in ("grpc", "entity_status_grpc", "entity_grpc") else "dds"
+
+
+def build_camera_status_grpc_receivers(settings: Settings | None = None) -> List[Dict[str, Any]]:
+    """camServer EntityStatusService gRPC 订阅（相机实时 PTZ/FOV）。
+    地址由 NEXUS_CAMERA_ENTITY_GRPC_URL 控制，默认本机 8092（camServer SiteProfile.ini EntityStatusGrpcPort）。
+    """
+    s = settings or get_settings()
+    host, port = _split_host_port(
+        os.environ.get("NEXUS_CAMERA_ENTITY_GRPC_URL", ""),
+        "192.168.18.141",
+        8092,
+    )
+    return [
+        {
+            "id": "grpc_camera_entity",
+            "name": "camServer 相机实时状态 EntityStatus gRPC",
+            "host": host,
+            "port": port,
+            "enabled": False,   # 由 apply_camera_status_transport 按 env var 开关
+        }
+    ]
+
+
+def apply_camera_status_transport(
+    dds_receivers: List[Dict[str, Any]],
+    grpc_receivers: List[Dict[str, Any]],
+    mode: str | None = None,
+) -> str:
+    """按 NEXUS_CAMERA_STATUS_TRANSPORT 启用 DDS 或 gRPC 相机状态订阅（二选一）。"""
+    resolved = resolve_camera_status_transport(mode)
+    use_grpc = resolved == "grpc"
+    for rec in dds_receivers:
+        if rec.get("id") in ("dds_camera_status", "dds_camera_status_legacy"):
+            rec["enabled"] = not use_grpc
+    for rec in grpc_receivers:
+        rec["enabled"] = use_grpc
+    return resolved
+
+
+CAMERA_STATUS_GRPC_RECEIVERS = build_camera_status_grpc_receivers()
+CAMERA_STATUS_TRANSPORT = apply_camera_status_transport(
+    DDS_RECEIVERS, CAMERA_STATUS_GRPC_RECEIVERS
+)
+
+
+def resolve_fusion_track_transport(raw: str | None = None) -> str:
+    """归一化对空/对海融合航迹通道：dds | grpc"""
+    if raw is not None:
+        mode = raw
+    else:
+        mode = os.environ.get("NEXUS_FUSION_TRACK_TRANSPORT")
+        if not mode:
+            mode = get_settings().NEXUS_FUSION_TRACK_TRANSPORT
+    mode = (mode or "dds").strip().lower()
+    if mode in ("grpc", "new_track_struct_grpc", "new_track_struct", "track_grpc"):
+        return "grpc"
+    return "dds"
+
+
+def build_new_track_struct_grpc_receivers(settings: Settings | None = None) -> List[Dict[str, Any]]:
+    """TrackManager NewTrackStruct gRPC 订阅源（空/海同流，按 environment 分流）。"""
+    s = settings or get_settings()
+    host, port = _split_host_port(
+        s.NEXUS_NEW_TRACK_STRUCT_GRPC_URL, "192.168.18.141", 60055
+    )
+    return [
+        {
+            "id": "new_track_struct_grpc_client",
+            "name": "TrackManager NewTrackStruct gRPC 航迹",
+            "host": host,
+            "port": port,
+            "enabled": True,
+            "method": "Subscribe",
+            "reconnect_interval": 2.0,
+        },
+    ]
+
+
+def build_virtual_new_track_struct_grpc_receivers(
+    settings: Settings | None = None,
+) -> List[Dict[str, Any]]:
+    """蓝方虚兵 NewTrackStruct gRPC：独立一路，不随 NEXUS_FUSION_TRACK_TRANSPORT 开关。"""
+    s = settings or get_settings()
+    host, port = _split_host_port(
+        s.NEXUS_VIRTUAL_NEW_TRACK_STRUCT_GRPC_URL, "192.168.18.116", 50065
+    )
+    return [
+        {
+            "id": "virtual_new_track_struct_grpc_client",
+            "name": "TrackManager NewTrackStruct gRPC 虚兵航迹",
+            "host": host,
+            "port": port,
+            "enabled": True,
+            "method": "Subscribe",
+            "reconnect_interval": 2.0,
+        },
+    ]
+
+
+def apply_fusion_track_transport(
+    dds_receivers: List[Dict[str, Any]],
+    grpc_receivers: List[Dict[str, Any]],
+    mode: str | None = None,
+) -> str:
+    """按 NEXUS_FUSION_TRACK_TRANSPORT 启用 DDS 或 gRPC 融合航迹订阅。"""
+    resolved = resolve_fusion_track_transport(mode)
+    use_grpc = resolved == "grpc"
+    for rec in dds_receivers:
+        if rec.get("id") in _FUSION_DDS_RECEIVER_IDS:
+            rec["enabled"] = not use_grpc
+    for rec in grpc_receivers:
+        rec["enabled"] = use_grpc
+    return resolved
+
+
+NEW_TRACK_STRUCT_GRPC_RECEIVERS = build_new_track_struct_grpc_receivers()
+FUSION_TRACK_TRANSPORT = apply_fusion_track_transport(
+    DDS_RECEIVERS, NEW_TRACK_STRUCT_GRPC_RECEIVERS
+)
+# 蓝方虚兵 gRPC：独立列表，不受上面融合 dds/grpc 切换影响
+VIRTUAL_NEW_TRACK_STRUCT_GRPC_RECEIVERS = build_virtual_new_track_struct_grpc_receivers()
+
+
+def resolve_track_alarm_transport(raw: str | None = None) -> str:
+    """航迹类告警通道：embedded（目标.alarms）| dds（AlarmEventTopic）。"""
+    if raw is not None:
+        mode = raw
+    else:
+        mode = os.environ.get("NEXUS_TRACK_ALARM_TRANSPORT")
+        if not mode:
+            mode = get_settings().NEXUS_TRACK_ALARM_TRANSPORT
+    mode = (mode or "embedded").strip().lower()
+    if mode in ("dds", "alarmevent", "alarm_event", "alarm-event"):
+        return "dds"
+    return "embedded"
+
+
+def apply_track_alarm_transport(
+    dds_receivers: List[Dict[str, Any]],
+    mode: str | None = None,
+) -> str:
+    """按 NEXUS_TRACK_ALARM_TRANSPORT 开关 dds_alarm_event；embedded 时保留配置但 enabled=False。"""
+    resolved = resolve_track_alarm_transport(mode)
+    use_dds = resolved == "dds"
+    for rec in dds_receivers:
+        if rec.get("id") == "dds_alarm_event":
+            rec["enabled"] = use_dds
+    return resolved
+
+
+TRACK_ALARM_TRANSPORT = apply_track_alarm_transport(DDS_RECEIVERS)
+
+
+def resolve_radar_track_transport(raw: str | None = None) -> str:
+    """归一化传感器旁路航迹通道（FusionTrack 可替代的 DDS/UDP）：dds | grpc"""
+    if raw is not None:
+        mode = raw
+    else:
+        mode = os.environ.get("NEXUS_RADAR_TRACK_TRANSPORT")
+        if not mode:
+            mode = get_settings().NEXUS_RADAR_TRACK_TRANSPORT
+    mode = (mode or "dds").strip().lower()
+    if mode in ("grpc", "fusion_track", "fusion_track_grpc", "track_grpc"):
+        return "grpc"
+    return "dds"
+
+
+def build_fusion_track_grpc_receivers(settings: Settings | None = None) -> List[Dict[str, Any]]:
+    """FusionTrack gRPC(:60056) 统一航迹流（传感器旁路：雷达/AIS/探鸟/自报位/反无车等）。"""
+    s = settings or get_settings()
+    host, port = _split_host_port(
+        s.NEXUS_FUSION_TRACK_STREAM_GRPC_URL, "192.168.18.141", 60056
+    )
+    return [
+        {
+            "id": "fusion_track_grpc_client",
+            "name": "FusionTrack gRPC 传感器航迹",
+            "host": host,
+            "port": port,
+            "enabled": True,
+            "method": "Subscribe",
+            "reconnect_interval": 2.0,
+        },
+    ]
+
+
+def apply_radar_track_transport(
+    dds_receivers: List[Dict[str, Any]],
+    grpc_receivers: List[Dict[str, Any]],
+    mode: str | None = None,
+    udp_receivers: List[Dict[str, Any]] | None = None,
+) -> str:
+    """按 NEXUS_RADAR_TRACK_TRANSPORT 启用 DDS/UDP 或 FusionTrack gRPC（二选一，防双点）。
+
+    grpc 时关闭：远遥/靖子头/鹏飞/船自报/AIS/探鸟/无人机自报位/反无车 DDS，
+    以及探鸟智能跟踪 UDP。
+    """
+    resolved = resolve_radar_track_transport(mode)
+    use_grpc = resolved == "grpc"
+    for rec in dds_receivers:
+        if rec.get("id") in _RADAR_DDS_RECEIVER_IDS:
+            rec["enabled"] = not use_grpc
+    for rec in udp_receivers or []:
+        if rec.get("id") in _RADAR_UDP_RECEIVER_IDS:
+            rec["enabled"] = not use_grpc
+    for rec in grpc_receivers:
+        rec["enabled"] = use_grpc
+    return resolved
+
+
+FUSION_TRACK_STREAM_GRPC_RECEIVERS = build_fusion_track_grpc_receivers()
+RADAR_TRACK_TRANSPORT = apply_radar_track_transport(
+    DDS_RECEIVERS,
+    FUSION_TRACK_STREAM_GRPC_RECEIVERS,
+    udp_receivers=UDP_RECEIVERS,
 )

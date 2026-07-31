@@ -333,17 +333,34 @@ export function mapOneEntityRow(
    * 相机（8090 实体列表）：优先 online.isOnline，不用 isLive 盖掉；
    * 其他类型：isLive / online.isOnline 为 0 时强制 offline */
   const health = asRecord(r.health);
-  const healthStatus = String(health?.healthStatus ?? r.status ?? "online");
+  const statusField = typeof r.status === "string" ? r.status : undefined;
+  const healthStatus = String(health?.healthStatus ?? statusField ?? "online");
   const status: string = (() => {
     const hs = healthStatus.toUpperCase();
-    if (hs.includes("OFFLINE") || hs.includes("FAIL")) return "offline";
+    if (
+      hs.includes("OFFLINE") ||
+      hs.includes("FAIL") ||
+      hs.includes("离线") ||
+      hs.includes("NOT_CONNECTED") ||
+      hs.includes("UNAVAILABLE")
+    ) {
+      return "offline";
+    }
     if (hs.includes("DEGRADED")) return "degraded";
     return "online";
   })();
 
   const isLive = r.isLive;
-  const online = asRecord(r.online);
-  const isOnline = online?.isOnline;
+  const onlineRaw = r.online;
+  const online = asRecord(onlineRaw);
+  const isOnline =
+    online?.isOnline ??
+    (typeof onlineRaw === "boolean" || typeof onlineRaw === "number" ? onlineRaw : undefined);
+  const liveOff =
+    isLive === 0 ||
+    isLive === false ||
+    isOnline === 0 ||
+    isOnline === false;
   let effectiveStatus: string;
   if (assetType === "camera" && isOnline !== undefined && isOnline !== null) {
     effectiveStatus = isOnline === 0 || isOnline === false ? "offline" : "online";
@@ -351,7 +368,7 @@ export function mapOneEntityRow(
     /* 8090 UAV/机场实体常 isLive=0，实时在线由 WS 遥测/relationships 判定，此处仅看 health */
     effectiveStatus = status;
   } else {
-    effectiveStatus = (isLive === 0 || isOnline === 0) ? "offline" : status;
+    effectiveStatus = liveOff ? "offline" : status;
   }
   /* 雷达为全向扫描，fov_angle 强制 360° */
   const effectiveFovDeg = assetType === "radar" ? 360 : fovDeg;
@@ -665,6 +682,8 @@ export type AppConfigTrackRendering = {
     fusionSeconds: number;
     /** 对空融合 DDS 航迹（`fuse_air`）专用超时秒数；默认 6s */
     fusionAirSeconds: number;
+    /** AIS 航迹（`ais_track`）专用超时秒数；缺省回退到 `seconds` */
+    aisSeconds: number;
     uavSeconds: number;
     /** 无新 WS 包时仍定时按「上次摄入时间」从 store 剔除航迹的轮询间隔（毫秒） */
     checkIntervalMs: number;
@@ -734,6 +753,7 @@ export const DEFAULT_TRACK_RENDERING: AppConfigTrackRendering = {
     seconds: 10,
     fusionSeconds: 90,
     fusionAirSeconds: 90,
+    aisSeconds: 180,
     uavSeconds: 10,
     checkIntervalMs: 2000,
   },
@@ -816,6 +836,7 @@ export function parseTrackRenderingConfig(root: Record<string, unknown>): AppCon
       seconds: num(tt?.seconds, base.trackTimeout.seconds),
       fusionSeconds: num(tt?.fusionSeconds, base.trackTimeout.fusionSeconds),
       fusionAirSeconds: num(tt?.fusionAirSeconds, base.trackTimeout.fusionAirSeconds),
+      aisSeconds: num(tt?.aisSeconds, base.trackTimeout.aisSeconds),
       uavSeconds: num(tt?.uavSeconds, base.trackTimeout.uavSeconds),
       checkIntervalMs: num(tt?.checkIntervalMs, base.trackTimeout.checkIntervalMs),
     },
@@ -952,6 +973,8 @@ export function getRadarConfigDefaults(): Record<string, unknown> {
 
 export interface AppConfigWebSocket {
   url: string;
+  /** 对海融合专用 WS；空则由 url 推导为 …/ws/fuse-sea */
+  fuseSeaUrl: string;
   reconnectInterval: number;
   heartbeatInterval: number;
   maxReconnectAttempts: number;
@@ -1037,6 +1060,7 @@ function parseAssetTargetLineConfig(root: Record<string, unknown>): void {
 
 const DEFAULT_WS: AppConfigWebSocket = {
   url: "ws://localhost:8001/ws",
+  fuseSeaUrl: "",
   reconnectInterval: 3000,
   heartbeatInterval: 25000,
   maxReconnectAttempts: 12,
@@ -1080,6 +1104,7 @@ function applyResolvedNewConfigs(root: Record<string, unknown>) {
   if (ws) {
     resolvedWebSocketConfig = {
       url: str(ws.url, DEFAULT_WS.url),
+      fuseSeaUrl: str(ws.fuseSeaUrl, DEFAULT_WS.fuseSeaUrl),
       reconnectInterval: num(ws.reconnectInterval, DEFAULT_WS.reconnectInterval),
       heartbeatInterval: num(ws.heartbeatInterval, DEFAULT_WS.heartbeatInterval),
       maxReconnectAttempts: num(ws.maxReconnectAttempts, DEFAULT_WS.maxReconnectAttempts),
@@ -1137,6 +1162,33 @@ export function getWebSocketConfig(): AppConfigWebSocket {
   return resolvedWebSocketConfig;
 }
 
+/**
+ * 对海融合专用 WS 地址。
+ * 优先 `websocket.fuseSeaUrl`；否则由主 `url` 推导为同主机 `/ws/fuse-sea`。
+ */
+export function getFuseSeaWebSocketUrl(): string {
+  const cfg = resolvedWebSocketConfig;
+  const explicit = cfg.fuseSeaUrl?.trim();
+  if (explicit) return explicit;
+  const main = cfg.url?.trim();
+  if (!main) return "";
+  try {
+    const u = new URL(main);
+    const p = u.pathname.replace(/\/+$/, "") || "/";
+    if (p.endsWith("/ws/fuse-sea")) return u.toString();
+    if (p.endsWith("/ws")) {
+      u.pathname = `${p}/fuse-sea`;
+      return u.toString();
+    }
+    u.pathname = `${p === "/" ? "" : p}/ws/fuse-sea`;
+    return u.toString();
+  } catch {
+    if (main.endsWith("/ws")) return `${main}/fuse-sea`;
+    if (main.endsWith("/ws/")) return `${main}fuse-sea`;
+    return `${main.replace(/\/+$/, "")}/ws/fuse-sea`;
+  }
+}
+
 export function getCoordinateTransformConfig(): AppConfigCoordinateTransform {
   return resolvedCoordinateTransformConfig;
 }
@@ -1168,6 +1220,9 @@ export function getTrackStaleTimeoutMs(track: Track): number {
   /** 对空融合优先：不被 `isUav` 分档覆盖，避免无人机对空融合残留过久 */
   if (lk === "fuse_air") {
     return Math.max(1, cfg.trackTimeout.fusionAirSeconds) * 1000;
+  }
+  if (lk === "ais_track") {
+    return Math.max(1, cfg.trackTimeout.aisSeconds) * 1000;
   }
   if (track.isUav === true) return Math.max(1, cfg.trackTimeout.uavSeconds) * 1000;
   if (lk === "fuse_sea") {
@@ -1221,6 +1276,16 @@ export type CameraManagementConfig = {
    * 缺省时用对海 + 对空槽位（`sea*` / `sky*`）；18.141 → 001+004，28.9 → 004+008。
    */
   mapFovCameraEntityIds?: string[];
+  /**
+   * 双击融合/雷达航迹：true 时发 LookAtChildTask（仅转到位置），不发重点关注采集，
+   * 从而跳过单目标跟踪与左右补充搜索。缺省 false（仍走 TargetCollectionIMChildTask）。
+   */
+  mapTrackDblClickLookAtOnly?: boolean;
+  /**
+   * 与 `mapTrackDblClickLookAtOnly` 配套的 LookAt `checkTime`；缺省 0（不搜框、不左右摆）。
+   * 空白地图双击仍用客户端 DEFAULT_LOOK_AT_CHECK_TIME。
+   */
+  mapTrackDblClickLookAtCheckTime?: number;
   requestTimeoutMs: number;
 };
 
@@ -1270,6 +1335,11 @@ function parseCameraManagementConfig(root: Record<string, unknown>): CameraManag
   const imTaskUserPriority = Number.isFinite(Number(cm.imTaskUserPriority))
     ? Number(cm.imTaskUserPriority)
     : undefined;
+  const mapTrackDblClickLookAtOnly = cm.mapTrackDblClickLookAtOnly === true;
+  const lookAtCheckRaw = Number(cm.mapTrackDblClickLookAtCheckTime);
+  const mapTrackDblClickLookAtCheckTime = Number.isFinite(lookAtCheckRaw)
+    ? Math.max(0, Math.min(6, Math.trunc(lookAtCheckRaw)))
+    : undefined;
 
   return {
     host,
@@ -1284,6 +1354,8 @@ function parseCameraManagementConfig(root: Record<string, unknown>): CameraManag
     seaOwnerEntityId,
     skyOwnerEntityId,
     mapFovCameraEntityIds: mapFovCameraEntityIds?.length ? mapFovCameraEntityIds : undefined,
+    mapTrackDblClickLookAtOnly: mapTrackDblClickLookAtOnly || undefined,
+    mapTrackDblClickLookAtCheckTime,
     requestTimeoutMs,
   };
 }

@@ -19,6 +19,12 @@ from system_eval_camera_client import (
     trigger_true_north_pointing_eval,
     trigger_visibility_check,
 )
+from track_link_evaluator import (
+    DEFAULT_DURATION_SEC,
+    DEFAULT_MAX_TRACKS_PER_TYPE,
+    get_track_link_eval_result,
+    start_track_link_eval,
+)
 
 router = APIRouter(prefix="/system-eval", tags=["system-eval"])
 
@@ -31,12 +37,20 @@ class TrackEvalRequest(BaseModel):
     region_type: str = ""
     bounding_box: Optional[Dict[str, float]] = None
     polygon: Optional[Dict[str, Any]] = Field(default=None, description="含 points 数组")
-    fused_track_id: Optional[int] = None
-    unique_id: Optional[int] = None
+    fusion_unique_ids: Optional[List[int]] = None
+    radar_track_ids: Optional[List[int]] = None
+    ais_ids: Optional[List[int]] = None
+    self_report_ids: Optional[List[int]] = None
     attr_range: Optional[Dict[str, float]] = None
     sea_fusion_filter: Optional[str] = None
     air_fusion_filter: Optional[str] = None
     display_sensor_ids: Optional[List[int]] = None
+
+
+class TrackLinkEvalTriggerRequest(BaseModel):
+    """航迹链路评估触发（Custombackend 本地采集，不经 system-evaluation-server）。"""
+    duration_sec: int = Field(default=DEFAULT_DURATION_SEC, ge=5, le=300)
+    max_tracks_per_type: int = Field(default=DEFAULT_MAX_TRACKS_PER_TYPE, ge=1, le=50)
 
 
 class CameraSharpnessRequest(BaseModel):
@@ -120,6 +134,103 @@ async def get_system_perf_stats(limit: int = Query(10, ge=1, le=100)):
         )
 
 
+@router.post("/track-link/trigger")
+async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerRequest] = Body(None)):
+    """
+    触发航迹链路评估：在 Custombackend 独立线程旁路采样 gRPC 航迹 4 时间戳，
+    默认采集 30s、每类最多 10 条航迹。不调用 system-evaluation-server，不影响其他评估。
+    """
+    try:
+        req = body or TrackLinkEvalTriggerRequest()
+        result = start_track_link_eval(
+            duration_sec=req.duration_sec,
+            max_tracks_per_type=req.max_tracks_per_type,
+        )
+        if result.get("conflict"):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "code": 409,
+                    "message": result.get("message") or "已有评估在进行中",
+                    "data": result,
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "code": 200,
+                "message": "ok",
+                "data": {
+                    "task_id": result.get("task_id"),
+                    "status": result.get("status"),
+                    "duration_sec": result.get("duration_sec"),
+                    "max_tracks_per_type": result.get("max_tracks_per_type"),
+                },
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+    except Exception as e:
+        logger.exception("track-link trigger 失败")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": 500,
+                "message": f"航迹链路评估触发异常: {e}",
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+
+@router.get("/track-link/result")
+async def get_track_link_eval_result_api(task_id: Optional[str] = Query(None)):
+    """
+    查询航迹链路评估进度/结果。
+    collecting → 返回 elapsed/remaining；done → 返回 results（每类延迟与更新频率）。
+    """
+    try:
+        result = get_track_link_eval_result(task_id=task_id)
+        if result.get("not_found"):
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "code": 404,
+                    "message": result.get("message") or "未找到评估任务",
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "code": 200,
+                "message": "ok",
+                "data": {
+                    "task_id": result.get("task_id"),
+                    "status": result.get("status"),
+                    "duration_sec": result.get("duration_sec"),
+                    "elapsed_sec": result.get("elapsed_sec"),
+                    "remaining_sec": result.get("remaining_sec"),
+                    "type_counts": result.get("type_counts"),
+                    "results": result.get("results"),
+                    "error": result.get("error"),
+                    "started_at": result.get("started_at"),
+                    "ended_at": result.get("ended_at"),
+                },
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+    except Exception as e:
+        logger.exception("track-link result 查询失败")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": 500,
+                "message": f"航迹链路评估查询异常: {e}",
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+
 @router.post("/track/evaluate")
 async def post_track_evaluate(body: TrackEvalRequest = Body(...)):
     """
@@ -151,8 +262,10 @@ async def post_track_evaluate(body: TrackEvalRequest = Body(...)):
             region_type=body.region_type,
             bounding_box=body.bounding_box,
             polygon_points=polygon_points,
-            fused_track_id=body.fused_track_id,
-            unique_id=body.unique_id,
+            fusion_unique_ids=body.fusion_unique_ids,
+            radar_track_ids=body.radar_track_ids,
+            ais_ids=body.ais_ids,
+            self_report_ids=body.self_report_ids,
             attr_range=body.attr_range,
             sea_fusion_filter=body.sea_fusion_filter,
             air_fusion_filter=body.air_fusion_filter,

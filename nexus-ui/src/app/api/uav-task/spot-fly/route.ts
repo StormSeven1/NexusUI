@@ -27,11 +27,55 @@ function tsFlightsubtask(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
+type FlyWaypoint = { longitude: number; latitude: number; height: number; speed: number };
+
+function parseWaypointsFromBody(
+  body: Record<string, unknown>,
+  height: number,
+  speed: number,
+): FlyWaypoint[] | null {
+  const raw = body.waypoints;
+  if (Array.isArray(raw) && raw.length > 0) {
+    const out: FlyWaypoint[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const o = item as Record<string, unknown>;
+      const lat = typeof o.latitude === "number" ? o.latitude : Number(o.latitude);
+      const lon = typeof o.longitude === "number" ? o.longitude : Number(o.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const h =
+        o.height != null && Number.isFinite(Number(o.height)) ? Number(o.height) : height;
+      const s =
+        o.speed != null && Number.isFinite(Number(o.speed)) ? Number(o.speed) : speed;
+      out.push({
+        longitude: Math.round(lon * 1e6) / 1e6,
+        latitude: Math.round(lat * 1e6) / 1e6,
+        height: h,
+        speed: s,
+      });
+    }
+    return out.length > 0 ? out : null;
+  }
+
+  const lat = typeof body.latitude === "number" ? body.latitude : Number(body.latitude);
+  const lon = typeof body.longitude === "number" ? body.longitude : Number(body.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return [
+    {
+      longitude: Math.round(lon * 1e6) / 1e6,
+      latitude: Math.round(lat * 1e6) / 1e6,
+      height,
+      speed,
+    },
+  ];
+}
+
 /**
  * WatchSys `uavctrlboard::sendSpotFlightRequest3`：
  * POST `UAV_TRACE_TASK`（即 `NEXUS_UAV_TASK_API_BASE_URL/api/v1/tasks`），`type.casia.tasks.v1.DroneFlyTo`。
  * 高度默认 100、速度默认 15（对应 C++ `m_nHeight` / `m_nSpeed`）。
  * `specification.deviceSn` 填 **机场（机巢）gateway SN**（与 WatchSys 一致），非机体 SN。
+ * 支持单点（`latitude`/`longitude`）或折线（`waypoints: [{latitude,longitude},...]`）。
  */
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
@@ -48,17 +92,12 @@ export async function POST(req: NextRequest) {
         ? body.deviceSN.trim()
         : "";
   const airportSN = rawAirport;
-  const lat = typeof body.latitude === "number" ? body.latitude : Number(body.latitude);
-  const lon = typeof body.longitude === "number" ? body.longitude : Number(body.longitude);
 
   if (!airportSN) {
     return NextResponse.json({ ok: false, error: "airportSN_required" }, { status: 400 });
   }
   if (airportSN === "whzdh01") {
     return NextResponse.json({ ok: false, error: "whzdh01_skipped" }, { status: 400 });
-  }
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    return NextResponse.json({ ok: false, error: "invalid_lat_lon" }, { status: 400 });
   }
 
   const taskBase = getUavTaskApiBase();
@@ -73,8 +112,11 @@ export async function POST(req: NextRequest) {
   const speed = resolveDroneFlightSpeedFromBody(body, readEnvInt("NEXUS_UAV_SPOT_FLY_SPEED", 15));
   const taskWorkMode = readEnvInt("NEXUS_UAV_SPOT_FLY_TASK_WORK_MODE", 0);
 
-  const latR = Math.round(lat * 1e6) / 1e6;
-  const lonR = Math.round(lon * 1e6) / 1e6;
+  const waypoints = parseWaypointsFromBody(body, height, speed);
+  if (!waypoints) {
+    return NextResponse.json({ ok: false, error: "invalid_lat_lon_or_waypoints" }, { status: 400 });
+  }
+
   const taskId = `flightsubtask_${tsFlightsubtask()}`;
 
   const taskJson: Record<string, unknown> = {
@@ -86,14 +128,7 @@ export async function POST(req: NextRequest) {
     maxExecutionTimeMs: 10000,
     specification: {
       "@type": "type.casia.tasks.v1.DroneFlyTo",
-      waypoints: [
-        {
-          longitude: lonR,
-          latitude: latR,
-          height,
-          speed,
-        },
-      ],
+      waypoints,
       deviceSn: airportSN,
       transition_distance: 5,
       mode: 1,

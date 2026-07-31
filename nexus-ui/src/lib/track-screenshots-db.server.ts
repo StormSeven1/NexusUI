@@ -8,6 +8,10 @@ import { resolvePostgresConnectionString } from "@/lib/postgres-connection.serve
 export type TrackScreenshotRow = {
   minioBucket: string;
   minioObjectKey: string;
+  /** `minio_multi_metadata.camera_index`，现为相机 entityId（如 camera_004） */
+  cameraIndex: string;
+  /** `minio_multi_metadata.uploaded_at`，ISO 字符串；无则空 */
+  uploadedAt: string;
 };
 
 let pool: Pool | null | undefined;
@@ -45,7 +49,7 @@ export async function listRecentTrackScreenshotsFromDb(options: {
   const client = await p.connect();
   try {
     const sql = `
-      SELECT minio_bucket, minio_object_key
+      SELECT minio_bucket, minio_object_key, camera_index, uploaded_at
       FROM minio_multi_metadata
       WHERE "unique_id" = $1::bigint
         AND minio_bucket IS NOT NULL AND trim(minio_bucket) <> ''
@@ -53,7 +57,12 @@ export async function listRecentTrackScreenshotsFromDb(options: {
       ORDER BY uploaded_at DESC NULLS LAST
       LIMIT $2`;
 
-    const r = await client.query<{ minio_bucket: string; minio_object_key: string }>(sql, [uid, limit]);
+    const r = await client.query<{
+      minio_bucket: string;
+      minio_object_key: string;
+      camera_index: string | null;
+      uploaded_at: Date | string | null;
+    }>(sql, [uid, limit]);
     const seen = new Set<string>();
     const out: TrackScreenshotRow[] = [];
     for (const row of r.rows) {
@@ -63,7 +72,20 @@ export async function listRecentTrackScreenshotsFromDb(options: {
       const sig = `${b}\0${k}`;
       if (seen.has(sig)) continue;
       seen.add(sig);
-      out.push({ minioBucket: b, minioObjectKey: k });
+      let uploadedAt = "";
+      const ua = row.uploaded_at;
+      if (ua instanceof Date && Number.isFinite(ua.getTime())) {
+        uploadedAt = ua.toISOString();
+      } else if (typeof ua === "string" && ua.trim()) {
+        const d = new Date(ua);
+        uploadedAt = Number.isFinite(d.getTime()) ? d.toISOString() : ua.trim();
+      }
+      out.push({
+        minioBucket: b,
+        minioObjectKey: k,
+        cameraIndex: (row.camera_index ?? "").trim(),
+        uploadedAt,
+      });
       if (out.length >= limit) break;
     }
     return out;

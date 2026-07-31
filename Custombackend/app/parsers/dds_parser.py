@@ -295,9 +295,8 @@ def _parse_alarm_event(dds_object) -> Optional[Dict]:
                 
                 result['alarms'].append(alarm_data)
         
-        print("*"*50)
-        print("解析告警事件:",result)
-        print("*"*50)
+        # 高频告警勿 print 全量 dict：同步 stdout 会堵死 asyncio，导致 /ws 握手超时
+        logger.debug("解析告警事件: eventId={} alarms={}", result.get("eventId"), len(result.get("alarms") or []))
         return result
     except Exception as e:
         logger.error(f"解析告警事件失败: {e}")
@@ -520,9 +519,7 @@ def _parse_uav_image_track(dds_object) -> Optional[Dict]:
                 'pitch': gimbal.pitch() if hasattr(gimbal, 'pitch') else None,
                 'yaw': gimbal.yaw() if hasattr(gimbal, 'yaw') else None,
             }
-        print("*"*50)
-        print("解析无人机图像航迹:",result)
-        print("*"*50)
+        # 高频勿 print 全量 dict（同告警解析）
         
         # 存储到文件（如果开关开启）
         if get_settings().ENABLE_DRONE_DATA_STORAGE:
@@ -587,7 +584,8 @@ def _parse_drone_status(dds_object) -> Optional[Dict]:
         
         # 如果是过滤状态，返回None不发送
         if mode_code in filtered_modes:
-            print(f"[过滤] 无人机状态 {filtered_modes[mode_code]}，不发送到前端")
+            # 高频路径勿 print（同步 stdout 会阻塞 asyncio 事件循环）
+            logger.debug("过滤无人机状态 {}，不发送到前端", filtered_modes[mode_code])
             return None
         
         result = {
