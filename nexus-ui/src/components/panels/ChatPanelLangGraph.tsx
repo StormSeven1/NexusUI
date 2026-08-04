@@ -75,7 +75,9 @@ import {
 } from "@/lib/langgraph-workflow-progress";
 import {
   extractWorkflowDevicesFromChatNotification,
+  extractWorkflowTopicFromInterruptText,
   extractWorkflowTopicFromMessageChunk,
+  inferWorkflowTopicFromBusinessThreadId,
 } from "@/lib/langgraph-workflow-context";
 import { WorkflowDeviceStrip } from "@/components/chat/WorkflowDeviceStrip";
 import {
@@ -96,6 +98,11 @@ import {
   pickDbQaAnswerId,
   type DbQaStreamState,
 } from "@/lib/knowledge-base-db-qa-adapter";
+import {
+  applyChatAnswerSnapshot,
+  parseChatAnswerSnapshot,
+  shouldUpsertChatAnswerSnapshot,
+} from "@/lib/knowledge-base-chat-answer-upsert";
 import {
   executeTaskManagerMapCommand,
   formatMapCommandFeedback,
@@ -461,6 +468,7 @@ export function ChatPanelLangGraph() {
   const deleteTab = useAssistantChatTabsStore((s) => s.deleteTab);
   const setTabLangGraphThreadId = useAssistantChatTabsStore((s) => s.setTabLangGraphThreadId);
   const setTabBusinessWorkflowThreadId = useAssistantChatTabsStore((s) => s.setTabBusinessWorkflowThreadId);
+  const setTabWorkflowApiSource = useAssistantChatTabsStore((s) => s.setTabWorkflowApiSource);
   const setTabWorkflowName = useAssistantChatTabsStore((s) => s.setTabWorkflowName);
   const applyWorkflowTopicToTab = useAssistantChatTabsStore((s) => s.applyWorkflowTopicToTab);
   const upsertWorkflowDevicesForTab = useAssistantChatTabsStore((s) => s.upsertWorkflowDevicesForTab);
@@ -495,6 +503,8 @@ export function ChatPanelLangGraph() {
   const [kbInterruptSubmitting, setKbInterruptSubmitting] = useState(false);
   const [kbInterruptResultUnknown, setKbInterruptResultUnknown] = useState(false);
   const kbPendingInterruptRef = useRef<KnowledgeBasePendingInterrupt | null>(null);
+  /** 因断流锁死的 interrupt_id；收到不同 id 的新中断时自动解锁 */
+  const kbResultUnknownInterruptIdRef = useRef<string | null>(null);
 
   const streamTabIdRef = useRef(activeTabId);
   const sourceTabIdForStreamRef = useRef(activeTabId);
@@ -506,6 +516,8 @@ export function ChatPanelLangGraph() {
   const streamAssistantMsgIdRef = useRef<string | null>(null);
   /** db_qa 按 answer_id 的流式状态（仅知识库数据库问答路由） */
   const dbQaStatesRef = useRef<Map<string, DbQaStreamState>>(new Map());
+  /** 快照型 chat_answer 已见过的 answer_id（同一 id 必须替换 content） */
+  const chatAnswerSnapshotIdsRef = useRef<Set<string>>(new Set());
 
   const quickPrompts = ASSISTANT_QUICK_PROMPTS;
 
@@ -571,6 +583,7 @@ export function ChatPanelLangGraph() {
     setKbInterruptSubmitting(false);
     assignInterruptPrompt(null);
     assignKbPendingInterrupt(null);
+    kbResultUnknownInterruptIdRef.current = null;
     setKbInterruptResultUnknown(false);
     setIsStreaming(false);
   }, [assignInterruptPrompt, assignKbPendingInterrupt]);
@@ -641,6 +654,7 @@ export function ChatPanelLangGraph() {
     responseModeRef.current = "workflow";
     streamTabIdRef.current = newTabId;
     setActiveWorkflowVerifyTabId(newTabId);
+    setTabWorkflowApiSource(newTabId, apiModeRef.current);
 
     if (pair) {
       patchTabMessages(sourceTabId, (msgs) =>
@@ -679,7 +693,13 @@ export function ChatPanelLangGraph() {
       }
     }
     return newTabId;
-  }, [createWorkflowTab, patchTabMessages, setActiveWorkflowVerifyTabId, setTabWorkflowName]);
+  }, [
+    createWorkflowTab,
+    patchTabMessages,
+    setActiveWorkflowVerifyTabId,
+    setTabWorkflowApiSource,
+    setTabWorkflowName,
+  ]);
 
   const processLangGraphParsedLine = useCallback(
     async (parsed: Record<string, unknown>) => {
@@ -718,6 +738,8 @@ export function ChatPanelLangGraph() {
         registerWorkflowVerifyThreadId(notifyThreadId, tabId);
         setTabBusinessWorkflowThreadId(tabId, notifyThreadId);
         registerTaskIdsForTab(tabId, [notifyThreadId]);
+        const inferred = inferWorkflowTopicFromBusinessThreadId(notifyThreadId);
+        if (inferred) applyWorkflowTopicToTab(tabId, inferred);
       }
 
       // chat_notification 相机/无人机设备卡片
@@ -735,8 +757,16 @@ export function ChatPanelLangGraph() {
       if (wfName) {
         if (isBirdRadarAcquisitionWorkflow({ workflowName: wfName, businessWorkflowThreadId: notifyThreadId })) {
           setTabWorkflowName(tabId, wfName.includes("探鸟雷达") ? wfName : "探鸟雷达");
+          applyWorkflowTopicToTab(tabId, "探鸟雷达");
         } else {
           setTabWorkflowName(tabId, wfName);
+          // 中文显示名直接用作 Tab 标题；纯英文内部名再走 thread_id 推断
+          if (/[\u4e00-\u9fff]/.test(wfName)) {
+            applyWorkflowTopicToTab(tabId, wfName);
+          } else {
+            const inferred = inferWorkflowTopicFromBusinessThreadId(wfName);
+            if (inferred) applyWorkflowTopicToTab(tabId, inferred);
+          }
         }
       }
 
@@ -788,7 +818,7 @@ export function ChatPanelLangGraph() {
         return;
       }
 
-      // chat_answer：db_qa 按事件类型分流；其它路由仍追加终态正文
+      // chat_answer：db_qa 按事件类型分流；知识库等快照路由按 answer_id 替换
       if (ev === "chat_answer") {
         const data =
           parsed.data && typeof parsed.data === "object"
@@ -835,6 +865,37 @@ export function ChatPanelLangGraph() {
           return;
         }
 
+        if (shouldUpsertChatAnswerSnapshot(data, chatAnswerSnapshotIdsRef.current)) {
+          const snapshot = parseChatAnswerSnapshot(parsed, data);
+          if (snapshot) {
+            chatAnswerSnapshotIdsRef.current.add(snapshot.answerId);
+            const action = applyChatAnswerSnapshot(snapshot);
+            let content = action.content;
+            if (action.terminal) {
+              const suffix = formatKnowledgeBaseChatAnswerSuffix({
+                type: "chat_answer",
+                text: content,
+                status: String(snapshot.status),
+                payload: snapshot.payload as
+                  | {
+                      dispatched?: boolean;
+                      cancelled?: boolean;
+                      partial_success?: boolean;
+                    }
+                  | undefined,
+                raw: parsed,
+              });
+              if (suffix) content = [content, suffix].filter(Boolean).join("\n\n");
+              assignInterruptPrompt(null);
+              assignKbPendingInterrupt(null);
+              setKbInterruptResultUnknown(false);
+            }
+            // 完整快照原地覆盖，禁止 append
+            setAssistantTextById(patchForStream, streamAssistantMsgIdRef.current, content);
+            return;
+          }
+        }
+
         const text =
           (typeof data.content === "string" && data.content.trim()) ||
           (typeof data.text === "string" && data.text.trim()) ||
@@ -866,24 +927,32 @@ export function ChatPanelLangGraph() {
         return;
       }
 
-      // 知识库模式：通用 nodes/options 中断面板；智能助手仍用 Qt 风格确认区
+      // 知识库模式：通用 nodes/options 中断面板；详情在下方确认区，聊天区只留短提示（与智能助手一致）
       if (ev === "interrupt") {
         const kbIntr = parseKnowledgeBaseInterrupt(parsed);
         if (apiModeRef.current === "knowledge-base" && kbIntr) {
           assignKbPendingInterrupt(kbIntr);
-          setKbInterruptResultUnknown(false);
+          // 新中断令牌：清掉上一轮「结果不确定」锁，否则按钮会一直点不了
+          if (kbResultUnknownInterruptIdRef.current !== kbIntr.interruptId) {
+            kbResultUnknownInterruptIdRef.current = null;
+            setKbInterruptResultUnknown(false);
+          }
           assignInterruptPrompt(null);
           useAssistantPanelSessionStore.getState().setThreadId(kbIntr.threadId);
           const wfOnInterrupt = useAssistantChatTabsStore.getState().getTabById(tabId);
           if (wfOnInterrupt?.kind === "workflow") {
             setActiveWorkflowVerifyTabId(tabId);
           }
-          const preview = kbIntr.nodes.map((n) => n.message).filter(Boolean).join("\n");
-          appendStream(
-            preview
-              ? `\n\n—— 需要确认 ——\n${preview}\n`
-              : "\n\n—— 任务流已暂停，请在下方确认后继续 ——\n",
-          );
+          for (const node of kbIntr.nodes) {
+            const topic = extractWorkflowTopicFromInterruptText(node.message);
+            if (topic) {
+              tabId = ensureWorkflowTabForStream();
+              applyWorkflowTopicToTab(tabId, topic);
+              setTabWorkflowName(tabId, topic);
+              break;
+            }
+          }
+          appendStream("\n\n—— 任务流已暂停，请在下方确认后继续 ——\n");
           return;
         }
         const intr = parseLangGraphInterruptEvent(parsed);
@@ -899,6 +968,8 @@ export function ChatPanelLangGraph() {
           }
           if (intr.threadId && /tanniao_radar|_workflow_/i.test(intr.threadId)) {
             setTabBusinessWorkflowThreadId(tabId, intr.threadId);
+            const inferred = inferWorkflowTopicFromBusinessThreadId(intr.threadId);
+            if (inferred) applyWorkflowTopicToTab(tabId, inferred);
           }
           appendStream("\n\n—— 任务流已暂停，请在下方确认后继续 ——\n");
           return;
@@ -1155,6 +1226,7 @@ export function ChatPanelLangGraph() {
       workflowStreamPromotedRef.current = false;
       sourceTabIdForStreamRef.current = sourceTabId;
       dbQaStatesRef.current = new Map();
+      chatAnswerSnapshotIdsRef.current = new Set();
       assignKbPendingInterrupt(null);
       setKbInterruptResultUnknown(false);
 
@@ -1364,13 +1436,16 @@ export function ChatPanelLangGraph() {
         .map((n) => {
           const v = selectedValues[n.interrupt_id];
           const label = n.options.find((o) => o.value === v)?.label ?? v;
-          return `${n.node_name}：${label}`;
+          return label;
         })
-        .join("；");
+        .filter(Boolean)
+        .join("、");
       appendToStreamAssistantText(
         patchForStream,
         streamAssistantMsgIdRef.current,
-        `\n\n—— 已提交：${choiceSummary} ——\n`,
+        choiceSummary
+          ? `\n\n—— 已确认（${choiceSummary}），继续执行 ——\n`
+          : "\n\n—— 已确认，继续执行 ——\n",
       );
 
       const chatUrl = "/api/knowledge-base-chat";
@@ -1453,26 +1528,35 @@ export function ChatPanelLangGraph() {
           const soft =
             /INCOMPLETE_CHUNKED|Failed to fetch|network error|Load failed/i.test(msg) ||
             (e instanceof TypeError && /fetch|network|load/i.test(msg));
-          if (soft) {
-            assignKbPendingInterrupt(prev);
-            setKbInterruptResultUnknown(true);
+          const newer = kbPendingInterruptRef.current;
+          // 恢复流里已收到新 interrupt 时，勿用旧令牌覆盖，也勿锁死新面板
+          if (newer && newer.interruptId !== prev.interruptId) {
+            kbResultUnknownInterruptIdRef.current = null;
+            setKbInterruptResultUnknown(false);
             appendToStreamAssistantText(
               patchForStream,
               streamAssistantMsgIdRef.current,
-              `\n\n⚠ ${msg}（结果状态不确定，未自动重试）`,
+              soft
+                ? `\n\n⚠ ${msg}（已出现新的确认项，请在下方继续选择）`
+                : `\n\n⚠ ${msg}`,
             );
-            toast.error("确认结果不确定", {
-              description: "请勿重复提交；请核对设备/任务状态后再决定是否重新发起指令。",
-            });
+            if (!soft) {
+              toast.error("中断反馈请求异常", { description: msg });
+            }
           } else {
             assignKbPendingInterrupt(prev);
+            kbResultUnknownInterruptIdRef.current = prev.interruptId;
             setKbInterruptResultUnknown(true);
-            toast.error("中断反馈请求失败", { description: msg });
             appendToStreamAssistantText(
               patchForStream,
               streamAssistantMsgIdRef.current,
-              `\n\n⚠ ${msg}（结果状态不确定，未自动重试）`,
+              `\n\n⚠ ${msg}（结果状态不确定；若任务未继续，可点「重新选择」）`,
             );
+            toast.error(soft ? "确认结果不确定" : "中断反馈请求失败", {
+              description: soft
+                ? "请先核对设备/任务状态；未生效时可点「重新选择」。"
+                : msg,
+            });
           }
         }
       } finally {
@@ -1578,7 +1662,12 @@ export function ChatPanelLangGraph() {
     if (workflowActionBusy) return;
     setWorkflowActionBusy("terminate");
     try {
-      const ret = await postWorkflowTerminate(tid);
+      const source =
+        activeTab.workflowApiSource === "knowledge-base" ||
+        activeTab.workflowApiSource === "assistant"
+          ? activeTab.workflowApiSource
+          : apiMode;
+      const ret = await postWorkflowTerminate(tid, source);
       if (!ret.ok) {
         toast.error("停止工作流失败", { description: ret.detail || ret.error });
         return;
@@ -1593,7 +1682,7 @@ export function ChatPanelLangGraph() {
     } finally {
       setWorkflowActionBusy(null);
     }
-  }, [activeTab, activeTabId, patchTabMessages, stop, workflowActionBusy]);
+  }, [activeTab, activeTabId, apiMode, patchTabMessages, stop, workflowActionBusy]);
 
   const handleStopCapture = useCallback(async () => {
     if (activeTab?.kind !== "workflow") return;
@@ -1608,7 +1697,12 @@ export function ChatPanelLangGraph() {
     if (workflowActionBusy) return;
     setWorkflowActionBusy("stop-capture");
     try {
-      const ret = await postWorkflowStopCapture(tid);
+      const source =
+        activeTab.workflowApiSource === "knowledge-base" ||
+        activeTab.workflowApiSource === "assistant"
+          ? activeTab.workflowApiSource
+          : apiMode;
+      const ret = await postWorkflowStopCapture(tid, source);
       if (!ret.ok) {
         toast.error("停止采集失败", { description: ret.detail || ret.error });
         return;
@@ -1624,7 +1718,7 @@ export function ChatPanelLangGraph() {
     } finally {
       setWorkflowActionBusy(null);
     }
-  }, [activeTab, activeTabId, patchTabMessages, workflowActionBusy]);
+  }, [activeTab, activeTabId, apiMode, patchTabMessages, workflowActionBusy]);
 
   const showChatLikeEmpty = chatLikeActive && messages.length === 0;
   const showDutyEmpty = activeTabId === DUTY_CHAT_TAB_ID && messages.length === 0;
@@ -1817,6 +1911,12 @@ export function ChatPanelLangGraph() {
             onDismiss={() => {
               if (kbInterruptSubmitting) return;
               assignKbPendingInterrupt(null);
+              kbResultUnknownInterruptIdRef.current = null;
+              setKbInterruptResultUnknown(false);
+            }}
+            onAllowRetry={() => {
+              if (kbInterruptSubmitting) return;
+              kbResultUnknownInterruptIdRef.current = null;
               setKbInterruptResultUnknown(false);
             }}
             onSubmit={(values) => {

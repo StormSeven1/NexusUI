@@ -2,6 +2,7 @@
 接收器管理器 - 统一管理所有数据接收器
 """
 import asyncio
+import re
 from typing import Dict, List, Optional, Any
 from loguru import logger
 
@@ -53,8 +54,10 @@ TRACK_LAYER_KEY_BY_RECEIVER = {
     "grpc_fusion_track_bird": "bird_radar",
     "grpc_fusion_track_uav_pose": "uav_pose_track",
     "grpc_fusion_track_fanwu": "fanwu_car_radar",
-    "grpc_fusion_track_ku": "fanwu_car_radar",
+    "grpc_fusion_track_ku": "ku_lei_da",
     "grpc_fusion_track_auto_bird": "auto_bird_radar",
+    "grpc_fusion_track_tian_ao": "tian_ao",
+    "grpc_fusion_track_wu_ren_che": "wu_ren_che",
     "dds_forward_ais_track": "ais_track",
     "dds_forward_uav_pose_track": "uav_pose_track",
     "dds_udp_boatself_track": "boat_self_track",
@@ -670,16 +673,22 @@ class ReceiverManager:
         "uav_pose_track": ("grpc_fusion_track_uav_pose", "自报位航迹(gRPC)"),
         "fanwu_car_radar": ("grpc_fusion_track_fanwu", "反无车雷达航迹(gRPC)"),
         "auto_bird_radar": ("grpc_fusion_track_auto_bird", "探鸟智能跟踪点迹(gRPC)"),
+        "ku_lei_da": ("grpc_fusion_track_ku", "Ku雷达航迹(gRPC)"),
+        "tian_ao": ("grpc_fusion_track_tian_ao", "天鳌航迹(gRPC)"),
+        "wu_ren_che": ("grpc_fusion_track_wu_ren_che", "无人车航迹(gRPC)"),
     }
     # 同图层但不同 dataSourceId 时覆盖虚拟 receiver / 显示名
     _FUSION_TRACK_DATASOURCE_META = {
         "ku_lei_da": ("grpc_fusion_track_ku", "Ku雷达航迹(gRPC)"),
+        "tian_ao": ("grpc_fusion_track_tian_ao", "天鳌航迹(gRPC)"),
+        "wu_ren_che": ("grpc_fusion_track_wu_ren_che", "无人车航迹(gRPC)"),
     }
 
     def _on_fusion_track_grpc_batch(
         self,
         tracks: List[Dict[str, Any]],
         client_id: str = "fusion_track_grpc_client",
+        label_map: Optional[Dict[str, str]] = None,
     ) -> None:
         """FusionTrack gRPC 一批（已在解析器筛为旁路源）→ 标注 track_layer_key 后入 WS。"""
         self._init_stats(client_id)
@@ -687,17 +696,40 @@ class ReceiverManager:
         if not tracks:
             return
         self._stats[client_id]["parsed"] += 1
+        labels = label_map or {}
 
         for track in tracks:
             if not isinstance(track, dict):
                 continue
-            layer_key = track.get("track_layer_key")
+            layer_key = str(track.get("track_layer_key") or "").strip()
             ds = str(track.get("data_source_id") or "").strip()
             meta = self._FUSION_TRACK_DATASOURCE_META.get(ds) or self._FUSION_TRACK_LAYER_META.get(
                 layer_key
             )
+            cfg_label = labels.get(ds) or labels.get(layer_key)
             if not meta:
-                continue
+                safe = re.sub(r"[^a-zA-Z0-9_]+", "_", ds or layer_key or "unknown").strip("_") or "unknown"
+                try:
+                    from config import fusion_track_source_display_name
+                    label = fusion_track_source_display_name(ds, layer_key, label_map=labels)
+                except Exception:
+                    label = cfg_label or ds or layer_key or "旁路"
+                if label.endswith("(gRPC)"):
+                    source_name = label
+                elif label.endswith("航迹"):
+                    source_name = f"{label}(gRPC)"
+                else:
+                    source_name = f"{label}航迹(gRPC)"
+                meta = (f"grpc_fusion_track_{safe}", source_name)
+            elif cfg_label:
+                layer_rid, _ = meta
+                if cfg_label.endswith("(gRPC)"):
+                    source_name = cfg_label
+                elif cfg_label.endswith("航迹"):
+                    source_name = f"{cfg_label}(gRPC)"
+                else:
+                    source_name = f"{cfg_label}航迹(gRPC)"
+                meta = (layer_rid, source_name)
             layer_rid, source_name = meta
             _annotate_track_receiver_metadata(track, layer_rid, source_name)
             self._init_stats(layer_rid)
@@ -714,10 +746,11 @@ class ReceiverManager:
             if not receiver_id:
                 continue
             try:
+                label_map = dict(config.get("datasource_label_map") or {})
                 receiver = FusionTrackGrpcReceiver(
                     config,
-                    data_callback=lambda tracks, rid=receiver_id: self._on_fusion_track_grpc_batch(
-                        tracks, client_id=rid
+                    data_callback=lambda tracks, rid=receiver_id, lm=label_map: self._on_fusion_track_grpc_batch(
+                        tracks, client_id=rid, label_map=lm
                     ),
                 )
                 receiver.name = config.get("name", receiver_id)
@@ -725,7 +758,9 @@ class ReceiverManager:
                 self.fusion_track_grpc_receivers[receiver_id] = receiver
                 logger.info(
                     f"✅ FusionTrack gRPC 接收器已启动 [{receiver_id}] → "
-                    f"{config.get('host')}:{config.get('port')}"
+                    f"{config.get('host')}:{config.get('port')} "
+                    f"sources={sorted((config.get('datasource_layer_map') or {}).keys()) or ['(all catalog)']} "
+                    f"labels={sorted((config.get('datasource_label_map') or {}).items())[:8]}…"
                 )
             except Exception as e:
                 logger.error(f"❌ FusionTrack gRPC 接收器启动失败 [{receiver_id}]: {e}")

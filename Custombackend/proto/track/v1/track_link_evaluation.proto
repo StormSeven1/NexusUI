@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package track.eval.v1;
+
+// 与 SystemEvaluation/proto/track/v1/track_link_evaluation.proto 保持一致
+
+message TriggerTrackLinkEvalRequest {
+  uint32 duration_sec = 1;
+  uint32 max_tracks_per_type = 2;
+}
+
+message TriggerTrackLinkEvalResponse {
+  string task_id = 1;
+  string status = 2;
+  uint32 duration_sec = 3;
+  uint32 max_tracks_per_type = 4;
+  string error_message = 5;
+  bool conflict = 6;
+}
+
+message GetTrackLinkEvalResultRequest {
+  string task_id = 1;
+}
+
+message LinkSegmentStats {
+  optional double avg_ms = 1;
+  optional double median_ms = 2;
+  optional double min_ms = 3;
+  optional double max_ms = 4;
+  uint32 count = 5;
+}
+
+message TrackLinkTypeResult {
+  string track_layer_key = 1;
+  string label = 2;
+  bool has_data = 3;
+  string message = 4;
+  uint32 sampled_track_count = 5;
+  uint32 candidate_track_count = 6;
+  uint32 single_frame_dropped = 7;
+  uint32 implausible_samples_dropped = 8;
+  uint32 total_updates = 9;
+  uint32 effective_updates = 10;
+  optional double update_frequency_hz = 11;
+  LinkSegmentStats create_to_recv = 12;
+  LinkSegmentStats recv_to_send = 13;
+  LinkSegmentStats send_to_backend = 14;
+  LinkSegmentStats total = 15;
+}
+
+message TrackLinkTypeCount {
+  uint32 seen = 1;
+  uint32 updated = 2;
+  uint32 updates = 3;
+}
+
+message GetTrackLinkEvalResultResponse {
+  string task_id = 1;
+  string status = 2;
+  uint32 duration_sec = 3;
+  double elapsed_sec = 4;
+  double remaining_sec = 5;
+  map<string, TrackLinkTypeCount> type_counts = 6;
+  repeated TrackLinkTypeResult results = 7;
+  bool has_data = 8;
+  string message = 9;
+  string error_message = 10;
+  double started_at_unix = 11;
+  double ended_at_unix = 12;
+}
+
+service TrackLinkEvaluationService {
+  rpc TriggerTrackLinkEval(TriggerTrackLinkEvalRequest) returns (TriggerTrackLinkEvalResponse);
+  rpc GetTrackLinkEvalResult(GetTrackLinkEvalResultRequest) returns (GetTrackLinkEvalResultResponse);
+}

@@ -12,6 +12,8 @@ export type TrackScreenshotRow = {
   cameraIndex: string;
   /** `minio_multi_metadata.uploaded_at`，ISO 字符串；无则空 */
   uploadedAt: string;
+  /** `minio_multi_metadata.download_url`；无则空（由 API 再补预签名） */
+  downloadUrl: string;
 };
 
 let pool: Pool | null | undefined;
@@ -49,7 +51,7 @@ export async function listRecentTrackScreenshotsFromDb(options: {
   const client = await p.connect();
   try {
     const sql = `
-      SELECT minio_bucket, minio_object_key, camera_index, uploaded_at
+      SELECT minio_bucket, minio_object_key, camera_index, uploaded_at, download_url
       FROM minio_multi_metadata
       WHERE "unique_id" = $1::bigint
         AND minio_bucket IS NOT NULL AND trim(minio_bucket) <> ''
@@ -62,6 +64,7 @@ export async function listRecentTrackScreenshotsFromDb(options: {
       minio_object_key: string;
       camera_index: string | null;
       uploaded_at: Date | string | null;
+      download_url: string | null;
     }>(sql, [uid, limit]);
     const seen = new Set<string>();
     const out: TrackScreenshotRow[] = [];
@@ -85,6 +88,7 @@ export async function listRecentTrackScreenshotsFromDb(options: {
         minioObjectKey: k,
         cameraIndex: (row.camera_index ?? "").trim(),
         uploadedAt,
+        downloadUrl: (row.download_url ?? "").trim(),
       });
       if (out.length >= limit) break;
     }

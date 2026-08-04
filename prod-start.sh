@@ -114,7 +114,7 @@ fi
 # 从 nexus-ui/.env.local 读取 NEXUS_DDS_CAMERA_STATUS_MODE（legacy | entity | both），注入 Custombackend 容器
 NEXUS_DDS_CAMERA_STATUS_MODE="${NEXUS_DDS_CAMERA_STATUS_MODE:-legacy}"
 NEXUS_DRONE_STATUS_TRANSPORT="${NEXUS_DRONE_STATUS_TRANSPORT:-dds}"
-NEXUS_DRONE_ENTITY_GRPC_URL="${NEXUS_DRONE_ENTITY_GRPC_URL:-192.168.18.103:51070}"
+NEXUS_DRONE_ENTITY_GRPC_URL="${NEXUS_DRONE_ENTITY_GRPC_URL:-192.168.18.141:51070}"
 NEXUS_DRONE_HOSTILE_GRPC_URL="${NEXUS_DRONE_HOSTILE_GRPC_URL:-192.168.18.141:50065}"
 NEXUS_FUSION_TRACK_TRANSPORT="${NEXUS_FUSION_TRACK_TRANSPORT:-dds}"
 NEXUS_TRACK_ALARM_TRANSPORT="${NEXUS_TRACK_ALARM_TRANSPORT:-embedded}"
@@ -122,6 +122,10 @@ NEXUS_NEW_TRACK_STRUCT_GRPC_URL="${NEXUS_NEW_TRACK_STRUCT_GRPC_URL:-192.168.18.1
 NEXUS_VIRTUAL_NEW_TRACK_STRUCT_GRPC_URL="${NEXUS_VIRTUAL_NEW_TRACK_STRUCT_GRPC_URL:-192.168.18.116:50065}"
 NEXUS_RADAR_TRACK_TRANSPORT="${NEXUS_RADAR_TRACK_TRANSPORT:-dds}"
 NEXUS_FUSION_TRACK_STREAM_GRPC_URL="${NEXUS_FUSION_TRACK_STREAM_GRPC_URL:-192.168.18.141:60056}"
+NEXUS_FUSION_TRACK_GRPC_SOURCES="${NEXUS_FUSION_TRACK_GRPC_SOURCES:-}"
+# 光电相机实时状态通道：dds | grpc（grpc 需 camServer SiteProfile.ini UseEntityGrpc=1 + EntityStatusGrpcPort=8092）
+NEXUS_CAMERA_STATUS_TRANSPORT="${NEXUS_CAMERA_STATUS_TRANSPORT:-dds}"
+NEXUS_CAMERA_ENTITY_GRPC_URL="${NEXUS_CAMERA_ENTITY_GRPC_URL:-192.168.18.141:8092}"
 NEXUS_EO_CALC_RECORD_CAM_CONF_DIR="${NEXUS_EO_CALC_RECORD_CAM_CONF_DIR:-/mnt/nfs_200T/camconf}"
 NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT="${NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT:-\\\\192.168.18.142\\store_200T\\camconf}"
 NEXUS_EO_AIM_PARAM_GRPC_ADDR="${NEXUS_EO_AIM_PARAM_GRPC_ADDR:-192.168.18.108:50052}"
@@ -135,7 +139,48 @@ if [[ -f "$ROOT/nexus-ui/.env.local" ]]; then
 
   _read_env_local() {
     local key="$1"
-    grep -E "^[[:space:]]*${key}=" "$ROOT/nexus-ui/.env.local" 2>/dev/null | tail -1 | cut -d= -f2- | xargs || true
+    # 支持双引号多行值（如 NEXUS_FUSION_TRACK_GRPC_SOURCES）；读出后换行压成逗号便于 docker -e
+    python3 - "$ROOT/nexus-ui/.env.local" "$key" <<'PY' 2>/dev/null || true
+import sys
+from pathlib import Path
+path, key = Path(sys.argv[1]), sys.argv[2]
+if not path.is_file():
+    raise SystemExit(0)
+lines = path.read_text(encoding="utf-8").splitlines()
+i = 0
+val = None
+while i < len(lines):
+    raw = lines[i]
+    s = raw.lstrip("\ufeff").lstrip()
+    if not s or s.startswith("#") or not s.startswith(key + "="):
+        i += 1
+        continue
+    body = s[len(key) + 1 :]
+    if body.startswith('"'):
+        chunks = [body[1:]]
+        if chunks[0].endswith('"') and not chunks[0].endswith('\\"'):
+            val = chunks[0][:-1]
+        else:
+            i += 1
+            while i < len(lines):
+                ln = lines[i]
+                if ln.rstrip().endswith('"') and not ln.rstrip().endswith('\\"'):
+                    chunks.append(ln.rstrip()[:-1])
+                    break
+                chunks.append(ln)
+                i += 1
+            val = "\n".join(chunks)
+        val = val.replace("\\n", "\n").replace('\\"', '"')
+    elif body.startswith("'"):
+        val = body[1:-1] if body.endswith("'") else body[1:]
+    else:
+        val = body.strip()
+    break
+if val is None:
+    raise SystemExit(0)
+flat = ",".join(p.strip() for p in val.replace("\r", "\n").split("\n") if p.strip())
+sys.stdout.write(flat)
+PY
   }
   _v="$(_read_env_local NEXUS_EO_CALC_RECORD_CAM_CONF_DIR)"; [[ -n "$_v" ]] && NEXUS_EO_CALC_RECORD_CAM_CONF_DIR="$_v"
   _v="$(_read_env_local NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT)"; [[ -n "$_v" ]] && NEXUS_EO_AIM_PARAM_AIM_PATH_ROOT="$_v"
@@ -151,8 +196,12 @@ if [[ -f "$ROOT/nexus-ui/.env.local" ]]; then
   _v="$(_read_env_local NEXUS_VIRTUAL_NEW_TRACK_STRUCT_GRPC_URL)"; [[ -n "$_v" ]] && NEXUS_VIRTUAL_NEW_TRACK_STRUCT_GRPC_URL="$_v"
   _v="$(_read_env_local NEXUS_RADAR_TRACK_TRANSPORT)"; [[ -n "$_v" ]] && NEXUS_RADAR_TRACK_TRANSPORT="$_v"
   _v="$(_read_env_local NEXUS_FUSION_TRACK_STREAM_GRPC_URL)"; [[ -n "$_v" ]] && NEXUS_FUSION_TRACK_STREAM_GRPC_URL="$_v"
+  _v="$(_read_env_local NEXUS_FUSION_TRACK_GRPC_SOURCES)"; [[ -n "$_v" ]] && NEXUS_FUSION_TRACK_GRPC_SOURCES="$_v"
+  _v="$(_read_env_local NEXUS_CAMERA_STATUS_TRANSPORT)"; [[ -n "$_v" ]] && NEXUS_CAMERA_STATUS_TRANSPORT="$_v"
+  _v="$(_read_env_local NEXUS_CAMERA_ENTITY_GRPC_URL)"; [[ -n "$_v" ]] && NEXUS_CAMERA_ENTITY_GRPC_URL="$_v"
 fi
 echo "NEXUS_DDS_CAMERA_STATUS_MODE=${NEXUS_DDS_CAMERA_STATUS_MODE}（相机 PTZ DDS：legacy=149 / entity=200）"
+echo "NEXUS_CAMERA_STATUS_TRANSPORT=${NEXUS_CAMERA_STATUS_TRANSPORT}（光电视场：dds | grpc(camServer :${NEXUS_CAMERA_ENTITY_GRPC_URL##*:})）"
 echo "NEXUS_DRONE_STATUS_TRANSPORT=${NEXUS_DRONE_STATUS_TRANSPORT}（无人机：dds | grpc）"
 echo "NEXUS_FUSION_TRACK_TRANSPORT=${NEXUS_FUSION_TRACK_TRANSPORT}（对空/对海融合：dds | grpc）"
 echo "NEXUS_TRACK_ALARM_TRANSPORT=${NEXUS_TRACK_ALARM_TRANSPORT}（航迹告警：embedded | dds）"
@@ -194,6 +243,9 @@ docker run -d \
   -e "NEXUS_VIRTUAL_NEW_TRACK_STRUCT_GRPC_URL=${NEXUS_VIRTUAL_NEW_TRACK_STRUCT_GRPC_URL}" \
   -e "NEXUS_RADAR_TRACK_TRANSPORT=${NEXUS_RADAR_TRACK_TRANSPORT}" \
   -e "NEXUS_FUSION_TRACK_STREAM_GRPC_URL=${NEXUS_FUSION_TRACK_STREAM_GRPC_URL}" \
+  -e "NEXUS_FUSION_TRACK_GRPC_SOURCES=${NEXUS_FUSION_TRACK_GRPC_SOURCES}" \
+  -e "NEXUS_CAMERA_STATUS_TRANSPORT=${NEXUS_CAMERA_STATUS_TRANSPORT}" \
+  -e "NEXUS_CAMERA_ENTITY_GRPC_URL=${NEXUS_CAMERA_ENTITY_GRPC_URL}" \
   -e "NEXUS_EO_AIM_PARAM_GRPC_ADDR=${NEXUS_EO_AIM_PARAM_GRPC_ADDR}" \
   -e "NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR=${NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR}" \
   -e "NEXUS_EO_AIM_TRACK_COLLECT_URL=${NEXUS_EO_AIM_TRACK_COLLECT_GRPC_ADDR}" \

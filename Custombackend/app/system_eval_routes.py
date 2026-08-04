@@ -19,11 +19,13 @@ from system_eval_camera_client import (
     trigger_true_north_pointing_eval,
     trigger_visibility_check,
 )
+from system_eval_track_link_client import (
+    get_track_link_eval_result_grpc,
+    trigger_track_link_eval_grpc,
+)
 from track_link_evaluator import (
     DEFAULT_DURATION_SEC,
     DEFAULT_MAX_TRACKS_PER_TYPE,
-    get_track_link_eval_result,
-    start_track_link_eval,
 )
 
 router = APIRouter(prefix="/system-eval", tags=["system-eval"])
@@ -137,12 +139,25 @@ async def get_system_perf_stats(limit: int = Query(10, ge=1, le=100)):
 @router.post("/track-link/trigger")
 async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerRequest] = Body(None)):
     """
-    触发航迹链路评估：在 Custombackend 独立线程旁路采样 gRPC 航迹 4 时间戳，
-    默认采集 30s、每类最多 10 条航迹。不调用 system-evaluation-server，不影响其他评估。
+    触发航迹链路评估：转发 system-evaluation-server TrackLinkEvaluationService。
+    评估服务独立线程旁路采样 DDS 实时航迹（对海/对空融合），不依赖 NexusUI 进站路径。
     """
     try:
+        settings = get_settings()
+        target = (settings.SYSTEM_EVAL_GRPC_TARGET or "").strip()
+        if not target:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": 503,
+                    "message": "未配置 SYSTEM_EVAL_GRPC_TARGET",
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+
         req = body or TrackLinkEvalTriggerRequest()
-        result = start_track_link_eval(
+        result = trigger_track_link_eval_grpc(
+            target,
             duration_sec=req.duration_sec,
             max_tracks_per_type=req.max_tracks_per_type,
         )
@@ -151,7 +166,17 @@ async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerReques
                 status_code=409,
                 content={
                     "code": 409,
-                    "message": result.get("message") or "已有评估在进行中",
+                    "message": result.get("message") or result.get("error_message") or "已有评估在进行中",
+                    "data": result,
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+        if not result.get("ok"):
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "code": 502,
+                    "message": result.get("error_message") or result.get("message") or "触发失败",
                     "data": result,
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -166,6 +191,7 @@ async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerReques
                     "status": result.get("status"),
                     "duration_sec": result.get("duration_sec"),
                     "max_tracks_per_type": result.get("max_tracks_per_type"),
+                    "grpc_target": result.get("grpc_target"),
                 },
                 "timestamp": datetime.now().isoformat(),
             },
@@ -185,17 +211,39 @@ async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerReques
 @router.get("/track-link/result")
 async def get_track_link_eval_result_api(task_id: Optional[str] = Query(None)):
     """
-    查询航迹链路评估进度/结果。
-    collecting → 返回 elapsed/remaining；done → 返回 results（每类延迟与更新频率）。
+    查询航迹链路评估进度/结果（system-evaluation-server）。
+    collecting → 返回 elapsed/remaining；done → 返回 results。
     """
     try:
-        result = get_track_link_eval_result(task_id=task_id)
+        settings = get_settings()
+        target = (settings.SYSTEM_EVAL_GRPC_TARGET or "").strip()
+        if not target:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": 503,
+                    "message": "未配置 SYSTEM_EVAL_GRPC_TARGET",
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+
+        result = get_track_link_eval_result_grpc(target, task_id=task_id)
         if result.get("not_found"):
             return JSONResponse(
                 status_code=404,
                 content={
                     "code": 404,
-                    "message": result.get("message") or "未找到评估任务",
+                    "message": result.get("error_message") or result.get("message") or "未找到评估任务",
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+        if not result.get("ok"):
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "code": 502,
+                    "message": result.get("error_message") or "查询失败",
+                    "data": result,
                     "timestamp": datetime.now().isoformat(),
                 },
             )
@@ -212,9 +260,12 @@ async def get_track_link_eval_result_api(task_id: Optional[str] = Query(None)):
                     "remaining_sec": result.get("remaining_sec"),
                     "type_counts": result.get("type_counts"),
                     "results": result.get("results"),
+                    "has_data": result.get("has_data"),
+                    "message": result.get("message"),
                     "error": result.get("error"),
                     "started_at": result.get("started_at"),
                     "ended_at": result.get("ended_at"),
+                    "grpc_target": result.get("grpc_target"),
                 },
                 "timestamp": datetime.now().isoformat(),
             },

@@ -328,14 +328,14 @@ export function rectRowRectTypeId(rect: number[] | undefined): number | undefine
 
 export type EoSurfaceShort = "空" | "海";
 
-/** 与 WatchSys_Widget / Qt gConfig：bird=1 plane=2 → 空；ship/buoy=3/4/5 → 海 */
+/** 检测 classId：1鸟 2无人机 3空中其他 → 空；4船 5浮标 6海面其他 → 海 */
 export function inferEoSurfaceShortFromRectTypeId(
   rectTypeId: number | undefined | null,
 ): EoSurfaceShort | undefined {
   if (rectTypeId == null || !Number.isFinite(rectTypeId)) return undefined;
   const t = Math.trunc(rectTypeId);
-  if (t === 1 || t === 2) return "空";
-  if (t === 3 || t === 4 || t === 5) return "海";
+  if (t === 1 || t === 2 || t === 3) return "空";
+  if (t === 4 || t === 5 || t === 6) return "海";
   return undefined;
 }
 

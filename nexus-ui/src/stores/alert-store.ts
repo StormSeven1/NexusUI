@@ -27,6 +27,7 @@
 import { create } from "zustand";
 import type { AlarmFilterFuseType } from "@/lib/alarm-filter-api";
 import { buildAlarmMatchKeysFromAlerts } from "@/lib/alarm-track-match";
+import { isSuspiciousAlarmMarker } from "@/lib/suspicious-alarm-marker";
 import { useDisposedStore } from "@/stores/disposed-store";
 
 export interface AlertData {
@@ -90,6 +91,11 @@ export interface AlertData {
   systemId?: string;
   /** 系统告警关联实体 */
   entityId?: string;
+  /**
+   * 系统告警扩展字段（GetActiveAlarms / SystemAlarm）。
+   * 例：相机检测可疑目标 `reserved3=track`，见 `system-alarm.ts`。
+   */
+  reserved3?: string;
 }
 
 /**
@@ -309,6 +315,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
     set((s) => {
       const now = Date.now();
       const next = s.alerts.filter((item) => {
+        if (isSuspiciousAlarmMarker(item as unknown as Record<string, unknown>)) return false;
         if (item.source === "SystemAlarm") return true;
         const raw = item.lastUpdateTime ?? new Date(item.timestamp).getTime();
         const lastUpdate = typeof raw === "number" ? raw : 0;
@@ -370,11 +377,21 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
 /**
  * 重算 alarmTrackIds Set，仅在 Set 真正变化时递增 alarmTrackRevision。
+ * 同时剔除误入的可疑标记（不得占威胁蓝）。
  */
 function applyRevision<T extends { alerts: AlertData[]; alarmTrackIds: Set<string>; alarmTrackRevision: number }>(
   state: T,
 ): T {
-  const newIds = buildAlarmMatchKeysFromAlerts(state.alerts);
-  if (setsEqual(newIds, state.alarmTrackIds)) return state;
-  return { ...state, alarmTrackIds: newIds, alarmTrackRevision: state.alarmTrackRevision + 1 };
+  const alerts = state.alerts.filter(
+    (a) => !isSuspiciousAlarmMarker(a as unknown as Record<string, unknown>),
+  );
+  const newIds = buildAlarmMatchKeysFromAlerts(alerts);
+  const alertsChanged = alerts.length !== state.alerts.length;
+  if (!alertsChanged && setsEqual(newIds, state.alarmTrackIds)) return state;
+  return {
+    ...state,
+    alerts,
+    alarmTrackIds: newIds,
+    alarmTrackRevision: state.alarmTrackRevision + 1,
+  };
 }

@@ -14,11 +14,11 @@ import { subscribeTaskStatusChat } from "@/lib/task-status-chat-feed-bus";
 import { pickTaskStatusImageUrl } from "@/lib/task-status-chat-format";
 import { resolveVerifyUniqueId } from "@/lib/verified-track-from-task-status";
 import { useTrackStore } from "@/stores/track-store";
-import { useTargetProfileStore } from "@/stores/target-profile-store";
+import { useTargetProfileStore, type TargetProfileShot } from "@/stores/target-profile-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
 import { canonicalEntityId } from "@/lib/camera-entity-id";
-import { resolveTrackLayerKey, TRACK_SUBTYPE_LABELS } from "@/lib/track-layer-visibility";
+import { resolveTrackLayerKey, trackSubtypeLabel } from "@/lib/track-layer-visibility";
 import { formatTrackSpeed } from "@/lib/track-speed-format";
 
 const PROFILE_POLL_MS = 5000;
@@ -63,13 +63,14 @@ function isDigitsUniqueId(s: string | undefined | null): boolean {
   return t.length > 0 && /^\d+$/.test(t);
 }
 
-type ProfileShot = { url: string; cameraIndex: string; uploadedAt: string };
+type ProfileShot = TargetProfileShot;
 
 function shotsEqual(a: readonly ProfileShot[], b: readonly ProfileShot[]): boolean {
   if (a.length !== b.length) return false;
   return a.every(
     (s, i) =>
       s.url === b[i]!.url &&
+      s.downloadUrl === b[i]!.downloadUrl &&
       s.cameraIndex === b[i]!.cameraIndex &&
       s.uploadedAt === b[i]!.uploadedAt,
   );
@@ -114,6 +115,8 @@ function PairCell({ k, v, className }: { k: string; v: string; className?: strin
 
 export function TargetProfilePanel() {
   const focusedShowId = useTargetProfileStore((s) => s.focusedShowId);
+  const setProfileShots = useTargetProfileStore((s) => s.setShots);
+  const clearProfileShots = useTargetProfileStore((s) => s.clearShots);
   const liveTrack = useTrackStore((s) =>
     focusedShowId ? s.tracks.find((t) => t.showID === focusedShowId) : undefined,
   );
@@ -184,12 +187,13 @@ export function TargetProfilePanel() {
     setShots([]);
     setImgIdx(0);
     setImgLoading(false);
-  }, [focusedShowId]);
+    clearProfileShots();
+  }, [focusedShowId, clearProfileShots]);
 
   const layerLabel = useMemo(() => {
     if (!displayTrack) return "—";
     const k = resolveTrackLayerKey(displayTrack);
-    return TRACK_SUBTYPE_LABELS[k] ?? k;
+    return trackSubtypeLabel(k);
   }, [displayTrack]);
 
   const sourceText = useMemo(() => {
@@ -207,6 +211,7 @@ export function TargetProfilePanel() {
     const uid = displayTrack.uniqueID?.trim() ?? "";
     if (!isDigitsUniqueId(uid)) {
       setShots([]);
+      setProfileShots([]);
       return;
     }
 
@@ -224,28 +229,42 @@ export function TargetProfilePanel() {
         (r) =>
           r.json() as Promise<{
             ok?: boolean;
-            items?: { url?: string; cameraIndex?: string; uploadedAt?: string }[];
+            items?: {
+              url?: string;
+              downloadUrl?: string;
+              cameraIndex?: string;
+              uploadedAt?: string;
+            }[];
           }>,
       )
       .then((j) => {
         if (cancelled) return;
         const list: ProfileShot[] = Array.isArray(j.items)
           ? j.items
-              .map((x) => ({
-                url: (x.url ?? "").trim(),
-                cameraIndex: (x.cameraIndex ?? "").trim(),
-                uploadedAt: (x.uploadedAt ?? "").trim(),
-              }))
+              .map((x) => {
+                const url = (x.url ?? "").trim();
+                const downloadUrl = (x.downloadUrl ?? "").trim() || url;
+                return {
+                  url,
+                  downloadUrl,
+                  cameraIndex: (x.cameraIndex ?? "").trim(),
+                  uploadedAt: (x.uploadedAt ?? "").trim(),
+                };
+              })
               .filter((x) => Boolean(x.url))
           : [];
         if (shotsEqual(shotsRef.current, list)) {
           return;
         }
         setShots(list);
+        setProfileShots(list);
         setImgIdx((i) => (list.length === 0 ? 0 : Math.min(i, list.length - 1)));
       })
       .catch(() => {
-        if (!cancelled && !silentPoll) setShots([]);
+        if (!cancelled && !silentPoll) {
+          setShots([]);
+          setProfileShots([]);
+        }
       })
       .finally(() => {
         if (!cancelled && !silentPoll) setImgLoading(false);
@@ -254,7 +273,13 @@ export function TargetProfilePanel() {
     return () => {
       cancelled = true;
     };
-  }, [focusedShowId, displayTrack?.showID, displayTrack?.uniqueID, imagePollGen]);
+  }, [
+    focusedShowId,
+    displayTrack?.showID,
+    displayTrack?.uniqueID,
+    imagePollGen,
+    setProfileShots,
+  ]);
 
   const prevPic = useCallback(() => {
     setImgIdx((i) => (shots.length ? (i <= 0 ? shots.length - 1 : i - 1) : 0));

@@ -25,7 +25,6 @@ import {
 import {
   collectMapGisDroneRowsSync,
   mapGisDroneEoFallbackLabel,
-  mapGisDroneSyncSignature,
   mergeMapGisDroneRowsPreferSync,
   type MapGisDroneRow,
 } from "@/lib/map-gis-drone-rows";
@@ -36,9 +35,7 @@ import {
 } from "@/lib/entities-track-task-cache";
 import { postUavSpotFlyToTask } from "@/lib/eo-video/uavSpotFlyClient";
 import { postUavTrackFollowTask } from "@/lib/eo-video/uavTrackFollowClient";
-import { useAssetStore } from "@/stores/asset-store";
 import { useEoFocusedUavAirportSnStore } from "@/stores/eo-focused-uav-airport-sn-store";
-import { useDroneStore } from "@/stores/drone-store";
 import { useTrackStore } from "@/stores/track-store";
 import { resolveUniqueIdFromTrack, sendAlarmConfirmRequest, buildAlarmConfirmTrackHint } from "@/lib/alarm-confirm-api";
 import { dismissAlarmForTrack, resolveAlarmFilterTargetId } from "@/lib/dismiss-alarm-for-track";
@@ -216,6 +213,16 @@ function CascadeMenu({
 
 type SubKey = NonNullable<SubCascade>["key"];
 
+function snapshotTrackForMenu(variant: MapGisMenuState["variant"], trackId: string | null): Track | null {
+  if (variant !== "track" || !trackId) return null;
+  return useTrackStore.getState().tracks.find((t) => t.id === trackId) ?? null;
+}
+
+/** 菜单打开瞬间读一次列表；不订阅 store，地图航迹/无人机刷新不受影响 */
+function snapshotSyncDroneRows(): MapGisDroneRow[] {
+  return collectMapGisDroneRowsSync();
+}
+
 export function MapGisContextMenu({
   open,
   state,
@@ -230,28 +237,16 @@ export function MapGisContextMenu({
   const mainRef = useRef<HTMLDivElement>(null);
   const subPanelRef = useRef<HTMLDivElement>(null);
 
-  const track = useTrackStore((s) =>
-    state.variant === "track" && state.trackId ? s.tracks.find((t) => t.id === state.trackId) ?? null : null,
+  /** 打开菜单时快照；勿订阅 tracks/drones（否则航迹刷新会打掉 mousedown→click） */
+  const [track, setTrack] = useState<Track | null>(() =>
+    snapshotTrackForMenu(state.variant, state.trackId),
   );
+  const [syncDroneRows, setSyncDroneRows] = useState<MapGisDroneRow[]>(() => snapshotSyncDroneRows());
   const manualUavPihao = useManualUavMarkStore((s) =>
     track?.showID ? s.markedPihaoByShowId[track.showID] ?? null : null,
   );
 
   const [trackOwnersEpoch, setTrackOwnersEpoch] = useState(0);
-
-  const dronesMap = useDroneStore((s) => s.drones);
-  const droneToAirport = useDroneStore((s) => s.droneToAirport);
-  const airportRelSig = useDroneStore((s) =>
-    (s.relationships?.airports ?? [])
-      .map((a) => `${a.dockSn}:${a.drones.map((d) => d.deviceSn).sort().join(",")}`)
-      .join(";"),
-  );
-  const droneAssetSig = useAssetStore((s) => mapGisDroneSyncSignature(s.assets));
-
-  const syncDroneRows = useMemo(
-    () => collectMapGisDroneRowsSync(),
-    [dronesMap, droneToAirport, airportRelSig, droneAssetSig],
-  );
 
   const [eoMenuCtx, setEoMenuCtx] = useState<MapGisEoMenuContext | null>(null);
   const eoFocusedAirportSn = useEoFocusedUavAirportSnStore((s) => s.airportSn);
@@ -261,8 +256,11 @@ export function MapGisContextMenu({
   useEffect(() => {
     if (!open) {
       setEoMenuCtx(null);
+      setCascade(null);
       return;
     }
+    setTrack(snapshotTrackForMenu(state.variant, state.trackId));
+    setSyncDroneRows(snapshotSyncDroneRows());
     let cancelled = false;
     void fetchMapGisEoMenuContext().then((ctx) => {
       if (!cancelled) setEoMenuCtx(ctx);
@@ -270,12 +268,30 @@ export function MapGisContextMenu({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, state.variant, state.trackId, state.clientX, state.clientY]);
 
   const drones = useMemo(
     () => mergeMapGisDroneRowsPreferSync(syncDroneRows, eoMenuCtx?.registryDroneRows ?? []),
     [syncDroneRows, eoMenuCtx],
   );
+
+  /** 下发任务时取最新航迹位置/ID；菜单展示仍用打开时快照 */
+  const resolveLiveTrack = (): Track | null => {
+    const live = snapshotTrackForMenu(state.variant, state.trackId);
+    return live ?? track;
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    void ensureEntitiesTrackTaskCache()
+      .then(() => setTrackOwnersEpoch((e) => e + 1))
+      .catch(() => setTrackOwnersEpoch((e) => e + 1));
+  }, [open]);
+
+  const cameras = useMemo(() => {
+    void trackOwnersEpoch;
+    return buildMapGisCameraMenuRows(listTrackTaskOwnerRows(), eoMenuCtx);
+  }, [trackOwnersEpoch, eoMenuCtx]);
 
   const cameraMenuLabel = (c: Pick<MapGisCameraMenuRow, "entityId" | "label">) => {
     const id = canonicalEntityId(c.entityId.trim());
@@ -289,21 +305,6 @@ export function MapGisContextMenu({
     if (fromEo?.trim()) return fromEo.trim();
     return mapGisDroneEoFallbackLabel(d.sn) || d.label.trim() || d.sn;
   };
-
-  useEffect(() => {
-    if (!open) setCascade(null);
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    void ensureEntitiesTrackTaskCache()
-      .then(() => setTrackOwnersEpoch((e) => e + 1))
-      .catch(() => setTrackOwnersEpoch((e) => e + 1));
-  }, [open]);
-
-  const cameras = useMemo(() => {
-    void trackOwnersEpoch;
-    return buildMapGisCameraMenuRows(listTrackTaskOwnerRows(), eoMenuCtx);
-  }, [trackOwnersEpoch, eoMenuCtx]);
 
   const toggleCascade = (key: SubKey, el: HTMLElement) => {
     setCascade((prev) => {
@@ -380,8 +381,9 @@ export function MapGisContextMenu({
                   console.warn("[map-gis-menu] 航迹跟踪: track 为空");
                   return false;
                 }
+                const liveTr = resolveLiveTrack() ?? tr;
                 const target = buildImportantTrackTargetFromTrack(
-                  tr,
+                  liveTr,
                   useTrackStore.getState().tracks,
                 );
                 const body = buildImportantTrackTaskBody(cm, c.entityId, target, {
@@ -435,7 +437,10 @@ export function MapGisContextMenu({
                 }
               }
               void toastCameraTask(async () => {
-                if (trackForFollow) return uavTrackFollowOnTrack(trackForFollow, d.airportSN);
+                if (trackForFollow) {
+                  const live = resolveLiveTrack() ?? trackForFollow;
+                  return uavTrackFollowOnTrack(live, d.airportSN);
+                }
                 return spotFlyRecon(lat, lng, d.airportSN);
               }, okToast(disp));
               onClose();
@@ -635,7 +640,8 @@ export function MapGisContextMenu({
                 toast.error("请先在光电窗口选中 UAV 流且能解析到机场 SN（当前焦点光电无机场映射）");
                 return false;
               }
-              return uavTrackFollowOnTrack(track, ap);
+              const live = resolveLiveTrack() ?? track;
+              return uavTrackFollowOnTrack(live, ap);
             }, "已下发无人机跟踪任务（当前光电机场）");
             onClose();
           }}

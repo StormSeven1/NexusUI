@@ -12,9 +12,14 @@ type Props = {
   open: boolean;
   pending: KnowledgeBasePendingInterrupt | null;
   submitting: boolean;
-  /** 恢复请求断流/网络异常后进入结果未知，禁止再次提交同一令牌 */
+  /**
+   * 恢复请求断流后进入结果未知：默认禁止再点同一令牌；
+   * 可用「重新选择」解锁（确认设备侧未执行后再试）。
+   */
   resultUnknown?: boolean;
   onDismiss: () => void;
+  /** 用户确认可再次选择后清除 resultUnknown */
+  onAllowRetry?: () => void;
   onSubmit: (selectedValues: Record<string, string>) => void;
 };
 
@@ -28,6 +33,7 @@ export function KnowledgeBaseInterruptDialog({
   submitting,
   resultUnknown = false,
   onDismiss,
+  onAllowRetry,
   onSubmit,
 }: Props) {
   const [selected, setSelected] = useState<Record<string, string>>({});
@@ -95,8 +101,20 @@ export function KnowledgeBaseInterruptDialog({
           </div>
 
           {resultUnknown ? (
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-100">
-              恢复请求结果状态不确定。请勿重复提交同一确认；请通过设备或任务平台状态核对后再决定是否重新发起自然语言指令。
+            <div className="space-y-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-100">
+              <p>
+                上次确认请求结果不确定（网络可能半截断开）。请先核对设备/任务是否已继续；若确认未生效，可重新选择下方选项。
+              </p>
+              {onAllowRetry ? (
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={onAllowRetry}
+                  className="rounded-md bg-amber-500/90 px-2.5 py-1 text-[11px] font-medium text-black hover:bg-amber-400 disabled:opacity-45"
+                >
+                  重新选择
+                </button>
+              ) : null}
             </div>
           ) : null}
 

@@ -215,6 +215,8 @@ export function buildFovGeoJSON(
   cameraDdsById?: Readonly<Record<string, EoCameraDdsStatusRow | undefined>>,
   /** `sectorBorder.lineWidth>0` 时沿用整圈描边；否则仅任务执行中画两侧虚线 */
   fovBorderOutline = false,
+  /** 相机检测可疑目标告警中的实体 ID（小写）；有视场则标红 */
+  detectAlertEntityIds?: ReadonlySet<string> | null,
 ) {
   /* 仅光电(camera)画 FOV 扇区；电侦(tower)由 tower-maplibre 独立渲染 */
   const polyFeatures = assetList
@@ -235,6 +237,12 @@ export function buildFovGeoJSON(
       const coords = isSector
         ? geoSectorCoords(a.lng, a.lat, a.range!, a.heading!, a.fovAngle!)
         : geoCircleCoords(a.lng, a.lat, a.range!);
+      const idLower = String(a.id ?? "").trim().toLowerCase();
+      const detectAlert =
+        detectAlertEntityIds &&
+        (detectAlertEntityIds.has(idLower) || detectAlertEntityIds.has(canonicalEntityId(a.id)))
+          ? 1
+          : 0;
       return {
         type: "Feature" as const,
         geometry: { type: "Polygon" as const, coordinates: [coords] },
@@ -245,6 +253,7 @@ export function buildFovGeoJSON(
           status: a.status,
           assetType: a.type,
           isVirtual: a.isVirtual === true ? 1 : 0,
+          detectAlert,
         },
       };
     });
@@ -267,6 +276,12 @@ export function buildFovGeoJSON(
       const taskExecuting = isCameraMapTaskExecuting(resolveCameraDdsRow(a.id, cameraDdsById));
       if (!taskExecuting) continue;
 
+      const idLower = String(a.id ?? "").trim().toLowerCase();
+      const detectAlert =
+        detectAlertEntityIds &&
+        (detectAlertEntityIds.has(idLower) || detectAlertEntityIds.has(canonicalEntityId(a.id)))
+          ? 1
+          : 0;
       for (const line of geoSectorSideLineCoords(a.lng, a.lat, a.range, a.heading, a.fovAngle)) {
         sideLineFeatures.push({
           type: "Feature",
@@ -276,6 +291,7 @@ export function buildFovGeoJSON(
             id: a.id,
             assetType: a.type,
             isVirtual: a.isVirtual === true ? 1 : 0,
+            detectAlert,
           },
         });
       }
@@ -532,15 +548,28 @@ export class OptoelectronicFovModule {
     _fovLineDashVirtual = style.lineDashVirtual;
     _fovLineDashReal = style.lineDashReal;
 
-    /* 应用填充色 + 透明度 */
+    const fillByAlert: maplibregl.ExpressionSpecification = [
+      "case",
+      ["==", ["get", "detectAlert"], 1],
+      "#ef4444",
+      style.fillColor,
+    ];
+    const lineByAlert: maplibregl.ExpressionSpecification = [
+      "case",
+      ["==", ["get", "detectAlert"], 1],
+      "#f87171",
+      style.lineColor,
+    ];
+
+    /* 应用填充色 + 透明度（检测告警标红） */
     if (m.getLayer(FOV_FILL)) {
-      m.setPaintProperty(FOV_FILL, "fill-color", style.fillColor);
+      m.setPaintProperty(FOV_FILL, "fill-color", fillByAlert);
       m.setPaintProperty(FOV_FILL, "fill-opacity", style.fillOpacity);
     }
 
     /* 应用线色 / 线宽 / 透明度 / 虚线 */
     if (m.getLayer(FOV_LINE)) {
-      m.setPaintProperty(FOV_LINE, "line-color", style.lineColor);
+      m.setPaintProperty(FOV_LINE, "line-color", lineByAlert);
       m.setPaintProperty(FOV_LINE, "line-width", style.lineWidth);
       m.setPaintProperty(FOV_LINE, "line-opacity", style.lineOpacity);
       m.setPaintProperty(FOV_LINE, "line-dasharray", FOV_LINE_DASH_BY_VIRTUAL);
@@ -583,9 +612,17 @@ export class OptoelectronicFovModule {
   private panelCameraIds: ReadonlySet<string> | null = null;
   /** 第三方相机 id：2D 地图视场改由 `ThirdPartyPtzFovModule` 绘制 */
   private excludeFromOptoFovIds: ReadonlySet<string> = new Set();
+  /** 检测可疑目标告警实体（小写）→ 视场标红 */
+  private detectAlertEntityIds: ReadonlySet<string> = new Set();
 
   setExcludeFromOptoFovIds(ids: ReadonlySet<string>) {
     this.excludeFromOptoFovIds = ids;
+    this.refreshFovGeoJson();
+  }
+
+  setDetectAlertEntityIds(ids: ReadonlySet<string>) {
+    this.detectAlertEntityIds = ids;
+    this.lastFovDataSig = "";
     this.refreshFovGeoJson();
   }
 
@@ -622,6 +659,7 @@ export class OptoelectronicFovModule {
         this.excludeFromOptoFovIds,
         this.cameraDdsByEntityId,
         this.fovBorderOutline,
+        this.detectAlertEntityIds,
       ) as GeoJSON.FeatureCollection,
     );
     this.lastFovDataSig = this.buildFovDataSig(this.lastFovAssets);
@@ -724,6 +762,7 @@ export class OptoelectronicFovModule {
           this.excludeFromOptoFovIds,
           this.cameraDdsByEntityId,
           this.fovBorderOutline,
+          this.detectAlertEntityIds,
         ) as GeoJSON.FeatureCollection,
       );
       this.lastFovDataSig = nextFovSig;

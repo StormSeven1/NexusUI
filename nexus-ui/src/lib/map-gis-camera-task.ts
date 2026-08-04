@@ -146,7 +146,7 @@ export function findAssociatedSeaFusionForRadarTrack(
 
 /**
  * camServer 光电任务用的 shipType + target_id。
- * 雷达层：优先关联对海融合的 `target_id`（shipType=3）；找不到融合再回退雷达 ID（shipType=1）。
+ * 雷达层：优先关联对海融合的 `target_id`（shipType=3）；找不到融合再回退雷达 uniqueId（shipType=1）。
  */
 /** 地图高频三角无 DDS 航迹时合成的占位 id（不可从 SN 抠数字当 target_id） */
 export function isSyntheticDroneHfTrack(
@@ -168,7 +168,18 @@ export function resolveCamServerShipTaskIds(
 
   const lk = resolveTrackLayerKey(track);
 
-  if (lk === "radar_wharf" || lk === "radar_jingzi") {
+  // 对海/对空融合：始终用融合 target_id（与地图 showID / 查证一致）。
+  // 不可因 fusionSources 含 zibaowei 改成自报位本地号，否则光电显示 4011、前端按 5149100 查查证对不上。
+  if (lk === "fuse_sea" || lk === "fuse_air") {
+    const fusionTargetId = numericTargetIdForCameraTask(track);
+    const isSea = lk === "fuse_sea" || track.type === "sea" || track.type === "underwater";
+    return {
+      shipType: isSea ? 3 : 0,
+      targetId: fusionTargetId,
+    };
+  }
+
+  if (lk === "radar_wharf" || lk === "radar_jingzi" || lk === "xpf_track") {
     const fusion = findAssociatedSeaFusionForRadarTrack(track, allTracks);
     if (fusion) {
       const fusionTargetId = numericTargetIdForCameraTask(fusion);
@@ -176,10 +187,11 @@ export function resolveCamServerShipTaskIds(
         return { shipType: 3, targetId: fusionTargetId };
       }
     }
+    // shipType=1：camServer m_mapRadarTrack 主键为 uniqueId/target_id
     const radarId =
-      parsePositiveIntId(String(track.trackId ?? "")) ||
+      numericTargetIdForCameraTask(track) ||
       parsePositiveIntId(String(track.externalTargetId ?? "")) ||
-      numericTargetIdForCameraTask(track);
+      parsePositiveIntId(String(track.trackId ?? ""));
     return { shipType: 1, targetId: radarId };
   }
 
@@ -189,6 +201,7 @@ export function resolveCamServerShipTaskIds(
     return { shipType: 2, targetId: aisId };
   }
 
+  // 仅独立自报位层（或未归入融合层但带自报位）才走 selfPosMap 本地号
   if (trackHasSelfReportSource(track)) {
     const selfPosId = resolveCamServerSelfPosMapId(track);
     if (selfPosId != null && selfPosId > 0) {

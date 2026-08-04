@@ -1,7 +1,7 @@
 /**
  * 知识库问答上游根地址（与智能助手任务管理地址分离）。
  * - 对话：`/api/knowledge-base-chat` → 本地址
- * - 停止工作流：仍走 `NEXUS_TASK_MANAGEMENT_URL`（智能助手侧 terminate）
+ * - 停止工作流：知识库发起的会话优先打本地址（见 workflow-control-origin）
  */
 export const DEFAULT_KNOWLEDGE_BASE_CHAT_ORIGIN = "http://192.168.18.103:21914";
 

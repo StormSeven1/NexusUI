@@ -155,6 +155,7 @@ import {
 import type { TrackWorkerConfig, TrackWorkerResult } from "@/lib/track-parse-worker";
 import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
 import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
+import { isSuspiciousAlarmMarker } from "@/lib/suspicious-alarm-marker";
 import { normalizeAssetType, LYR_TRACKS, type PublicMapAssetType, type Track } from "@/lib/map-entity-model";
 import { recordTrackReceived, recordAlertReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived, recordHighFreqReceived, recordWsHeartbeat, recordEntityStatusFrame, recordAssetBatchReceived, recordAssetEventReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
@@ -164,10 +165,13 @@ import {
   normThirdPartyEntityId,
 } from "@/lib/eo-video/thirdPartyEntityId";
 import { rewriteWsUrlForHttpsPage } from "@/lib/wsHttpsRewrite";
+import { appendAccessTokenToUrl } from "@/lib/auth/auth-fetch";
+import { ensureFreshToken } from "@/lib/auth/keycloak-client";
 import {
   apply8090CameraPositionsToAssets,
   fetch8090OptoCameraCatalog,
 } from "@/lib/opto-camera-positions-8090";
+import { readDroneInDockFlag } from "@/lib/eo-video/resolveWsDroneInDock";
 import { useAppStore } from "@/stores/app-store";
 import { useTrackDisplayStore } from "@/stores/track-display-store";
 import { isTrackVisibleBySubtype } from "@/lib/track-layer-visibility";
@@ -734,6 +738,142 @@ function payloadArray(msg: Record<string, unknown>): unknown[] | null {
   return null;
 }
 
+/** 现场坐标：拒绝 0/0（relationships 机场常下发无效 0） */
+function isPlausibleMapLatLng(lat: number, lng: number): boolean {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (Math.abs(lat) < 1e-5 && Math.abs(lng) < 1e-5) return false;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+  return true;
+}
+
+/** entity_status.entities → dockSn(GATEWAY_SN) 站址缓存（补 relationships 机场 0,0） */
+const dockSnLatLngFromEntities = new Map<string, { lat: number; lng: number }>();
+
+function ingestDockLatLngFromEntities(entities: unknown[]) {
+  for (const raw of entities) {
+    if (!raw || typeof raw !== "object") continue;
+    const e = raw as Record<string, unknown>;
+    const loc = e.location;
+    const pos =
+      loc && typeof loc === "object"
+        ? ((loc as Record<string, unknown>).position as Record<string, unknown> | undefined)
+        : undefined;
+    const lat = Number(
+      pos?.latitudeDegrees ?? pos?.latitude ?? e.latitude ?? e.lat,
+    );
+    const lng = Number(
+      pos?.longitudeDegrees ?? pos?.longitude ?? e.longitude ?? e.lng ?? e.lon,
+    );
+    if (!isPlausibleMapLatLng(lat, lng)) continue;
+
+    const sns = new Set<string>();
+    const eid = String(e.entityId ?? e.entity_id ?? "").trim();
+    if (eid) sns.add(eid);
+    const aliasBags: unknown[] = [];
+    if (Array.isArray(e.aliases)) aliasBags.push(...e.aliases);
+    const other = e.other;
+    if (other && typeof other === "object") {
+      const o = other as Record<string, unknown>;
+      if (Array.isArray(o.aliases)) aliasBags.push(...o.aliases);
+      if (Array.isArray(o.identifiers)) aliasBags.push(...o.identifiers);
+    }
+    for (const a of aliasBags) {
+      if (!a || typeof a !== "object") continue;
+      const row = a as Record<string, unknown>;
+      const id = String(row.id ?? row.value ?? "").trim();
+      const typ = String(row.type ?? row.kind ?? "").toUpperCase();
+      if (!id) continue;
+      if (typ.includes("GATEWAY") || typ.includes("DOCK") || typ === "DEVICE_SN") sns.add(id);
+    }
+    const dockParams = e.dockParameters ?? e.dock_parameters;
+    if (dockParams && typeof dockParams === "object") {
+      const sn = String(
+        (dockParams as Record<string, unknown>).dockSn ??
+          (dockParams as Record<string, unknown>).dock_sn ??
+          (dockParams as Record<string, unknown>).gatewaySn ??
+          "",
+      ).trim();
+      if (sn) sns.add(sn);
+    }
+    for (const sn of sns) {
+      dockSnLatLngFromEntities.set(sn, { lat, lng });
+    }
+  }
+}
+
+/** 机场坐标：relationships → dock_status → entity 站址；忽略 0,0 */
+function resolveDockLatLng(
+  dockSn: string,
+  apLat?: number | null,
+  apLng?: number | null,
+): { lat: number; lng: number } | null {
+  if (apLat != null && apLng != null && isPlausibleMapLatLng(apLat, apLng)) {
+    return { lat: apLat, lng: apLng };
+  }
+  const payload = useDroneStore.getState().docks[dockSn]?.payload;
+  if (payload) {
+    const lat = Number(payload.latitude ?? payload.latitudeDegrees);
+    const lng = Number(payload.longitude ?? payload.longitudeDegrees);
+    if (isPlausibleMapLatLng(lat, lng)) return { lat, lng };
+  }
+  const fromEnt = dockSnLatLngFromEntities.get(dockSn);
+  if (fromEnt) return fromEnt;
+  /* 资产里已有机场行（可能来自 dock-002 实体） */
+  const asset = useAssetStore.getState().assets.find(
+    (a) => a.id === dockSn || a.properties?.dock_sn === dockSn,
+  );
+  if (asset && isPlausibleMapLatLng(asset.lat, asset.lng)) {
+    return { lat: asset.lat, lng: asset.lng };
+  }
+  return null;
+}
+
+/** 所属机场 `drone_in_dock===true` 时，忽略实时位姿（避免回仓后仍停在空中） */
+function isDroneCurrentlyInDock(deviceSn: string): boolean {
+  const ds = useDroneStore.getState();
+  const dockSn = ds.droneToAirport[deviceSn];
+  if (!dockSn) return false;
+  if (readDroneInDockFlag(ds.docks[dockSn]?.payload) === true) return true;
+  const ap = ds.relationships?.airports.find((a) => a.dockSn === dockSn);
+  return ap?.droneInDock === true;
+}
+
+/**
+ * 回仓后清掉实时机队坐标，让静态层（钉在机场）接管；
+ * 保留 telemetry 行，离舱后 high_freq 可继续写。
+ */
+function clearLivePoseForDockedDrones(deviceSns: string[]) {
+  if (deviceSns.length === 0) return;
+  useDroneStore.setState((s) => {
+    let changed = false;
+    const next = { ...s.drones };
+    for (const sn of deviceSns) {
+      const d = next[sn];
+      if (!d) continue;
+      if (d.lat == null && d.lng == null && !d.highFreq && !d.status) continue;
+      next[sn] = {
+        ...d,
+        lat: null,
+        lng: null,
+        highFreq: null,
+        highFreqReceivedAt: null,
+        status: null,
+        statusReceivedAt: null,
+        wasLanded: true,
+        historyTrail: [],
+      };
+      changed = true;
+    }
+    return changed ? { drones: next } : s;
+  });
+}
+
+/** dock_status 舱态变化后：重算机场/无人机静态资产（回仓钉机场） */
+function refreshRelationshipAssetsAfterDockStateChange() {
+  relationshipAssetsCache = collectDroneAndAirportAssetsFromRelationships();
+  rebuildAndCommitAssetSnapshot();
+}
+
 /**
  * 【entity_status 第3步】遍历 drone-store.relationships，将机场和无人机 upsert 进 asset-store。
  *
@@ -741,6 +881,8 @@ function payloadArray(msg: Record<string, unknown>): unknown[] | null {
  * 在统一快照阶段一次性覆盖进 asset-store，避免「先 setAssets 再 upsert」双入口写入。
  *
  * 数据来源：drone-store.relationships 由第1步 applyEntityStatusMessage() 解析得到。
+ * 回仓钉机场：`drone_in_dock` / relationships.droneInDock / 无实时位姿(wasLanded)，
+ * 避免 entity 残留空中坐标把三角留在场外。
  */
 function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
   const ds = useDroneStore.getState();
@@ -750,12 +892,16 @@ function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
   for (const ap of ds.relationships?.airports ?? []) {
     if (!ap.dockSn) continue;
 
+    const dockPos = resolveDockLatLng(ap.dockSn, ap.latitude ?? null, ap.longitude ?? null);
+    const droneInDock =
+      readDroneInDockFlag(ds.docks[ap.dockSn]?.payload) === true || ap.droneInDock === true;
+
     // ── 机场：用 dockSn 作为资产 key（机场没有 entityId）──
     const airportId = ap.dockSn;
     if (shouldDisplayAssetId("airport", airportId)) {
       const airportName = ds.docks[ap.dockSn]?.displayName ?? "机场";
-      const lat = ap.latitude ?? null;
-      const lng = ap.longitude ?? null;
+      const lat = dockPos?.lat ?? null;
+      const lng = dockPos?.lng ?? null;
       if (lat == null || lng == null) continue;
       rows.push({
         id: airportId,
@@ -784,8 +930,20 @@ function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
       const droneAssetId = dr.deviceSn;
       if (!shouldDisplayAssetId("drone", droneAssetId, dr.name)) continue;
       const droneName = dr.name || dr.deviceSn;
-      const lat = dr.latitude ?? null;
-      const lng = dr.longitude ?? null;
+      const tele = ds.drones[dr.deviceSn];
+      const noLivePose =
+        !tele || tele.wasLanded || (tele.lat == null && tele.lng == null);
+      /* 在舱或已无实时空中位姿：钉机场；否则用 entity 关系坐标 */
+      let lat = dr.latitude ?? null;
+      let lng = dr.longitude ?? null;
+      const pinToDock = dockPos && (droneInDock || noLivePose);
+      if (pinToDock) {
+        lat = dockPos.lat;
+        lng = dockPos.lng;
+      } else if (lat != null && lng != null && !isPlausibleMapLatLng(lat, lng)) {
+        lat = null;
+        lng = null;
+      }
       if (lat == null || lng == null) continue;
       rows.push({
         id: droneAssetId,
@@ -798,7 +956,13 @@ function collectDroneAndAirportAssetsFromRelationships(): AssetData[] {
         range_km: null,
         heading: null,
         fov_angle: null,
-        properties: { virtual_troop: dr.virtualTroop, dock_sn: ap.dockSn, device_sn: dr.deviceSn, entity_id: dr.entityId ?? "" },
+        properties: {
+          virtual_troop: dr.virtualTroop,
+          dock_sn: ap.dockSn,
+          device_sn: dr.deviceSn,
+          entity_id: dr.entityId ?? "",
+          drone_in_dock: droneInDock || noLivePose,
+        },
         mission_status: "monitoring",
         assigned_target_id: null,
         target_lat: null,
@@ -827,8 +991,11 @@ function isVerifySuccessAlarmRaw(raw: Record<string, unknown>): boolean {
 function handleAlarmItem(raw: Record<string, unknown>) {
   // 航迹类告警只吃 NewTrackStruct 目标.alarms（证据链同源）；丢弃 DDS AlarmEvent
   if (isDdsAlarmEventPayload(raw)) return;
+  // 可疑/重点关注标记不得进威胁蓝（黄标走航迹 isSuspicious）
+  if (isSuspiciousAlarmMarker(raw)) return;
   const normalized = normalizeWsAlertItem(raw);
   if (!normalized) return;
+  if (isSuspiciousAlarmMarker(normalized as unknown as Record<string, unknown>)) return;
   const alertStore = useAlertStore.getState();
   if (isVerifySuccessAlarmRaw(raw)) {
     // 右键设为蓝方 → VERIFY_SUCCESS：告警中心级别固定为严重
@@ -875,10 +1042,31 @@ function isDdsAlarmEventPayload(raw: Record<string, unknown>): boolean {
  */
 function dispatchWsMessageSync(raw: string, replySocket?: WebSocket | null, wsRecvMs?: number) {
   const msg = JSON.parse(raw) as Record<string, unknown>;
+  dispatchParsedWsMessage(msg, replySocket, wsRecvMs);
+}
+
+/**
+ * 分发已解析的 WS 消息（信封对象）。
+ * 单独抽出以便 `stateBatch`（后端把一拍所有「其它消息」合并成一帧）拆包后逐条复用同一分发逻辑，
+ * 无需对每条内层消息重新 stringify/parse。
+ */
+function dispatchParsedWsMessage(msg: Record<string, unknown>, replySocket?: WebSocket | null, wsRecvMs?: number) {
   const type = (msg.type as string | undefined)?.toLowerCase();
   if (!type) return;
 
   switch (type) {
+      // ── 其它消息合批（HighFreq/DroneFlightPath/Camera/DockStatus… 一拍一帧）──
+      case "statebatch": {
+        const arr = msg.data;
+        if (Array.isArray(arr)) {
+          for (const inner of arr) {
+            if (inner && typeof inner === "object") {
+              dispatchParsedWsMessage(inner as Record<string, unknown>, replySocket, wsRecvMs);
+            }
+          }
+        }
+        break;
+      }
       // ── 航迹 ──
       case "trackbatch": {
         if (WS_DISABLE_TRACK_INGEST) break;
@@ -1030,12 +1218,14 @@ function dispatchWsMessageSync(raw: string, replySocket?: WebSocket | null, wsRe
        *   遍历 relationships，将第1步解析好的机场和无人机 upsert 到 asset-store：
        *   ├─ 机场：name = docks[dockSn].displayName, 坐标 = ap.latitude/ap.longitude
        *   ├─ 无人机：name = dr.name, 坐标 = dr.latitude/dr.longitude
+       *   │         （若 dock_status.drone_in_dock=true 则钉到所属机场坐标）
        *   └─ 无坐标则跳过，不兜底
        *
        * ── 后续 WS 消息只更新不新增 ──
        *   dock_status       → 更新 drone-store.docks + asset-store 已有机场
-       *   drone_status      → 更新 drone-store.drones（遥测坐标/航向）
-       *   high_freq         → 更新 drone-store.drones（高频坐标）
+       *                       （drone_in_dock=true 时清实时空中位姿、静态图标钉机场）
+       *   drone_status      → 更新 drone-store.drones（遥测坐标/航向；在舱则忽略）
+       *   high_freq         → 更新 drone-store.drones（高频坐标；在舱则忽略）
        *   drone_flight_path → 更新 drone-store.drones（航线）
        *   camera / optoelectronic → 更新 asset-store 已有光电（朝向/视场角/坐标）
        */
@@ -1056,6 +1246,29 @@ function dispatchWsMessageSync(raw: string, replySocket?: WebSocket | null, wsRe
         const rawEntities: unknown[] | null =
           Array.isArray(msg.entities) ? msg.entities : null;
         if (rawEntities) {
+          ingestDockLatLngFromEntities(rawEntities);
+          /* relationships 机场常为 0,0：用实体 GATEWAY_SN 站址补进 docks.payload */
+          useDroneStore.setState((s) => {
+            let changed = false;
+            const docks = { ...s.docks };
+            for (const [sn, pos] of dockSnLatLngFromEntities) {
+              const dock = docks[sn];
+              if (!dock) continue;
+              const curLat = Number(dock.payload?.latitude ?? dock.payload?.latitudeDegrees);
+              const curLng = Number(dock.payload?.longitude ?? dock.payload?.longitudeDegrees);
+              if (isPlausibleMapLatLng(curLat, curLng)) continue;
+              docks[sn] = {
+                ...dock,
+                payload: {
+                  ...dock.payload,
+                  latitude: pos.lat,
+                  longitude: pos.lng,
+                },
+              };
+              changed = true;
+            }
+            return changed ? { docks } : s;
+          });
           const parsed = mapEntitiesPayload(rawEntities);
           applyAssetListFromWs(parsed, { commit: false });
           for (const a of parsed) {
@@ -1065,7 +1278,7 @@ function dispatchWsMessageSync(raw: string, replySocket?: WebSocket | null, wsRe
           console.warn(`[entity_status] 无实体数据`);
         }
 
-        /* ── 第3步：将第1步解析的机场/无人机并入统一资产快照 ── */
+        /* ── 第3步：将第1步解析的机场/无人机并入统一资产快照（回仓/无高频时钉机场） ── */
         relationshipAssetsCache = collectDroneAndAirportAssetsFromRelationships();
         rebuildAndCommitAssetSnapshot();
         break;
@@ -1276,6 +1489,9 @@ function dispatchWsMessageSync(raw: string, replySocket?: WebSocket | null, wsRe
           useEoDroneDdsStatusStore
             .getState()
             .applyDroneInDockObservation([...relatedEids], docked ? true : false);
+          /* 回仓：清实时空中位姿 + 静态图标钉机场；离舱：恢复用 entity 关系坐标 */
+          if (docked) clearLivePoseForDockedDrones(deviceSns);
+          refreshRelationshipAssetsAfterDockStateChange();
         }
         break;
       }
@@ -1283,8 +1499,10 @@ function dispatchWsMessageSync(raw: string, replySocket?: WebSocket | null, wsRe
       case "drone_status": {
         const d = msg.data as Record<string, unknown> | undefined;
         if (d) {
+          const sn = snFromDronePayload(d);
+          if (sn && isDroneCurrentlyInDock(sn)) break;
           useDroneStore.getState().setDroneStatus(d);
-          recordDroneReceived(snFromDronePayload(d) ?? "unknown");
+          recordDroneReceived(sn ?? "unknown");
         }
         break;
       }
@@ -1307,8 +1525,10 @@ function dispatchWsMessageSync(raw: string, replySocket?: WebSocket | null, wsRe
       case "high_freq": {
         const d = msg.data as Record<string, unknown> | undefined;
         if (d && typeof d === "object") {
+          const sn = snFromDronePayload(d);
+          if (sn && isDroneCurrentlyInDock(sn)) break;
           useDroneStore.getState().setHighFreq(d);
-          recordHighFreqReceived(snFromDronePayload(d));
+          recordHighFreqReceived(sn);
         }
         break;
       }
@@ -1433,9 +1653,6 @@ function scheduleFuseSeaReconnect() {
 
 function openFuseSeaConnection() {
   if (!ws.running || WS_DISABLE_TRACK_INGEST) return;
-  const url = rewriteWsUrlForHttpsPage(getFuseSeaWebSocketUrl());
-  if (!url) return;
-
   if (
     fuseSeaWs.socket &&
     (fuseSeaWs.socket.readyState === WebSocket.OPEN || fuseSeaWs.socket.readyState === WebSocket.CONNECTING)
@@ -1443,45 +1660,60 @@ function openFuseSeaConnection() {
     return;
   }
 
-  const socket = new WebSocket(url);
-  fuseSeaWs.socket = socket;
-
-  socket.onopen = () => {
-    fuseSeaWs.reconnectAttempt = 0;
-    startFuseSeaHeartbeat();
-    if (!fuseSeaWs.readyNotified) {
-      fuseSeaWs.readyNotified = true;
-      notify("对海融合 WS 已就绪", url, "success");
-    }
-  };
-
-  socket.onmessage = (ev) => {
-    const data = ev.data;
-    if (typeof data === "string") {
-      dispatchWsMessage(data, socket);
+  void (async () => {
+    await ensureFreshToken(30);
+    if (!ws.running || WS_DISABLE_TRACK_INGEST) return;
+    if (
+      fuseSeaWs.socket &&
+      (fuseSeaWs.socket.readyState === WebSocket.OPEN || fuseSeaWs.socket.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
-    if (typeof Blob !== "undefined" && data instanceof Blob) {
-      void data
-        .text()
-        .then((raw) => dispatchWsMessage(raw, socket))
-        .catch(() => {});
-    }
-  };
 
-  socket.onerror = () => {
-    try { socket.close(); } catch { /* noop */ }
-  };
+    const raw = rewriteWsUrlForHttpsPage(getFuseSeaWebSocketUrl());
+    const url = appendAccessTokenToUrl(raw);
+    if (!url) return;
 
-  socket.onclose = () => {
-    clearFuseSeaHeartbeat();
-    fuseSeaWs.socket = null;
-    if (!ws.running) return;
-    fuseSeaWs.reconnectAttempt += 1;
-    const maxAttempts = getWebSocketConfig().maxReconnectAttempts;
-    if (fuseSeaWs.reconnectAttempt > maxAttempts) return;
-    scheduleFuseSeaReconnect();
-  };
+    const socket = new WebSocket(url);
+    fuseSeaWs.socket = socket;
+
+    socket.onopen = () => {
+      fuseSeaWs.reconnectAttempt = 0;
+      startFuseSeaHeartbeat();
+      if (!fuseSeaWs.readyNotified) {
+        fuseSeaWs.readyNotified = true;
+        notify("对海融合 WS 已就绪", url.split("?")[0] ?? url, "success");
+      }
+    };
+
+    socket.onmessage = (ev) => {
+      const data = ev.data;
+      if (typeof data === "string") {
+        dispatchWsMessage(data, socket);
+        return;
+      }
+      if (typeof Blob !== "undefined" && data instanceof Blob) {
+        void data
+          .text()
+          .then((rawText) => dispatchWsMessage(rawText, socket))
+          .catch(() => {});
+      }
+    };
+
+    socket.onerror = () => {
+      try { socket.close(); } catch { /* noop */ }
+    };
+
+    socket.onclose = () => {
+      clearFuseSeaHeartbeat();
+      fuseSeaWs.socket = null;
+      if (!ws.running) return;
+      fuseSeaWs.reconnectAttempt += 1;
+      const maxAttempts = getWebSocketConfig().maxReconnectAttempts;
+      if (fuseSeaWs.reconnectAttempt > maxAttempts) return;
+      scheduleFuseSeaReconnect();
+    };
+  })();
 }
 
 function scheduleReconnect() {
@@ -1498,57 +1730,64 @@ function scheduleReconnect() {
 
 function openConnection() {
   if (!ws.running) return;
-  const url = rewriteWsUrlForHttpsPage(getWebSocketConfig().url);
-  if (!url) return;
-
   if (ws.socket && (ws.socket.readyState === WebSocket.OPEN || ws.socket.readyState === WebSocket.CONNECTING)) return;
 
-  const socket = new WebSocket(url);
-  ws.socket = socket;
-
-  socket.onopen = () => {
-    ws.reconnectAttempt = 0;
-    useTrackStore.getState().setConnected(true);
-    recordWsHeartbeat();
-    startHeartbeat();
-    if (!ws.readyNotified) {
-      ws.readyNotified = true;
-      notify("WebSocket 已就绪", url, "success");
-    }
-  };
-
-  socket.onmessage = (ev) => {
-    const data = ev.data;
-    if (typeof data === "string") {
-      dispatchWsMessage(data, socket);
-      return;
-    }
-    if (typeof Blob !== "undefined" && data instanceof Blob) {
-      void data
-        .text()
-        .then((raw) => dispatchWsMessage(raw, socket))
-        .catch(() => {});
-    }
-  };
-
-  socket.onerror = () => {
-    notify("WebSocket 连接异常", "请确认后端 WebSocket 服务可用", "error");
-    try { socket.close(); } catch { /* noop */ }
-  };
-
-  socket.onclose = () => {
-    clearHeartbeat();
-    useTrackStore.getState().setConnected(false);
-    ws.socket = null;
+  void (async () => {
+    await ensureFreshToken(30);
     if (!ws.running) return;
-    ws.reconnectAttempt += 1;
-    const maxAttempts = getWebSocketConfig().maxReconnectAttempts;
-    if (ws.reconnectAttempt > maxAttempts) {
-      notify("WebSocket 重连失败", "已停止自动重连", "error");
-      return;
-    }
-    scheduleReconnect();
-  };
+    if (ws.socket && (ws.socket.readyState === WebSocket.OPEN || ws.socket.readyState === WebSocket.CONNECTING)) return;
+
+    const raw = rewriteWsUrlForHttpsPage(getWebSocketConfig().url);
+    const url = appendAccessTokenToUrl(raw);
+    if (!url) return;
+
+    const socket = new WebSocket(url);
+    ws.socket = socket;
+
+    socket.onopen = () => {
+      ws.reconnectAttempt = 0;
+      useTrackStore.getState().setConnected(true);
+      recordWsHeartbeat();
+      startHeartbeat();
+      if (!ws.readyNotified) {
+        ws.readyNotified = true;
+        notify("WebSocket 已就绪", url.split("?")[0] ?? url, "success");
+      }
+    };
+
+    socket.onmessage = (ev) => {
+      const data = ev.data;
+      if (typeof data === "string") {
+        dispatchWsMessage(data, socket);
+        return;
+      }
+      if (typeof Blob !== "undefined" && data instanceof Blob) {
+        void data
+          .text()
+          .then((rawText) => dispatchWsMessage(rawText, socket))
+          .catch(() => {});
+      }
+    };
+
+    socket.onerror = () => {
+      notify("WebSocket 连接异常", "请确认后端 WebSocket 服务可用", "error");
+      try { socket.close(); } catch { /* noop */ }
+    };
+
+    socket.onclose = () => {
+      clearHeartbeat();
+      useTrackStore.getState().setConnected(false);
+      ws.socket = null;
+      if (!ws.running) return;
+      ws.reconnectAttempt += 1;
+      const maxAttempts = getWebSocketConfig().maxReconnectAttempts;
+      if (ws.reconnectAttempt > maxAttempts) {
+        notify("WebSocket 重连失败", "已停止自动重连", "error");
+        return;
+      }
+      scheduleReconnect();
+    };
+  })();
 }
 
 // ── 定时器 ──

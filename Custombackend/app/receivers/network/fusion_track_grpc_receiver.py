@@ -39,6 +39,11 @@ class FusionTrackGrpcReceiver:
         self.port = int(config["port"])
         self.reconnect_interval = float(config.get("reconnect_interval", 2.0) or 2.0)
         self.data_callback = data_callback
+        # NEXUS_FUSION_TRACK_GRPC_SOURCES 解析结果；None 时解析器走全部已知目录
+        raw_map = config.get("datasource_layer_map")
+        self.datasource_layer_map: Optional[Dict[str, str]] = (
+            dict(raw_map) if isinstance(raw_map, dict) else None
+        )
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._channel: Optional[grpc.Channel] = None
@@ -118,7 +123,9 @@ class FusionTrackGrpcReceiver:
             parsed: List[Dict[str, Any]] = []
             for i, track in enumerate(tracks):
                 source = sources[i] if sources is not None and i < len(sources) else None
-                row = track_data_class_to_radar_track(track, source)
+                row = track_data_class_to_radar_track(
+                    track, source, datasource_layer_map=self.datasource_layer_map
+                )
                 if row is not None:  # 非旁路源返回 None，跳过（防与 DDS/:60055 重复）
                     parsed.append(row)
             if parsed and self.data_callback:

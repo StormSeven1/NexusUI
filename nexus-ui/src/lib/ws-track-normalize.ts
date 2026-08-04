@@ -65,7 +65,7 @@ function parseFusionSourcesFromRecord(rec: Record<string, unknown>): TrackFusion
   }
   return out.length > 0 ? out : undefined;
 }
-const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
+const BUILTIN_TRACK_LAYER_KEYS = new Set<string>([
   "fuse_sea",
   "fuse_air",
   "bird_radar",
@@ -77,13 +77,19 @@ const TRACK_LAYER_KEYS = new Set<TrackLayerKey>([
   "uav_pose_track",
   "boat_self_track",
   "xpf_track",
+  "ku_lei_da",
+  "tian_ao",
+  "wu_ren_che",
 ]);
 
 function readTrackLayerKey(rec: Record<string, unknown>): TrackLayerKey | undefined {
   const raw = rec.track_layer_key ?? rec.trackLayerKey;
   if (typeof raw !== "string") return undefined;
   const s = raw.trim().toLowerCase().replace(/-/g, "_");
-  return TRACK_LAYER_KEYS.has(s as TrackLayerKey) ? (s as TrackLayerKey) : undefined;
+  // 内置 + 配置动态层（非空合法标识即可）
+  if (BUILTIN_TRACK_LAYER_KEYS.has(s)) return s;
+  if (/^[a-z][a-z0-9_]*$/.test(s) && s !== "fuse_sea" && !s.startsWith("dds_")) return s;
+  return undefined;
 }
 
 /** 判断非空对象 */
@@ -119,12 +125,12 @@ function surfaceKindFromDdsOrTrackLayerKey(rec: Record<string, unknown>): Track[
   if (typeof ddsRaw === "string") {
     const rid = ddsRaw.trim().toLowerCase();
     const lk = TRACK_LAYER_KEY_BY_DDS_SOURCE_ID[rid];
-    if (lk === "fuse_air" || lk === "bird_radar" || lk === "auto_bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track") return "air";
-    if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track" || lk === "boat_self_track" || lk === "xpf_track") return "sea";
+    if (lk === "fuse_air" || lk === "bird_radar" || lk === "auto_bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track" || lk === "ku_lei_da" || lk === "wu_ren_che") return "air";
+    if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track" || lk === "boat_self_track" || lk === "xpf_track" || lk === "tian_ao") return "sea";
   }
   const tlk = readTrackLayerKey(rec);
-  if (tlk === "fuse_air" || tlk === "bird_radar" || tlk === "auto_bird_radar" || tlk === "fanwu_car_radar" || tlk === "uav_pose_track") return "air";
-  if (tlk === "fuse_sea" || tlk === "radar_wharf" || tlk === "radar_jingzi" || tlk === "ais_track" || tlk === "boat_self_track" || tlk === "xpf_track") return "sea";
+  if (tlk === "fuse_air" || tlk === "bird_radar" || tlk === "auto_bird_radar" || tlk === "fanwu_car_radar" || tlk === "uav_pose_track" || tlk === "ku_lei_da" || tlk === "wu_ren_che") return "air";
+  if (tlk === "fuse_sea" || tlk === "radar_wharf" || tlk === "radar_jingzi" || tlk === "ais_track" || tlk === "boat_self_track" || tlk === "xpf_track" || tlk === "tian_ao") return "sea";
   return undefined;
 }
 
@@ -386,6 +392,11 @@ export function normalizeIncomingTrack(raw: unknown, wsRecvMs?: number): Track |
     rootVirtualRaw === 1 ||
     (typeof rootVirtualRaw === "string" && /^(1|true|yes|virtual)$/i.test(String(rootVirtualRaw).trim()));
   const isVirtual = resolveTrackIsVirtual(realityType, propBag, rootVirtual);
+  const rawSuspicious = rec.is_suspicious ?? rec.isSuspicious ?? rec.suspiciousTarget;
+  const isSuspicious =
+    rawSuspicious === true ||
+    rawSuspicious === 1 ||
+    (typeof rawSuspicious === "string" && /^(1|true|yes)$/i.test(String(rawSuspicious).trim()));
   const rawUav = rec.is_uav ?? rec.isUav ?? rec.uav;
   let isUav =
     rawUav === true ||
@@ -444,7 +455,11 @@ export function normalizeIncomingTrack(raw: unknown, wsRecvMs?: number): Track |
       .filter(Boolean)
       .join(", ");
   } else {
-    sensorValue = String(rec.sensor ?? rec.source ?? "");
+    // 非融合雷达：优先中文来源名（后端 sensor / source_name），勿优先英文 radarId
+    const sensorRaw = String(rec.sensor ?? "").trim();
+    const sourceName = String(rec.source_name ?? rec.sourceName ?? "").trim();
+    const radarId = String(rec.radarId ?? rec.radar_id ?? "").trim();
+    sensorValue = sensorRaw || sourceName || radarId || String(rec.source ?? "");
   }
 
   const dataSourceId = rec.dataSourceId ?? rec.data_source_id;
@@ -503,6 +518,7 @@ export function normalizeIncomingTrack(raw: unknown, wsRecvMs?: number): Track |
     ...(fusionSourcesParsed ? { fusionSources: fusionSourcesParsed } : {}),
     ...(realityType !== undefined ? { realityType } : {}),
     ...(isVirtual ? { isVirtual: true } : {}),
+    ...(isSuspicious ? { isSuspicious: true } : {}),
     ...(isUav ? { isUav: true } : {}),
     ...(trackCategoryId !== undefined ? { trackCategoryId } : {}),
     ...(classifiedType !== undefined ? { classifiedType } : {}),

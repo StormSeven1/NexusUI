@@ -152,6 +152,7 @@ function wsEntityTypeRaw(r: Record<string, unknown>): string {
     stu === "THIRDPARTYCAMERA" ||
     stu === "THIRDPARTYUDPCAMERAIMAGE" ||
     stu === "THIRDPARTYUDPCAMERAVIDEO" ||
+    stu === "THIRDPARTYUAN8CAMERA" ||
     stu === "THIRD_PARTY_CAMERA" ||
     stu === "THIRDPARTY_CAMERA"
   ) {
@@ -661,11 +662,16 @@ export type AppConfigTrackRendering = {
     underwater: AppConfigTrackTypeStyle;
   };
   /**
-   * `showTrackId`、`maxViewportPoints`、`maxHistoryPointsPerTrack` 被读取；
+   * `showTrackId`、`showTrackRecvTime`、`maxViewportPoints`、`maxHistoryPointsPerTrack` 被读取；
    * `maxViewportPoints`：全图航迹折线顶点总预算；`maxHistoryPointsPerTrack`：单条航迹在 store 内保留的历史点数上限（与总预算独立）。
    */
   trackDisplay: {
     showTrackId: boolean;
+    /**
+     * 是否在航迹点标签顶部显示「航迹创建」时间（与标牌第一行同源 `trackCreatedMs`），
+     * 格式 HH:MM:SS.mmm；排查链路延迟用，可关。
+     */
+    showTrackRecvTime: boolean;
     /** 当前帧所有航迹折线顶点估算之和的上限（仅影响是否绘制折线，不裁剪 store） */
     maxViewportPoints: number;
     /** 每条航迹 `historyTrail` 在 track-store 内最多保留的点数（与 `maxViewportPoints` 无关） */
@@ -741,6 +747,7 @@ export const DEFAULT_TRACK_RENDERING: AppConfigTrackRendering = {
   },
   trackDisplay: {
     showTrackId: true,
+    showTrackRecvTime: false,
     maxViewportPoints: 8000,
     /**
      * 须 ≥ 面板「尾迹长度」换算点数上限（1800s / 2s ≈ 900），否则拉长滑块无效果。
@@ -828,6 +835,7 @@ export function parseTrackRenderingConfig(root: Record<string, unknown>): AppCon
     },
     trackDisplay: {
       showTrackId: bool(td?.showTrackId, base.trackDisplay.showTrackId),
+      showTrackRecvTime: bool(td?.showTrackRecvTime, base.trackDisplay.showTrackRecvTime),
       maxViewportPoints: num(td?.maxViewportPoints, base.trackDisplay.maxViewportPoints),
       maxHistoryPointsPerTrack: num(td?.maxHistoryPointsPerTrack, base.trackDisplay.maxHistoryPointsPerTrack),
     },

@@ -298,12 +298,17 @@ export function useWebRtcPlayer({
         scheduleIceReconnect(`ICE=${s}`);
       }
       if (s === "disconnected") {
+        /**
+         * 900ms 太短：短暂网络抖动常在 1-2s 内自动恢复到 connected/completed，
+         * 过早触发 start() 会 cleanup → srcObject=null → 1-2 帧黑屏。
+         * 延长到 2500ms 给浏览器足够的 ICE 自愈窗口。
+         */
         window.setTimeout(() => {
           if (genRef.current !== gen) return;
           if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
             scheduleIceReconnect(`ICE=${pc.iceConnectionState}`);
           }
-        }, 900);
+        }, 2500);
       }
     };
 
@@ -362,6 +367,11 @@ export function useWebRtcPlayer({
           if (Date.now() - t0 >= BLACK_FRAME_GIVEUP_MS) {
             if (blackFrameTimerRef.current != null) window.clearInterval(blackFrameTimerRef.current);
             blackFrameTimerRef.current = null;
+            /**
+             * 有外部停帧恢复（无人机 poke+kick）时不要在 2.4s 抢先 ICE 重连：
+             * 推流刚起来时常再晚几百 ms 才有 videoWidth，抢踢会造成「有画→黑→有画」闪烁。
+             */
+            if (onStallRecoverRef.current) return;
             scheduleIceReconnect("black_frame_timeout");
           }
         }, BLACK_FRAME_CHECK_MS);
@@ -446,10 +456,18 @@ export function useWebRtcPlayer({
       lastStallRecoverAtRef.current = Date.now();
       iceFailCountRef.current = Math.min(iceFailCountRef.current, 2);
       resetStallWatchState();
-      try {
-        onStallRecoverRef.current?.();
-      } catch {
-        /* ignore */
+      const external = onStallRecoverRef.current;
+      if (external) {
+        /**
+         * 有外部恢复（如无人机 poke 后再延迟 kick）时不要立刻 restart：
+         * 否则会先连上空流闪黑一帧，随后 kick 再闪一次。
+         */
+        try {
+          external();
+        } catch {
+          /* ignore */
+        }
+        return;
       }
       restartRef.current();
     };
@@ -473,9 +491,15 @@ export function useWebRtcPlayer({
       if (pc.connectionState !== "connected") return;
 
       // 软恢复：轨还在但 video 空/暂停（放大关窗、srcObject 被清等）
+      // 只在无画时调 reattachVideoFromPeer，避免重设 srcObject 引发 1-2 帧黑闪
       if (video) {
-        const healed = reattachVideoFromPeer(video, pc);
-        if (healed && video.videoWidth > 0 && video.videoHeight > 0) {
+        const hasPictureNow = video.videoWidth > 0 && video.videoHeight > 0;
+        if (!hasPictureNow) {
+          const healed = reattachVideoFromPeer(video, pc);
+          if (healed && video.videoWidth > 0 && video.videoHeight > 0) {
+            softHealAttemptedRef.current = false;
+          }
+        } else {
           softHealAttemptedRef.current = false;
         }
       }

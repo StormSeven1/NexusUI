@@ -57,6 +57,10 @@ export function normalizeWsCameraRow(row: unknown): EoCameraWsPayload | null {
   if (p) out.planeRect = p;
   const s = normalizeRectLayer(r.singleRect ?? r.single_rect);
   if (s) out.singleRect = s;
+  if (r.burnInHideOverlay != null || r.burn_in_hide_overlay != null) {
+    const v = r.burnInHideOverlay ?? r.burn_in_hide_overlay;
+    out.burnInHideOverlay = v === true || v === 1 || v === "1" || v === "true";
+  }
   return out;
 }
 

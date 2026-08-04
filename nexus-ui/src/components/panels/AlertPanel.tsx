@@ -4,8 +4,10 @@
  * 告警面板 — 消费 alert-store 的实时数据。
  *
  * 【数据流】
- * - 航迹类：`useUnifiedWsFeed` → `ws-alert-normalize` → upsert
- * - 系统类：`useSystemAlarmPoll`（2s）→ `/api/system-alarms` → syncSystemAlarms
+ * - 航迹类（两类同源筛选「航迹」）：
+ *   1) 目标结构威胁：`useUnifiedWsFeed` → `ws-alert-normalize` → upsert
+ *   2) 检测框可疑目标：camServer SystemAlarm gRPC → `useSystemAlarmPoll` → syncSystemAlarms
+ * - 其它系统类：`useSystemAlarmPoll`（2s）→ `/api/system-alarms` → syncSystemAlarms
  */
 
 import { useAppStore } from "@/stores/app-store";
@@ -35,6 +37,7 @@ import {
   ALL_ALERT_SYSTEM_FILTER_KEYS,
   alertMatchesFilters,
   compareAlertForAlarmCenter,
+  isCameraDetectTrackAlarm,
   isSystemAlarm,
   type AlertFilterKey,
   type AlertSeverityFilterKey,
@@ -67,6 +70,13 @@ function loadPersistedFilterSet<T extends string>(
     if (!Array.isArray(parsed)) return new Set(fallback);
     const valid = new Set(validKeys);
     const next = parsed.filter((x): x is T => typeof x === "string" && valid.has(x as T));
+    /**
+     * 新增筛选项（如「航迹」）不会出现在旧 localStorage 里；
+     * 若仍按旧数组恢复，相机会检测告警被永久滤掉。未在存档中出现过的合法 key 默认勾选。
+     */
+    for (const k of validKeys) {
+      if (!parsed.includes(k)) next.push(k);
+    }
     return new Set(next);
   } catch {
     return new Set(fallback);
@@ -126,9 +136,15 @@ function resolveAlertVisualStyle(alert: AlertData) {
   return SEVERITY_STYLES[severity];
 }
 
+/** 目标结构航迹威胁/告警（有 trackId） */
 function isTrackAlarmItem(alert: AlertData): boolean {
   if (isSystemAlarm(alert)) return false;
   return Boolean(alert.trackId?.trim()) && alert.type !== THIRD_PARTY_DETECT_ALERT_TYPE;
+}
+
+/** 告警中心「航迹」类：目标结构威胁 ∪ gRPC 检测框告警 */
+function isTrackCategoryItem(alert: AlertData): boolean {
+  return isTrackAlarmItem(alert) || isCameraDetectTrackAlarm(alert);
 }
 
 function isVerifiedAlarmItem(alert: AlertData): boolean {
@@ -136,6 +152,7 @@ function isVerifiedAlarmItem(alert: AlertData): boolean {
 }
 
 function alarmKindLabel(alert: AlertData): string {
+  if (isCameraDetectTrackAlarm(alert)) return "航迹";
   if (isSystemAlarm(alert)) return alert.title || alert.type || "系统";
   return isVerifiedAlarmItem(alert) ? "告警" : "威胁";
 }
@@ -586,12 +603,13 @@ export function AlertPanel() {
           const fuseType = isTrackAlarmItem(alert)
             ? resolveAlertFuseType(alert, shadowTracks)
             : undefined;
-          const kindLabel = isSystemAlarm(alert)
-            ? alarmKindLabel(alert)
-            : null;
-          const kindColor = isSystemAlarm(alert)
-            ? "text-violet-300"
-            : style.labelColor;
+          const detectTrack = isCameraDetectTrackAlarm(alert);
+          const kindLabel = alarmKindLabel(alert);
+          const kindColor = detectTrack
+            ? "text-nexus-text-primary"
+            : isSystemAlarm(alert)
+              ? "text-violet-300"
+              : style.labelColor;
           const targetNo =
             (summary.target && summary.target !== "-"
               ? summary.target
@@ -606,7 +624,7 @@ export function AlertPanel() {
                 style.bg,
               )}
               onClick={() => {
-                if (isSystemAlarm(alert)) return;
+                if (detectTrack || isSystemAlarm(alert)) return;
                 if (alert.type === THIRD_PARTY_DETECT_ALERT_TYPE && alert.lat != null && alert.lng != null) {
                   requestFlyTo(alert.lat, alert.lng);
                   return;
@@ -639,6 +657,10 @@ export function AlertPanel() {
                         <span className="shrink-0 text-[10px] font-bold text-nexus-text-primary">
                           目标
                         </span>
+                      ) : detectTrack ? (
+                        <span className="shrink-0 text-[10px] font-bold text-nexus-text-primary">
+                          航迹
+                        </span>
                       ) : (
                         <span className={cn("shrink-0 text-[10px] font-bold", kindColor)}>
                           {kindLabel}
@@ -665,7 +687,7 @@ export function AlertPanel() {
                           确认告警
                         </button>
                       )}
-                      {(isTrackAlarmItem(alert) || isSystemAlarm(alert)) && (
+                      {(isTrackCategoryItem(alert) || isSystemAlarm(alert)) && (
                         <button
                           type="button"
                           onClick={(e) => void handleDelete(e, alert)}
@@ -696,7 +718,7 @@ export function AlertPanel() {
                     </div>
                   </div>
 
-                  {isSystemAlarm(alert) ? (
+                  {detectTrack || isSystemAlarm(alert) ? (
                     <>
                       <p
                         className="mt-0.5 break-words text-[10px] leading-snug text-nexus-text-primary"

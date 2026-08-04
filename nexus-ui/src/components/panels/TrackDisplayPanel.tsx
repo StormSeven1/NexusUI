@@ -6,8 +6,12 @@
  */
 
 import { cn } from "@/lib/utils";
-import { TRACK_LAYER_KEYS_ORDERED, type TrackLayerKey } from "@/lib/map-entity-model";
-import { TRACK_SUBTYPE_LABELS, isDotTrackLayerKey } from "@/lib/track-layer-visibility";
+import { type TrackLayerKey } from "@/lib/map-entity-model";
+import {
+  getTrackLayerKeysOrdered,
+  isDotTrackLayerKey,
+  trackSubtypeLabel,
+} from "@/lib/track-layer-visibility";
 import {
   type AirFusionSubtypeKey,
   defaultAirFusionNeutralColors,
@@ -108,9 +112,9 @@ export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) 
 
   const layerTabs = useMemo(
     () =>
-      TRACK_LAYER_KEYS_ORDERED.map((id) => ({
+      getTrackLayerKeysOrdered().map((id) => ({
         id,
-        label: TRACK_SUBTYPE_LABELS[id],
+        label: trackSubtypeLabel(id),
       })),
     [],
   );
@@ -192,7 +196,7 @@ export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) 
         {isFuseAir ? (
           <div className="space-y-3">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-nexus-text-muted">
-              {colorLabelForLayer("fuse_air")}（{TRACK_SUBTYPE_LABELS.fuse_air}）
+              {colorLabelForLayer("fuse_air")}（{trackSubtypeLabel("fuse_air")}）
             </div>
             {AIR_FUSION_COLOR_ROWS.map((row) => (
               <ColorRow
@@ -218,7 +222,7 @@ export function TrackDisplayPanel({ embedded = false }: { embedded?: boolean }) 
           </div>
         ) : (
           <ColorRow
-            label={`${colorLabelForLayer(selectedLayer)}（${TRACK_SUBTYPE_LABELS[selectedLayer]}）`}
+            label={`${colorLabelForLayer(selectedLayer)}（${trackSubtypeLabel(selectedLayer)}）`}
             ariaLabel="航迹颜色"
             storedColor={storedColor}
             draft={colorDraft}

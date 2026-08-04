@@ -92,11 +92,11 @@ PUT http://192.168.18.141:7775/api/alarms/ALM-20250601-001/task-status
 | `speedMps` | number | `speed_mps` | 速度（m/s） |
 | `shipArchiveInfo` | string | `ship_archive_info`, `aisInfo`, `ais_info` | 船舶档案摘要；缺省展示「无」 |
 
-#### 研判文本（taskStatus 为 5 / 6 / 7 时）
+#### 研判 / 来访文本（taskStatus 为 5 / 6 / 7 / 8 时）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `description` | string | 大模型研判结论、扩展说明等 |
+| `description` | string | 大模型研判结论、MinIO 分片、知识库来访记录等 |
 
 #### 图片元数据（可选）
 
@@ -185,13 +185,15 @@ curl -sS -X PUT "http://192.168.18.141:7775/api/alarms/ALM-20250601-001/task-sta
 | **4** | **VERIFYING** | **查证中** | 开始查证；推送航迹信息 + 首图 |
 | **5** | **MODEL_REPLY** | **研判结果** | 大模型 / 人工研判文本（`description`） |
 | 6 | EXT_6 | 扩展状态 6 | 需 `description` |
-| 7 | EXT_7 | 扩展状态 7 | 需 `description` |
+| 7 | EXT_7 | 扩展状态 7 | MinIO 路径分片等 |
+| **8** | **KB_VISIT** | **来访记录** | 知识库 `user_context.image_urls` 查询结果（`description`） |
 
 **推荐上报顺序（一次完整查证）**
 
 1. `taskStatus: 4` — 带 `trackID`、`cameraIndex`、图片 URL 或库表可查的截图  
 2. `taskStatus: 5` — 带 `description` 研判结论  
-3. （可选）`taskStatus: 1` — 流程结束  
+3. `taskStatus: 8` — （可选）知识库来访记录 `description`  
+4. （可选）`taskStatus: 1` — 流程结束  
 
 ### 1.5 成功响应
 

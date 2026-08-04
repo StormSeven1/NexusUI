@@ -272,6 +272,7 @@
       "trackDisplay": {
         "_说明": "下列子键均生效。",
         "showTrackId": "是否显示航迹名称标签图层。",
+        "showTrackRecvTime": "是否在航迹点标签**顶部**显示「航迹创建」时间（与标牌时间区第一行同源 `trackCreatedMs`），格式 `HH:MM:SS.mmm`、字号略小；排查延迟用，设 `false` 关闭。",
         "maxViewportPoints": "全图航迹**折线顶点总预算**：对当前渲染集每条航迹估算 `1 + len(historyTrail)`，求和。≤ 本值：画历史折线 + 当前点符号。**大于本值：整批不画折线**。**`0` 或负数：不画任何历史折线**（仅符号）。无效/非有限数字时按「不限制」处理。store 内 `historyTrail` **不删**。与 `maxHistoryPointsPerTrack` 独立。",
         "maxHistoryPointsPerTrack": "单条航迹在 `track-store` 内 `historyTrail` **最多保留点数**（`ws-track-normalize.maxStoredTrailPointsPerTrack` 直接取本值作上限）。须 ≥ 面板尾迹长度换算（约 1800s/2s=900），否则调大滑块无效。与 `maxViewportPoints` 独立。",
         "_trackTimeout": "见 `trackTimeout`：**仅**定时任务扫 `track-store` 调用 `filterTracksByTimeout` 删超时目标；地图渲染**不**参与超时判断。"
@@ -704,6 +705,7 @@
     },
     "trackDisplay": {
       "showTrackId": true,
+      "showTrackRecvTime": false,
       "maxViewportPoints": 8000,
       "maxHistoryPointsPerTrack": 900
     },

@@ -28,6 +28,11 @@ _MIN_FRAMES_FOR_EVAL = 2
 # 候选池上限，避免洪峰占满内存
 _MAX_CANDIDATE_TRACKS_PER_TYPE = 300
 _MAX_SAMPLES_PER_TRACK = 150
+# 段延迟可信上限：超过视为缺时间戳/单位错乱/观测时戳僵死，不参与统计（勿输出离谱均值）
+_MAX_CREATE_TO_RECV_MS = 180_000.0  # 3 min
+_MAX_RECV_TO_SEND_MS = 60_000.0
+_MAX_SEND_TO_BACKEND_MS = 30_000.0
+_MAX_TOTAL_MS = 180_000.0
 
 TRACK_LAYER_LABELS: Dict[str, str] = {
     "fuse_sea": "对海融合",
@@ -106,11 +111,22 @@ def _median(values: List[float]) -> float:
     return (s[mid - 1] + s[mid]) / 2.0
 
 
-def _seg_stats(values: List[float]) -> Dict[str, float]:
-    """段延迟统计。排除负值（跨机时钟偏差）；中位数抗长滞后航迹拉偏。"""
+def _empty_seg_stats() -> Dict[str, Any]:
+    """无有效样本：不写 0，避免前端把「没数据」当成 0 ms。"""
+    return {
+        "avg_ms": None,
+        "median_ms": None,
+        "min_ms": None,
+        "max_ms": None,
+        "count": 0,
+    }
+
+
+def _seg_stats(values: List[float]) -> Dict[str, Any]:
+    """段延迟统计。排除负值与超上限脏值；无样本返回 null 数值。"""
     vals = [v for v in values if v is not None and v == v and v >= 0]
     if not vals:
-        return {"avg_ms": 0.0, "median_ms": 0.0, "min_ms": 0.0, "max_ms": 0.0, "count": 0}
+        return _empty_seg_stats()
     return {
         "avg_ms": round(sum(vals) / len(vals), 3),
         "median_ms": round(_median(vals), 3),
@@ -120,10 +136,23 @@ def _seg_stats(values: List[float]) -> Dict[str, float]:
     }
 
 
+def _plausible_delta(raw: Optional[float], max_ms: float) -> Optional[float]:
+    """仅保留 [0, max_ms] 内的有限差分；否则视为无可信数据。"""
+    if raw is None:
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if v != v or v < 0 or v > max_ms:
+        return None
+    return v
+
+
 def _create_lag_ms(created: Optional[float], src_recv: Optional[float]) -> Optional[float]:
     if created is None or src_recv is None:
         return None
-    return src_recv - created
+    return _plausible_delta(src_recv - created, _MAX_CREATE_TO_RECV_MS)
 
 
 class TrackLinkEvaluator:
@@ -374,6 +403,13 @@ class TrackLinkEvaluator:
                 }
 
             results = self._compute_results_unlocked()
+            any_data = any(bool(r.get("has_data")) for r in results)
+            summary_msg = None
+            if not results:
+                summary_msg = "暂无数据：采集期内未收到可评估航迹"
+            elif not any_data:
+                summary_msg = "暂无数据：采集到的航迹缺少可信链路时间戳，或无有效更新"
+
             return {
                 "task_id": self.task_id,
                 "status": status,
@@ -384,6 +420,8 @@ class TrackLinkEvaluator:
                 "ended_at": ended,
                 "type_counts": type_counts,
                 "results": results,
+                "has_data": any_data,
+                "message": summary_msg,
                 "error": err,
             }
 
@@ -402,38 +440,94 @@ class TrackLinkEvaluator:
             recv_to_send: List[float] = []
             send_to_backend: List[float] = []
             total: List[float] = []
+            dropped_implausible = 0
             # 只用第 2 帧及以后做延迟统计（第 1 帧只用于确认航迹存活/可更新）
             for _, samples in selected:
                 for s in samples[1:]:
                     if s.track_created_ms is not None and s.track_source_recv_ms is not None:
-                        create_to_recv.append(s.track_source_recv_ms - s.track_created_ms)
+                        d = _plausible_delta(
+                            s.track_source_recv_ms - s.track_created_ms,
+                            _MAX_CREATE_TO_RECV_MS,
+                        )
+                        if d is None:
+                            dropped_implausible += 1
+                        else:
+                            create_to_recv.append(d)
                     if s.track_source_recv_ms is not None and s.track_grpc_send_ms is not None:
-                        recv_to_send.append(s.track_grpc_send_ms - s.track_source_recv_ms)
+                        d = _plausible_delta(
+                            s.track_grpc_send_ms - s.track_source_recv_ms,
+                            _MAX_RECV_TO_SEND_MS,
+                        )
+                        if d is None:
+                            dropped_implausible += 1
+                        else:
+                            recv_to_send.append(d)
                     if s.track_grpc_send_ms is not None:
-                        send_to_backend.append(s.backend_recv_ms - s.track_grpc_send_ms)
+                        d = _plausible_delta(
+                            s.backend_recv_ms - s.track_grpc_send_ms,
+                            _MAX_SEND_TO_BACKEND_MS,
+                        )
+                        if d is None:
+                            dropped_implausible += 1
+                        else:
+                            send_to_backend.append(d)
                     if s.track_created_ms is not None:
-                        total.append(s.backend_recv_ms - s.track_created_ms)
+                        d = _plausible_delta(
+                            s.backend_recv_ms - s.track_created_ms,
+                            _MAX_TOTAL_MS,
+                        )
+                        if d is None:
+                            dropped_implausible += 1
+                        else:
+                            total.append(d)
+
+            seg_create = _seg_stats(create_to_recv)
+            seg_recv = _seg_stats(recv_to_send)
+            seg_send = _seg_stats(send_to_backend)
+            seg_total = _seg_stats(total)
+            valid_seg_count = (
+                int(seg_create["count"] or 0)
+                + int(seg_recv["count"] or 0)
+                + int(seg_send["count"] or 0)
+                + int(seg_total["count"] or 0)
+            )
 
             # 频率：有效更新次数（第 2 帧起）/ 时长 / 航迹数
             effective_updates = max(0, total_updates - n_tracks)
-            freq = (effective_updates / duration / n_tracks) if n_tracks > 0 else 0.0
+            freq = (effective_updates / duration / n_tracks) if n_tracks > 0 else None
+
+            if n_tracks <= 0:
+                has_data = False
+                message = "暂无数据：采集期内无有效更新航迹（需≥2帧）"
+            elif valid_seg_count <= 0:
+                has_data = False
+                message = (
+                    "暂无数据：链路时间戳缺失或异常（已丢弃不可信时延样本），无法计算时延"
+                )
+            else:
+                has_data = True
+                message = None
+
             out.append(
                 {
                     "track_layer_key": layer,
                     "label": TRACK_LAYER_LABELS.get(layer, layer),
+                    "has_data": has_data,
+                    "message": message,
                     "sampled_track_count": n_tracks,
                     "candidate_track_count": len(bucket.samples),
                     "single_frame_dropped": sum(
                         1 for smps in bucket.samples.values() if len(smps) < _MIN_FRAMES_FOR_EVAL
                     ),
+                    "implausible_samples_dropped": dropped_implausible,
                     "total_updates": total_updates,
                     "effective_updates": effective_updates,
-                    "update_frequency_hz": round(freq, 4),
+                    "update_frequency_hz": round(freq, 4) if freq is not None else None,
                     "segments": {
-                        "create_to_recv": _seg_stats(create_to_recv),
-                        "recv_to_send": _seg_stats(recv_to_send),
-                        "send_to_backend": _seg_stats(send_to_backend),
-                        "total": _seg_stats(total),
+                        "create_to_recv": seg_create,
+                        "recv_to_send": seg_recv,
+                        "send_to_backend": seg_send,
+                        "total": seg_total,
                     },
                 }
             )

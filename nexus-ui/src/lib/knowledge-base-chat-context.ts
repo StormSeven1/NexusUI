@@ -1,10 +1,20 @@
 "use client";
 
 import { generateId } from "ai";
-import { defaultSkyOwnerEntityId } from "@/lib/camera-management-client";
+import {
+  defaultSkyOwnerEntityId,
+  resolveOwnerEntityIdForCameraTask,
+} from "@/lib/camera-management-client";
+import { EO_ACTIVE_MAIN_STREAM_STORAGE_PREFIX } from "@/lib/eo-video/eoStreamSelectionKeys";
 import type { KnowledgeBasePendingInterrupt } from "@/lib/knowledge-base-chat-sse";
 import { useAppConfigStore } from "@/stores/app-config-store";
 import { useAssistantPanelSessionStore, getKnowledgeBaseThreadId } from "@/stores/assistant-panel-session-store";
+import { useEoVideoPanelFocusStore } from "@/stores/eo-video-panel-focus-store";
+import { useEoVideoStreamSelectionSyncStore } from "@/stores/eo-video-stream-selection-sync-store";
+import { getTargetProfileImageDownloadUrls } from "@/stores/target-profile-store";
+import { useAssetStore } from "@/stores/asset-store";
+import { useMapGisCameraMenuStore } from "@/stores/map-gis-camera-menu-store";
+import { canonicalEntityId } from "@/lib/camera-entity-id";
 
 const CLIENT_SESSION_KEY = "nexus-knowledge-base-client-session-id";
 
@@ -29,14 +39,46 @@ export function ensureKnowledgeBaseThreadId(): string {
   return created;
 }
 
+/** 当前选中光电主画面实体 id；无则回退配置默认对空相机 */
 function resolveSelectedCameraId(): string | undefined {
+  if (typeof window !== "undefined") {
+    const focusedPanel = useEoVideoPanelFocusStore.getState().focusedDockPanelId.trim();
+    const syncKey = focusedPanel || "electro-optical-1";
+    let streamId =
+      useEoVideoStreamSelectionSyncStore.getState().mainBySyncKey[syncKey]?.trim() || "";
+    if (!streamId) {
+      try {
+        streamId =
+          window.localStorage.getItem(EO_ACTIVE_MAIN_STREAM_STORAGE_PREFIX + syncKey)?.trim() ||
+          "";
+      } catch {
+        /* ignore */
+      }
+    }
+    if (streamId) {
+      const fromEo = resolveOwnerEntityIdForCameraTask(streamId);
+      if (fromEo) return fromEo;
+    }
+  }
+
   const cm = useAppConfigStore.getState().config?.cameraManagement;
   if (!cm) return undefined;
   return defaultSkyOwnerEntityId(cm);
 }
 
-function resolveSelectedCameraName(): string | undefined {
-  return undefined;
+function resolveSelectedCameraName(cameraId: string | undefined): string | undefined {
+  const id = cameraId ? canonicalEntityId(cameraId) : "";
+  if (!id) return undefined;
+  const fromMenu = useMapGisCameraMenuStore
+    .getState()
+    .rows.find((r) => canonicalEntityId(r.entityId) === id)
+    ?.label?.trim();
+  if (fromMenu) return fromMenu;
+  const fromAsset = useAssetStore
+    .getState()
+    .assets.find((a) => canonicalEntityId(a.id) === id)
+    ?.name?.trim();
+  return fromAsset || undefined;
 }
 
 function buildUserContext(): Record<string, unknown> {
@@ -54,8 +96,14 @@ function buildUserContext(): Record<string, unknown> {
 
   const cameraId = resolveSelectedCameraId();
   if (cameraId) userContext.selected_camera_id = cameraId;
-  const cameraName = resolveSelectedCameraName();
+  const cameraName = resolveSelectedCameraName(cameraId);
   if (cameraName) userContext.selected_camera_name = cameraName;
+
+  // 目标档案当前展示图的下载地址；无图则不带该字段（船只识别路由才使用）
+  const imageUrls = getTargetProfileImageDownloadUrls(8);
+  if (imageUrls.length > 0) {
+    userContext.image_urls = imageUrls;
+  }
 
   return userContext;
 }

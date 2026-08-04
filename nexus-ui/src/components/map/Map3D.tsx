@@ -21,7 +21,7 @@ import {
   LYR_OPTO_FOV,
   LYR_TRACKS,
   type Asset,
-  trackMapDisplayId,
+  trackMapLabelPlainText,
   type Track,
 } from "@/lib/map-entity-model";
 import {
@@ -530,9 +530,15 @@ async function syncCesiumTrackBillboards(
     const wantAis = isAisTrackLayerKey(layerKey);
     const wantDot = isDotTrackLayerKey(layerKey);
     const opticallyVerified = shouldApplyVerifiedTrackYellow(track);
+    const labelText = trackMapLabelPlainText(track, {
+      showTrackId: trCfg.trackDisplay.showTrackId,
+      showTrackRecvTime: trCfg.trackDisplay.showTrackRecvTime,
+    });
     const labelCommon = {
-      text: trackMapDisplayId(track),
-      font: '11px Roboto, "Noto Sans SC", sans-serif',
+      text: labelText,
+      font: trCfg.trackDisplay.showTrackRecvTime
+        ? '10px Roboto, "Noto Sans SC", sans-serif'
+        : '11px Roboto, "Noto Sans SC", sans-serif',
       fillColor: Cesium.Color.fromCssColorString(pickTrackPointCss(track, eff, friendlyFill)),
       outlineColor: Cesium.Color.fromCssColorString("#09090b"),
       outlineWidth: 2,
@@ -541,6 +547,7 @@ async function syncCesiumTrackBillboards(
       pixelOffset: new Cesium.Cartesian2(0, wantDot || wantAis ? -22 : -26),
       scaleByDistance: new Cesium.NearFarScalar(1e4, 1, 5e5, 0.4),
       translucencyByDistance: new Cesium.NearFarScalar(1e4, 1, 8e5, 0.2),
+      show: Boolean(labelText),
     };
     const pc = pickTrackPointCss(track, eff, friendlyFill);
     const ent = wantAis
@@ -624,12 +631,24 @@ async function syncCesiumTrackBillboards(
       ent.billboard.image = new Cesium.ConstantProperty(buildAisHollowTriangleDataUrl(pc));
       ent.billboard.rotation = new Cesium.ConstantProperty(trackBillboardRotationRad(t, Cesium));
       if (ent.label) {
+        const labelText = trackMapLabelPlainText(t, {
+          showTrackId: trCfg.trackDisplay.showTrackId,
+          showTrackRecvTime: trCfg.trackDisplay.showTrackRecvTime,
+        });
+        ent.label.text = new Cesium.ConstantProperty(labelText);
+        ent.label.show = new Cesium.ConstantProperty(Boolean(labelText));
         ent.label.fillColor = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc));
         ent.label.pixelOffset = new Cesium.ConstantProperty(new Cesium.Cartesian2(0, -22));
       }
     } else if (ent.point) {
       ent.point.color = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc).withAlpha(0.92));
       if (ent.label) {
+        const labelText = trackMapLabelPlainText(t, {
+          showTrackId: trCfg.trackDisplay.showTrackId,
+          showTrackRecvTime: trCfg.trackDisplay.showTrackRecvTime,
+        });
+        ent.label.text = new Cesium.ConstantProperty(labelText);
+        ent.label.show = new Cesium.ConstantProperty(Boolean(labelText));
         ent.label.fillColor = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc));
         ent.label.pixelOffset = new Cesium.ConstantProperty(new Cesium.Cartesian2(0, -22));
       }
@@ -653,6 +672,12 @@ async function syncCesiumTrackBillboards(
       ent.billboard.image = new Cesium.ConstantProperty(image);
       ent.billboard.rotation = new Cesium.ConstantProperty(trackBillboardRotationRad(t, Cesium));
       if (ent.label) {
+        const labelText = trackMapLabelPlainText(t, {
+          showTrackId: trCfg.trackDisplay.showTrackId,
+          showTrackRecvTime: trCfg.trackDisplay.showTrackRecvTime,
+        });
+        ent.label.text = new Cesium.ConstantProperty(labelText);
+        ent.label.show = new Cesium.ConstantProperty(Boolean(labelText));
         ent.label.fillColor = new Cesium.ConstantProperty(Cesium.Color.fromCssColorString(pc));
         ent.label.pixelOffset = new Cesium.ConstantProperty(new Cesium.Cartesian2(0, -26));
       }

@@ -4,6 +4,8 @@ import { useEffect, useRef } from "react";
 import { publishTaskStatusChatPayload, resolveTaskStatusSseUrl } from "@/lib/task-status-chat-feed-bus";
 import type { TaskStatusChatPayload } from "@/lib/task-status-types";
 import { recordTaskStatusSseReceived } from "@/stores/network-stats-store";
+import { appendAccessTokenToUrl } from "@/lib/auth/auth-fetch";
+import { ensureFreshToken } from "@/lib/auth/keycloak-client";
 
 /**
  * 在布局根常驻一条 EventSource，与右侧是否挂载 ChatPanel 无关。
@@ -24,17 +26,18 @@ export function TaskStatusChatSseHost() {
       const n = reconnectAttempt.current;
       const delayMs = Math.min(30_000, 1000 * 2 ** Math.min(n, 5));
       reconnectAttempt.current = n + 1;
-      reconnectTimer = window.setTimeout(() => open(), delayMs);
+      reconnectTimer = window.setTimeout(() => { void open(); }, delayMs);
     };
 
-    const open = () => {
+    const open = async () => {
       if (cancelled) return;
       if (reconnectTimer != null) {
         window.clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
       es?.close();
-      const url = resolveTaskStatusSseUrl();
+      await ensureFreshToken(30);
+      const url = appendAccessTokenToUrl(resolveTaskStatusSseUrl());
       const next = new EventSource(url);
       es = next;
       next.onopen = () => {
@@ -63,7 +66,7 @@ export function TaskStatusChatSseHost() {
       };
     };
 
-    open();
+    void open();
     return () => {
       cancelled = true;
       if (reconnectTimer != null) window.clearTimeout(reconnectTimer);

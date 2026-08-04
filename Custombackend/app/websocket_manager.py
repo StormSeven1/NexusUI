@@ -10,9 +10,10 @@ trackBatch 里导致前端对海融合闪烁。
 """
 import asyncio
 import json
+import threading
 from typing import Dict, Set, Optional, Any, List, Callable, Awaitable, Tuple
 from datetime import datetime
-from collections import deque
+from collections import deque, OrderedDict
 from fastapi import WebSocket, WebSocketDisconnect
 from loguru import logger
 
@@ -51,6 +52,12 @@ STATE_COALESCE_KEYS: Dict[str, tuple] = {
 }
 # 航迹按此顺序取唯一标识（用于每拍每航迹只留最新的位置快照）
 TRACK_ID_KEYS = ("trackId", "track_id", "uniqueId", "unique_id")
+
+# 广播队列硬上限：正常每 broadcast_interval 全量 drain，深度应远小于此；上限仅为极端拥塞时
+# 防止内存/耗时失控的兜底（deque 满则丢最旧）。航迹已按 trackId 入队合并（深度=当前唯一航迹数），
+# 不随更新频率堆积，故无需上限；此上限只作用于「无 id 航迹」与「非航迹消息」两个 deque。
+_TRACK_NOID_QUEUE_MAXLEN = 20000
+_OTHER_QUEUE_MAXLEN = 20000
 
 
 def _state_coalesce_key(message: Dict[str, Any]):
@@ -136,14 +143,23 @@ class WebSocketManager:
         # 添加锁保护connections字典
         self._connections_lock = asyncio.Lock()
         
-        self.broadcast_queue: deque = deque()
+        # 非航迹消息队列（Camera/HighFreq/Alarm/entity_status…）：有界 deque，满则丢最旧
+        self.broadcast_queue: deque = deque(maxlen=_OTHER_QUEUE_MAXLEN)
+        # 航迹入队即按 trackId 合并（同一航迹只留最新一帧）→ 队列深度恒等于当前唯一航迹数，
+        # 不随更新频率堆积，从根上避免广播循环掉拍后「队列越堆越慢、越慢越堆」的正反馈雪崩。
+        # 无 id 航迹入有界 deque 兜底。接收线程与广播 drain 用同一 _track_lock 互斥。
+        self._track_lock = threading.Lock()
+        self._pending_tracks: "OrderedDict[Any, Dict[str, Any]]" = OrderedDict()
+        self._pending_tracks_noid: deque = deque(maxlen=_TRACK_NOID_QUEUE_MAXLEN)
         self.heartbeat_task: Optional[asyncio.Task] = None
         self.broadcast_task: Optional[asyncio.Task] = None
 
         # 对海融合专用通道（连接 / 队列 / 任务与主 /ws 隔离）
         self.fuse_sea_connections: Dict[str, WebSocket] = {}
         self._fuse_sea_connections_lock = asyncio.Lock()
-        self.fuse_sea_queue: deque = deque()
+        self._fuse_sea_lock = threading.Lock()
+        self._pending_fuse_sea: "OrderedDict[Any, Dict[str, Any]]" = OrderedDict()
+        self._pending_fuse_sea_noid: deque = deque(maxlen=_TRACK_NOID_QUEUE_MAXLEN)
         self.fuse_sea_heartbeat_task: Optional[asyncio.Task] = None
         self.fuse_sea_broadcast_task: Optional[asyncio.Task] = None
         
@@ -342,12 +358,7 @@ class WebSocketManager:
         except Exception as e:
             logger.debug("雷达训练真值采集跳过: {}", e)
 
-        # 航迹链路评估旁路：无活跃任务时立即返回；有任务时仅非阻塞入队，独立线程处理
-        try:
-            from track_link_evaluator import feed_track_link_evaluator
-            feed_track_link_evaluator(track_data)
-        except Exception:
-            pass
+        # 航迹链路评估已迁至 system-evaluation-server（DDS 实时航迹旁路），此处不再采样
 
         message = {
             "type": "Track",
@@ -355,14 +366,24 @@ class WebSocketManager:
             "data": track_data
         }
         if self._is_fuse_sea_track(track_data):
-            self.fuse_sea_queue.append(message)
+            self._enqueue_track(message, self._pending_fuse_sea, self._pending_fuse_sea_noid, self._fuse_sea_lock)
         else:
-            self.broadcast_queue.append(message)
+            self._enqueue_track(message, self._pending_tracks, self._pending_tracks_noid, self._track_lock)
 
         # 嵌入告警仍走主通道（告警/处置不依赖对海专用 WS）
+        # 纯可疑标记不进告警中心（黄标由航迹 is_suspicious 表达）
         if embedded_alarms:
             for alarm_item in embedded_alarms:
                 if not isinstance(alarm_item, dict):
+                    continue
+                if (
+                    alarm_item.get("is_suspicious") is True
+                    or alarm_item.get("isSuspicious") is True
+                    or str(alarm_item.get("resolutionDetails") or alarm_item.get("resolution_details") or "").strip().lower()
+                    == "is_suspicious"
+                    or str(alarm_item.get("content") or "").strip() == "SuspiciousTarget"
+                    or str(alarm_item.get("alarmId") or alarm_item.get("alarm_id") or "").startswith("suspicious_")
+                ):
                     continue
                 self.queue_message({
                     "type": "Alarm",
@@ -400,9 +421,9 @@ class WebSocketManager:
         区分对空融合、探鸟与对海/雷达，避免仅靠 source_name 导致全为对海、前端全画船标。
         """
         tlk = str(track_data.get("track_layer_key", "") or "").strip().lower().replace("-", "_")
-        if tlk in ("fuse_air", "bird_radar", "auto_bird_radar", "fanwu_car_radar", "uav_pose_track"):
+        if tlk in ("fuse_air", "bird_radar", "auto_bird_radar", "fanwu_car_radar", "uav_pose_track", "ku_lei_da", "wu_ren_che"):
             track_data["is_air_track"] = True
-        elif tlk in ("fuse_sea", "radar_wharf", "radar_jingzi", "ais_track", "boat_self_track", "xpf_track"):
+        elif tlk in ("fuse_sea", "radar_wharf", "radar_jingzi", "ais_track", "boat_self_track", "xpf_track", "tian_ao"):
             track_data["is_air_track"] = False
 
         dds = str(track_data.get("dds_source_id", "") or "").strip().lower()
@@ -417,6 +438,7 @@ class WebSocketManager:
             "dds_udp_fanwucar_track",
             "grpc_fusion_track_fanwu",
             "grpc_fusion_track_ku",
+            "grpc_fusion_track_wu_ren_che",
             "dds_forward_uav_pose_track",
             "grpc_fusion_track_uav_pose",
         ):
@@ -427,6 +449,7 @@ class WebSocketManager:
             "dds_forward_radar_track2",
             "dds_forward_ais_track",
             "grpc_fusion_track_ais",
+            "grpc_fusion_track_tian_ao",
             "grpc_fusion_track_radar_wharf",
             "grpc_fusion_track_radar_jingzi",
             "grpc_fusion_track_xpf",
@@ -437,8 +460,61 @@ class WebSocketManager:
             track_data["is_air_track"] = False
 
     def queue_message(self, message: Dict[str, Any]):
-        """将消息加入广播队列"""
+        """将消息加入广播队列（有界，满则丢最旧）"""
         self.broadcast_queue.append(message)
+
+    @staticmethod
+    def _enqueue_track(
+        message: Dict[str, Any],
+        pending: "OrderedDict[Any, Dict[str, Any]]",
+        pending_noid: deque,
+        lock: threading.Lock,
+    ) -> None:
+        """航迹入队即合并：有 trackId 的按 id 覆盖留最新（深度=唯一航迹数），无 id 的进有界 deque。
+        由接收线程（gRPC/DDS/UDP）调用；与广播 drain 用同一 lock 互斥，避免并发迭代/修改 dict。"""
+        key = _track_coalesce_key(message)
+        if key is None:
+            pending_noid.append(message)  # deque(maxlen) 的 append 线程安全，满则丢最旧
+            return
+        with lock:
+            pending[key] = message
+
+    def _drain_main_tracks(self) -> List[Dict[str, Any]]:
+        """取走主通道待广播航迹。
+        持锁期间完成 list + clear：接收线程持同一锁写入，与本方法完全互斥，无并发迭代风险。"""
+        with self._track_lock:
+            msgs = list(self._pending_tracks.values())
+            self._pending_tracks.clear()
+        noid = self._pending_tracks_noid
+        while noid:
+            try:
+                msgs.append(noid.popleft())
+            except IndexError:
+                break
+        return msgs
+
+    def _drain_fuse_sea_tracks(self) -> List[Dict[str, Any]]:
+        """取走对海融合通道待广播航迹。"""
+        with self._fuse_sea_lock:
+            msgs = list(self._pending_fuse_sea.values())
+            self._pending_fuse_sea.clear()
+        noid = self._pending_fuse_sea_noid
+        while noid:
+            try:
+                msgs.append(noid.popleft())
+            except IndexError:
+                break
+        return msgs
+
+    def _clear_main_tracks(self) -> None:
+        with self._track_lock:
+            self._pending_tracks.clear()
+        self._pending_tracks_noid.clear()
+
+    def _clear_fuse_sea_tracks(self) -> None:
+        with self._fuse_sea_lock:
+            self._pending_fuse_sea.clear()
+        self._pending_fuse_sea_noid.clear()
     
     async def _heartbeat_loop(self):
         """心跳循环"""
@@ -472,24 +548,20 @@ class WebSocketManager:
                 async with self._connections_lock:
                     if not self.connections:
                         self.broadcast_queue.clear()
+                        self._clear_main_tracks()
                         continue
-                
-                if not self.broadcast_queue:
-                    continue
-                
-                # 取出所有消息
-                messages = []
+
+                # 航迹已按 trackId 入队合并，drain 出的即为当前唯一航迹最新帧
+                track_messages = self._drain_main_tracks()
+                other_messages: List[Dict[str, Any]] = []
                 while self.broadcast_queue:
-                    messages.append(self.broadcast_queue.popleft())
-                
-                # 分离航迹消息和其他消息
-                track_messages = []
-                other_messages = []
-                for msg in messages:
-                    if msg.get("type") == "Track":
-                        track_messages.append(msg)
-                    else:
-                        other_messages.append(msg)
+                    try:
+                        other_messages.append(self.broadcast_queue.popleft())
+                    except IndexError:
+                        break
+
+                if not track_messages and not other_messages:
+                    continue
 
                 # 航迹：线程内 coalesce + dumps，保持 100ms 节拍且不堵事件循环
                 if track_messages:
@@ -502,21 +574,17 @@ class WebSocketManager:
                 # 其他：状态型按目标去重留最新，事件型（告警等）全部保留
                 other_messages = _coalesce_state_messages(other_messages)
                 if other_messages:
-                    # 1次线程调用批量序列化，避免N次to_thread开销拖慢事件循环
-                    other_payloads: List[str] = await asyncio.to_thread(
-                        lambda msgs=other_messages: [_dumps_text(m) for m in msgs]
-                    )
-                    # 复用同一连接快照，避免N次锁竞争
-                    async with self._connections_lock:
-                        other_conns = list(self.connections.items())
-                    if other_conns:
-                        for payload in other_payloads:
-                            await self._fanout_text(
-                                other_conns,
-                                payload,
-                                remove_client=self._remove_client,
-                                log_prefix="broadcast发送消息",
-                            )
+                    # 关键：与 trackBatch 一致，一拍所有「其它消息」合并成单帧 stateBatch 下发。
+                    # 旧实现逐条一个 WS 帧、串行 await（每帧带单客户端超时），一旦某客户端稍慢，
+                    # 一拍就被 N 帧 × 超时放大到秒级，高频三角/航线夹在其中被拖后。
+                    # 合并单帧后：一次序列化 + 一次扇出，前端拆包复用原有分发（见 statebatch 分支）。
+                    batch_msg = {
+                        "type": "stateBatch",
+                        "timestamp": datetime.now().isoformat(),
+                        "data": other_messages,
+                    }
+                    payload = await asyncio.to_thread(_dumps_text, batch_msg)
+                    await self.broadcast_text(payload)
                 
             except asyncio.CancelledError:
                 break
@@ -616,24 +684,18 @@ class WebSocketManager:
 
                 async with self._fuse_sea_connections_lock:
                     if not self.fuse_sea_connections:
-                        self.fuse_sea_queue.clear()
+                        self._clear_fuse_sea_tracks()
                         continue
 
-                if not self.fuse_sea_queue:
+                track_messages = self._drain_fuse_sea_tracks()
+                if not track_messages:
                     continue
 
-                track_messages = []
-                while self.fuse_sea_queue:
-                    msg = self.fuse_sea_queue.popleft()
-                    if msg.get("type") == "Track":
-                        track_messages.append(msg)
-
-                if track_messages:
-                    payload = await asyncio.to_thread(
-                        _prepare_track_batch_payload, track_messages
-                    )
-                    if payload:
-                        await self.broadcast_fuse_sea_text(payload)
+                payload = await asyncio.to_thread(
+                    _prepare_track_batch_payload, track_messages
+                )
+                if payload:
+                    await self.broadcast_fuse_sea_text(payload)
 
             except asyncio.CancelledError:
                 break

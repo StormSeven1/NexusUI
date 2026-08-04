@@ -92,6 +92,8 @@ interface RelationshipAirportRow {
   name?: string;
   latitude?: number;
   longitude?: number;
+  /** relationships 下发的舱内标志（0/1/bool）；与 dock_status.drone_in_dock 同源语义 */
+  droneInDock?: boolean | null;
   drones: RelationshipDroneRow[];
   virtualTroop: boolean;
 }
@@ -330,12 +332,17 @@ function buildRelationshipCachesFromAirportsRaw(airportsRaw: unknown[]): {
 
     const lat = Number(ap.latitude);
     const lng = Number(ap.longitude);
+    const rawInDock = ap.droneInDock ?? ap.drone_in_dock;
+    let droneInDock: boolean | null = null;
+    if (rawInDock === true || rawInDock === 1 || rawInDock === "1") droneInDock = true;
+    else if (rawInDock === false || rawInDock === 0 || rawInDock === "0") droneInDock = false;
     filteredAirports.push({
       dockSn,
       entityId: ap.entityId != null ? String(ap.entityId).trim() || undefined : undefined,
       name: ap.name != null ? String(ap.name) : undefined,
       latitude: Number.isFinite(lat) ? lat : undefined,
       longitude: Number.isFinite(lng) ? lng : undefined,
+      droneInDock,
       drones,
       virtualTroop: virtualTroopForDockSn(dockSn),
     });
@@ -580,17 +587,28 @@ export const useDroneStore = create<DroneFleetState>((set, get) => ({
       }
       // 创建/更新机场：遍历 dockNames，对每个 dockSn 确保 docks 中存在
       const newDocks = { ...s.docks };
+      const apBySn = new Map(built.relationships.airports.map((a) => [a.dockSn, a]));
       for (const [dockSn, name] of Object.entries(dockNames)) {
+        const apRow = apBySn.get(dockSn);
+        const inDockPatch =
+          apRow?.droneInDock === true
+            ? { drone_in_dock: true as const }
+            : apRow?.droneInDock === false
+              ? { drone_in_dock: false as const }
+              : {};
         if (newDocks[dockSn]) {
-          // 已存在 -> 更新 displayName
-          if (newDocks[dockSn].displayName !== name) {
-            newDocks[dockSn] = { ...newDocks[dockSn], displayName: name };
-          }
+          const prev = newDocks[dockSn];
+          newDocks[dockSn] = {
+            ...prev,
+            displayName: name,
+            payload: { ...prev.payload, ...inDockPatch },
+            updatedAt: isoNow(),
+          };
         } else {
           // 不存在 -> 创建
           newDocks[dockSn] = {
             dockSn,
-            payload: {},
+            payload: { ...inDockPatch },
             updatedAt: isoNow(),
             displayName: name,
           };
@@ -825,7 +843,18 @@ function startTimeoutCheck() {
     for (const [sn, d] of Object.entries(next)) {
       const noDataMs = now - d.lastPacketAtMs;
       if (noDataMs > LANDED_NO_DATA_MS && !d.wasLanded) {
-        next[sn] = { ...d, wasLanded: true };
+        /* 无实时包：标记已落地并清空中位姿，避免静态层被 live 旧坐标挡住、三角停在场外 */
+        next[sn] = {
+          ...d,
+          wasLanded: true,
+          lat: null,
+          lng: null,
+          highFreq: null,
+          highFreqReceivedAt: null,
+          status: null,
+          statusReceivedAt: null,
+          historyTrail: [],
+        };
         changed = true;
       }
       if (noDataMs > DRONE_TIMEOUT_MS) {

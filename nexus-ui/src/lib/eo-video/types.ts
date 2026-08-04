@@ -30,6 +30,8 @@ export interface EoVideoStreamEntry {
   webrtcUrl?: string;
   /** 来自实体注册表合并的相机/无人机条目（用于剔除与延迟拉流） */
   registrySource?: "camera" | "uav" | "thirdPartyCamera";
+  /** 8090 ontology.specificType（如 ThirdPartyYuan8Camera） */
+  ontologySpecificType?: string;
   /** 缺省按 WebRTC；`image` 为 HTTP 图片轮询（第三方相机等） */
   playbackKind?: "webrtc" | "image";
   /** 若存在，表示该路为无人机流（右键「无人机」子菜单） */

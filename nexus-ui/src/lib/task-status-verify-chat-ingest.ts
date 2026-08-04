@@ -198,7 +198,7 @@ function resolveVerifyBubbleId(
     const byKey = tabVerify.verifySessionByKey.get(sessionKey);
     if (byKey) return byKey;
   }
-  if ((ts === 5 || ts === 6 || ts === 7) && payload.entityId) {
+  if ((ts === 5 || ts === 6 || ts === 7 || ts === 8) && payload.entityId) {
     const pending = findBubbleAwaitingJudgment(tabVerify, payload.entityId);
     if (pending) {
       if (sessionKey) tabVerify.verifySessionByKey.set(sessionKey, pending);
@@ -251,6 +251,7 @@ function buildReportForBubble(
     judgmentBasis: prev?.judgmentBasis,
     featureTarget: prev?.featureTarget,
     targetFound: prev?.targetFound,
+    visitHistory: prev?.visitHistory,
     analyzing: payload.taskStatus === 4 ? true : prev?.analyzing ?? base.analyzing,
   };
   if (fragments.length > 0) {
@@ -260,6 +261,10 @@ function buildReportForBubble(
     report.analyzing = true;
   } else if (payload.taskStatus === 5 || payload.taskStatus === 6 || payload.taskStatus === 7) {
     report.analyzing = false;
+  }
+  if (payload.taskStatus === 8) {
+    const vh = payload.description?.trim();
+    if (vh) report.visitHistory = vh;
   }
   tabVerify.reportByBubbleId.set(bubbleId, report);
   return report;
@@ -326,7 +331,7 @@ export function ingestTaskStatusChatPayload(raw: TaskStatusChatPayload): void {
       return;
     }
 
-    if (sessionKey && (ts === 5 || ts === 6 || ts === 7)) {
+    if (sessionKey && (ts === 5 || ts === 6 || ts === 7 || ts === 8)) {
       let bubbleId = resolveVerifyBubbleId(tabVerify, sessionKey, payload, ts);
       if (!bubbleId) {
         bubbleId = generateId();
@@ -345,14 +350,20 @@ export function ingestTaskStatusChatPayload(raw: TaskStatusChatPayload): void {
         tabVerify.judgmentFragmentsByBubbleId.set(bubbleId, []);
       }
 
+      if (ts === 8) {
+        const report = buildReportForBubble(tabVerify, bubbleId, payload);
+        rewriteVerifyAssistantBubble(tabId, bubbleId, report);
+        return;
+      }
+
       appendJudgmentFragment(tabVerify, bubbleId, payload.description ?? "");
       const report = buildReportForBubble(tabVerify, bubbleId, payload);
       rewriteVerifyAssistantBubble(tabId, bubbleId, report);
       return;
     }
 
-    /** 与旧版一致：无 sessionKey 的 5/6/7 不单独落气泡，避免图/研判拆成两条 */
-    if (ts === 5 || ts === 6 || ts === 7) return;
+    /** 与旧版一致：无 sessionKey 的 5/6/7/8 不单独落气泡，避免图/研判拆成两条 */
+    if (ts === 5 || ts === 6 || ts === 7 || ts === 8) return;
 
     const text = formatTaskStatusAssistantMarkdown(payload);
     const asstId = generateId();

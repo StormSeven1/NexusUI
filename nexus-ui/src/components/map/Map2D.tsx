@@ -129,6 +129,7 @@ import {
   registerThirdPartyPtzFovFlushListener,
   resolveThirdPartyPtzFovRows,
 } from "@/lib/third-party-ptz-fov";
+import { collectCameraDetectAlarmEntityIds } from "@/lib/system-alarm";
 import { useEoThirdPartyUdpDevStatusStore } from "@/stores/eo-third-party-udp-dev-status-store";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
 import { useOptoDeviceLayerStore } from "@/stores/opto-device-layer-store";
@@ -1715,6 +1716,11 @@ export function Map2D() {
 
   /* 光电装备：按设备视场 / GIS 图标 + 面板白名单 → GeoJSON */
   useEffect(() => {
+    const flushDetectFovAlert = () => {
+      const ids = collectCameraDetectAlarmEntityIds(useAlertStore.getState().alerts);
+      optoFovRef.current?.setDetectAlertEntityIds(ids);
+      thirdPartyPtzFovRef.current?.setDetectAlertEntityIds(ids);
+    };
     const flushCameraDdsForFov = () => {
       const dds = useEoCameraDdsStatusStore.getState().byEntityId;
       optoFovRef.current?.setCameraDdsStatus(dds);
@@ -1763,9 +1769,11 @@ export function Map2D() {
     const unsubAssets = useAssetStore.subscribe(flushThirdPartyPtzFov);
     const unsubUdp = useEoThirdPartyUdpDevStatusStore.subscribe(flushThirdPartyPtzFov);
     const unsubDds = useEoCameraDdsStatusStore.subscribe(flushThirdPartyPtzFov);
+    const unsubAlerts = useAlertStore.subscribe(flushDetectFovAlert);
     const ttlTimer = setInterval(flushThirdPartyPtzFov, 1000);
     flushCameraDdsForFov();
     flushOptoPerDevice();
+    flushDetectFovAlert();
     registerThirdPartyPtzFovFlushListener(flushThirdPartyPtzFov);
     void useMapGisCameraMenuStore.getState().ensureLoaded().then(() => {
       flushOptoPerDevice();
@@ -1780,6 +1788,7 @@ export function Map2D() {
       unsubAssets();
       unsubUdp();
       unsubDds();
+      unsubAlerts();
       clearInterval(ttlTimer);
     };
   }, []);

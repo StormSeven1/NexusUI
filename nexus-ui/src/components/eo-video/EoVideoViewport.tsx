@@ -14,6 +14,12 @@ import { eoVideoObjectFitToTailwindClass } from "@/lib/eo-video/eoVideoObjectFit
 import { useWebCodecsCanvas } from "@/hooks/useWebCodecsCanvas";
 import { useWebRtcPlayer } from "@/hooks/useWebRtcPlayer";
 
+/**
+ * 切流冻结帧淡出时间（ms）。新流首帧已就绪时立刻开始淡出，让新画面快速呈现。
+ * 值越小切换越"即时感"；80ms 只是 transition 期间，基本感知不到。
+ */
+const FREEZE_FADE_MS = 80;
+
 export interface EoVideoViewportProps {
   signalingUrl: string;
   iceServers: EoVideoIceServer[];
@@ -159,6 +165,52 @@ function EoVideoViewportHardware({
   const blockWebRtc = Boolean(sharedMediaStream) || Boolean(sharedPlaybackOnly);
   const reuseShared = Boolean(sharedMediaStream);
 
+  // ── 切流冻结帧：消除 signalingUrl 切换时的黑帧闪烁 ──────────────────────
+  const freezeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [freezeVisible, setFreezeVisible] = useState(false);
+  const [freezeFading, setFreezeFading] = useState(false);
+  const freezeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * cleanup 先于 useWebRtcPlayer 的 cleanup 运行（hooks 定义顺序保证），
+   * 此时 video 仍显示旧流画面，可安全截帧。
+   */
+  useEffect(() => {
+    return () => {
+      const v = videoRef.current;
+      const canvas = freezeCanvasRef.current;
+      if (!canvas || !v || v.videoWidth <= 0 || v.videoHeight <= 0) return;
+      canvas.width = v.videoWidth;
+      canvas.height = v.videoHeight;
+      canvas.getContext("2d")?.drawImage(v, 0, 0);
+      setFreezeVisible(true);
+      setFreezeFading(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signalingUrl]);
+
+  /** 新流出图后淡出冻结帧 */
+  useEffect(() => {
+    if (!freezeVisible) return;
+    const v = videoRef.current;
+    const check = window.setInterval(() => {
+      if (v && v.videoWidth > 0 && v.videoHeight > 0 && !v.paused) {
+        window.clearInterval(check);
+        setFreezeFading(true);
+        if (freezeTimerRef.current) clearTimeout(freezeTimerRef.current);
+        freezeTimerRef.current = setTimeout(() => {
+          setFreezeVisible(false);
+          setFreezeFading(false);
+        }, FREEZE_FADE_MS);
+      }
+    }, 40);
+    return () => {
+      window.clearInterval(check);
+      if (freezeTimerRef.current) clearTimeout(freezeTimerRef.current);
+    };
+  }, [freezeVisible, videoRef]);
+  // ──────────────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     applyPresentationRef(webCodecsPresentationRef, {
       active: false,
@@ -258,6 +310,24 @@ function EoVideoViewportHardware({
         controlsList="nopictureinpicture"
         disableRemotePlayback
       />
+
+      {/* 切流冻结帧：覆盖黑帧过渡，新流出图后淡出 */}
+      {freezeVisible ? (
+        <canvas
+          ref={freezeCanvasRef}
+          aria-hidden
+          style={{
+            transition: freezeFading ? `opacity ${FREEZE_FADE_MS}ms ease-out` : undefined,
+            opacity: freezeFading ? 0 : 1,
+          }}
+          className={cn(
+            "pointer-events-none absolute inset-0 z-[1] h-full w-full",
+            eoVideoObjectFitToTailwindClass(videoObjectFit),
+          )}
+        />
+      ) : (
+        <canvas ref={freezeCanvasRef} aria-hidden className="hidden" />
+      )}
 
       {showDebugOverlay ? (
         <div className="pointer-events-none absolute left-2 top-2 z-20 flex max-w-[min(90%,280px)] flex-col gap-0.5 rounded border border-white/10 bg-black/70 px-2 py-1 font-mono text-[9px] text-nexus-text-secondary">

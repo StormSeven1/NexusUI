@@ -1,6 +1,6 @@
 import type maplibregl from "maplibre-gl";
 import type { FilterSpecification } from "maplibre-gl";
-import { trackMapDisplayId, type Track } from "@/lib/map-entity-model";
+import { trackMapDisplayId, trackMapLabelRecvTime, type Track } from "@/lib/map-entity-model";
 import {
   getMarkerSymbolId,
   TRACK_SELECT_RING_ID,
@@ -176,16 +176,45 @@ const TRACK_SYMBOL_LAYOUT = {
   "icon-ignore-placement": true,
 } as maplibregl.SymbolLayerSpecification["layout"];
 
+/** 航迹点标签 text-field：可选首行时间（略小）+ 编号 */
+const TRACK_LABEL_TEXT_FIELD: maplibregl.ExpressionSpecification = [
+  "case",
+  ["all", ["has", "mapLabelTime"], ["!=", ["to-string", ["get", "mapLabelTime"]], ""]],
+  [
+    "case",
+    ["all", ["has", "mapLabelText"], ["!=", ["to-string", ["get", "mapLabelText"]], ""]],
+    [
+      "format",
+      ["get", "mapLabelTime"],
+      { "font-scale": 0.72 },
+      "\n",
+      {},
+      ["get", "mapLabelText"],
+      {},
+    ],
+    ["format", ["get", "mapLabelTime"], { "font-scale": 0.72 }],
+  ],
+  ["coalesce", ["get", "mapLabelText"], ["get", "name"], ""],
+];
+
 const TRACK_LABEL_LAYOUT = {
-  "text-field": ["coalesce", ["get", "mapLabelText"], ["get", "name"], ""],
+  "text-field": TRACK_LABEL_TEXT_FIELD,
   "text-font": ["Open Sans Regular"],
   "text-size": 10,
   "text-offset": [0, 2.2],
   "text-anchor": "top",
-  "text-max-width": 10,
+  "text-max-width": 12,
   "text-allow-overlap": true,
   "text-ignore-placement": true,
 } as maplibregl.SymbolLayerSpecification["layout"];
+
+function trackLabelProps(t: Track): { mapLabelText: string; mapLabelTime: string } {
+  const td = getTrackRenderingConfig().trackDisplay;
+  return {
+    mapLabelText: td.showTrackId ? trackMapDisplayId(t) : "",
+    mapLabelTime: td.showTrackRecvTime ? trackMapLabelRecvTime(t) : "",
+  };
+}
 
 /**
  * 纯表达式写法（`["geometry-type"]`），避免与 `["get", ...]` 混用传统 `$type` 导致
@@ -461,6 +490,7 @@ export function buildTrackFusionPointsGeoJSON(
     const opticallyVerified = shouldApplyVerifiedTrackYellow(t);
     const suspiciousTarget = shouldApplySuspiciousTrackGreen(t);
     const coasting = isTrackCoasting(t);
+    const labelProps = trackLabelProps(t);
     const baseProps: Record<string, unknown> = {
       id: t.id,
       showID: t.showID,
@@ -469,7 +499,8 @@ export function buildTrackFusionPointsGeoJSON(
       isAirTrack: t.isAirTrack ?? false,
       targetType: t.targetType ?? null,
       name: t.name,
-      mapLabelText: trackMapDisplayId(t),
+      mapLabelText: labelProps.mapLabelText,
+      mapLabelTime: labelProps.mapLabelTime,
       type: t.type,
       disposition: disp,
       speed: t.speed,
@@ -525,6 +556,7 @@ export function buildTrackRadarPointsGeoJSON(
     const layerKey = resolveTrackLayerKey(t);
     if (!isNonMilSymbolTrackLayerKey(layerKey)) continue;
     const { pointFill, disp, style } = trackPointFillAndStyle(t, accent);
+    const labelProps = trackLabelProps(t);
     const baseProps: Record<string, unknown> = {
       id: t.id,
       showID: t.showID,
@@ -533,7 +565,8 @@ export function buildTrackRadarPointsGeoJSON(
       isAirTrack: t.isAirTrack ?? false,
       targetType: t.targetType ?? null,
       name: t.name,
-      mapLabelText: trackMapDisplayId(t),
+      mapLabelText: labelProps.mapLabelText,
+      mapLabelTime: labelProps.mapLabelTime,
       type: t.type,
       disposition: disp,
       speed: t.speed,
@@ -733,15 +766,17 @@ export class TracksMaplibre {
     this.lastRankKey = "";
   }
 
-  /** 应用 `app-config.json` 中 `trackRendering.trackDisplay`（如是否显示名称） */
+  /** 应用 `app-config.json` 中 `trackRendering.trackDisplay`（名称 / 接收时间标签） */
   applyTrackRenderingLayout() {
     const m = this.map;
     const tr = getTrackRenderingConfig();
-    const vis = tr.trackDisplay.showTrackId ? "visible" : "none";
+    const vis =
+      tr.trackDisplay.showTrackId || tr.trackDisplay.showTrackRecvTime ? "visible" : "none";
     for (const lid of [TRACK_LABEL, TRACK_LABEL_FUSE_SEA, TRACK_LABEL_RADAR]) {
       if (m.getLayer(lid)) {
         m.setLayoutProperty(lid, "visibility", vis);
         m.setLayoutProperty(lid, "text-size", ["coalesce", ["get", "labelTextSize"], 10]);
+        m.setLayoutProperty(lid, "text-field", TRACK_LABEL_TEXT_FIELD);
         m.setPaintProperty(lid, "text-color", ["coalesce", ["get", "labelColor"], "#a1a1aa"]);
       }
     }

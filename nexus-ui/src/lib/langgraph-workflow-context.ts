@@ -96,3 +96,66 @@ export function formatWorkflowSessionTitle(topic: string): string {
   if (/任务$/.test(t)) return t;
   return `${t}任务`;
 }
+
+/**
+ * 从中断文案中的参数 JSON 提取中文工作流名（如 `"工作流": "区域航迹查证"`）。
+ * 知识库启动确认常把参数嵌在 message 里，未必再发 extracted_topic。
+ */
+export function extractWorkflowTopicFromInterruptText(text: string): string | null {
+  const raw = text.trim();
+  if (!raw) return null;
+
+  const tryObj = (o: Record<string, unknown>): string | null => {
+    for (const key of ["工作流", "workflow", "display_name", "displayName", "workflow_display_name"]) {
+      const v = o[key];
+      if (typeof v !== "string" || !v.trim()) continue;
+      const s = v.trim();
+      // 优先中文显示名；跳过纯 snake_case 内部名
+      if (/[\u4e00-\u9fff]/.test(s)) return s;
+    }
+    return null;
+  };
+
+  // 整段即 JSON
+  if (raw.startsWith("{")) {
+    try {
+      const o = JSON.parse(raw) as unknown;
+      if (o && typeof o === "object" && !Array.isArray(o)) {
+        const hit = tryObj(o as Record<string, unknown>);
+        if (hit) return hit;
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // 文案中夹带 JSON 块
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      const o = JSON.parse(raw.slice(start, end + 1)) as unknown;
+      if (o && typeof o === "object" && !Array.isArray(o)) {
+        const hit = tryObj(o as Record<string, unknown>);
+        if (hit) return hit;
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  const m = raw.match(/["']?工作流["']?\s*[:：]\s*["']?([^\n"',}]+)/);
+  if (m?.[1]?.trim()) return m[1].trim();
+  return null;
+}
+
+/** 业务 thread_id 前缀 → 中文话题（无 extracted_topic 时的兜底） */
+export function inferWorkflowTopicFromBusinessThreadId(threadId: string): string | null {
+  const t = threadId.trim();
+  if (!t) return null;
+  if (/area_track_vertification/i.test(t)) return "区域航迹查证";
+  if (/search_area|area_search/i.test(t)) return "区域搜索查证";
+  if (/tanniao_radar/i.test(t)) return "探鸟雷达";
+  if (/auto_duty/i.test(t)) return "日常查证";
+  return null;
+}

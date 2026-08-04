@@ -32,7 +32,7 @@ import {
   isNonMilSymbolTrackLayerKey,
   isTrackVisibleBySubtype,
   resolveTrackLayerKey,
-  TRACK_SUBTYPE_LABELS,
+  trackSubtypeLabel,
 } from "@/lib/track-layer-visibility";
 
 
@@ -87,7 +87,7 @@ function TrackListRow({
           viewBox="0 0 14 14"
           aria-hidden
         >
-          <title>{TRACK_SUBTYPE_LABELS[layerKey]}</title>
+          <title>{trackSubtypeLabel(layerKey)}</title>
           <polygon
             points="7,1.5 12.5,12.5 1.5,12.5"
             fill="none"
@@ -100,7 +100,7 @@ function TrackListRow({
         <span
           className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border border-black/35"
           style={{ backgroundColor: dotFill }}
-          title={TRACK_SUBTYPE_LABELS[layerKey]}
+          title={trackSubtypeLabel(layerKey)}
         />
       ) : (
         <MilSymbol

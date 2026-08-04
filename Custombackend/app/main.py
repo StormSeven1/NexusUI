@@ -48,6 +48,10 @@ from system_eval_routes import router as system_eval_router
 from radar_train_routes import router as radar_train_router
 from bird_radar_capture_routes import router as bird_radar_capture_router
 from air_radar_collect_routes import router as air_radar_collect_router
+from auth.config import get_auth_settings
+from auth.middleware import KeycloakAuthMiddleware
+from auth.routes import router as auth_router
+from auth.jwt_validator import verify_access_token
 
 import os
 
@@ -336,7 +340,7 @@ async def lifespan(app: FastAPI):
     )
     logger.info(
         "传感器旁路航迹通道 NEXUS_RADAR_TRACK_TRANSPORT={} "
-        "(dds/udp_bypass={}, grpc={})",
+        "(dds/udp_bypass={}, grpc={}, sources={})",
         RADAR_TRACK_TRANSPORT,
         any(
             (
@@ -359,6 +363,14 @@ async def lifespan(app: FastAPI):
             c.get("id") == "udp_auto_bird_radar" and c.get("enabled") for c in UDP_RECEIVERS
         ),
         [c.get("id") for c in FUSION_TRACK_STREAM_GRPC_RECEIVERS if c.get("enabled")],
+        sorted(
+            {
+                ds
+                for c in FUSION_TRACK_STREAM_GRPC_RECEIVERS
+                if c.get("enabled")
+                for ds in (c.get("datasource_layer_map") or {}).keys()
+            }
+        ),
     )
     receiver_manager.start_fusion_track_grpc_receivers(FUSION_TRACK_STREAM_GRPC_RECEIVERS)
     from receivers.network import DDS_AVAILABLE as _dds_py_ok
@@ -459,7 +471,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 配置CORS
+# Keycloak JWT：AUTH_ENABLED=false 时整段跳过（先注册 = 内层）
+app.add_middleware(KeycloakAuthMiddleware)
+
+# CORS 后注册 = 最外层，确保 401 响应也带 CORS 头；OPTIONS 预检在鉴权内放行
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -470,6 +485,7 @@ app.add_middleware(
 
 # 注册API路由
 app.include_router(api_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
 app.include_router(camera_tasks_router, prefix="/api")
 app.include_router(camera_task_singular_router, prefix="/api")
 app.include_router(system_eval_router, prefix="/api")
@@ -477,24 +493,56 @@ app.include_router(radar_train_router, prefix="/api")
 app.include_router(bird_radar_capture_router, prefix="/api")
 app.include_router(air_radar_collect_router, prefix="/api")
 
+_auth_boot = get_auth_settings()
+logger.info(
+    "Keycloak auth: enabled={} realm={} clientId={}",
+    _auth_boot.AUTH_ENABLED,
+    _auth_boot.KEYCLOAK_REALM,
+    _auth_boot.KEYCLOAK_CLIENT_ID,
+)
+
+
+async def _reject_ws_if_auth_failed(websocket: WebSocket) -> bool:
+    """AUTH_ENABLED 时校验 query token / access_token；失败则关闭并返回 True。"""
+    auth = get_auth_settings()
+    if not auth.AUTH_ENABLED:
+        return False
+    token = (
+        websocket.query_params.get("token")
+        or websocket.query_params.get("access_token")
+        or ""
+    ).strip()
+    if not token:
+        logger.warning("WebSocket 拒绝：缺少 token")
+        await websocket.close(code=4401, reason="Missing token")
+        return True
+    try:
+        verify_access_token(token)
+    except Exception as e:
+        logger.warning("WebSocket 拒绝：token 无效 ({})", e)
+        await websocket.close(code=4401, reason="Invalid token")
+        return True
+    return False
+
 
 # WebSocket端点（更具体的路径须先于 /ws 注册）
 @app.websocket("/ws/fuse-sea")
 async def websocket_fuse_sea_endpoint(websocket: WebSocket):
-    """对海融合航迹专用 WebSocket（减轻主 /ws trackBatch 压力，避免前端闪烁）"""
+    """对海融合航迹专用 WebSocket；AUTH_ENABLED 时要求 query token。"""
     origin = websocket.headers.get("origin", "*")
     logger.info(f"对海融合 WebSocket 连接请求，Origin: {origin}")
+    if await _reject_ws_if_auth_failed(websocket):
+        return
     await ws_manager.handle_fuse_sea_connection(websocket)
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket连接端点（告警/实体/非对海融合航迹等）"""
-    # 显式接受所有Origin（开发环境）
-    # 生产环境应该验证Origin
+    """WebSocket连接端点；AUTH_ENABLED 时要求 query token / access_token。"""
     origin = websocket.headers.get("origin", "*")
     logger.info(f"WebSocket连接请求，Origin: {origin}")
-    
+    if await _reject_ws_if_auth_failed(websocket):
+        return
     await ws_manager.handle_connection(websocket)
 
 

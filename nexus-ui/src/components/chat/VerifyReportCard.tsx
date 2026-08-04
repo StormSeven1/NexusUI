@@ -166,6 +166,18 @@ export function VerifyReportCard({ report }: { report: VerifyReportViewModel }) 
         </JudgmentPanel>
       </div>
 
+      {report.visitHistory?.trim() ? (
+        <div
+          className="overflow-hidden rounded-sm"
+          style={{ border: `1px solid ${COLOR_JUDGMENT}` }}
+        >
+          <PanelHeader title="来访记录" color={COLOR_JUDGMENT} />
+          <p className="whitespace-pre-wrap bg-[#1a2332]/90 px-2.5 py-2 text-[11px] leading-relaxed text-white/90">
+            {report.visitHistory.trim()}
+          </p>
+        </div>
+      ) : null}
+
       {showFeatureTarget ? (
         <p className="px-0.5 text-[11px] leading-relaxed text-white/90">
           <span className="text-white/75">特征目标：</span>

@@ -2,7 +2,9 @@
 配置模块 - 数据接收和服务配置
 """
 import os
+import re
 from typing import List, Dict, Any
+from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,7 +68,7 @@ class Settings(BaseSettings):
 
     # 无人机状态/任务/高频：dds | grpc（见 NEXUS_DRONE_STATUS_TRANSPORT）
     NEXUS_DRONE_STATUS_TRANSPORT: str = "dds"
-    NEXUS_DRONE_ENTITY_GRPC_URL: str = "192.168.18.103:51070"
+    NEXUS_DRONE_ENTITY_GRPC_URL: str = "192.168.18.141:51070"
     NEXUS_DRONE_HOSTILE_GRPC_URL: str = "192.168.18.141:50065"
 
     # 对空/对海融合航迹：dds | grpc（见 NEXUS_FUSION_TRACK_TRANSPORT）
@@ -82,6 +84,10 @@ class Settings(BaseSettings):
     # 与 NewTrackStruct(:60055) 融合 target_id 同池不撞 → 与融合可同时显示。
     NEXUS_RADAR_TRACK_TRANSPORT: str = "dds"
     NEXUS_FUSION_TRACK_STREAM_GRPC_URL: str = "192.168.18.141:60056"
+    # FusionTrack 旁路源白名单（英文 dataSourceId，逗号分隔）。
+    # 空 / all / * = 摄入全部已知源；填写则仅注入列出的源。
+    # 格式：id | id|显示名 | id:layer | id:layer|显示名 | id:中文名
+    NEXUS_FUSION_TRACK_GRPC_SOURCES: str = ""
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -242,7 +248,7 @@ DDS_RECEIVERS: List[Dict[str, Any]] = [
     {
         "id": "dds_suspicious_target",
         "name": "DDS可疑目标(NewTrackStructSuspicious)",
-        "enabled": True,
+        "enabled": False,
         "domain_id": 141,
         "topic_name": "NewTrackStructSuspicious",
         "profile_name": "track_subscriber_newstruct_suspicious",
@@ -810,7 +816,7 @@ def build_drone_status_grpc_receivers(settings: Settings | None = None) -> List[
     """无人机 EntityStatus gRPC 订阅源（地址来自环境变量）。"""
     s = settings or get_settings()
     entity_host, entity_port = _split_host_port(
-        s.NEXUS_DRONE_ENTITY_GRPC_URL, "192.168.18.103", 51070
+        s.NEXUS_DRONE_ENTITY_GRPC_URL, "192.168.18.141", 51070
     )
     hostile_host, hostile_port = _split_host_port(
         s.NEXUS_DRONE_HOSTILE_GRPC_URL, "192.168.18.141", 50065
@@ -1035,12 +1041,191 @@ def resolve_radar_track_transport(raw: str | None = None) -> str:
     return "dds"
 
 
+# 与 parsers.fusion_track_grpc_parser.FUSION_TRACK_DATASOURCE_TO_LAYER 保持一致（启动时解析白名单用）
+# 已知源可映射到稳定图层键；未知源在配置里裸写 id 时自动 layer=id（无需改代码）。
+_FUSION_TRACK_DATASOURCE_CATALOG: Dict[str, str] = {
+    "yuan_yao": "radar_wharf",
+    "jing_zi_tou": "radar_jingzi",
+    "udp_xpf_track": "xpf_track",
+    "udp_boatself_track": "boat_self_track",
+    "ais": "ais_track",
+    "tan_niao": "bird_radar",
+    "zi_bao_wei": "uav_pose_track",
+    "udp_fanwucar_track": "fanwu_car_radar",
+    "ku_lei_da": "ku_lei_da",
+    "auto_bird": "auto_bird_radar",
+}
+
+# 未在配置写 |显示名 时的回退中文名
+_FUSION_TRACK_DATASOURCE_LABELS: Dict[str, str] = {
+    "yuan_yao": "远遥码头雷达",
+    "jing_zi_tou": "靖子头雷达",
+    "udp_xpf_track": "远遥鹏飞",
+    "udp_boatself_track": "船只自报位",
+    "ais": "AIS",
+    "tan_niao": "探鸟雷达",
+    "zi_bao_wei": "自报位",
+    "udp_fanwucar_track": "反无车",
+    "ku_lei_da": "Ku雷达",
+    "auto_bird": "探鸟智能跟踪",
+    "tian_ao": "天鳌",
+    "wu_ren_che": "无人车",
+    "radar_wharf": "远遥码头雷达",
+    "radar_jingzi": "靖子头雷达",
+    "xpf_track": "远遥鹏飞",
+    "boat_self_track": "船只自报位",
+    "ais_track": "AIS",
+    "bird_radar": "探鸟雷达",
+    "uav_pose_track": "自报位",
+    "fanwu_car_radar": "反无车",
+    "auto_bird_radar": "探鸟智能跟踪",
+}
+
+_LAYER_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$", re.I)
+
+
+def _raw_fusion_track_grpc_sources(raw: str | None, settings: Settings | None) -> str:
+    if raw is not None:
+        return (raw or "").strip()
+    env = os.environ.get("NEXUS_FUSION_TRACK_GRPC_SOURCES")
+    if env is None or env == "":
+        env = (settings or get_settings()).NEXUS_FUSION_TRACK_GRPC_SOURCES
+    return (env or "").strip()
+
+
+def parse_fusion_track_grpc_sources(
+    raw: str | None = None,
+    settings: Settings | None = None,
+) -> List[Dict[str, str]]:
+    """解析 NEXUS_FUSION_TRACK_GRPC_SOURCES → [{dataSourceId, layerKey, label}, ...]。
+
+    单项格式：
+    - id
+    - id|显示名
+    - id:layerKey
+    - id:layerKey|显示名
+    - id:中文名（冒号后非英文图层键时视为显示名）
+    """
+    text = _raw_fusion_track_grpc_sources(raw, settings)
+    text = text.strip().strip("\"'").strip()
+    if not text or text.lower() in ("*", "all"):
+        return [
+            {
+                "dataSourceId": ds,
+                "layerKey": layer,
+                "label": _FUSION_TRACK_DATASOURCE_LABELS.get(layer)
+                or _FUSION_TRACK_DATASOURCE_LABELS.get(ds)
+                or f"{ds}航迹",
+            }
+            for ds, layer in _FUSION_TRACK_DATASOURCE_CATALOG.items()
+        ]
+
+    out: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for part in re.split(r"[,\n\r]+", text):
+        token = part.strip()
+        if not token:
+            continue
+        label_from_pipe: str | None = None
+        rest = token
+        if "|" in rest:
+            left, right = rest.split("|", 1)
+            rest = left.strip()
+            label_from_pipe = right.strip() or None
+        if not rest:
+            continue
+
+        label_from_colon: str | None = None
+        if ":" in rest:
+            ds, right = rest.split(":", 1)
+            ds, right = ds.strip(), right.strip()
+            if not ds or not right:
+                continue
+            if _LAYER_KEY_RE.match(right):
+                data_source_id, layer_key = ds, right
+            else:
+                data_source_id = ds
+                layer_key = _FUSION_TRACK_DATASOURCE_CATALOG.get(ds, ds)
+                label_from_colon = right
+        else:
+            data_source_id = rest
+            layer_key = _FUSION_TRACK_DATASOURCE_CATALOG.get(rest, rest)
+
+        label = (
+            label_from_pipe
+            or label_from_colon
+            or _FUSION_TRACK_DATASOURCE_LABELS.get(layer_key)
+            or _FUSION_TRACK_DATASOURCE_LABELS.get(data_source_id)
+            or f"{data_source_id}航迹"
+        )
+        dedupe = f"{data_source_id}::{layer_key}"
+        if dedupe in seen:
+            continue
+        seen.add(dedupe)
+        out.append(
+            {
+                "dataSourceId": data_source_id,
+                "layerKey": layer_key,
+                "label": label,
+            }
+        )
+    return out
+
+
+def resolve_fusion_track_grpc_datasource_layer_map(
+    raw: str | None = None,
+    settings: Settings | None = None,
+) -> Dict[str, str]:
+    """解析 → {dataSourceId: track_layer_key}。"""
+    return {
+        row["dataSourceId"]: row["layerKey"]
+        for row in parse_fusion_track_grpc_sources(raw, settings)
+    }
+
+
+def resolve_fusion_track_grpc_datasource_label_map(
+    raw: str | None = None,
+    settings: Settings | None = None,
+) -> Dict[str, str]:
+    """解析 → {dataSourceId|layerKey: 显示名}。"""
+    out: Dict[str, str] = {}
+    for row in parse_fusion_track_grpc_sources(raw, settings):
+        out[row["dataSourceId"]] = row["label"]
+        out[row["layerKey"]] = row["label"]
+    return out
+
+
+def fusion_track_source_display_name(
+    data_source_id: str,
+    layer_key: str = "",
+    label_map: Dict[str, str] | None = None,
+) -> str:
+    ds = (data_source_id or "").strip()
+    lk = (layer_key or "").strip()
+    labels = label_map if label_map is not None else resolve_fusion_track_grpc_datasource_label_map()
+    if ds and ds in labels:
+        return labels[ds]
+    if lk and lk in labels:
+        return labels[lk]
+    if ds and ds in _FUSION_TRACK_DATASOURCE_LABELS:
+        return _FUSION_TRACK_DATASOURCE_LABELS[ds]
+    if lk and lk in _FUSION_TRACK_DATASOURCE_LABELS:
+        return _FUSION_TRACK_DATASOURCE_LABELS[lk]
+    return ds or lk or "旁路航迹"
+
+
 def build_fusion_track_grpc_receivers(settings: Settings | None = None) -> List[Dict[str, Any]]:
     """FusionTrack gRPC(:60056) 统一航迹流（传感器旁路：雷达/AIS/探鸟/自报位/反无车等）。"""
     s = settings or get_settings()
     host, port = _split_host_port(
         s.NEXUS_FUSION_TRACK_STREAM_GRPC_URL, "192.168.18.141", 60056
     )
+    parsed = parse_fusion_track_grpc_sources(settings=s)
+    datasource_layer_map = {row["dataSourceId"]: row["layerKey"] for row in parsed}
+    datasource_label_map = {}
+    for row in parsed:
+        datasource_label_map[row["dataSourceId"]] = row["label"]
+        datasource_label_map[row["layerKey"]] = row["label"]
     return [
         {
             "id": "fusion_track_grpc_client",
@@ -1050,6 +1235,8 @@ def build_fusion_track_grpc_receivers(settings: Settings | None = None) -> List[
             "enabled": True,
             "method": "Subscribe",
             "reconnect_interval": 2.0,
+            "datasource_layer_map": datasource_layer_map,
+            "datasource_label_map": datasource_label_map,
         },
     ]
 

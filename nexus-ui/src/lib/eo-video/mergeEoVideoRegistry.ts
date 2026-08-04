@@ -220,6 +220,7 @@ export function mergeRegistryStreams(
     label: c.label,
     signalingUrl: "",
     registrySource: "thirdPartyCamera",
+    ontologySpecificType: c.ontologySpecificType,
     ...(thirdPartyMulticast ? { multicastUdp: thirdPartyMulticast } : {}),
   }));
   const apiThirdPartyWebrtcStreams: EoVideoStreamEntry[] = thirdParty.webrtc.map((c) => ({
@@ -227,6 +228,7 @@ export function mergeRegistryStreams(
     label: c.label,
     signalingUrl: c.signalingUrl?.trim() || "about:blank",
     registrySource: "thirdPartyCamera",
+    ontologySpecificType: c.ontologySpecificType,
     playbackKind: "webrtc" as const,
   }));
   const apiThirdPartyStreams = [...apiThirdPartyUdpStreams, ...apiThirdPartyWebrtcStreams];

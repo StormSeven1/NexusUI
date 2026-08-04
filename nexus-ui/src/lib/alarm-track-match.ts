@@ -13,6 +13,7 @@ import type { Track } from "@/lib/map-entity-model";
 import type { AlarmFilterFuseType } from "@/lib/alarm-filter-api";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { getRenderCache } from "@/stores/track-store";
+import { isSuspiciousAlarmMarker } from "@/lib/suspicious-alarm-marker";
 
 /** 从告警 WS 体解析对海(0)/对空(1)；无法判断时返回 undefined */
 export function parseAlarmFuseTypeFromRaw(o: Record<string, unknown>): AlarmFilterFuseType | undefined {
@@ -63,6 +64,8 @@ function trimId(v: string | undefined | null): string {
 export function buildAlarmMatchKeysFromAlerts(alerts: readonly AlertData[]): Set<string> {
   const keys = new Set<string>();
   for (const a of alerts) {
+    // 可疑标记不得参与威胁蓝匹配
+    if (isSuspiciousAlarmMarker(a as unknown as Record<string, unknown>)) continue;
     const uid = trimId(a.uniqueID);
     if (uid) keys.add(`u:${uid}`);
 

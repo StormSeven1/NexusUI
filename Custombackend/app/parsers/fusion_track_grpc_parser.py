@@ -33,6 +33,7 @@ from typing import Any, Dict, Optional
 from loguru import logger
 
 # 业务数据源 ID → 前端 track_layer_key（FusionTrack gRPC 摄入；切 grpc 时关对应 DDS/UDP）
+# 注意：实际摄入以 NEXUS_FUSION_TRACK_GRPC_SOURCES 解析结果为准；此处为默认目录/回退。
 FUSION_TRACK_DATASOURCE_TO_LAYER: Dict[str, str] = {
     "yuan_yao": "radar_wharf",              # 远遥码头雷达
     "jing_zi_tou": "radar_jingzi",           # 靖子头雷达
@@ -42,8 +43,32 @@ FUSION_TRACK_DATASOURCE_TO_LAYER: Dict[str, str] = {
     "tan_niao": "bird_radar",                # 探鸟雷达
     "zi_bao_wei": "uav_pose_track",          # 无人机自报位
     "udp_fanwucar_track": "fanwu_car_radar",  # 反无车
-    "ku_lei_da": "fanwu_car_radar",          # Ku 雷达（与反无车同目标图层）
+    "ku_lei_da": "ku_lei_da",                # Ku 雷达（独立目标图层）
     "auto_bird": "auto_bird_radar",          # 探鸟智能跟踪点迹
+}
+
+# 非融合雷达类图层：标牌「来源」用中文雷达名（勿用 radarId 英文 id）
+_RADAR_SENSOR_LAYER_KEYS = frozenset({
+    "radar_wharf",
+    "radar_jingzi",
+    "xpf_track",
+    "bird_radar",
+    "auto_bird_radar",
+    "fanwu_car_radar",
+    "ku_lei_da",
+    "tian_ao",
+    "wu_ren_che",
+})
+_RADAR_SENSOR_CN_BY_LAYER: Dict[str, str] = {
+    "radar_wharf": "远遥码头雷达",
+    "radar_jingzi": "靖子头雷达",
+    "xpf_track": "远遥鹏飞",
+    "bird_radar": "探鸟雷达",
+    "auto_bird_radar": "探鸟智能跟踪",
+    "fanwu_car_radar": "反无车雷达",
+    "ku_lei_da": "Ku雷达",
+    "tian_ao": "天鳌",
+    "wu_ren_che": "无人车",
 }
 
 
@@ -110,19 +135,26 @@ def _attach_link_times_fusion_track(result: Dict[str, Any], track) -> None:
         result["track_grpc_send_time_ms"] = send_ms
 
 
-def track_data_class_to_radar_track(track, source) -> Optional[Dict[str, Any]]:
+def track_data_class_to_radar_track(
+    track,
+    source,
+    datasource_layer_map: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
     """单条 (TrackDataClass, TrackDataClassSource) → 前端雷达航迹 dict。
 
-    非雷达源（不在 FUSION_TRACK_DATASOURCE_TO_LAYER）返回 None，交由原有 DDS/gRPC 通道处理，避免重复。
+    非旁路源（不在 datasource_layer_map / 默认目录）返回 None，交由原有 DDS/gRPC 通道处理，避免重复。
+    datasource_layer_map 来自 NEXUS_FUSION_TRACK_GRPC_SOURCES；缺省用全部已知目录。
     """
     data_source_id = str(getattr(source, "dataSourceId", "") or "").strip() if source is not None else ""
-    layer_key = FUSION_TRACK_DATASOURCE_TO_LAYER.get(data_source_id)
+    layer_map = datasource_layer_map if datasource_layer_map is not None else FUSION_TRACK_DATASOURCE_TO_LAYER
+    layer_key = layer_map.get(data_source_id)
     if not layer_key:
         return None
 
     try:
         unique_id = int(getattr(track, "uniqueId", 0) or 0)
         is_ais = layer_key == "ais_track"
+        radar_id = str(getattr(track, "radarId", "") or "").strip()
         result: Dict[str, Any] = {
             # showID 主键：全局唯一 uniqueId（与 :60055 融合 target_id 同池、不撞）
             "uniqueId": unique_id,
@@ -137,7 +169,7 @@ def track_data_class_to_radar_track(track, source) -> Optional[Dict[str, Any]]:
             "speed": _f(getattr(track, "speed", 0.0)),
             "azimuth": _f(getattr(track, "azimuth", 0.0)),
             "range": _f(getattr(track, "range", 0.0)),
-            "radarId": str(getattr(track, "radarId", "") or ""),
+            "radarId": radar_id,
             "dotID": int(getattr(track, "dotID", 0) or 0),
             "timestamp": int(getattr(track, "timeStamp", 0) or 0),
             "cpa": 0,
@@ -152,6 +184,18 @@ def track_data_class_to_radar_track(track, source) -> Optional[Dict[str, Any]]:
             "data_source_id": data_source_id,
             "track_layer_key": layer_key,
         }
+        # 非融合雷达：标牌「来源」用中文雷达名（与图层对应），勿用 radar-001 等英文 id
+        if layer_key in _RADAR_SENSOR_LAYER_KEYS or (
+            layer_key
+            and layer_key not in ("ais_track", "uav_pose_track", "boat_self_track", "xpf_track")
+            and not str(layer_key).startswith("fuse_")
+        ):
+            result["sensor"] = (
+                _RADAR_SENSOR_CN_BY_LAYER.get(layer_key)
+                or _RADAR_SENSOR_CN_BY_LAYER.get(data_source_id)
+                or data_source_id
+                or radar_id
+            )
         if is_ais:
             result["mmsi"] = int(getattr(track, "mmsi", 0) or 0)
         _attach_link_times_fusion_track(result, track)

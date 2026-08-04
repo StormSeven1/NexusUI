@@ -11,6 +11,8 @@ import {
   THIRD_PARTY_PTZ_FOV_DEG,
   THIRD_PARTY_PTZ_FOV_FILL_COLOR,
   THIRD_PARTY_PTZ_FOV_LINE_COLOR,
+  THIRD_PARTY_PTZ_FOV_ALERT_FILL_COLOR,
+  THIRD_PARTY_PTZ_FOV_ALERT_LINE_COLOR,
   THIRD_PARTY_PTZ_FOV_RANGE_M,
   type ThirdPartyPtzFovRow,
 } from "@/lib/third-party-ptz-fov";
@@ -28,6 +30,19 @@ export const THIRD_PARTY_PTZ_FOV_LAYER_IDS = [
 const LEGACY_LAYER_IDS = ["third-party-ptz-fov-fill", "third-party-ptz-fov-line"] as const;
 const LEGACY_SOURCE_ID = "third-party-ptz-fov-source";
 
+const FILL_COLOR_BY_ALERT: maplibregl.ExpressionSpecification = [
+  "case",
+  ["==", ["get", "detectAlert"], 1],
+  THIRD_PARTY_PTZ_FOV_ALERT_FILL_COLOR,
+  THIRD_PARTY_PTZ_FOV_FILL_COLOR,
+];
+const LINE_COLOR_BY_ALERT: maplibregl.ExpressionSpecification = [
+  "case",
+  ["==", ["get", "detectAlert"], 1],
+  THIRD_PARTY_PTZ_FOV_ALERT_LINE_COLOR,
+  THIRD_PARTY_PTZ_FOV_LINE_COLOR,
+];
+
 /** 删除旧版青色扇形图层（每次刷新都调用，避免与 v2 绿色层叠） */
 export function purgeLegacyThirdPartyFovLayers(m: maplibregl.Map) {
   for (const id of LEGACY_LAYER_IDS) {
@@ -36,20 +51,40 @@ export function purgeLegacyThirdPartyFovLayers(m: maplibregl.Map) {
   if (m.getSource(LEGACY_SOURCE_ID)) m.removeSource(LEGACY_SOURCE_ID);
 }
 
+function entityInDetectAlertSet(
+  entityId: string,
+  alertEntityIds: ReadonlySet<string> | null | undefined,
+): boolean {
+  if (!alertEntityIds || alertEntityIds.size === 0) return false;
+  const norm = normThirdPartyEntityId(entityId);
+  return alertEntityIds.has(norm) || alertEntityIds.has(entityId.toLowerCase());
+}
+
+function isFovLayerOff(
+  entityId: string,
+  deviceVisibility: OptoDeviceVisibilityMap,
+): boolean {
+  const id = normThirdPartyEntityId(entityId);
+  return deviceVisibility[id]?.fov === false || deviceVisibility[entityId]?.fov === false;
+}
+
 function buildGeoJSON(
   rows: ThirdPartyPtzFovRow[],
   rangeKm: number,
   cameraDdsById?: Readonly<Record<string, EoCameraDdsStatusRow | undefined>>,
+  detectAlertEntityIds?: ReadonlySet<string> | null,
 ): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
   for (const r of rows) {
     const ring = geoSectorCoords(r.lng, r.lat, rangeKm, r.panVehicleDeg, THIRD_PARTY_PTZ_FOV_DEG, 24);
+    const detectAlert = entityInDetectAlertSet(r.entityId, detectAlertEntityIds) ? 1 : 0;
     features.push({
       type: "Feature",
       geometry: { type: "Polygon", coordinates: [ring] },
       properties: {
         geomKind: "poly",
         id: r.entityId,
+        detectAlert,
       },
     });
 
@@ -71,6 +106,7 @@ function buildGeoJSON(
         properties: {
           geomKind: "side",
           id: r.entityId,
+          detectAlert,
         },
       });
     }
@@ -86,6 +122,7 @@ export class ThirdPartyPtzFovModule {
   private cameraDdsByEntityId: Record<string, EoCameraDdsStatusRow | undefined> = {};
   private deviceVisibility: OptoDeviceVisibilityMap = {};
   private panelIds: ReadonlySet<string> | null = null;
+  private detectAlertEntityIds: ReadonlySet<string> = new Set();
 
   constructor(map: maplibregl.Map, opts?: { insertBeforeLayerId?: string }) {
     this.map = map;
@@ -114,6 +151,11 @@ export class ThirdPartyPtzFovModule {
     this.refreshLayers();
   }
 
+  setDetectAlertEntityIds(ids: ReadonlySet<string>) {
+    this.detectAlertEntityIds = ids;
+    this.refreshLayers();
+  }
+
   setFromRows(rows: ThirdPartyPtzFovRow[]) {
     this.lastRows = rows;
     this.refreshLayers();
@@ -127,20 +169,21 @@ export class ThirdPartyPtzFovModule {
     return rows.filter((r) => {
       const id = normThirdPartyEntityId(r.entityId);
       if (!isOptoCameraAllowedOnMap(id, panelNorm)) return false;
-      const vis = this.deviceVisibility;
-      const fovOff = vis[id]?.fov === false || vis[r.entityId]?.fov === false;
-      return !fovOff;
+      const fovOff = isFovLayerOff(r.entityId, this.deviceVisibility);
+      if (!fovOff) return true;
+      // 图层关视场：有检测告警（红）仍显示；告警消失后自动隐藏
+      return entityInDetectAlertSet(r.entityId, this.detectAlertEntityIds);
     });
   }
 
-  /** 每次刷新都写 paint，避免 HMR 后图层仍保留旧色；有目标时仍保持绿色常态（不标红） */
+  /** 按 feature.detectAlert 数据驱动着色：告警红 / 常态绿 */
   private applyPaintStyle() {
     const m = this.map;
     if (!m.getLayer(THIRD_PARTY_PTZ_FOV_FILL)) return;
     try {
-      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_FILL, "fill-color", THIRD_PARTY_PTZ_FOV_FILL_COLOR);
+      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_FILL, "fill-color", FILL_COLOR_BY_ALERT);
       m.setPaintProperty(THIRD_PARTY_PTZ_FOV_FILL, "fill-opacity", 0.22);
-      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-color", THIRD_PARTY_PTZ_FOV_LINE_COLOR);
+      m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-color", LINE_COLOR_BY_ALERT);
       m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-opacity", 0.65);
       m.setPaintProperty(THIRD_PARTY_PTZ_FOV_LINE, "line-dasharray", [4, 3]);
     } catch {
@@ -160,7 +203,7 @@ export class ThirdPartyPtzFovModule {
           type: "fill",
           source: THIRD_PARTY_PTZ_FOV_SOURCE,
           paint: {
-            "fill-color": THIRD_PARTY_PTZ_FOV_FILL_COLOR,
+            "fill-color": FILL_COLOR_BY_ALERT,
             "fill-opacity": 0.22,
           },
         },
@@ -181,7 +224,7 @@ export class ThirdPartyPtzFovModule {
           source: THIRD_PARTY_PTZ_FOV_SOURCE,
           filter: ["==", ["get", "geomKind"], "side"],
           paint: {
-            "line-color": THIRD_PARTY_PTZ_FOV_LINE_COLOR,
+            "line-color": LINE_COLOR_BY_ALERT,
             "line-width": 2,
             "line-opacity": 0.65,
             "line-dasharray": [4, 3],
@@ -207,7 +250,14 @@ export class ThirdPartyPtzFovModule {
     if (!src) return;
 
     const filtered = this.filterRows(this.lastRows);
-    src.setData(buildGeoJSON(filtered, this.rangeKm, this.cameraDdsByEntityId) as GeoJSON.FeatureCollection);
+    src.setData(
+      buildGeoJSON(
+        filtered,
+        this.rangeKm,
+        this.cameraDdsByEntityId,
+        this.detectAlertEntityIds,
+      ) as GeoJSON.FeatureCollection,
+    );
     this.ensureLayers();
   }
 

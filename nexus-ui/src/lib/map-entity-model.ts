@@ -1,22 +1,11 @@
 import type { ForceDisposition } from "./theme-colors";
 import type { TargetState } from "./track-target-state";
 
-/** 与后端 `track_layer_key`、DDS 来源一一对应 */
-export type TrackLayerKey =
-  | "fuse_sea"
-  | "fuse_air"
-  | "bird_radar"
-  | "auto_bird_radar"
-  | "fanwu_car_radar"
-  | "radar_wharf"
-  | "radar_jingzi"
-  | "ais_track"
-  | "uav_pose_track"
-  | "boat_self_track"
-  | "xpf_track";
+/** 与后端 `track_layer_key`、DDS 来源对应；旁路源可由 NEXUS_FUSION_TRACK_GRPC_SOURCES 动态扩展 */
+export type TrackLayerKey = string;
 
-/** 稳定顺序：签名 / 目标侧边栏 / 航迹显示面板 */
-export const TRACK_LAYER_KEYS_ORDERED = [
+/** 内置图层（融合 + 历史旁路键）；面板完整列表见 `getTrackLayerKeysOrdered` */
+export const BUILTIN_TRACK_LAYER_KEYS = [
   "fuse_sea",
   "fuse_air",
   "bird_radar",
@@ -28,7 +17,11 @@ export const TRACK_LAYER_KEYS_ORDERED = [
   "uav_pose_track",
   "boat_self_track",
   "xpf_track",
-] as const satisfies readonly TrackLayerKey[];
+  "ku_lei_da",
+] as const;
+
+/** @deprecated 请优先用 `getTrackLayerKeysOrdered()`；保留供签名/兼容遍历 */
+export const TRACK_LAYER_KEYS_ORDERED: TrackLayerKey[] = [...BUILTIN_TRACK_LAYER_KEYS];
 
 /** 从 WS / 后端 properties 解析是否虚兵（供地图符号与适配器共用） */
 export function isVirtualFromProperties(properties: Record<string, unknown> | null | undefined): boolean {
@@ -98,6 +91,11 @@ export interface Track {
   trackLayerKey?: TrackLayerKey;
   /** 虚兵：航迹符号外框为虚线样式（与资产 `virtual_troop` 一致） */
   isVirtual?: boolean;
+  /**
+   * 可疑/重点关注：来自主航迹 TargetObject.alarms 中 rule_id=suspicious_target 标记，
+   * 与真实告警（告警中心）区分。
+   */
+  isSuspicious?: boolean;
   /**
    * DDS NewTrackStruct `reality_type`：0 未知、1 实兵、2 虚兵（见 `isTrackVirtualTroop`）。
    */
@@ -179,6 +177,45 @@ export function trackMapDisplayId(
   const isFusion =
     track.trackLayerKey === "fuse_sea" || track.trackLayerKey === "fuse_air";
   return formatFusionTrackDisplayName(raw, isFusion);
+}
+
+/**
+ * 与标牌「时间」区第一行「航迹创建」同源字段：本地时分秒.毫秒（不含日期）。
+ * 无效返回空串（地图标签不占行）。
+ */
+export function formatTrackCreatedClockHms(input: number | string | null | undefined): string {
+  if (input == null) return "";
+  let ms: number;
+  if (typeof input === "number") {
+    ms = input;
+  } else {
+    const p = Date.parse(input);
+    if (!Number.isFinite(p)) return "";
+    ms = p;
+  }
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  const d = new Date(ms);
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+/** 地图航迹点标签首行时间（`trackCreatedMs` / 标牌「航迹创建」） */
+export function trackMapLabelRecvTime(track: Pick<Track, "trackCreatedMs">): string {
+  return formatTrackCreatedClockHms(track.trackCreatedMs);
+}
+
+/**
+ * 3D / 纯文本标签：可选首行接收时间 + 编号（换行）。
+ * 2D MapLibre 用分字段 + `format` 表达式给时间更小字号。
+ */
+export function trackMapLabelPlainText(
+  track: Pick<Track, "showID" | "uniqueID" | "trackAlias" | "trackLayerKey" | "trackCreatedMs">,
+  opts: { showTrackId: boolean; showTrackRecvTime: boolean },
+): string {
+  const id = opts.showTrackId ? trackMapDisplayId(track) : "";
+  const time = opts.showTrackRecvTime ? trackMapLabelRecvTime(track) : "";
+  if (time && id) return `${time}\n${id}`;
+  return time || id;
 }
 
 /** 标牌副标题等处展示的 target_id（不用带图层前缀的 showID） */

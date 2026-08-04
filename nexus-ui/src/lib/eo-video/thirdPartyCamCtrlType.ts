@@ -4,6 +4,8 @@ import type { EoVideoStreamEntry } from "./types";
 export const ONTOLOGY_THIRD_PARTY_UDP_IMAGE = "ThirdPartyUdpCameraImage";
 /** 8090 列表 `ontology.specificType`：WebRTC（`sensorParameters.url`） */
 export const ONTOLOGY_THIRD_PARTY_VIDEO_WEBRTC = "ThirdPartyUdpCameraVideo";
+/** 8090 列表 `ontology.specificType`：8院 XJXT 光电协议 */
+export const ONTOLOGY_THIRD_PARTY_YUAN8 = "ThirdPartyYuan8Camera";
 
 /** 旧实体类型，兼容为 UDP 图传；若仍带 `camCtrlType=8` 则走 WebRTC */
 export const ONTOLOGY_THIRD_PARTY_LEGACY = "ThirdPartyCamera";
@@ -25,11 +27,16 @@ function normOntologySt(st: string): string {
   return st.trim().toUpperCase();
 }
 
+export function isYuan8OntologySpecificType(st: string): boolean {
+  return normOntologySt(st) === normOntologySt(ONTOLOGY_THIRD_PARTY_YUAN8);
+}
+
 export function isThirdPartyOntologySpecificType(st: string): boolean {
   const u = normOntologySt(st);
   return (
     u === normOntologySt(ONTOLOGY_THIRD_PARTY_UDP_IMAGE) ||
     u === normOntologySt(ONTOLOGY_THIRD_PARTY_VIDEO_WEBRTC) ||
+    u === normOntologySt(ONTOLOGY_THIRD_PARTY_YUAN8) ||
     u === normOntologySt(ONTOLOGY_THIRD_PARTY_LEGACY)
   );
 }
@@ -37,6 +44,10 @@ export function isThirdPartyOntologySpecificType(st: string): boolean {
 /** 是否第三方相机实体（仅看 ontology.specificType） */
 export function isThirdPartyCameraOntologyRow(raw: Record<string, unknown>): boolean {
   return isThirdPartyOntologySpecificType(readOntologySpecificType(raw));
+}
+
+export function isYuan8CameraOntologyRow(raw: Record<string, unknown>): boolean {
+  return isYuan8OntologySpecificType(readOntologySpecificType(raw));
 }
 
 function pickCamCtrlTypeFromRecord(r: Record<string, unknown>): number | undefined {
@@ -67,6 +78,8 @@ export function classifyThirdPartyPlaybackFromOntology(raw: Record<string, unkno
   if (!isThirdPartyOntologySpecificType(st)) return null;
   const u = normOntologySt(st);
   if (u === normOntologySt(ONTOLOGY_THIRD_PARTY_VIDEO_WEBRTC)) return "webrtc";
+  /** 8院：播放地址来自 sensorParameters.url（3007 / 配置写入） */
+  if (u === normOntologySt(ONTOLOGY_THIRD_PARTY_YUAN8)) return "webrtc";
   if (u === normOntologySt(ONTOLOGY_THIRD_PARTY_UDP_IMAGE)) return "udp";
   if (u === normOntologySt(ONTOLOGY_THIRD_PARTY_LEGACY)) {
     return parseCamCtrlTypeLegacy(raw) === 8 ? "webrtc" : "udp";
@@ -82,4 +95,10 @@ export function isThirdPartyUdpStreamEntry(entry: EoVideoStreamEntry | null | un
 /** 右键菜单里走 WebRTC 的第三方相机 */
 export function isThirdPartyWebrtcStreamEntry(entry: EoVideoStreamEntry | null | undefined): boolean {
   return entry?.registrySource === "thirdPartyCamera" && entry.playbackKind === "webrtc";
+}
+
+export function isYuan8StreamEntry(entry: EoVideoStreamEntry | null | undefined): boolean {
+  if (!entry) return false;
+  const st = String(entry.ontologySpecificType ?? "").trim();
+  return isYuan8OntologySpecificType(st);
 }

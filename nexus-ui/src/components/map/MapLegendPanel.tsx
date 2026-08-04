@@ -9,8 +9,8 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, List } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TRACK_LAYER_KEYS_ORDERED, type TrackLayerKey } from "@/lib/map-entity-model";
-import { TRACK_SUBTYPE_LABELS } from "@/lib/track-layer-visibility";
+import { type TrackLayerKey } from "@/lib/map-entity-model";
+import { getTrackLayerKeysOrdered, trackSubtypeLabel } from "@/lib/track-layer-visibility";
 import { FORCE_COLORS } from "@/lib/theme-colors";
 import { SUSPICIOUS_TRACK_MAP_COLOR } from "@/lib/suspicious-track-constants";
 import {
@@ -49,7 +49,7 @@ function buildTrackLegendItems(
   const defaults = defaultNeutralColorByLayer();
   const airDefaults = defaultAirFusionNeutralColors();
   const out: LegendSwatch[] = [];
-  for (const key of TRACK_LAYER_KEYS_ORDERED) {
+  for (const key of getTrackLayerKeysOrdered()) {
     if (key === "fuse_air") {
       out.push({
         key: "fuse_air_bird",
@@ -65,8 +65,11 @@ function buildTrackLegendItems(
     }
     out.push({
       key,
-      label: TRACK_SUBTYPE_LABELS[key],
-      color: normalizeCssHexColor(neutralColorByLayer[key] ?? defaults[key], defaults[key]),
+      label: trackSubtypeLabel(key),
+      color: normalizeCssHexColor(
+        neutralColorByLayer[key] ?? defaults[key] ?? "#94a3b8",
+        defaults[key] ?? "#94a3b8",
+      ),
     });
   }
   return out;

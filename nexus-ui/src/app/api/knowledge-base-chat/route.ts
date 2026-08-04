@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 /**
  * 代理知识库入口 → `POST {WatchSystemDbQa 上游}/api/v1/chat/stream`
- * 与智能助手 `/api/langgraph-chat` 入口分离；停止工作流仍走任务管理 terminate。
+ * 与智能助手 `/api/langgraph-chat` 入口分离；工作流 terminate 按发起入口选上游。
  * 请求体：
  * - 普通：`messages` / `thread_id` / `user_context`
  * - 中断恢复：`thread_id` / `interrupt_id` / `interrupt_feedback`（无 messages）
@@ -70,6 +70,7 @@ export async function POST(req: Request) {
       "Content-Type": streamCt.includes("application/json") ? "text/event-stream" : streamCt,
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 }

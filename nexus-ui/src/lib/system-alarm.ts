@@ -7,6 +7,9 @@ import type { AlertData } from "@/stores/alert-store";
 
 export const SYSTEM_ALARM_SOURCE = "SystemAlarm" as const;
 
+/** camServer 检测可疑目标：alarm_camera_detect_<entityId>，reserved3=track */
+export const CAMERA_DETECT_ALARM_ID_PREFIX = "alarm_camera_detect_";
+
 export type SystemAlarmKindCode =
   | "EQUIPMENT"
   | "DATA_COMM"
@@ -109,8 +112,23 @@ export function formatSystemIdLabel(systemId: string | undefined | null): string
   return SYSTEM_ID_LABEL[id] ?? id;
 }
 
+/** 相机检测可疑目标（camServer SystemAlarm，前端归入航迹类） */
+export function isCameraDetectTrackAlarm(alert: {
+  id?: string;
+  source?: string;
+  reserved3?: string;
+}): boolean {
+  const id = String(alert.id ?? "").trim().toLowerCase();
+  if (id.startsWith(CAMERA_DETECT_ALARM_ID_PREFIX)) return true;
+  return (
+    String(alert.reserved3 ?? "").trim().toLowerCase() === "track" &&
+    String(alert.source ?? "") === SYSTEM_ALARM_SOURCE
+  );
+}
+
 /** 告警归属的系统筛选键；未知 systemId 返回原字符串（仅「全部选中」时放行） */
 export function alertSystemFilterKey(alert: AlertData): string {
+  if (isCameraDetectTrackAlarm(alert)) return "track";
   if (isSystemAlarm(alert)) {
     const id = alert.systemId?.trim() ?? "";
     return id || "track";
@@ -136,12 +154,14 @@ export function isSystemAlarm(alert: Pick<AlertData, "source">): boolean {
   return alert.source === SYSTEM_ALARM_SOURCE;
 }
 
-export function isTrackAlarm(alert: Pick<AlertData, "source" | "trackId" | "type">): boolean {
+export function isTrackAlarm(alert: Pick<AlertData, "source" | "trackId" | "type" | "id">): boolean {
+  if (isCameraDetectTrackAlarm(alert)) return true;
   if (isSystemAlarm(alert)) return false;
   return Boolean(alert.trackId?.trim());
 }
 
 export function alertCategoryKey(alert: AlertData): AlertFilterKey | null {
+  if (isCameraDetectTrackAlarm(alert)) return "track";
   if (isSystemAlarm(alert)) {
     const k = alert.systemAlarmKind;
     if (
@@ -165,8 +185,11 @@ export function systemAlarmToAlertData(item: SystemAlarmApiItem): AlertData {
   // 列表时间用上报方最新消息时间；重复上报同 alarm_id 时会刷新
   const displayMs =
     item.timestampMs > 0 ? item.timestampMs : raised > 0 ? raised : Date.now();
+  const isDetect =
+    item.alarmId.trim().toLowerCase().startsWith(CAMERA_DETECT_ALARM_ID_PREFIX) ||
+    item.reserved3?.trim().toLowerCase() === "track";
   const kindCode = item.alarmKindCode || undefined;
-  const kindLabel = item.alarmKindLabel || "系统告警";
+  const kindLabel = isDetect ? "航迹" : item.alarmKindLabel || "系统告警";
   const entity = item.entityId?.trim() ?? "";
   const cameraName = item.reserved1?.trim() ?? "";
   const systemLabel = formatSystemIdLabel(item.systemId);
@@ -177,7 +200,8 @@ export function systemAlarmToAlertData(item: SystemAlarmApiItem): AlertData {
       : "";
   return {
     id: item.alarmId,
-    severity: levelToSeverity(item.level),
+    // 检测框可疑目标：与目标结构航迹威胁同属「航迹」类，一律严重
+    severity: isDetect ? "critical" : levelToSeverity(item.level),
     message: item.description || kindLabel,
     timestamp: formatTs(displayMs) || new Date(displayMs).toISOString(),
     type: kindLabel,
@@ -187,13 +211,36 @@ export function systemAlarmToAlertData(item: SystemAlarmApiItem): AlertData {
     lastUpdateTime: Date.now(),
     title: kindLabel,
     source: SYSTEM_ALARM_SOURCE,
-    alarmLevel: item.level,
+    alarmLevel: isDetect ? 2 : item.level,
     detail: [systemLabel ? `系统 ${systemLabel}` : "", entityPart].filter(Boolean).join(" · "),
     content: item.description,
-    systemAlarmKind: kindCode as AlertData["systemAlarmKind"],
+    // 检测告警不走装备状态筛选，避免与「航迹」分裂
+    systemAlarmKind: isDetect ? undefined : (kindCode as AlertData["systemAlarmKind"]),
     systemId: item.systemId || undefined,
     entityId: entity || undefined,
+    reserved3: item.reserved3?.trim() || undefined,
   };
+}
+
+/**
+ * 当前活跃的相机检测可疑目标实体 ID（小写）。
+ * 用于地图视场标红；无对应视场的相机仅有告警、不影响地图。
+ */
+export function collectCameraDetectAlarmEntityIds(
+  alerts: ReadonlyArray<Pick<AlertData, "id" | "source" | "entityId" | "reserved3">>,
+): Set<string> {
+  const out = new Set<string>();
+  for (const a of alerts) {
+    if (!isCameraDetectTrackAlarm(a)) continue;
+    const eid = String(a.entityId ?? "").trim().toLowerCase();
+    if (eid) out.add(eid);
+    const fromId = String(a.id ?? "").trim().toLowerCase();
+    if (fromId.startsWith(CAMERA_DETECT_ALARM_ID_PREFIX)) {
+      const rest = fromId.slice(CAMERA_DETECT_ALARM_ID_PREFIX.length).trim();
+      if (rest) out.add(rest);
+    }
+  }
+  return out;
 }
 
 /**

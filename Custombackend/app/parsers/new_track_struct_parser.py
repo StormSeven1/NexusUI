@@ -76,6 +76,72 @@ def _fuse_type_from_environment(env: int) -> int:
     return 1 if env == 2 else 0
 
 
+SUSPICIOUS_RULE_ID = "suspicious_target"
+
+
+def _alarm_rule_ids(alarm) -> List[str]:
+    rule_ids: List[str] = []
+    if hasattr(alarm, 'rule_ids'):
+        try:
+            rules = alarm.rule_ids()
+        except TypeError:
+            rules = getattr(alarm, 'rule_ids', None) or []
+            if callable(rules):
+                rules = rules()
+        for i in range(len(rules)):
+            rid = str(rules[i] or '').strip()
+            if rid:
+                rule_ids.append(rid)
+    return rule_ids
+
+
+def _alarm_resolution_details(alarm) -> str:
+    raw = ""
+    if hasattr(alarm, "resolution_details"):
+        try:
+            raw = alarm.resolution_details()
+        except TypeError:
+            raw = getattr(alarm, "resolution_details", "") or ""
+            if callable(raw):
+                raw = raw()
+    return str(raw or "").strip()
+
+
+def _is_suspicious_marker(
+    rule_ids: List[str],
+    content: str = "",
+    alarm_id: str = "",
+    resolution_details: str = "",
+) -> bool:
+    """可疑标记只认 AlarmItem 内字段（TM 原样转发），不认目标外层自定义字段。"""
+    details = (resolution_details or "").strip().lower()
+    if details == "is_suspicious" or "is_suspicious" in details:
+        return True
+    if any(r == SUSPICIOUS_RULE_ID for r in rule_ids):
+        return True
+    if content.strip() == "SuspiciousTarget":
+        return True
+    return alarm_id.startswith("suspicious_")
+
+
+def _is_suspicious_only(
+    rule_ids: List[str],
+    content: str = "",
+    alarm_id: str = "",
+    resolution_details: str = "",
+) -> bool:
+    """纯可疑标记（无其它规则）→ 不进告警中心。"""
+    if not _is_suspicious_marker(rule_ids, content, alarm_id, resolution_details):
+        return False
+    other = [r for r in rule_ids if r != SUSPICIOUS_RULE_ID]
+    if other:
+        return False
+    # 有真实告警 content 但仅叠加 is_suspicious 时，不算 only
+    if content.strip() and content.strip() != "SuspiciousTarget" and not alarm_id.startswith("suspicious_"):
+        return False
+    return True
+
+
 def _target_alarm_item_to_ws(
     alarm,
     target_id: str,
@@ -117,13 +183,9 @@ def _target_alarm_item_to_ws(
             except (TypeError, ValueError):
                 pass
 
-    rule_ids: List[str] = []
-    if hasattr(alarm, 'rule_ids'):
-        rules = alarm.rule_ids()
-        for i in range(len(rules)):
-            rid = str(rules[i] or '').strip()
-            if rid:
-                rule_ids.append(rid)
+    rule_ids = _alarm_rule_ids(alarm)
+    details = _alarm_resolution_details(alarm)
+    suspicious = _is_suspicious_marker(rule_ids, content, alarm_id, details)
 
     # ThreatLevel: 0=LOW / 1=MEDIUM / 2=HIGH → 前端 severity
     severity = "info"
@@ -147,6 +209,12 @@ def _target_alarm_item_to_ws(
         'fuse_type': fuse_type,
         'source': 'NewTrackStruct',
     }
+    if details:
+        item['resolutionDetails'] = details
+    if suspicious:
+        # is_suspicious 挂在 alarm 上（与 TM 转发的 AlarmItem 对齐），不依赖目标外层字段
+        item['is_suspicious'] = True
+        item['isSuspicious'] = True
     if area_name:
         item['areaName'] = area_name
     if timestamp:
@@ -169,20 +237,43 @@ def _extract_embedded_alarms(
     fuse_type: int,
     fallback_lat: float,
     fallback_lon: float,
-) -> List[Dict[str, Any]]:
+) -> tuple:
+    """返回 (真实告警列表, 是否可疑标记)。可疑-only 不进告警中心。"""
     if not hasattr(obj, 'alarms'):
-        return []
+        return [], False
     try:
         alarm_seq = obj.alarms()
     except (TypeError, AttributeError):
-        return []
+        return [], False
     out: List[Dict[str, Any]] = []
+    is_suspicious = False
     for i in range(len(alarm_seq)):
+        alarm = alarm_seq[i]
+        try:
+            alarm_id = str(alarm.alarm_id() or '').strip()
+            content = str(alarm.content() or '').strip()
+        except (TypeError, AttributeError):
+            alarm_id = str(getattr(alarm, 'alarm_id', '') or '').strip()
+            content = str(getattr(alarm, 'content', '') or '').strip()
+        rule_ids = _alarm_rule_ids(alarm)
+        details = _alarm_resolution_details(alarm)
+        if _is_suspicious_marker(rule_ids, content, alarm_id, details):
+            is_suspicious = True
+        if _is_suspicious_only(rule_ids, content, alarm_id, details):
+            continue
         parsed = _target_alarm_item_to_ws(
-            alarm_seq[i], target_id, fuse_type, fallback_lat, fallback_lon)
+            alarm, target_id, fuse_type, fallback_lat, fallback_lon)
         if parsed:
+            # 真实告警上若带可疑 rule，去掉以免污染告警中心展示
+            rules = parsed.get('alarmRuleId')
+            if isinstance(rules, list):
+                filtered = [r for r in rules if r != SUSPICIOUS_RULE_ID]
+                if filtered:
+                    parsed['alarmRuleId'] = filtered
+                else:
+                    parsed.pop('alarmRuleId', None)
             out.append(parsed)
-    return out
+    return out, is_suspicious
 
 
 def _read_reality_type(obj) -> int:
@@ -312,7 +403,7 @@ def target_object_to_track(obj) -> Dict[str, Any]:
                 result['mmsi'] = fs.get('trackId')
                 break
 
-    embedded_alarms = _extract_embedded_alarms(
+    embedded_alarms, is_suspicious = _extract_embedded_alarms(
         obj,
         target_id,
         fuse_type,
@@ -321,6 +412,9 @@ def target_object_to_track(obj) -> Dict[str, Any]:
     )
     if embedded_alarms:
         result['embedded_alarms'] = embedded_alarms
+    if is_suspicious:
+        result['is_suspicious'] = True
+        result['isSuspicious'] = True
 
     return result
 

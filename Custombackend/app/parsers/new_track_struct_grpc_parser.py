@@ -13,8 +13,11 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from parsers.new_track_struct_parser import (
+    SUSPICIOUS_RULE_ID,
     _TRACK_TYPE_TO_CATEGORY_NAME,
     _fuse_type_from_environment,
+    _is_suspicious_marker,
+    _is_suspicious_only,
 )
 
 _STATE_NAMES = ("STABLE", "COASTING", "LOST", "MERGED", "SPLIT")
@@ -116,6 +119,8 @@ def _target_alarm_item_to_ws(
         s = str(rid or "").strip()
         if s:
             rule_ids.append(s)
+    details = str(getattr(alarm, "resolution_details", "") or "").strip()
+    suspicious = _is_suspicious_marker(rule_ids, content, alarm_id, details)
 
     severity = "info"
     if level >= 2:
@@ -137,6 +142,12 @@ def _target_alarm_item_to_ws(
         "fuse_type": fuse_type,
         "source": "NewTrackStruct",
     }
+    if details:
+        item["resolutionDetails"] = details
+    if suspicious:
+        # is_suspicious 挂在 alarm 上（与 TM 转发的 AlarmItem 对齐）
+        item["is_suspicious"] = True
+        item["isSuspicious"] = True
     if area_name:
         item["areaName"] = area_name
     if timestamp:
@@ -159,15 +170,36 @@ def _extract_embedded_alarms(
     fuse_type: int,
     fallback_lat: float,
     fallback_lon: float,
-) -> List[Dict[str, Any]]:
+) -> tuple:
+    """返回 (真实告警列表, 是否可疑标记)。可疑-only 不进告警中心。"""
     out: List[Dict[str, Any]] = []
+    is_suspicious = False
     for alarm in getattr(obj, "alarms", []) or []:
+        alarm_id = str(getattr(alarm, "alarm_id", "") or "").strip()
+        content = str(getattr(alarm, "content", "") or "").strip()
+        details = str(getattr(alarm, "resolution_details", "") or "").strip()
+        rule_ids: List[str] = []
+        for rid in getattr(alarm, "rule_ids", []) or []:
+            s = str(rid or "").strip()
+            if s:
+                rule_ids.append(s)
+        if _is_suspicious_marker(rule_ids, content, alarm_id, details):
+            is_suspicious = True
+        if _is_suspicious_only(rule_ids, content, alarm_id, details):
+            continue
         parsed = _target_alarm_item_to_ws(
             alarm, target_id, fuse_type, fallback_lat, fallback_lon
         )
         if parsed:
+            rules = parsed.get("alarmRuleId")
+            if isinstance(rules, list):
+                filtered = [r for r in rules if r != SUSPICIOUS_RULE_ID]
+                if filtered:
+                    parsed["alarmRuleId"] = filtered
+                else:
+                    parsed.pop("alarmRuleId", None)
             out.append(parsed)
-    return out
+    return out, is_suspicious
 
 
 def _read_target_state(obj) -> Optional[str]:
@@ -298,7 +330,7 @@ def target_object_to_track_pb(obj) -> Dict[str, Any]:
                 result["mmsi"] = fs.get("trackId")
                 break
 
-    embedded_alarms = _extract_embedded_alarms(
+    embedded_alarms, is_suspicious = _extract_embedded_alarms(
         obj,
         target_id,
         fuse_type,
@@ -307,6 +339,9 @@ def target_object_to_track_pb(obj) -> Dict[str, Any]:
     )
     if embedded_alarms:
         result["embedded_alarms"] = embedded_alarms
+    if is_suspicious:
+        result["is_suspicious"] = True
+        result["isSuspicious"] = True
 
     return result
 

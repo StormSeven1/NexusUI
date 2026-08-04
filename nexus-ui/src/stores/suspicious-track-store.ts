@@ -43,8 +43,9 @@ export const useSuspiciousTrackStore = create<SuspiciousTrackState>((set, get) =
 }));
 
 export function isTrackSuspicious(
-  track: Pick<Track, "uniqueID" | "showID" | "trackId">,
+  track: Pick<Track, "uniqueID" | "showID" | "trackId" | "isSuspicious">,
 ): boolean {
+  if (track.isSuspicious === true) return true;
   const set = useSuspiciousTrackStore.getState().suspiciousUniqueIds;
   const uid = normUniqueId(track.uniqueID);
   if (uid && set[uid]) return true;

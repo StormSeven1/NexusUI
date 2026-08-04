@@ -509,7 +509,16 @@ export function useUavMqttDockState(opts: UseUavMqttDockStateOpts): {
         });
       });
       client.on("reconnect", () => {
-        if (!cancelled) setMqttConnected(true);
+        // 勿在此置 connected=true：reconnect 只表示开始重试，连上前推流仍断。
+        // 误报 true 会导致「断线→自动恢复画面」永远看不到 false→true。
+        if (!cancelled) {
+          setMqttConnected(false);
+          setMqttHud((h) => ({
+            ...h,
+            connected: false,
+            lastError: h.lastError ?? "reconnecting",
+          }));
+        }
       });
       client.on("close", () => {
         mqttClientRef.current = null;

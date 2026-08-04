@@ -1,26 +1,32 @@
 /** 航迹链路评估 API（Custombackend 本地采集，不经 system-evaluation-server） */
 
 export interface LinkSegmentStats {
-  avg_ms: number;
+  avg_ms: number | null;
   /** 中位数：对海融合「创建→接收」含观测时戳滞后时，比均值更稳健 */
-  median_ms?: number;
-  min_ms: number;
-  max_ms: number;
+  median_ms?: number | null;
+  min_ms: number | null;
+  max_ms: number | null;
   count: number;
 }
 
 export interface TrackLinkTypeResult {
   track_layer_key: string;
   label: string;
+  /** false：无有效更新或时间戳不可信，勿展示时延数值 */
+  has_data?: boolean;
+  /** 无数据时的说明（如「暂无数据：…」） */
+  message?: string | null;
   sampled_track_count: number;
   /** 采集期见到的候选航迹数（含只出现 1 帧的） */
   candidate_track_count?: number;
   /** 因只出现 1 帧被丢弃的数量 */
   single_frame_dropped?: number;
+  /** 因时延超可信上限被丢弃的差分次数 */
+  implausible_samples_dropped?: number;
   total_updates: number;
   /** 第 2 帧起计入的有效更新次数 */
   effective_updates?: number;
-  update_frequency_hz: number;
+  update_frequency_hz: number | null;
   segments: {
     create_to_recv: LinkSegmentStats;
     recv_to_send: LinkSegmentStats;
@@ -40,6 +46,10 @@ export interface TrackLinkEvalData {
     { seen?: number; updated?: number; sampled: number; updates: number }
   >;
   results?: TrackLinkTypeResult[];
+  /** 任一类型有可信时延样本时为 true */
+  has_data?: boolean;
+  /** 整体说明（如采集期内暂无数据） */
+  message?: string | null;
   error?: string | null;
   started_at?: number;
   ended_at?: number;

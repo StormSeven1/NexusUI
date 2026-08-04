@@ -75,6 +75,7 @@ export function isTrackAlarmLinked(track: Track): boolean {
 
 /**
  * 地图 / 列表 / 标牌用敌我：仅告警关联（渲染层）显示为敌方；其余显示为中立（不采用报文缺省 hostile）。
+ * 纯可疑标记会被告警入口过滤，不进入渲染层；地图黄标见 resolveTrackMapHighlightFill。
  */
 export function getEffectiveTrackDisposition(track: Track): ForceDisposition {
   return isTrackAlarmLinked(track) ? "hostile" : "neutral";

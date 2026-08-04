@@ -52,6 +52,8 @@ function statusLabel(taskStatus: number): string {
       return "状态 6";
     case 7:
       return "状态 7";
+    case 8:
+      return "来访记录";
     default:
       return `状态 ${taskStatus}`;
   }
@@ -154,6 +156,8 @@ export function taskStatusResponseLabel(taskStatus: number): string {
       return "EXT_6";
     case 7:
       return "EXT_7";
+    case 8:
+      return "KB_VISIT";
     default:
       return "UNKNOWN";
   }

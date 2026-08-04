@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import queue as _queue
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -11,6 +13,11 @@ from loguru import logger
 
 DEFAULT_TTL_SEC = 2 * 60 * 60
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "radar_train_labels"
+
+# 落盘队列上限：满则丢最旧（真值可从内存表/后续帧恢复，绝不阻塞采集热路径）
+_PERSIST_QUEUE_MAXSIZE = 20000
+# 后台维护线程定时 prune 间隔（秒）
+_PRUNE_INTERVAL_SEC = 60.0
 
 
 class RadarTrainLabelStore:
@@ -21,22 +28,82 @@ class RadarTrainLabelStore:
         self._persist = persist
         if self._persist:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
+        # 异步落盘 + 定时 prune 的后台维护线程（惰性启动，避免仅 import 就起线程）
+        self._write_q: "_queue.Queue[Dict[str, Any]]" = _queue.Queue(maxsize=_PERSIST_QUEUE_MAXSIZE)
+        self._maint_lock = threading.Lock()
+        self._maintenance_started = False
 
     def _now_iso(self) -> str:
         return datetime.now().isoformat()
 
-    def _persist_row(self, row: Dict[str, Any]) -> None:
+    def _ensure_maintenance_started(self) -> None:
+        """首次 upsert 时惰性启动维护线程：批量落盘 + 定时 prune（守护线程，随进程退出）。"""
+        if self._maintenance_started:
+            return
+        with self._maint_lock:
+            if self._maintenance_started:
+                return
+            t = threading.Thread(
+                target=self._maintenance_loop,
+                name="radar-train-label-maint",
+                daemon=True,
+            )
+            t.start()
+            self._maintenance_started = True
+
+    def _maintenance_loop(self) -> None:
+        last_prune = time.monotonic()
+        while True:
+            rows: List[Dict[str, Any]] = []
+            try:
+                # 阻塞等第一条，最多 1s 醒一次以便定时 prune
+                rows.append(self._write_q.get(timeout=1.0))
+                while len(rows) < 1000:
+                    rows.append(self._write_q.get_nowait())
+            except _queue.Empty:
+                pass
+            if rows:
+                self._flush_rows(rows)
+            now = time.monotonic()
+            if now - last_prune >= _PRUNE_INTERVAL_SEC:
+                try:
+                    self.prune_expired()
+                except Exception as e:  # noqa: BLE001 - 后台线程不因单次异常退出
+                    logger.warning("雷达训练真值定时 prune 失败: {}", e)
+                last_prune = now
+
+    def _flush_rows(self, rows: List[Dict[str, Any]]) -> None:
+        """批量把多行合并成一次 open→write→close（大幅降低 syscall；且发生在后台线程，不占热路径）。"""
         if not self._persist:
             return
-        day = datetime.now().strftime("%Y-%m-%d")
-        path = DATA_DIR / f"uav_gt_{day}.jsonl"
+        by_day: Dict[str, List[str]] = {}
+        for row in rows:
+            day = datetime.now().strftime("%Y-%m-%d")
+            by_day.setdefault(day, []).append(json.dumps(row, ensure_ascii=False))
+        for day, lines in by_day.items():
+            path = DATA_DIR / f"uav_gt_{day}.jsonl"
+            try:
+                with path.open("a", encoding="utf-8") as f:
+                    f.write("\n".join(lines) + "\n")
+            except OSError as e:
+                logger.warning("雷达训练真值落盘失败: {}", e)
+
+    def _persist_row(self, row: Dict[str, Any]) -> None:
+        """入队交后台线程写；不再在 gRPC 回调线程里同步 open/write/close。"""
+        if not self._persist:
+            return
         try:
-            with path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        except OSError as e:
-            logger.warning("雷达训练真值落盘失败: {}", e)
+            self._write_q.put_nowait(row)
+        except _queue.Full:
+            # 落盘落后于采集：丢最旧一条腾位，绝不阻塞热路径
+            try:
+                self._write_q.get_nowait()
+                self._write_q.put_nowait(row)
+            except (_queue.Empty, _queue.Full):
+                pass
 
     def upsert(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_maintenance_started()
         pihao = int(entry["pihao"])
         now = self._now_iso()
         with self._lock:

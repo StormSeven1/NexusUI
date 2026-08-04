@@ -520,6 +520,54 @@ export function startEoThirdPartyCameraRelay(): void {
   const cameraInFlight = new Set<string>();
   const cameraPending = new Map<string, Buffer>();
 
+  /**
+   * 慢客户端背压：单连接发送队列超过阈值则跳过本帧（只影响该客户端）。
+   * 否则 TCP/WS 缓冲会无限堆旧帧 → 两台同开 21911 时，慢机延迟越来越大。
+   * 默认 512KiB（约 4~5 帧 320×240 I420）；可用 EO_THIRD_PARTY_WS_MAX_BUFFERED 覆盖。
+   */
+  const WS_MAX_BUFFERED =
+    Number(process.env.EO_THIRD_PARTY_WS_MAX_BUFFERED ?? String(512 * 1024)) || 512 * 1024;
+  let wsDropLogMs = 0;
+  let wsDropCount = 0;
+
+  function sendBinaryToClients(encoded: Buffer): void {
+    for (const c of sockets) {
+      if (c.readyState !== WebSocket.OPEN) continue;
+      if (c.bufferedAmount > WS_MAX_BUFFERED) {
+        wsDropCount++;
+        const now = Date.now();
+        if (now - wsDropLogMs > 5000) {
+          wsDropLogMs = now;
+          console.warn(
+            `[eo-third-party-relay] WS backpressure: dropped ${wsDropCount} frame(s) ` +
+              `(bufferedAmount>${WS_MAX_BUFFERED}, clients=${sockets.size})`,
+          );
+          wsDropCount = 0;
+        }
+        continue;
+      }
+      try {
+        c.send(encoded);
+      } catch {
+        /* 连接半关闭等，等 onclose 清理 */
+      }
+    }
+  }
+
+  function sendTextToClients(text: string): void {
+    // 状态包很小；仍对严重积压客户端跳过，避免拖大其队列
+    const statusCap = Math.max(WS_MAX_BUFFERED * 2, 1024 * 1024);
+    for (const c of sockets) {
+      if (c.readyState !== WebSocket.OPEN) continue;
+      if (c.bufferedAmount > statusCap) continue;
+      try {
+        c.send(text);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   const pruneStale = () => {
     const now = Date.now();
     for (const [k, e] of reasmMap) {
@@ -530,7 +578,9 @@ export function startEoThirdPartyCameraRelay(): void {
 
   // 创建 worker 池（JPEG decode + YUV 转换在独立线程，不阻塞 Next.js 事件循环）
   const pool = createWorkerPool(WORKER_POOL_SIZE);
-  console.log(`[eo-third-party-relay] worker pool size=${WORKER_POOL_SIZE}`);
+  console.log(
+    `[eo-third-party-relay] worker pool size=${WORKER_POOL_SIZE} wsMaxBuffered=${WS_MAX_BUFFERED}`,
+  );
 
   /** 将完整帧 payload 分发到空闲 worker；本路忙时覆盖 pending，worker 空闲后补发 */
   function dispatchToWorker(entityId: string, fullPayload: Buffer): void {
@@ -568,9 +618,7 @@ export function startEoThirdPartyCameraRelay(): void {
       try {
         if (msg.buf) {
           const encoded = Buffer.isBuffer(msg.buf) ? msg.buf : Buffer.from(msg.buf);
-          for (const c of sockets) {
-            if (c.readyState === WebSocket.OPEN) c.send(encoded);
-          }
+          sendBinaryToClients(encoded);
         }
       } finally {
         finish();
@@ -655,9 +703,7 @@ export function startEoThirdPartyCameraRelay(): void {
         entityId: entityId || fromJson || src,
         sequence,
       });
-      for (const c of sockets) {
-        if (c.readyState === WebSocket.OPEN) c.send(envelope);
-      }
+      sendTextToClients(envelope);
       return;
     }
 

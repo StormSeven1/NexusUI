@@ -31,6 +31,11 @@ export interface EoCameraWsPayload {
   boatRect?: EoRectLayerPayload | null;
   planeRect?: EoRectLayerPayload | null;
   singleRect?: EoRectLayerPayload | null;
+  /**
+   * camServer 烧录叠层隐藏勾选态（权威在服务端）。
+   * true = 不绘制框与航迹 ID；经检测 WS 广播供多前端同步。
+   */
+  burnInHideOverlay?: boolean | null;
 }
 
 export interface BufferedDetectionEntry {

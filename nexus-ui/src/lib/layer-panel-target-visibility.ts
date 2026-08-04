@@ -1,14 +1,14 @@
 import {
-  TRACK_LAYER_KEYS_ORDERED,
   type TrackLayerKey,
 } from "@/lib/map-entity-model";
 import {
   aggregatePanelVisibility,
   type PanelTreeVisibilityState,
 } from "@/lib/panel-tree-visibility";
-import type {
-  AirFusionSubtypeVisibility,
-  TrackSubtypeVisibility,
+import {
+  getTrackLayerKeysOrdered,
+  type AirFusionSubtypeVisibility,
+  type TrackSubtypeVisibility,
 } from "@/lib/track-layer-visibility";
 
 /** 目标图层各叶子项有效显隐（总开关关时视为全关） */
@@ -18,7 +18,7 @@ export function collectTargetLayerLeafFlags(
   airSubtypeVisible: AirFusionSubtypeVisibility,
 ): boolean[] {
   const flags: boolean[] = [];
-  for (const k of TRACK_LAYER_KEYS_ORDERED) {
+  for (const k of getTrackLayerKeysOrdered()) {
     const subOn = tracksMasterOn && subtypeVisible[k] !== false;
     flags.push(subOn);
     if (k === "fuse_air") {

@@ -34,6 +34,7 @@ import { canonicalEntityId, parseCameraEntityIdFromStreamId } from "@/lib/camera
 import {
   fetchCameraEntityPlayback,
   fetchEntityPlaybackAny,
+  prefetchEntityPlaybackUrls,
 } from "@/lib/eo-video/resolveCameraEntityPlayback";
 import { buildUavZlmSignalingUrl, buildUavZlmStreamKey, getUavZlmWebrtcBaseUrl } from "@/lib/eo-video/buildUavZlmWebrtcUrl";
 import { fetchUavPlatformSignalingUrl } from "@/lib/eo-video/resolveUavLiveByPlatform";
@@ -43,6 +44,14 @@ import {
   resolveEoBurnInRectId,
 } from "@/lib/eo-video/eoBurnInSelectClient";
 import { clearAllBurnInPlacards } from "@/lib/eo-video/eoBurnInPlacardClient";
+import {
+  fetchEoBurnInOverlay,
+  postEoBurnInOverlay,
+} from "@/lib/eo-video/eoBurnInOverlayClient";
+import {
+  selectBurnInHideOverlay,
+  useEoBurnInOverlayStore,
+} from "@/stores/eo-burn-in-overlay-store";
 import type {
   EoDetectionBox,
   EoVideoIceServer,
@@ -59,7 +68,6 @@ import { pokeUavLiveStreamsForView } from "@/lib/eo-video/pokeDroneLiveStream";
 import { forceReconnectThirdPartyCameraWsHub } from "@/lib/eo-video/thirdPartyCameraWsHub";
 import { WEBRTC_UAV_STALL_WATCH_INTERVAL_MS } from "@/hooks/useWebRtcPlayer";
 import {
-  captureOrClonePlaybackStream,
   reattachVideoFromPeer,
 } from "@/lib/eo-video/eoSharedPlaybackStream";
 import { postUavGimbalReset, uavMainPayloadIndexForDrone } from "@/lib/eo-video/postUavGimbalReset";
@@ -86,6 +94,7 @@ import { EoVideoFloatingTools } from "./EoVideoFloatingTools";
 import { useEoThirdPartyCameraWebSocket } from "@/hooks/useEoThirdPartyCameraWebSocket";
 import { EoHighSpeedYuvStack, type EoHighSpeedBox, type EoHighSpeedYuvStackHandle } from "./EoHighSpeedYuvStack";
 import { EoThirdPartyDirectMovePad } from "./EoThirdPartyDirectMovePad";
+import { EoYuan8PtzPanel } from "./EoYuan8PtzPanel";
 import { EoThirdPartySubCamPipStack } from "./EoThirdPartySubCamPip";
 import { postThirdPartyCamTask, type ThirdPartyCamTaskKind } from "@/lib/eo-video/thirdPartyCamTaskClient";
 import { evaluateThirdPartyTaskHttpResponse } from "@/lib/thirdPartyTaskServiceResponse";
@@ -113,7 +122,7 @@ import {
 } from "@/lib/entities-track-task-cache";
 import { useEoFocusedUavAirportSnStore } from "@/stores/eo-focused-uav-airport-sn-store";
 import { useEoThirdPartyUdpDevStatusStore } from "@/stores/eo-third-party-udp-dev-status-store";
-import { isThirdPartyUdpStreamEntry, isThirdPartyWebrtcStreamEntry } from "@/lib/eo-video/thirdPartyCamCtrlType";
+import { isThirdPartyUdpStreamEntry, isThirdPartyWebrtcStreamEntry, isYuan8StreamEntry } from "@/lib/eo-video/thirdPartyCamCtrlType";
 import { getThirdPartyCameraMulticastUdp } from "@/lib/eo-video/thirdPartyCameraMulticast";
 import {
   isThirdPartyCameraEntityId,
@@ -271,15 +280,21 @@ const RECORD_PATH_KEY = "nexus.eo.recordSavePath";
 const AIRPORT_FPV_PAYLOAD = "165-0-7";
 const DRONE_MAIN_PAYLOAD = "81-0-0";
 const DRONE_MAIN_PAYLOAD_SPECIAL = "80-0-0";
-/** 私有云 start 推流后，稍候再重连 ZLM WebRTC（毫秒）；仅黑屏重试时使用 */
-const UAV_WEBRTC_KICK_AFTER_START_MS = 900;
-/** 仍有黑屏时周期性重试 start；首轮只 poke 不 kick，避免刚出画就被拆掉 */
-const UAV_LIVE_STREAM_RETRY_MS = 5000;
+/** 私有云 start 推流后，稍候再重连 ZLM WebRTC（毫秒）；仅确认仍黑时才 kick */
+const UAV_WEBRTC_KICK_AFTER_START_MS = 600;
+/** 仍黑时周期性重试 start+kick */
+const UAV_LIVE_STREAM_RETRY_MS = 4000;
 const UAV_LIVE_STREAM_MAX_RETRIES = 8;
-/** 开流后给 WebRTC / WebCodecs 的出画宽限，避免误判黑屏连环 kick */
-const UAV_LIVE_STREAM_PICTURE_GRACE_MS = 3500;
+/** 首次出画宽限：过短易误踢，过长则空流黑屏拖太久 */
+const UAV_LIVE_STREAM_PICTURE_GRACE_MS = 1800;
+/** 切流后最多等 MQTT 舱状态多久再选定机场/机体信令（避免先连错路再闪切） */
+const UAV_MQTT_DOCK_WAIT_MS = 3000;
+/** MQTT 断线至少持续该时长再重连，才触发自动拉流（过滤瞬时抖动） */
+const UAV_MQTT_DOWN_RECOVER_MIN_MS = 3000;
+/** kick / 硬重拉后主窗看门狗宽限 */
+const UAV_PLAYBACK_KICK_GRACE_MS = 12_000;
 
-/** 舱内→机场 FPV；舱外→机体主摄；MQTT 未知时优先机体，避免先连机场再切舱外闪黑 */
+/** 舱内→机场 FPV；舱外→机体主摄；MQTT 未知时优先机体 */
 function pickUavPlaySignalingUrl(
   urls: { dock: string; air: string },
   mqttDroneInDock: boolean | null,
@@ -386,7 +401,6 @@ export function EoVideoPanel({
   }, [uavVideoOnly]);
   const [zoomWindowOpen, setZoomWindowOpen] = useState(false);
   /** 放大窗复用小窗画面（优先 captureStream），避免第二路 WebRTC 抢轨 */
-  const [zoomSharedStream, setZoomSharedStream] = useState<MediaStream | null>(null);
   /** 小窗黑屏时强制重建 WebRTC（相机路径） */
   const [dockPlaybackKick, setDockPlaybackKick] = useState(0);
   const [reconnectStreamBusy, setReconnectStreamBusy] = useState(false);
@@ -396,25 +410,9 @@ export function EoVideoPanel({
 
   useEffect(() => {
     if (dockPlaybackKick <= 0) return;
-    playbackKickGraceUntilRef.current = Date.now() + 12_000;
+    playbackKickGraceUntilRef.current = Date.now() + UAV_PLAYBACK_KICK_GRACE_MS;
   }, [dockPlaybackKick]);
 
-  useEffect(() => {
-    if (!zoomWindowOpen) {
-      setZoomSharedStream(null);
-      return;
-    }
-    setZoomSharedStream(captureOrClonePlaybackStream(videoRef.current));
-    const id = window.setInterval(() => {
-      const v = videoRef.current;
-      if (!v) return;
-      if (v.videoWidth > 0 && v.videoHeight > 0) return;
-      reattachVideoFromPeer(v, peerConnectionRef.current);
-      const refreshed = captureOrClonePlaybackStream(v);
-      if (refreshed) setZoomSharedStream(refreshed);
-    }, 2500);
-    return () => window.clearInterval(id);
-  }, [zoomWindowOpen, activeStreamId]);
 
   /** 全局调试 UI 关闭时：放大 + 相机在右侧点「调试」后于底部展开任务跟踪面板 */
   const [cameraExpandedDebugOpen, setCameraExpandedDebugOpen] = useState(false);
@@ -475,6 +473,9 @@ export function EoVideoPanel({
   const [uavPlaySignalingUrl, setUavPlaySignalingUrl] = useState<string | null>(null);
   const [uavWebRtcKick, setUavWebRtcKick] = useState(0);
   const uavWebRtcKickTimerRef = useRef<number | null>(null);
+  /** 主窗看门狗 / MQTT 恢复等早于 callback 定义处引用 */
+  const handleUavStallRecoverRef = useRef<() => void>(() => {});
+  const appendClientLogRef = useRef<(line: string) => void>(() => {});
   const [uavPlayLoading, setUavPlayLoading] = useState(false);
   const [uavPlayErr, setUavPlayErr] = useState<string | null>(null);
   const [uavResolveDebug, setUavResolveDebug] = useState<string>("");
@@ -483,6 +484,11 @@ export function EoVideoPanel({
   const uavUrlsRef = useRef<{ dock: string; air: string } | null>(null);
   const mqttDroneInDockRef = useRef<boolean | null>(null);
   const [uavUrlsEpoch, setUavUrlsEpoch] = useState(0);
+  /** 本路无人机是否已完成「先 poke 再提交信令」；用于避免 MQTT 晚到时二次换源闪黑 */
+  const uavPlayUrlCommittedRef = useRef(false);
+  const uavPlayUrlDockRef = useRef<boolean | null>(null);
+  /** 供提交/拉流 effect 读最新 SN（避免把 SN 放进 deps 导致等待定时器被反复重置） */
+  const uavLiveSnRef = useRef({ airportSn: "", droneSn: "" });
   /** 实体解析得到的机场/机体 SN，用于 MQTT topic（与取流 ZLM SN 一致，避免注册表 SN 错误导致收不到舱状态） */
   const [uavMqttProductIds, setUavMqttProductIds] = useState<{ airport: string; device: string } | null>(null);
   /** 无人机控制授权状态 */
@@ -551,6 +557,12 @@ export function EoVideoPanel({
 
   /** 首屏 applyActive 完成前禁止把 dock 默认 entity 写回 localStorage（会冲掉记忆） */
   const mainStreamPersistReadyRef = useRef(false);
+  /**
+   * 用户（或智能窗）主动切流后置 true。
+   * 放大窗启动时可能短暂回落到 dock 默认 entity（常为 camera_004），
+   * 此时不得写 SyncStore；但用户主动选 camera_004 必须同步回小窗。
+   */
+  const userPickedStreamRef = useRef(false);
 
   const syncedMainFromPeer = useEoVideoStreamSelectionSyncStore((s) => s.mainBySyncKey[streamSyncKey] ?? "");
   const syncedPipFromPeer = useEoVideoStreamSelectionSyncStore((s) => s.pipBySyncKey[streamSyncKey] ?? "");
@@ -628,6 +640,25 @@ export function EoVideoPanel({
       if (u) URL.revokeObjectURL(u);
     };
   }, []);
+
+  /**
+   * cfg 更新后预加载所有相机流的信令 URL（写入内存缓存）。
+   * 用户切流时直接命中缓存，无需等待 HTTP，近似瞬间出画。
+   */
+  useEffect(() => {
+    if (!cfg) return;
+    const cameraIds = cfg.streams
+      .filter(
+        (s) =>
+          (s.registrySource === "camera" || (!s.registrySource && !s.uav)) &&
+          (!s.signalingUrl || s.signalingUrl === "about:blank"),
+      )
+      .map((s) => s.id)
+      .filter(Boolean);
+    if (cameraIds.length > 0) {
+      prefetchEntityPlaybackUrls(cameraIds);
+    }
+  }, [cfg]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1056,10 +1087,11 @@ export function EoVideoPanel({
     const id = activeStreamId.trim();
     if (!id) return;
     /**
-     * 仅拦截放大窗启动时错误回落到 dock 默认 entity（如仍是 camera_004），
-     * 避免冲掉小窗当前流；用户在放大窗里主动切流仍应同步回去。
+     * 放大窗启动时可能短暂回落到 dock 默认 entity（常为 camera_004），
+     * 若此时写 SyncStore 会冲掉小窗当前流（如无人机）。
+     * 仅拦截「非用户主动切流」的 entity 回落；用户主动选 camera_004 必须同步。
      */
-    if (expandedMode) {
+    if (expandedMode && !userPickedStreamRef.current) {
       const pin = (initialStreamId ?? "").trim();
       const pinCanon = parseCameraEntityIdFromStreamId(pin) || pin;
       if (pinCanon && entity && id === entity && id !== pinCanon && id !== pin) return;
@@ -1117,6 +1149,7 @@ export function EoVideoPanel({
     () => isThirdPartyWebrtcStreamEntry(activeStream),
     [activeStream],
   );
+  const isYuan8Stream = useMemo(() => isYuan8StreamEntry(activeStream), [activeStream]);
 
   const thirdPartyStackRef = useRef<EoHighSpeedYuvStackHandle | null>(null);
 
@@ -1309,8 +1342,8 @@ export function EoVideoPanel({
     /** 勿用 activeStream 的 streams[0] 回退判断 uav：失配时会错把相机检测关掉或反过来 */
     const cur = findStreamById(cfg?.streams, activeStreamId);
     if (isThirdPartyUdpStreamEntry(cur)) return undefined;
-    /** 第三方 WebRTC（如 camera-ms-001）：2088 检测 WS 按流 entityId 订阅 */
-    if (isThirdPartyWebrtcStreamEntry(cur)) {
+    /** 第三方 WebRTC / 8院：2088 检测 WS 与任务按流 entityId */
+    if (isThirdPartyWebrtcStreamEntry(cur) || isYuan8StreamEntry(cur)) {
       const id = cur!.id.trim();
       return id ? canonicalEntityId(id) : undefined;
     }
@@ -1409,8 +1442,8 @@ export function EoVideoPanel({
   );
 
   useEffect(() => {
-    if (!ptzSupported && !isThirdPartyStream) setPtzPanelOpen(false);
-  }, [ptzSupported, isThirdPartyStream]);
+    if (!ptzSupported && !isThirdPartyStream && !isYuan8Stream) setPtzPanelOpen(false);
+  }, [ptzSupported, isThirdPartyStream, isYuan8Stream]);
 
   const mqttWsUrlFromEnv =
     typeof process !== "undefined" && process.env.NEXT_PUBLIC_MQTT_WS_URL
@@ -1469,6 +1502,10 @@ export function EoVideoPanel({
     (uavMqttProductIds?.airport ?? "").trim() || (activeStream?.uav?.airportSN ?? "").trim() || null;
   const mqttDeviceSn =
     (uavMqttProductIds?.device ?? "").trim() || (activeStream?.uav?.deviceSN ?? "").trim() || null;
+  uavLiveSnRef.current = {
+    airportSn: (mqttAirportSn ?? "").trim(),
+    droneSn: (mqttDeviceSn ?? "").trim(),
+  };
 
   useEffect(() => {
     useUavQuickContextStore.getState().setLastKnown(mqttAirportSn, mqttDeviceSn);
@@ -1591,6 +1628,8 @@ export function EoVideoPanel({
     const uav = activeStream?.uav;
     if (!uav) {
       uavUrlsRef.current = null;
+      uavPlayUrlCommittedRef.current = false;
+      uavPlayUrlDockRef.current = null;
       setUavMqttProductIds(null);
       setUavPlaySignalingUrl(null);
       setUavPlayLoading(false);
@@ -1605,6 +1644,9 @@ export function EoVideoPanel({
       return;
     }
     let cancelled = false;
+    uavPlayUrlCommittedRef.current = false;
+    uavPlayUrlDockRef.current = null;
+    setUavPlaySignalingUrl(null);
     void (async () => {
       setUavPlayLoading(true);
       setUavPlayErr(null);
@@ -1741,18 +1783,18 @@ export function EoVideoPanel({
             device: (droneSn ?? "").trim(),
           });
         }
+        // 只缓存双路 URL；真正提交信令由下方「等舱状态 → poke → 设 URL」完成，避免先连错路再闪切
         uavUrlsRef.current = urls;
         setUavUrlsEpoch((n) => n + 1);
-        setUavPlaySignalingUrl(pickUavPlaySignalingUrl(urls, mqttDroneInDockRef.current));
       } catch (e) {
         if (!cancelled) {
           setUavPlayErr(e instanceof Error ? e.message : String(e));
           setUavPlaySignalingUrl(null);
           setUavResolveDebug((prev) => prev || "uav resolve failed before url ready");
+          setUavPlayLoading(false);
         }
-      } finally {
-        if (!cancelled) setUavPlayLoading(false);
       }
+      // 成功时保持 loading，直到 poke+提交信令完成
     })();
     return () => {
       cancelled = true;
@@ -1771,11 +1813,133 @@ export function EoVideoPanel({
     mqttDroneInDockRef.current = mqttDroneInDock;
   }, [mqttDroneInDock]);
 
+  /**
+   * 提交无人机播放信令：
+   * 1) 等 MQTT 舱状态（短超时）再选机场/机体，避免「先机体后机场」中间闪一次；
+   * 2) 先 poke 唤醒推流，再设 URL 建连一次，避免连空流后再踢；
+   * 3) 之后仅在舱内↔舱外真实切换时换源。
+   */
   useEffect(() => {
+    if (reuseSharedStream) return;
+    if (!activeStream?.uav) return;
     const urls = uavUrlsRef.current;
-    if (!activeStream?.uav || !urls) return;
-    setUavPlaySignalingUrl(pickUavPlaySignalingUrl(urls, mqttDroneInDock));
-  }, [mqttDroneInDock, activeStream?.uav, activeStreamId, uavUrlsEpoch]);
+    if (!urls || uavUrlsEpoch <= 0) return;
+
+    let cancelled = false;
+    let waitTimer: number | null = null;
+
+    const pokeThenCommit = async (dockState: boolean | null, reason: string) => {
+      const nextUrl = pickUavPlaySignalingUrl(urls, dockState);
+      const { airportSn: ap, droneSn: dr } = uavLiveSnRef.current;
+      try {
+        const { parts } = await pokeUavLiveStreamsForView({
+          airportSn: ap,
+          droneSn: dr,
+          mqttDroneInDock: dockState,
+        });
+        if (cancelled) return;
+        appendClientLogRef.current(
+          `${new Date().toLocaleTimeString()} 无人机${reason}→拉流 ${parts.join(" · ")} → ${
+            dockState === true ? "舱内/机场" : dockState === false ? "舱外/机体" : "未知优先机体"
+          }`,
+        );
+      } catch (e) {
+        if (cancelled) return;
+        appendClientLogRef.current(
+          `${new Date().toLocaleTimeString()} 无人机${reason} poke 失败：${
+            e instanceof Error ? e.message : String(e)
+          }，仍提交信令`,
+        );
+      }
+      if (cancelled) return;
+      uavPlayUrlCommittedRef.current = true;
+      uavPlayUrlDockRef.current = dockState;
+      setUavPlaySignalingUrl((prev) => (prev === nextUrl ? prev : nextUrl));
+      setUavPlayLoading(false);
+    };
+
+    // —— 首次提交：等舱状态或超时 ——
+    if (!uavPlayUrlCommittedRef.current) {
+      if (mqttDroneInDock !== null) {
+        void pokeThenCommit(mqttDroneInDock, "切流");
+        return () => {
+          cancelled = true;
+        };
+      }
+
+      // 等待舱状态期间先双路 poke，缩短随后出画；SN 变化不重武装计时
+      {
+        const { airportSn: ap, droneSn: dr } = uavLiveSnRef.current;
+        void pokeUavLiveStreamsForView({
+          airportSn: ap,
+          droneSn: dr,
+          mqttDroneInDock: null,
+        }).then(({ parts }) => {
+          if (cancelled) return;
+          appendClientLogRef.current(
+            `${new Date().toLocaleTimeString()} 无人机切流预拉流(等舱状态) → ${parts.join(" · ")}`,
+          );
+        });
+      }
+
+      waitTimer = window.setTimeout(() => {
+        waitTimer = null;
+        if (cancelled || uavPlayUrlCommittedRef.current) return;
+        void pokeThenCommit(mqttDroneInDockRef.current, "切流(舱状态超时)");
+      }, UAV_MQTT_DOCK_WAIT_MS);
+
+      return () => {
+        cancelled = true;
+        if (waitTimer != null) window.clearTimeout(waitTimer);
+      };
+    }
+
+    // —— 已在播：仅舱内↔舱外切换时换源（null 抖动忽略）——
+    if (mqttDroneInDock === null) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (uavPlayUrlDockRef.current === mqttDroneInDock) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    const prevDock = uavPlayUrlDockRef.current;
+    if (prevDock === null) {
+      const curUrl = pickUavPlaySignalingUrl(urls, null);
+      const nextUrl = pickUavPlaySignalingUrl(urls, mqttDroneInDock);
+      uavPlayUrlDockRef.current = mqttDroneInDock;
+      if (curUrl === nextUrl) {
+        return () => {
+          cancelled = true;
+        };
+      }
+      // 超时后才到的舱状态：如果视频已在出画（已出现过画面），则不换源（避免有画→黑→有画闪烁）
+      const el = videoRef.current;
+      if (el && el.videoWidth > 0 && el.videoHeight > 0) {
+        // 不重连；下次手动重连或停帧恢复时才走正确路径
+        return () => {
+          cancelled = true;
+        };
+      }
+      void pokeThenCommit(mqttDroneInDock, "舱状态晚到校正");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void pokeThenCommit(mqttDroneInDock, `舱状态→${mqttDroneInDock ? "舱内" : "舱外"}`);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeStreamId,
+    activeStream?.uav?.entityId,
+    mqttDroneInDock,
+    reuseSharedStream,
+    uavUrlsEpoch,
+  ]);
 
   useEffect(() => {
     const s = activeStream;
@@ -1886,7 +2050,14 @@ export function EoVideoPanel({
         const hasPicture = v.videoWidth > 0 && v.videoHeight > 0;
         let progressing = false;
         if (framesDecoded != null) {
-          if (lastDecoded != null && framesDecoded > lastDecoded) progressing = true;
+          if (lastDecoded == null) {
+            /**
+             * 首次测量：无法对比帧数增量，若已有画则视为正常（避免误判触发 reattach/kick）。
+             */
+            if (hasPicture) progressing = true;
+          } else if (framesDecoded > lastDecoded) {
+            progressing = true;
+          }
           lastDecoded = framesDecoded;
         } else if (hasPicture) {
           progressing = true;
@@ -1898,11 +2069,22 @@ export function EoVideoPanel({
         }
 
         misses += 1;
-        reattachVideoFromPeer(v, pc);
+        /**
+         * 只在无画时才调 reattachVideoFromPeer：有画时调用会重设 srcObject，
+         * 导致 1-2 帧黑屏闪烁（浏览器需重新绑定新 MediaStream）。
+         */
+        if (!hasPicture) {
+          reattachVideoFromPeer(v, pc);
+        }
         if (misses >= 2) {
           misses = 0;
-          setDockPlaybackKick((k) => k + 1);
-          if (activeStream?.uav) setUavWebRtcKick((k) => k + 1);
+          if (activeStream?.uav) {
+            // 无人机：必须先 poke 再 kick；裸 kick 会连空流且与停帧恢复打架
+            handleUavStallRecoverRef.current();
+          } else {
+            playbackKickGraceUntilRef.current = Date.now() + UAV_PLAYBACK_KICK_GRACE_MS;
+            setDockPlaybackKick((k) => k + 1);
+          }
         }
       })();
     }, 3000);
@@ -2059,6 +2241,7 @@ export function EoVideoPanel({
     }, [activeStream?.uav, uavResolveDebug]);
 
   const onSelectStream = useCallback((id: string) => {
+    userPickedStreamRef.current = true;
     setActiveStreamId(id);
   }, []);
 
@@ -2074,16 +2257,25 @@ export function EoVideoPanel({
     pageEntity: entity,
   });
 
+  /** ref 供 restoreDockVideoAfterZoom 读取最新的 activeStream（避免 callback 闭包过期） */
+  const activeStreamRef = useRef(activeStream);
+  activeStreamRef.current = activeStream;
+
   const restoreDockVideoAfterZoom = useCallback(() => {
-    setZoomSharedStream(null);
     window.setTimeout(() => {
-      const ok = reattachVideoFromPeer(videoRef.current, peerConnectionRef.current);
-      if (ok) return;
       const v = videoRef.current;
+      const pc = peerConnectionRef.current;
+      const ok = reattachVideoFromPeer(v, pc);
+      if (ok && v && v.videoWidth > 0 && v.videoHeight > 0) return;
       if (v && v.videoWidth > 0 && v.videoHeight > 0) return;
-      setDockPlaybackKick((k) => k + 1);
-      setUavWebRtcKick((k) => k + 1);
-    }, 80);
+      if (activeStreamRef.current?.uav) {
+        // UAV：直接 kick 会连空流导致长时间黑屏；必须 poke 先恢复推流
+        handleUavStallRecoverRef.current();
+      } else {
+        playbackKickGraceUntilRef.current = Date.now() + UAV_PLAYBACK_KICK_GRACE_MS;
+        setDockPlaybackKick((k) => k + 1);
+      }
+    }, 200);
   }, []);
 
   const toggleExpand = useCallback(() => {
@@ -2093,9 +2285,7 @@ export function EoVideoPanel({
     }
     setZoomWindowOpen((was) => {
       const next = !was;
-      if (next) {
-        setZoomSharedStream(captureOrClonePlaybackStream(videoRef.current));
-      } else {
+      if (!next) {
         restoreDockVideoAfterZoom();
       }
       return next;
@@ -2127,6 +2317,7 @@ export function EoVideoPanel({
       return next.length > 4000 ? next.slice(0, 4000) : next;
     });
   }, []);
+  appendClientLogRef.current = appendClientLog;
 
   const [calcRecordLocationOpen, setCalcRecordLocationOpen] = useState(false);
   const [pidSettingsOpen, setPidSettingsOpen] = useState(false);
@@ -2175,15 +2366,30 @@ export function EoVideoPanel({
     [activeStream?.id, appendClientLog, taskBackendBaseUrl],
   );
 
-  const scheduleUavWebRtcKick = useCallback((delayMs = UAV_WEBRTC_KICK_AFTER_START_MS) => {
-    if (uavWebRtcKickTimerRef.current != null) {
-      window.clearTimeout(uavWebRtcKickTimerRef.current);
-    }
-    uavWebRtcKickTimerRef.current = window.setTimeout(() => {
-      uavWebRtcKickTimerRef.current = null;
-      setUavWebRtcKick((k) => k + 1);
-    }, delayMs);
-  }, []);
+  const scheduleUavWebRtcKick = useCallback(
+    (
+      delayMs = UAV_WEBRTC_KICK_AFTER_START_MS,
+      opts?: {
+        /** 延迟到期时若已出画则取消 kick，避免「已有画又被拆」闪黑 */
+        onlyIfBlack?: boolean;
+      },
+    ) => {
+      if (uavWebRtcKickTimerRef.current != null) {
+        window.clearTimeout(uavWebRtcKickTimerRef.current);
+      }
+      const onlyIfBlack = opts?.onlyIfBlack === true;
+      uavWebRtcKickTimerRef.current = window.setTimeout(() => {
+        uavWebRtcKickTimerRef.current = null;
+        if (onlyIfBlack) {
+          const el = videoRef.current;
+          if (el && el.videoWidth > 0 && el.videoHeight > 0) return;
+        }
+        playbackKickGraceUntilRef.current = Date.now() + UAV_PLAYBACK_KICK_GRACE_MS;
+        setUavWebRtcKick((k) => k + 1);
+      }, delayMs);
+    },
+    [],
+  );
 
   useEffect(() => {
     return () => {
@@ -2205,13 +2411,15 @@ export function EoVideoPanel({
   };
 
   /**
-   * 无人机停帧恢复：切舱内外 / 切机 / 上游空闲后，ZLM 常已停止推流，
-   * useWebRtcPlayer 的纯 WebRTC restart 会连到空流仍黑屏（需手动切流才好）。
-   * 这里在 restart 前先 poke 重新拉流，并延迟 kick 让推流起来后再重连。
+   * 无人机停帧 / MQTT 恢复：ZLM 常已停推，纯 WebRTC restart 会连空流仍黑。
+   * 先 poke 再延迟 kick；由 scheduleUavWebRtcKick 负责重建（useWebRtcPlayer 不再立刻 restart）。
    */
   const handleUavStallRecover = useCallback(() => {
     const { airportSn, droneSn } = uavStallPokeArgsRef.current;
-    if (!airportSn && !droneSn) return;
+    if (!airportSn && !droneSn) {
+      scheduleUavWebRtcKick(0);
+      return;
+    }
     void (async () => {
       try {
         const { parts } = await pokeUavLiveStreamsForView({
@@ -2223,15 +2431,15 @@ export function EoVideoPanel({
           `${new Date().toLocaleTimeString()} 无人机停帧恢复→重新拉流 ${parts.join(" · ")}`,
         );
       } catch {
-        /* poke 失败交由 WebRTC restart 兜底 */
+        /* poke 失败仍 kick，避免卡死 */
       }
       scheduleUavWebRtcKick();
     })();
   }, [appendClientLog, scheduleUavWebRtcKick]);
+  handleUavStallRecoverRef.current = handleUavStallRecover;
 
   /**
-   * 对齐 Qt sendStartLiveStream：切无人机后立即申请拉流；黑屏则周期性重试并重连 WebRTC。
-   * 旧逻辑仅 5s 后 poke 且不重连，ZLM 推流起来后 WebRTC 仍连在空流上。
+   * 信令已提交且已 poke：仅在仍黑时补 poke+kick（onlyIfBlack，避免出画后误踢）。
    */
   useEffect(() => {
     if (reuseSharedStream) return;
@@ -2243,33 +2451,39 @@ export function EoVideoPanel({
     const uv = activeStream.uav;
     let attempts = 0;
     let cancelled = false;
+    const startedAt = Date.now();
 
-    const runPoke = async (reason: string) => {
-      const ap = (mqttAirportSn ?? uavMqttProductIds?.airport ?? uv.airportSN ?? "").trim();
-      const dr = (mqttDeviceSn ?? uavMqttProductIds?.device ?? uv.deviceSN ?? "").trim();
-      const { parts } = await pokeUavLiveStreamsForView({
-        airportSn: ap,
-        droneSn: dr,
-        mqttDroneInDock: mqttDroneInDockRef.current,
-      });
-      if (cancelled) return;
-      appendClientLog(`${new Date().toLocaleTimeString()} ${reason} → ${parts.join(" · ")}`);
-      scheduleUavWebRtcKick();
+    const hasPicture = () => {
+      const el = videoRef.current;
+      return Boolean(el && el.videoWidth > 0 && el.videoHeight > 0);
     };
 
-    const tick = () => {
+    const intervalId = window.setInterval(() => {
       if (cancelled) return;
-      const el = videoRef.current;
-      if (el && el.videoWidth > 0 && el.videoHeight > 0) return;
+      if (hasPicture()) return;
+      if (Date.now() - startedAt < UAV_LIVE_STREAM_PICTURE_GRACE_MS) return;
       if (attempts >= UAV_LIVE_STREAM_MAX_RETRIES) return;
       attempts += 1;
-      const reason =
-        attempts === 1 ? "无人机切流申请拉流" : `无人机黑屏重试拉流(${attempts}/${UAV_LIVE_STREAM_MAX_RETRIES})`;
-      void runPoke(reason);
-    };
-
-    tick();
-    const intervalId = window.setInterval(tick, UAV_LIVE_STREAM_RETRY_MS);
+      const ap = (mqttAirportSn ?? uavMqttProductIds?.airport ?? uv.airportSN ?? "").trim();
+      const dr = (mqttDeviceSn ?? uavMqttProductIds?.device ?? uv.deviceSN ?? "").trim();
+      void (async () => {
+        try {
+          const { parts } = await pokeUavLiveStreamsForView({
+            airportSn: ap,
+            droneSn: dr,
+            mqttDroneInDock: mqttDroneInDockRef.current,
+          });
+          if (cancelled) return;
+          appendClientLog(
+            `${new Date().toLocaleTimeString()} 无人机黑屏重试拉流(${attempts}/${UAV_LIVE_STREAM_MAX_RETRIES}) → ${parts.join(" · ")}`,
+          );
+        } catch {
+          if (cancelled) return;
+        }
+        if (cancelled) return;
+        scheduleUavWebRtcKick(UAV_WEBRTC_KICK_AFTER_START_MS, { onlyIfBlack: true });
+      })();
+    }, UAV_LIVE_STREAM_RETRY_MS);
 
     return () => {
       cancelled = true;
@@ -2290,45 +2504,49 @@ export function EoVideoPanel({
     reuseSharedStream,
   ]);
 
-  /** 舱内/舱外切换时补发 start（WebRTC 信令 URL 已由另一 effect 切换） */
+  /**
+   * 夜间 MQTT 例行断线再连：库会恢复遥测，但私有云推流常已停，画面不会自己回来。
+   * 断线满一段时间后再连上时，自动走与「重连」相同的 poke+kick。
+   */
+  const mqttConnectedPrevRef = useRef<boolean | null>(null);
+  const mqttDownSinceRef = useRef<number | null>(null);
   useEffect(() => {
-    if (reuseSharedStream) return;
-    if (!activeStream?.uav || !uavPlaySignalingUrl?.trim() || uavPlayLoading || uavPlayErr) return;
-    if (mqttDroneInDock === null) return;
+    if (reuseSharedStream || !activeStream?.uav) {
+      mqttConnectedPrevRef.current = mqttConnected;
+      mqttDownSinceRef.current = null;
+      return;
+    }
+    const prev = mqttConnectedPrevRef.current;
+    mqttConnectedPrevRef.current = mqttConnected;
 
-    const uv = activeStream.uav;
-    let cancelled = false;
-    void (async () => {
-      const ap = (mqttAirportSn ?? uavMqttProductIds?.airport ?? uv.airportSN ?? "").trim();
-      const dr = (mqttDeviceSn ?? uavMqttProductIds?.device ?? uv.deviceSN ?? "").trim();
-      const { parts } = await pokeUavLiveStreamsForView({
-        airportSn: ap,
-        droneSn: dr,
-        mqttDroneInDock,
-      });
-      if (cancelled) return;
-      appendClientLog(
-        `${new Date().toLocaleTimeString()} 舱状态→${mqttDroneInDock ? "舱内" : "舱外"} 申请拉流 ${parts.join(" · ")}`,
-      );
-      scheduleUavWebRtcKick();
-    })();
+    if (!mqttConnected) {
+      if (prev === true) {
+        mqttDownSinceRef.current = Date.now();
+      } else if (mqttDownSinceRef.current == null && prev !== null) {
+        mqttDownSinceRef.current = Date.now();
+      }
+      return;
+    }
 
-    return () => {
-      cancelled = true;
-    };
+    // connected
+    const downSince = mqttDownSinceRef.current;
+    mqttDownSinceRef.current = null;
+    if (prev !== false) return; // 仅 false→true
+    if (downSince == null || Date.now() - downSince < UAV_MQTT_DOWN_RECOVER_MIN_MS) return;
+    if (!uavPlaySignalingUrl?.trim() || uavPlayLoading || uavPlayErr) return;
+
+    appendClientLog(
+      `${new Date().toLocaleTimeString()} MQTT 重连→自动恢复无人机画面（断线 ${Math.round((Date.now() - downSince) / 1000)}s）`,
+    );
+    handleUavStallRecoverRef.current();
   }, [
-    activeStream,
+    activeStream?.uav,
     appendClientLog,
-    mqttAirportSn,
-    mqttDeviceSn,
-    mqttDroneInDock,
-    scheduleUavWebRtcKick,
-    uavMqttProductIds?.airport,
-    uavMqttProductIds?.device,
+    mqttConnected,
+    reuseSharedStream,
     uavPlayErr,
     uavPlayLoading,
     uavPlaySignalingUrl,
-    reuseSharedStream,
   ]);
 
   const onEoCaptureReadyChange = useCallback((ready: boolean) => {
@@ -2518,6 +2736,60 @@ export function EoVideoPanel({
     detectionBoxes,
     onBottomFeedback: showCameraBottomFeedback,
   });
+
+  const burnInHideOverlay = useEoBurnInOverlayStore((s) =>
+    selectBurnInHideOverlay(s, detectionEntityId),
+  );
+  const [burnInHideOverlayBusy, setBurnInHideOverlayBusy] = useState(false);
+
+  useEffect(() => {
+    const id = (detectionEntityId ?? "").trim().toLowerCase();
+    if (!id || !/^camera_\d{3}$/.test(id) || isThirdPartyUdpStream) return;
+    let cancelled = false;
+    void fetchEoBurnInOverlay({ entityId: id, backendBaseUrl: taskBackendBaseUrl }).then((r) => {
+      if (cancelled || !r.ok) return;
+      useEoBurnInOverlayStore.getState().setHideOverlay(id, !!r.hideOverlay);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [detectionEntityId, taskBackendBaseUrl, isThirdPartyUdpStream]);
+
+  const handleToggleBurnInHideOverlay = useCallback(async () => {
+    const id = (detectionEntityId ?? "").trim().toLowerCase();
+    if (!id || !/^camera_\d{3}$/.test(id)) return;
+    const next = !burnInHideOverlay;
+    setBurnInHideOverlayBusy(true);
+    useEoBurnInOverlayStore.getState().setHideOverlay(id, next);
+    try {
+      const r = await postEoBurnInOverlay({
+        entityId: id,
+        hideOverlay: next,
+        backendBaseUrl: taskBackendBaseUrl,
+      });
+      if (!r.ok) {
+        useEoBurnInOverlayStore.getState().setHideOverlay(id, !next);
+        showCameraBottomFeedback({
+          text: `隐藏烧录框失败：${r.error ?? "unknown"}${r.detail ? ` · ${r.detail}` : ""}`,
+          tone: "error",
+        });
+        return;
+      }
+      useEoBurnInOverlayStore.getState().setHideOverlay(id, !!r.hideOverlay);
+      showCameraBottomFeedback({
+        text: r.hideOverlay ? "已隐藏烧录检测框与航迹ID（多端同步）" : "已恢复烧录检测框绘制",
+        tone: "success",
+      });
+    } catch (e) {
+      useEoBurnInOverlayStore.getState().setHideOverlay(id, !next);
+      showCameraBottomFeedback({
+        text: `隐藏烧录框失败：${e instanceof Error ? e.message : String(e)}`,
+        tone: "error",
+      });
+    } finally {
+      setBurnInHideOverlayBusy(false);
+    }
+  }, [burnInHideOverlay, detectionEntityId, showCameraBottomFeedback, taskBackendBaseUrl]);
 
   const [aimUpdateSupported, setAimUpdateSupported] = useState(false);
   const [aimUpdateBusy, setAimUpdateBusy] = useState(false);
@@ -3359,12 +3631,14 @@ export function EoVideoPanel({
                     entityId={detectionEntityId}
                     detectionEnabled={detectionEnabled}
                     bareVideoPlayback={isBurnInPlayback}
+                    suppressDrawnBoxes={burnInHideOverlay}
                     onDetectionDiagnostic={handleDetectionDiagnostic}
                     selectedBoxId={selectedBoxId}
                     onSelectBox={handleSelectDetectionBox}
                     taskBackendBaseUrl={taskBackendBaseUrl}
                     onSaveTaskBackendBaseUrl={onSaveTaskBackendBaseUrl}
                     onSingleTrackTask={onSingleTrackTask}
+                    enableYuan8PickTrack={isYuan8Stream}
                     onTaskClientLog={appendClientLog}
                     snapshotSavePath={snapshotSavePath}
                     recordSavePath={recordSavePath}
@@ -3413,7 +3687,7 @@ export function EoVideoPanel({
                 ) : null}
                 <div className="pointer-events-none absolute inset-0 z-30">
                   {effectiveExpandedMode && !classicToolsCaptureOnly ? (
-                    <div className="pointer-events-none absolute left-1 top-1/2 flex max-h-[calc(100%-8px)] -translate-y-1/2 flex-col items-start justify-center overflow-y-auto overflow-x-visible [scrollbar-width:thin]">
+                    <div className="pointer-events-none absolute left-1 top-1/2 flex max-h-[calc(100%-8px)] -translate-y-1/2 flex-col items-start justify-center overflow-visible">
                       <EoVideoFloatingTools
                         className="pointer-events-auto"
                         variant="uav"
@@ -3437,7 +3711,7 @@ export function EoVideoPanel({
                   ) : null}
                   <div
                     className={cn(
-                      "pointer-events-none absolute right-1 top-1/2 flex max-h-[calc(100%-8px)] -translate-y-1/2 flex-col items-end justify-center gap-1 overflow-y-auto overflow-x-visible [scrollbar-width:thin]",
+                      "pointer-events-none absolute right-1 top-1/2 flex max-h-[calc(100%-8px)] -translate-y-1/2 flex-col items-end justify-center gap-1 overflow-visible",
                     )}
                   >
                     {classicToolsCaptureOnly ? (
@@ -3729,12 +4003,14 @@ export function EoVideoPanel({
                         entityId={detectionEntityId}
                         detectionEnabled={detectionEnabled}
                         bareVideoPlayback={isBurnInPlayback}
+                    suppressDrawnBoxes={burnInHideOverlay}
                         onDetectionDiagnostic={handleDetectionDiagnostic}
                         selectedBoxId={selectedBoxId}
                         onSelectBox={handleSelectDetectionBox}
                         taskBackendBaseUrl={taskBackendBaseUrl}
                         onSaveTaskBackendBaseUrl={onSaveTaskBackendBaseUrl}
                         onSingleTrackTask={onSingleTrackTask}
+                        enableYuan8PickTrack={isYuan8Stream}
                         onTaskClientLog={appendClientLog}
                         snapshotSavePath={snapshotSavePath}
                         recordSavePath={recordSavePath}
@@ -3763,7 +4039,7 @@ export function EoVideoPanel({
                     </>
                   )}
                   <div className="pointer-events-none absolute inset-0 z-30">
-                    <div className="pointer-events-none absolute right-1 top-1/2 flex max-h-[calc(100%-8px)] -translate-y-1/2 flex-col items-end justify-center gap-1 overflow-y-auto overflow-x-visible [scrollbar-width:thin]">
+                    <div className="pointer-events-none absolute right-1 top-1/2 flex max-h-[calc(100%-8px)] -translate-y-1/2 flex-col items-end justify-center gap-1 overflow-visible">
                       <div className="flex flex-row items-start gap-1.5">
                         {snapshotPreview ? (
                           <EoSnapshotPreviewPopout
@@ -3797,7 +4073,9 @@ export function EoVideoPanel({
                         thirdPartyCamControls={!classicToolsCaptureOnly && isThirdPartyUdpStream}
                         onThirdPartyCamKind={handleThirdPartyCamKindSelect}
                         thirdPartyCamBusy={thirdPartyCamBusy}
-                        thirdPartyDirectMoveSupported={!classicToolsCaptureOnly && isThirdPartyUdpStream}
+                        thirdPartyDirectMoveSupported={
+                          !classicToolsCaptureOnly && (isThirdPartyUdpStream || isYuan8Stream)
+                        }
                         showCameraExpandedDebugToggle={
                           !classicToolsCaptureOnly && !EO_VIDEO_DEBUG_UI && effectiveExpandedMode
                         }
@@ -3806,7 +4084,10 @@ export function EoVideoPanel({
                           setCameraExpandedDebugOpen((v) => !v)
                         }
                         calcRecordSupported={
-                          !classicToolsCaptureOnly && ptzSupported && !isThirdPartyUdpStream
+                          !classicToolsCaptureOnly &&
+                          effectiveExpandedMode &&
+                          ptzSupported &&
+                          !isThirdPartyUdpStream
                         }
                         onOpenCalcRecord={() => calcRecord.setDialogOpen(true)}
                         aimCollectSupported={
@@ -3815,11 +4096,20 @@ export function EoVideoPanel({
                         aimCollectChecked={aimTrackCollect.checked}
                         aimCollectBusy={aimTrackCollect.busy}
                         onToggleAimCollect={() => void aimTrackCollect.toggleCollect()}
+                        burnInHideOverlaySupported={
+                          !classicToolsCaptureOnly && ptzSupported && !isThirdPartyUdpStream
+                        }
+                        burnInHideOverlayChecked={burnInHideOverlay}
+                        burnInHideOverlayBusy={burnInHideOverlayBusy}
+                        onToggleBurnInHideOverlay={() => void handleToggleBurnInHideOverlay()}
                         aimUpdateSupported={!classicToolsCaptureOnly && aimUpdateSupported}
                         aimUpdateBusy={aimUpdateBusy}
                         onAimUpdate={() => void handleAimUpdate()}
                         pidSettingsSupported={
-                          !classicToolsCaptureOnly && ptzSupported && !isThirdPartyUdpStream
+                          !classicToolsCaptureOnly &&
+                          effectiveExpandedMode &&
+                          ptzSupported &&
+                          !isThirdPartyUdpStream
                         }
                         onOpenPidSettings={() => setPidSettingsOpen(true)}
                       />
@@ -3828,7 +4118,15 @@ export function EoVideoPanel({
                   </div>
                   {/* 云台横条单行避让右侧工具；底栏本体全宽贴底（勿与云台共用外层 pl/pr/pb） */}
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[25] flex max-h-[min(58vh,420px)] flex-col justify-end gap-1 px-0 pb-0 pt-10">
-                    {ptzPanelOpen && isThirdPartyUdpStream && activeStream?.id ? (
+                    {ptzPanelOpen && isYuan8Stream && activeStream?.id ? (
+                      <div className="pointer-events-auto flex w-full shrink-0 justify-end pl-2 pr-14 pb-px max-sm:pr-3">
+                        <EoYuan8PtzPanel
+                          entityId={activeStream.id}
+                          backendBaseUrl={taskBackendBaseUrl}
+                          onClientLog={appendClientLog}
+                        />
+                      </div>
+                    ) : ptzPanelOpen && isThirdPartyUdpStream && activeStream?.id ? (
                       <div className="pointer-events-auto flex w-full shrink-0 justify-end pl-2 pr-14 pb-px max-sm:pr-3">
                         <EoThirdPartyDirectMovePad
                           entityId={activeStream.id}
@@ -3939,44 +4237,33 @@ export function EoVideoPanel({
           persistKey={`${(streamPersistKey || entity || "default").trim()}::expandFrame`}
           title={expandFloatingFrameTitle}
         >
+          {/**
+           * 放大窗口：
+           * - 与小窗口共用同一个 streamPersistKey（去掉 ::zoom 后缀）→ 共用 syncKey
+           * - 双向同步：任意一侧切流，SyncStore 自动通知另一侧跟上
+           * - 不传 sharedPlayback / sharedMediaStream：放大窗口独立建 WebRTC，
+           *   避免 reuseSharedStream=true 时永远"等待小窗画面"导致黑屏
+           * - initialStreamId 传当前流作为 seed，放大窗口首屏直接从正确流开始
+           */}
           <EoVideoPanel
-            key={`eo-zoom:${activeStreamId || entity || "default"}`}
+            key={`eo-zoom:${entity || "default"}`}
             configUrl={configUrl}
             entityId={
-              activeStream?.uav
-                ? undefined
-                : isThirdPartyUdpStreamEntry(activeStream)
-                  ? activeStream.id
-                  : parseCameraEntityIdFromStreamId(activeStreamId) ||
-                    (activeStreamId && /^camera[_-]?\d+$/i.test(activeStreamId.trim())
-                      ? canonicalEntityId(activeStreamId)
-                      : entityId)
+              isThirdPartyUdpStreamEntry(activeStream)
+                ? activeStream.id
+                : parseCameraEntityIdFromStreamId(activeStreamId) ||
+                  (activeStreamId && /^camera[_-]?\d+$/i.test(activeStreamId.trim())
+                    ? canonicalEntityId(activeStreamId)
+                    : entityId)
             }
-            streamPersistKey={`${streamPersistKey || entity || "default"}::zoom`}
+            streamPersistKey={streamPersistKey || entity || "default"}
             initialStreamId={activeStreamId}
             expandedMode
             onToggleExpand={() => {
               setZoomWindowOpen(false);
-              restoreDockVideoAfterZoom();
             }}
             className="h-full min-h-0 w-full border-0 bg-black"
             resizable={false}
-            /** 第三方 UDP 无 HTMLVideo MediaStream；仍传 sharedPlayback 锁定流条目，画面走本窗 WS/YUV */
-            sharedMediaStream={isThirdPartyUdpStreamEntry(activeStream) ? null : zoomSharedStream}
-            sharedPlayback={
-              activeStream && cfg
-                ? {
-                    stream: {
-                      ...activeStream,
-                      /** 把已解析的烧录/播放地址带进放大窗，便于识别 `_burn` 并关叠层 */
-                      ...(cameraResolvedUrl
-                        ? { signalingUrl: cameraResolvedUrl }
-                        : {}),
-                    },
-                    iceServers: cfg.iceServers ?? [],
-                  }
-                : null
-            }
           />
         </EoVideoExpandFloatingFrame>
       ) : null}

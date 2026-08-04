@@ -12,11 +12,11 @@ import {
   LYR_OPTO_FOV,
   LYR_RADAR_COVERAGE,
   LYR_TRACKS,
-  TRACK_LAYER_KEYS_ORDERED,
 } from "@/lib/map-entity-model";
 import {
   countVisibleTargetLayerLeaves,
-  TRACK_SUBTYPE_LABELS,
+  getTrackLayerKeysOrdered,
+  trackSubtypeLabel,
 } from "@/lib/track-layer-visibility";
 import {
   collectTargetLayerLeafFlags,
@@ -805,7 +805,7 @@ export function LayerPanel() {
                   onToggleVisible={toggleTargetMasterVisibility}
                 />
                 {openTargetTree
-                  ? TRACK_LAYER_KEYS_ORDERED.map((key) => {
+                  ? getTrackLayerKeysOrdered().map((key) => {
                       const on = trackSubtypeVisible[key] !== false;
                       const showAirChildren = key === "fuse_air";
                       if (showAirChildren) {
@@ -825,7 +825,7 @@ export function LayerPanel() {
                               depth={1}
                               open={subOpen}
                               onToggleOpen={() => toggleLayerPanelDynamic("targetSubtype", key)}
-                              label={TRACK_SUBTYPE_LABELS[key]}
+                              label={trackSubtypeLabel(key)}
                               visibility={fuseAirVis}
                               onToggleVisible={() => {
                                 const turnOn = parentToggleTurnOn(fuseAirVis);
@@ -891,7 +891,7 @@ export function LayerPanel() {
                             setTrackSubtypeVisible(key, turnOn);
                             if (turnOn) setLayerVisibility(LYR_TRACKS, true);
                           }}
-                          label={TRACK_SUBTYPE_LABELS[key]}
+                          label={trackSubtypeLabel(key)}
                         />
                       );
                     })

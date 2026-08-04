@@ -16,6 +16,7 @@ import {
   resolveCamServerShipTaskIds,
 } from "@/lib/map-gis-camera-task";
 import { postThirdPartyPosTask } from "@/lib/eo-video/thirdPartyPosTaskClient";
+import { postYuan8GuideTask } from "@/lib/eo-video/yuan8TaskClient";
 import { postEoBurnInPlacard } from "@/lib/eo-video/eoBurnInPlacardClient";
 import { evaluateThirdPartyTaskHttpResponse } from "@/lib/thirdPartyTaskServiceResponse";
 import { resolveShowIdFromAlarm } from "@/lib/alarm-track-match";
@@ -144,6 +145,50 @@ async function dispatchThirdPartyPosTaskLogged(
   }
 }
 
+async function dispatchYuan8GuideTaskLogged(
+  track: Track,
+  posBackend: string,
+): Promise<void> {
+  if (!Number.isFinite(track.lng) || !Number.isFinite(track.lat)) {
+    console.warn("[map-track-dblclick] ①b Yuan8 GUIDE 跳过：航迹缺经纬度", {
+      showID: track.showID,
+      lat: track.lat,
+      lng: track.lng,
+    });
+    return;
+  }
+  const body = {
+    backendBaseUrl: posBackend,
+    ownerEntityId: "",
+    targetLon: track.lng,
+    targetLat: track.lat,
+    targetAlt: Number.isFinite(track.altitude) ? Number(track.altitude) : 0,
+  };
+  console.log(
+    "[map-track-dblclick] ①b ThirdPartyYuan8GuideTask（8院经纬高引导）→ POST /api/camera-task/yuan8-guide\n",
+    JSON.stringify(body, null, 2),
+  );
+  try {
+    const res = await postYuan8GuideTask({
+      backendBaseUrl: posBackend,
+      targetLon: body.targetLon,
+      targetLat: body.targetLat,
+      targetAlt: body.targetAlt,
+      ownerEntityId: "",
+    });
+    const text = await res.text().catch(() => "");
+    const outcome = evaluateThirdPartyTaskHttpResponse(res.ok, text);
+    console.log("[map-track-dblclick] ①b Yuan8 GUIDE 响应", {
+      httpStatus: res.status,
+      accepted: outcome.accepted,
+      summary: outcome.logLine,
+      bodyPreview: text.slice(0, 600),
+    });
+  } catch (err: unknown) {
+    console.warn("[map-track-dblclick] ①b Yuan8 GUIDE 请求异常", err);
+  }
+}
+
 /** 地图双击无人机自报位/高频图标：与双击融合航迹相同，下发 POS + 光电重点关注采集 */
 export async function runGisDroneSelfReportVerification(sn: string): Promise<void> {
   const track = resolveTrackForDroneSelfReport(sn);
@@ -196,7 +241,7 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
     isMapTrackDblClickLookAtOnlyEligible(track);
 
   console.log(
-    "[map-track-dblclick] 分路说明：① ThirdPartyCamPosTask=第三方高速相机 POS（targetId=uniqueID）；② 光电 PTZ（默认 TargetCollectionIMChildTask；mapTrackDblClickLookAtOnly 时融合/雷达改 LookAtChildTask）；③ 对准采集 StreamTrack triggerType=3；④ burn-in placard 标牌",
+    "[map-track-dblclick] 分路说明：① ThirdPartyCamPosTask=第三方高速相机 POS；①b Yuan8 GUIDE=8院经纬高引导；② 光电 PTZ；③ 对准采集；④ burn-in placard",
   );
   console.log("[map-track-dblclick] ② 模式", lookAtOnly ? "LookAtChild（仅转到位置）" : "TargetCollectionIM", {
     mapTrackDblClickLookAtOnly: cfg.cameraManagement?.mapTrackDblClickLookAtOnly === true,
@@ -209,13 +254,16 @@ export async function runGisTrackVerification(track: Track): Promise<void> {
 
   let posPromise: Promise<void>;
   if (posFields) {
-    posPromise = dispatchThirdPartyPosTaskLogged(posFields, posBackend);
+    posPromise = Promise.all([
+      dispatchThirdPartyPosTaskLogged(posFields, posBackend),
+      dispatchYuan8GuideTaskLogged(track, posBackend),
+    ]).then(() => undefined);
   } else {
     console.warn(
       "[map-track-dblclick] ① ThirdPartyCamPosTask 跳过：航迹缺少合法 uniqueID 或经纬度",
       { showID: track.showID, uniqueID: track.uniqueID, lat: track.lat, lng: track.lng },
     );
-    posPromise = Promise.resolve();
+    posPromise = dispatchYuan8GuideTaskLogged(track, posBackend);
   }
 
   try {

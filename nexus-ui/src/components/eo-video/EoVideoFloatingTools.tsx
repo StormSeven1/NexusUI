@@ -13,6 +13,7 @@ import {
   Minimize2,
   Gamepad2,
   PictureInPicture2,
+  Layers,
   Radar,
   RefreshCw,
   RotateCcw,
@@ -100,6 +101,13 @@ export interface EoVideoFloatingToolsProps {
   aimCollectChecked?: boolean;
   aimCollectBusy?: boolean;
   onToggleAimCollect?: () => void;
+  /**
+   * 隐藏烧录框/航迹 ID（勾选后 camServer 不绘制；状态经检测 WS 多前端同步）。
+   */
+  burnInHideOverlaySupported?: boolean;
+  burnInHideOverlayChecked?: boolean;
+  burnInHideOverlayBusy?: boolean;
+  onToggleBurnInHideOverlay?: () => void;
   /** 主 PTZ 且无 parent / 非第三方：从 TrackService 拉对准参数并写入正式 ConfigAIM{N}.ini */
   aimUpdateSupported?: boolean;
   aimUpdateBusy?: boolean;
@@ -203,6 +211,10 @@ export function EoVideoFloatingTools({
   aimCollectChecked = false,
   aimCollectBusy = false,
   onToggleAimCollect,
+  burnInHideOverlaySupported = false,
+  burnInHideOverlayChecked = false,
+  burnInHideOverlayBusy = false,
+  onToggleBurnInHideOverlay,
   aimUpdateSupported = false,
   aimUpdateBusy = false,
   onAimUpdate,
@@ -891,6 +903,35 @@ export function EoVideoFloatingTools({
             <Loader2 className="size-3.5 animate-spin" aria-hidden />
           ) : (
             <SquareCheck className="size-3.5" />
+          )}
+        </Button>
+      ) : null}
+
+      {variant === "camera" && burnInHideOverlaySupported ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          disabled={burnInHideOverlayBusy}
+          title={
+            burnInHideOverlayChecked
+              ? "已隐藏烧录检测框/航迹ID（点击恢复绘制）"
+              : "隐藏烧录检测框与航迹ID（多端同步）"
+          }
+          aria-label="隐藏烧录框和ID"
+          aria-pressed={burnInHideOverlayChecked}
+          className={cn(
+            "border border-white/25 bg-transparent shadow-[0_1px_3px_rgba(0,0,0,0.65)] hover:bg-white/10 hover:text-white disabled:opacity-50",
+            burnInHideOverlayChecked
+              ? "border-amber-400/55 bg-amber-950/45 text-amber-200"
+              : "text-white/85",
+          )}
+          onClick={() => onToggleBurnInHideOverlay?.()}
+        >
+          {burnInHideOverlayBusy ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Layers className="size-3.5" />
           )}
         </Button>
       ) : null}

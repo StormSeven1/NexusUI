@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEoEncodedSyncHub } from "@/lib/eo-video/eoWebrtcEncodedSync";
 import type { EoWebCodecsPresentation } from "@/lib/eo-video/eoVideoWebCodecsCanvas";
 import { postEoPtzAbsolute, postEoPtzMove, postEoPtzStop, type EoPtzDirection } from "@/lib/eo-video/eoPtzTaskClient";
+import { postYuan8PickTrackTask } from "@/lib/eo-video/yuan8TaskClient";
+import { evaluateThirdPartyTaskHttpResponse } from "@/lib/thirdPartyTaskServiceResponse";
 import {
   isPlausibleFovDeg,
   PTZ_ABS_DRAG_MIN_PX,
@@ -126,6 +128,11 @@ export interface EoVideoPlayStageProps {
    * 以便 burn-in-select 让后端烧录框变色。
    */
   bareVideoPlayback?: boolean;
+  /**
+   * 额外强制隐藏前端检测框绘制（如工具栏勾选「隐藏烧录框/ID」时，
+   * 非烧录流也同步隐藏，避免多端观感不一致）。
+   */
+  suppressDrawnBoxes?: boolean;
   onDetectionDiagnostic?: (line: string, hoverDetail?: string) => void;
   selectedBoxId?: string | null;
   onSelectBox?: (boxId: string | null) => void;
@@ -192,6 +199,8 @@ export interface EoVideoPlayStageProps {
   sharedMediaStream?: MediaStream | null;
   /** 放大窗模式：流未到齐时也不要本窗自建 WebRTC */
   sharedPlaybackOnly?: boolean;
+  /** 8院相机：双击画面下发压点跟踪（XJXT 3003） */
+  enableYuan8PickTrack?: boolean;
   /**
    * 无人机：航线 + 对海融合航迹画面投影（周士胜算法）。
    * 默认关闭；起飞后由右侧工具栏开关控制。
@@ -217,6 +226,7 @@ export function EoVideoPlayStage({
   entityId,
   detectionEnabled,
   bareVideoPlayback = false,
+  suppressDrawnBoxes = false,
   onDetectionDiagnostic,
   selectedBoxId,
   onSelectBox,
@@ -243,6 +253,7 @@ export function EoVideoPlayStage({
   onStallRecover,
   sharedMediaStream = null,
   sharedPlaybackOnly = false,
+  enableYuan8PickTrack = false,
   uavTrackProjectVisible = true,
   uavTrackProjectAfterTakeoff = false,
   uavTrackProjectDroneSn = null,
@@ -264,12 +275,14 @@ export function EoVideoPlayStage({
   const isBurnInPlayback = bareVideoPlayback || isEoBurnInPlaybackUrl(signalingUrl);
   const showDetection = Boolean(trimmedEntityId && detectionEnabled);
   const isUavEntity = /^uav-/i.test(trimmedEntityId);
-  /** 与 Qt 一致：相机实体即可双击发任务；检测 WS 关闭时仍要有叠层接收双击 */
-  const showTrackHitLayer = Boolean(trimmedEntityId && /^camera_[0-9]{3}$/i.test(trimmedEntityId));
+  /** 与 Qt 一致：相机实体即可双击发任务；检测 WS 关闭时仍要有叠层接收双击；8院同理 */
+  const showTrackHitLayer = Boolean(
+    trimmedEntityId && (/^camera_[0-9]{3}$/i.test(trimmedEntityId) || enableYuan8PickTrack),
+  );
   const canSendSingleTrack = /^camera_[0-9]{3}$/i.test(trimmedEntityId);
   const canSendUavImgTrack = isUavEntity && Boolean(uavAirportSn?.trim() && onUavImgTrackingTask);
-  /** 相机可交互叠层；无人机仅穿透双击，不挡 camera_aim 拖拽 */
-  const detectionInteractive = canSendSingleTrack;
+  /** 相机可交互叠层；无人机仅穿透双击，不挡 camera_aim 拖拽；8院可双击压点 */
+  const detectionInteractive = canSendSingleTrack || enableYuan8PickTrack;
   /** 视频与检测叠层同一 fit（默认 fill 拉伸，与 Qt 一致；见 NEXT_PUBLIC_EO_VIDEO_OBJECT_FIT） */
   const videoObjectFit = resolveEoVideoObjectFit();
   const encodedSyncHub = useMemo(() => createEoEncodedSyncHub(), []);
@@ -906,6 +919,39 @@ export function EoVideoPlayStage({
       const boxesForDecision =
         payload.drawnBoxes && payload.drawnBoxes.length > 0 ? payload.drawnBoxes : detectionBoxes;
 
+      if (enableYuan8PickTrack && trimmedEntityId) {
+        if (taskBusy) {
+          logClient("中止：上一 8院压点任务仍在发送中");
+          return;
+        }
+        const pickX = Math.max(0, Math.min(255, Math.round(payload.normalizedX * 255)));
+        const pickY = Math.max(0, Math.min(255, Math.round(payload.normalizedY * 255)));
+        logClient(`准备 8院压点跟踪 pick=(${pickX},${pickY}) entity=${trimmedEntityId}`);
+        setTaskBusy(true);
+        setTaskHint("正在发送 8院压点跟踪…");
+        try {
+          const res = await postYuan8PickTrackTask({
+            backendBaseUrl: taskBackendBaseUrl,
+            entityId: trimmedEntityId,
+            normalizedX: payload.normalizedX,
+            normalizedY: payload.normalizedY,
+          });
+          const text = await res.text().catch(() => "");
+          const outcome = evaluateThirdPartyTaskHttpResponse(res.ok, text);
+          if (!outcome.accepted) {
+            throw new Error(outcome.logLine || text.slice(0, 200) || `HTTP ${res.status}`);
+          }
+          setTaskHint("8院压点跟踪已发送");
+          logClient(`HTTP 流程结束（Yuan8PickTrack）pick=(${pickX},${pickY})`);
+        } catch (e) {
+          setTaskHint(`发送失败：${e instanceof Error ? e.message : String(e)}`);
+          logClient(`HTTP 失败（Yuan8PickTrack）：${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          setTaskBusy(false);
+        }
+        return;
+      }
+
       if (canSendUavImgTrack) {
         if (taskBusy) {
           logClient("中止：上一无人机跟踪任务仍在发送中");
@@ -1150,7 +1196,7 @@ export function EoVideoPlayStage({
         setTaskBusy(false);
       }
     },
-    [canSendSingleTrack, canSendUavImgTrack, ddsSingleTrackActive, detectionBoxes, isBurnInPlayback, logClient, onSingleTrackTask, onUavImgTrackingTask, onUavStopTrackingTask, overlayIntrinsic.h, overlayIntrinsic.w, rectTypeFromDetectionBox, selectedBoxId, taskBusy, trimmedEntityId, uavAirportSn, uavTrackingActive, videoRef],
+    [canSendSingleTrack, canSendUavImgTrack, ddsSingleTrackActive, detectionBoxes, enableYuan8PickTrack, isBurnInPlayback, logClient, onSingleTrackTask, onUavImgTrackingTask, onUavStopTrackingTask, overlayIntrinsic.h, overlayIntrinsic.w, rectTypeFromDetectionBox, selectedBoxId, taskBackendBaseUrl, taskBusy, trimmedEntityId, uavAirportSn, uavTrackingActive, videoRef],
   );
 
   const onBottomCenterToastRef = useRef(onBottomCenterToast);
@@ -1237,7 +1283,7 @@ export function EoVideoPlayStage({
           expandedMode={expandedMode}
           ddsCameraEntityId={ddsCameraEntityId}
           interactive={detectionInteractive}
-          hideDrawnBoxes={isBurnInPlayback}
+          hideDrawnBoxes={isBurnInPlayback || suppressDrawnBoxes}
         />
       ) : showTrackHitLayer ? (
         <EoDetectionOverlay

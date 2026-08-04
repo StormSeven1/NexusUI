@@ -34,7 +34,10 @@ import {
 import {
   isCameraSingleTrackDetectionActive,
   isCameraTrackingExecutionActive,
+  isDailyAreaVerificationTaskType,
+  isCameraExecutionActive,
 } from "@/lib/eo-video/formatEoDdsTaskOverlay";
+import { useEoBurnInOverlayStore } from "@/stores/eo-burn-in-overlay-store";
 import type { EoDetectionBox } from "@/lib/eo-video/types";
 import { useTrackStore } from "@/stores/track-store";
 import { useEoCameraDdsStatusStore } from "@/stores/eo-camera-dds-status-store";
@@ -696,6 +699,9 @@ export function useEoEntityDetection({
     if (!enabled || !id) return;
     const mgr = getEoDetectionWebSocketManager();
     return mgr.subscribe(id, (data) => {
+      if (data.burnInHideOverlay != null) {
+        useEoBurnInOverlayStore.getState().applyFromWs(id, !!data.burnInHideOverlay);
+      }
       const cleared = ingestEntityDetectionPayload(
         data,
         boatBuf.current,
@@ -826,7 +832,15 @@ export function useEoEntityDetection({
          * ❌ 禁止 WS 出现 singleRect 即在 dds=0 时自动 engage（camServer 会 boat/single 分包交替广播）。
          * 航迹号已空但仍 EXECUTING：以 DDS EXECUTING 为权威锁定单目标层（不要求 fresh singleRect），
          * 避免重挂载/WS 中断空档回退到多目标层；任务结束（离开 EXECUTING）由 ddsTrackJustEnded 清理。
+         *
+         * 区域查证例外：CameraVerification+tid 不再算 ddsWithTrack（自动取消视觉跟踪后仍会报 tid），
+         * 视觉单跟期间靠 recentSingle 锁定单目标层；取消后 singleRect 清空 → eng 释放 → 立刻多目标。
          */
+        const areaVerifyExec =
+          !!ddsRow &&
+          isDailyAreaVerificationTaskType(ddsRow.taskType) &&
+          isCameraExecutionActive(ddsRow.executionState);
+
         if (ddsWithTrack) {
           singleEngagedRef.current = true;
           singleDdsMissTicksRef.current = 0;
@@ -843,6 +857,17 @@ export function useEoEntityDetection({
           singleEngagedRef.current = true;
           singleDdsMissTicksRef.current = 0;
           if (id) clearEoSingleTrackUserLatch(id);
+        } else if (areaVerifyExec && recentSingle) {
+          singleEngagedRef.current = true;
+          singleDdsMissTicksRef.current = 0;
+        } else if (
+          singleEngagedRef.current &&
+          areaVerifyExec &&
+          singleDdsMissTicksRef.current < SINGLE_DDS_MISS_MAX_TICKS
+        ) {
+          /** 区域查证视觉跟随时 WS 短空档，短暂保持单目标层 */
+          singleEngagedRef.current = true;
+          singleDdsMissTicksRef.current++;
         } else if (
           singleEngagedRef.current &&
           ddsWasActiveLastFrame &&

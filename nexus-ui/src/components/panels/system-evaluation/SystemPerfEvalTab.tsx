@@ -20,14 +20,27 @@ import {
 import { openEvalReportPreview } from "@/lib/eval-report/open-eval-report-preview";
 import { toast } from "sonner";
 
-function formatMs(v: number | undefined): string {
-  if (v == null || Number.isNaN(v)) return "—";
+function formatMs(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return "暂无数据";
   return `${Math.round(v)} ms`;
 }
 
-function formatHz(v: number | undefined): string {
-  if (v == null || Number.isNaN(v)) return "—";
+function formatHz(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return "暂无数据";
   return `${v.toFixed(3)} Hz`;
+}
+
+function formatSegMs(seg: { count?: number; avg_ms?: number | null; median_ms?: number | null } | undefined, which: "median" | "avg" | "min" | "max"): string {
+  if (!seg || !(seg.count && seg.count > 0)) return "暂无数据";
+  const v =
+    which === "median"
+      ? (seg.median_ms ?? seg.avg_ms)
+      : which === "avg"
+        ? seg.avg_ms
+        : which === "min"
+          ? (seg as { min_ms?: number | null }).min_ms
+          : (seg as { max_ms?: number | null }).max_ms;
+  return formatMs(v);
 }
 
 function PerfBarChart({ stats }: { stats: SystemResponseTimeStats }) {
@@ -65,12 +78,18 @@ function PerfBarChart({ stats }: { stats: SystemResponseTimeStats }) {
 }
 
 function TrackLinkTypeCard({ row }: { row: TrackLinkTypeResult }) {
+  const noData = row.has_data === false;
   return (
     <div className="rounded-md border border-nexus-border/70 bg-nexus-bg-base/50 px-2 py-2">
       <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[11px] font-medium text-nexus-text-primary">{row.label}</p>
         <p className="font-mono text-[10px] text-nexus-text-muted">{row.track_layer_key}</p>
       </div>
+      {noData && row.message ? (
+        <p className="mb-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[10px] text-amber-100">
+          {row.message}
+        </p>
+      ) : null}
       {row.single_frame_dropped != null && row.single_frame_dropped > 0 ? (
         <p className="mb-1 text-[9px] text-nexus-text-muted">
           已丢弃仅 1 帧航迹 {row.single_frame_dropped} 条（候选 {row.candidate_track_count ?? "—"}）
@@ -92,6 +111,7 @@ function TrackLinkTypeCard({ row }: { row: TrackLinkTypeResult }) {
           <p className="font-mono text-[11px] text-nexus-accent">{formatHz(row.update_frequency_hz)}</p>
         </div>
       </div>
+      {noData ? null : (
       <div className="overflow-x-auto">
         <table className="w-full min-w-[320px] border-collapse text-[10px]">
           <thead>
@@ -111,11 +131,11 @@ function TrackLinkTypeCard({ row }: { row: TrackLinkTypeResult }) {
                 <tr key={s.key} className="border-t border-nexus-border/30" title={s.hint}>
                   <td className="py-0.5 pr-2 text-nexus-text-secondary">{s.label}</td>
                   <td className="py-0.5 pr-2 font-mono text-nexus-accent">
-                    {formatMs(seg?.median_ms ?? seg?.avg_ms)}
+                    {formatSegMs(seg, "median")}
                   </td>
-                  <td className="py-0.5 pr-2 font-mono text-nexus-text-primary">{formatMs(seg?.avg_ms)}</td>
-                  <td className="py-0.5 pr-2 font-mono text-nexus-text-primary">{formatMs(seg?.min_ms)}</td>
-                  <td className="py-0.5 pr-2 font-mono text-nexus-text-primary">{formatMs(seg?.max_ms)}</td>
+                  <td className="py-0.5 pr-2 font-mono text-nexus-text-primary">{formatSegMs(seg, "avg")}</td>
+                  <td className="py-0.5 pr-2 font-mono text-nexus-text-primary">{formatSegMs(seg, "min")}</td>
+                  <td className="py-0.5 pr-2 font-mono text-nexus-text-primary">{formatSegMs(seg, "max")}</td>
                   <td className="py-0.5 font-mono text-nexus-text-muted">{seg?.count ?? 0}</td>
                 </tr>
               );
@@ -123,6 +143,7 @@ function TrackLinkTypeCard({ row }: { row: TrackLinkTypeResult }) {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
@@ -251,7 +272,8 @@ function TrackLinkEvalSection({
         <div>
           <p className="text-[11px] font-medium text-nexus-text-secondary">航迹链路评估</p>
           <p className="text-[9px] text-nexus-text-muted">
-            后端旁路采样 gRPC 航迹 · 仅统计采集期内至少更新过 1 次的航迹（≥2 帧）· 每类最多 10 条 · 采集 30s
+            system-evaluation-server 旁路采样 DDS 实时航迹（对海/对空融合）· 仅统计≥2
+            帧 · 每类最多 10 条 · 采集 30s
           </p>
         </div>
         <button
@@ -311,13 +333,21 @@ function TrackLinkEvalSection({
       {phase === "done" && results ? (
         results.length === 0 ? (
           <p className="text-[11px] text-nexus-text-muted">
-            采集完成，但未收到带链路时间戳的航迹（请确认 gRPC 航迹源已启用）
+            {progress?.message?.trim() ||
+              "暂无数据：采集完成，但未收到带链路时间戳的航迹（请确认 gRPC 航迹源已启用）"}
           </p>
         ) : (
           <div className="space-y-2">
-            <p className="text-[9px] text-nexus-text-muted">
-              「创建→接收」含观测时戳滞后（对海融合可达数十秒～数分钟），以中位数为准；「接收→发送」「发送→后端」才是近端链路时延。负值已排除（跨机时钟偏差）。
-            </p>
+            {progress?.message?.trim() ? (
+              <p className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[10px] text-amber-100">
+                {progress.message}
+              </p>
+            ) : (
+              <p className="text-[9px] text-nexus-text-muted">
+                「创建→接收」含观测时戳滞后时以中位数为准；超过可信上限（创建→接收
+                3min / 近端段更短）的样本已丢弃，不输出离谱均值。
+              </p>
+            )}
             {results.map((row) => (
               <TrackLinkTypeCard key={row.track_layer_key} row={row} />
             ))}

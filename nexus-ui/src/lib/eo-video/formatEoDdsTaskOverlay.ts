@@ -204,6 +204,15 @@ export function isCameraSingleTrackDetectionActive(row: EoCameraDdsStatusRow | u
     return active && tid != null;
   }
 
+  /**
+   * 区域查证/对空查证：任务条可显示航迹号，但不锁定单目标检测层。
+   * camServer 自动取消视觉跟踪后仍可能报 CameraVerification+tid+EXECUTING；
+   * 若此处 return true，eng 会一直锁单目标，多目标框被挡住（须手动再跟再取消才恢复）。
+   */
+  if (isDailyAreaVerificationTaskType(taskType)) {
+    return false;
+  }
+
   if (tid == null) return false;
   if (active) return true;
   if (ex === undefined || ex === null || String(ex).trim() === "") return true;

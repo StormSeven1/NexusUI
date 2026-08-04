@@ -15,7 +15,7 @@ export type TaskStatusRequestBody = {
   trackID?: number;
   /** 航迹唯一 ID（与 `minio_multi_metadata.unique_id`、报文 uniqueID 对齐） */
   uniqueId?: number;
-  /** taskStatus 为 5/6/7 时由相机/后端填入（如模型研判结果） */
+  /** taskStatus 为 5/6/7/8 时由相机/后端填入（研判结果 / 知识库来访等） */
   description?: string;
   /**
    * MinIO 预签名或 HTTP 直链；与 Qt `MinioMultiMetadata::downloadUrl` 一致。

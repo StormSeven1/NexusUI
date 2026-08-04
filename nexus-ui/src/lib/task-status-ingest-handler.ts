@@ -138,7 +138,7 @@ export async function processTaskStatusIngest(alarmId: string, body: unknown): P
   const shipArchiveInfo = strField("shipArchiveInfo", "ship_archive_info", "aisInfo", "ais_info");
 
   let description = "";
-  if (taskStatus === 5 || taskStatus === 6 || taskStatus === 7) {
+  if (taskStatus === 5 || taskStatus === 6 || taskStatus === 7 || taskStatus === 8) {
     if (typeof o.description === "string") description = o.description;
   }
 

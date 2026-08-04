@@ -6,6 +6,13 @@ const nextConfig: NextConfig = {
   /** pg/minio 含 Node 原生可选依赖，禁止打进 RSC 包 */
   serverExternalPackages: ["pg", "minio"],
   turbopack: {},
+  /**
+   * 将服务端 .env 的 NEXUS_FUSION_TRACK_GRPC_SOURCES 暴露给前端（目标图层默认显隐），
+   * 与 Custombackend 共用同一配置项，无需再写 NEXT_PUBLIC_ 副本。
+   */
+  env: {
+    NEXUS_FUSION_TRACK_GRPC_SOURCES: process.env.NEXUS_FUSION_TRACK_GRPC_SOURCES ?? "",
+  },
   /** 采集上传 /api/eo-capture/collect-upload 等 multipart 可能较大（截图 PNG、录屏） */
   experimental: {
     proxyClientMaxBodySize: "100mb",

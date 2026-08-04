@@ -62,6 +62,12 @@ export type AssistantChatTab = {
 
   verifyEntityIds: string[];
 
+  /**
+   * 发起该工作流时的对话入口：knowledge-base → DbQa 主机 terminate；
+   * assistant → 任务管理。缺省按当前 UI 模式。
+   */
+  workflowApiSource: "assistant" | "knowledge-base" | "";
+
 };
 
 
@@ -91,6 +97,7 @@ function emptyTab(
     workflowDevices: [],
     taskIds: [],
     verifyEntityIds: [],
+    workflowApiSource: "",
   };
 
 }
@@ -117,6 +124,11 @@ type State = {
   setTabLangGraphThreadId: (tabId: string, threadId: string) => void;
 
   setTabBusinessWorkflowThreadId: (tabId: string, threadId: string) => void;
+
+  setTabWorkflowApiSource: (
+    tabId: string,
+    source: "assistant" | "knowledge-base",
+  ) => void;
 
   setTabWorkflowName: (tabId: string, name: string) => void;
 
@@ -229,6 +241,11 @@ function mergePersistedTabs(
 
         verifyEntityIds: Array.isArray(t.verifyEntityIds) ? t.verifyEntityIds : [],
 
+        workflowApiSource:
+          t.workflowApiSource === "knowledge-base" || t.workflowApiSource === "assistant"
+            ? t.workflowApiSource
+            : "",
+
       });
 
     } else if (t.kind === "user" || t.kind === "workflow") {
@@ -250,6 +267,11 @@ function mergePersistedTabs(
         taskIds: Array.isArray(t.taskIds) ? t.taskIds : [],
 
         verifyEntityIds: Array.isArray(t.verifyEntityIds) ? t.verifyEntityIds : [],
+
+        workflowApiSource:
+          t.workflowApiSource === "knowledge-base" || t.workflowApiSource === "assistant"
+            ? t.workflowApiSource
+            : "",
 
       });
 
@@ -393,6 +415,14 @@ export const useAssistantChatTabsStore = create<State>()(
         set((s) => ({
           tabs: s.tabs.map((t) =>
             t.id === tabId ? { ...t, businessWorkflowThreadId: tid } : t,
+          ),
+        }));
+      },
+
+      setTabWorkflowApiSource: (tabId, source) => {
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === tabId ? { ...t, workflowApiSource: source } : t,
           ),
         }));
       },

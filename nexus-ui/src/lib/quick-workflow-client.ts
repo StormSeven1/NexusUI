@@ -82,7 +82,10 @@ export function resolveWorkflowStopCaptureBffUrl(): string {
   return `${sameOriginQuickWorkflowBase()}/stop-capture`;
 }
 
-export async function postWorkflowTerminate(threadId: string): Promise<{
+export async function postWorkflowTerminate(
+  threadId: string,
+  source: "assistant" | "knowledge-base" = "assistant",
+): Promise<{
   ok: boolean;
   error?: string;
   detail?: string;
@@ -93,7 +96,7 @@ export async function postWorkflowTerminate(threadId: string): Promise<{
     const res = await fetch(resolveWorkflowTerminateBffUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threadId: tid }),
+      body: JSON.stringify({ threadId: tid, source }),
       cache: "no-store",
     });
     const raw = await res.text().catch(() => "");
@@ -116,7 +119,10 @@ export async function postWorkflowTerminate(threadId: string): Promise<{
   }
 }
 
-export async function postWorkflowStopCapture(threadId: string): Promise<{
+export async function postWorkflowStopCapture(
+  threadId: string,
+  source: "assistant" | "knowledge-base" = "assistant",
+): Promise<{
   ok: boolean;
   message?: string;
   error?: string;
@@ -128,7 +134,7 @@ export async function postWorkflowStopCapture(threadId: string): Promise<{
     const res = await fetch(resolveWorkflowStopCaptureBffUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threadId: tid }),
+      body: JSON.stringify({ threadId: tid, source }),
       cache: "no-store",
     });
     const raw = await res.text().catch(() => "");

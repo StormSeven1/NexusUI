@@ -66,8 +66,11 @@ function fitRectToViewport(r: Rect): Rect {
 const MIN_W = 360;
 const MIN_H = 240;
 const EDGE_MARGIN = 8;
+/** 边框热区宽度（px），略宽以便 hover 易触发 */
+const EDGE_HIT_PX = 6;
 
-type ResizeEdge = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+/** 仅四边拉伸（不用四角），hover 显示系统箭头光标 */
+type ResizeEdge = "n" | "s" | "e" | "w";
 
 function resizeRectFromPointer(start: Rect, edge: ResizeEdge, cx: number, cy: number): Rect {
   const m = EDGE_MARGIN;
@@ -80,23 +83,15 @@ function resizeRectFromPointer(start: Rect, edge: ResizeEdge, cx: number, cy: nu
   let w = start.w;
   let h = start.h;
 
-  const applyN = edge === "n" || edge === "nw" || edge === "ne";
-  const applyS = edge === "s" || edge === "sw" || edge === "se";
-  const applyW = edge === "w" || edge === "nw" || edge === "sw";
-  const applyE = edge === "e" || edge === "ne" || edge === "se";
-
-  if (applyE) {
+  if (edge === "e") {
     w = clamp(cx - x, MIN_W, vw - x - m);
-  }
-  if (applyS) {
+  } else if (edge === "s") {
     h = clamp(cy - y, MIN_H, vh - y - m);
-  }
-  if (applyW) {
+  } else if (edge === "w") {
     const nx = clamp(cx, m, startRight - MIN_W);
     w = startRight - nx;
     x = nx;
-  }
-  if (applyN) {
+  } else if (edge === "n") {
     const ny = clamp(cy, m, startBottom - MIN_H);
     h = startBottom - ny;
     y = ny;
@@ -226,7 +221,43 @@ export interface EoVideoExpandFloatingChromeProps {
   mode?: "full" | "handlesOnly" | "headerOnly";
 }
 
-/** 放大浮层标题栏 + 边角拉伸（叠在同一面板根节点上） */
+/** 四边拉伸条：全长覆盖、高 z-index，避免被视频/工具栏挡住（相机/无人机一致） */
+function EdgeResizeHandle({
+  edge,
+  onPointerDown,
+}: {
+  edge: ResizeEdge;
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  const hit = EDGE_HIT_PX;
+  const base =
+    "pointer-events-auto absolute z-[60] touch-none transition-colors hover:bg-sky-400/25 active:bg-sky-400/35";
+  const byEdge: Record<ResizeEdge, string> = {
+    n: cn(base, "cursor-ns-resize left-0 right-0 top-0"),
+    s: cn(base, "cursor-ns-resize bottom-0 left-0 right-0"),
+    e: cn(base, "cursor-ew-resize right-0 top-0 bottom-0"),
+    w: cn(base, "cursor-ew-resize left-0 top-0 bottom-0"),
+  };
+  const style: React.CSSProperties =
+    edge === "n" || edge === "s"
+      ? { height: hit }
+      : { width: hit };
+  const label =
+    edge === "n" ? "上边调整高度" : edge === "s" ? "下边调整高度" : edge === "e" ? "右边调整宽度" : "左边调整宽度";
+  return (
+    <div
+      role="separator"
+      aria-orientation={edge === "n" || edge === "s" ? "horizontal" : "vertical"}
+      aria-label={label}
+      title={label}
+      className={byEdge[edge]}
+      style={style}
+      onPointerDown={onPointerDown}
+    />
+  );
+}
+
+/** 放大浮层标题栏 + 四边拉伸（叠在同一面板根节点上） */
 export function EoVideoExpandFloatingChrome({
   title = "光电",
   onClose,
@@ -240,7 +271,7 @@ export function EoVideoExpandFloatingChrome({
     <>
       {showHeader ? (
         <header
-          className="flex h-9 shrink-0 cursor-grab select-none items-center justify-between gap-2 border-b border-white/12 bg-zinc-900/95 px-2 active:cursor-grabbing"
+          className="relative z-[40] flex h-9 shrink-0 cursor-grab select-none items-center justify-between gap-2 border-b border-white/12 bg-zinc-900/95 px-2 active:cursor-grabbing"
           onPointerDown={startDragMove}
         >
           <span className="min-w-0 truncate text-xs font-medium text-white/90">{title}</span>
@@ -263,54 +294,11 @@ export function EoVideoExpandFloatingChrome({
       ) : null}
       {showHandles ? (
         <>
-          <div
-            role="presentation"
-            className="absolute left-0 top-9 bottom-12 z-10 w-3 cursor-ew-resize hover:bg-white/[0.06]"
-            onPointerDown={startResize("w")}
-            aria-hidden
-          />
-          <div
-            role="presentation"
-            className="absolute right-0 top-9 bottom-12 z-10 w-3 cursor-ew-resize hover:bg-white/[0.06]"
-            onPointerDown={startResize("e")}
-            aria-hidden
-          />
-          <div
-            role="presentation"
-            className="absolute bottom-0 left-12 right-12 z-10 h-3 cursor-ns-resize hover:bg-white/[0.06]"
-            onPointerDown={startResize("s")}
-            aria-hidden
-          />
-          <div
-            role="presentation"
-            className="absolute left-0 top-9 z-10 h-12 w-12 cursor-[nw-resize] hover:bg-white/[0.06]"
-            onPointerDown={startResize("nw")}
-            aria-hidden
-          />
-          <div
-            role="presentation"
-            className="absolute right-0 top-9 z-10 h-12 w-12 cursor-[ne-resize] hover:bg-white/[0.06]"
-            onPointerDown={startResize("ne")}
-            aria-hidden
-          />
-          <div
-            role="presentation"
-            className="absolute bottom-0 left-0 z-20 h-12 w-12 cursor-[sw-resize] hover:bg-white/[0.08]"
-            onPointerDown={startResize("sw")}
-            aria-hidden
-          />
-          <div
-            role="presentation"
-            className="absolute bottom-0 right-0 z-20 h-12 w-12 cursor-[se-resize] hover:bg-white/[0.08]"
-            onPointerDown={startResize("se")}
-            aria-hidden
-          />
-          <div
-            role="presentation"
-            className="absolute left-12 right-12 top-9 z-10 h-2 cursor-ns-resize hover:bg-white/[0.06]"
-            onPointerDown={startResize("n")}
-            aria-hidden
-          />
+          {/* 四边贴窗口外缘；上边在标题栏顶沿（不是标题下），与系统窗口一致 */}
+          <EdgeResizeHandle edge="n" onPointerDown={startResize("n")} />
+          <EdgeResizeHandle edge="s" onPointerDown={startResize("s")} />
+          <EdgeResizeHandle edge="e" onPointerDown={startResize("e")} />
+          <EdgeResizeHandle edge="w" onPointerDown={startResize("w")} />
         </>
       ) : null}
     </>
@@ -356,8 +344,17 @@ export function EoVideoExpandFloatingFrame({
         onClose={onClose}
         startDragMove={startDragMove}
         startResize={startResize}
+        mode="headerOnly"
       />
-      <div className="relative min-h-0 flex-1 overflow-hidden">{children}</div>
+      <div className="relative z-0 min-h-0 flex-1 overflow-hidden">{children}</div>
+      {/* 拉伸条放在内容之后，保证相机/无人机模式下热区都不被视频盖住 */}
+      <EoVideoExpandFloatingChrome
+        title={title}
+        onClose={onClose}
+        startDragMove={startDragMove}
+        startResize={startResize}
+        mode="handlesOnly"
+      />
     </div>,
     document.body,
   );

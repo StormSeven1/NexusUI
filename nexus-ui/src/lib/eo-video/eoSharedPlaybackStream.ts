@@ -43,13 +43,19 @@ export function reattachVideoFromPeer(
         .map((r) => r.track)
         .filter((t): t is MediaStreamTrack => Boolean(t && t.readyState === "live"));
       if (live.length) {
+        /**
+         * 仅比较 video 轨：audio 轨 readyState 变化（如对端停推音频）不应触发 srcObject 替换，
+         * 否则重设 srcObject 会导致 1-2 帧黑屏闪烁。
+         */
+        const videoLive = live.filter((t) => t.kind === "video");
         const cur = video.srcObject;
+        const curVideoTracks = cur instanceof MediaStream ? cur.getVideoTracks() : [];
         const same =
-          cur instanceof MediaStream &&
-          cur.getTracks().length === live.length &&
-          live.every((t) => cur.getTracks().some((c) => c.id === t.id));
-        if (!same) {
-          video.srcObject = new MediaStream(live);
+          videoLive.length > 0 &&
+          videoLive.length === curVideoTracks.length &&
+          videoLive.every((t) => curVideoTracks.some((c) => c.id === t.id));
+        if (!same && videoLive.length > 0) {
+          video.srcObject = new MediaStream(videoLive);
         }
         video.muted = true;
         video.playsInline = true;

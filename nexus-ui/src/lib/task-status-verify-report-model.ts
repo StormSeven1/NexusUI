@@ -43,6 +43,8 @@ export type VerifyReportViewModel = {
   featureTarget?: string;
   /** 找到目标：1/0 */
   targetFound?: number;
+  /** taskStatus=8：知识库来访记录正文 */
+  visitHistory?: string;
 };
 
 export type TaskVerifyReportPart = {

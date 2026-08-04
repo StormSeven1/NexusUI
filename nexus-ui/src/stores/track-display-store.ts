@@ -9,24 +9,24 @@ import {
   isAirTrackBirdGlyph,
 } from "@/lib/map-icons";
 import {
-  TRACK_LAYER_KEYS_ORDERED,
   type TrackLayerKey,
   type Track,
 } from "@/lib/map-entity-model";
 import {
   DEFAULT_AIR_FUSION_SUBTYPE_VISIBLE,
-  DEFAULT_TRACK_SUBTYPE_VISIBLE,
+  getTrackLayerKeysOrdered,
   resolveTrackLayerKey,
+  trackSubtypeVisibleFromFusionTrackSourcesEnv,
   type AirFusionSubtypeVisibility,
 } from "@/lib/track-layer-visibility";
 
 function defaultTrackSubtypeVisible(): Record<TrackLayerKey, boolean> {
-  return { ...DEFAULT_TRACK_SUBTYPE_VISIBLE };
+  return trackSubtypeVisibleFromFusionTrackSourcesEnv();
 }
 
 function defaultSecondsByLayer(defaultSec: number): Record<TrackLayerKey, number> {
   return Object.fromEntries(
-    TRACK_LAYER_KEYS_ORDERED.map((k) => [k, defaultSec]),
+    getTrackLayerKeysOrdered().map((k) => [k, defaultSec]),
   ) as Record<TrackLayerKey, number>;
 }
 
@@ -36,7 +36,9 @@ function layerUsesAirDisplayDefaults(key: TrackLayerKey): boolean {
     key === "bird_radar" ||
     key === "auto_bird_radar" ||
     key === "fanwu_car_radar" ||
-    key === "uav_pose_track"
+    key === "uav_pose_track" ||
+    key === "ku_lei_da" ||
+    key === "wu_ren_che"
   );
 }
 
@@ -66,7 +68,7 @@ export function defaultAirFusionNeutralColors(): AirFusionNeutralColors {
 
 /** 各航迹类型默认中立/圆点色（彼此独立，互不影响） */
 export function defaultNeutralColorByLayer(): Record<TrackLayerKey, string> {
-  return {
+  const base: Record<TrackLayerKey, string> = {
     fuse_sea: FUSION_TRACK_NEUTRAL_SEA,
     fuse_air: FUSION_TRACK_NEUTRAL_AIR,
     bird_radar: FUSION_TRACK_NEUTRAL_AIR,
@@ -79,7 +81,15 @@ export function defaultNeutralColorByLayer(): Record<TrackLayerKey, string> {
     uav_pose_track: DEFAULT_UAV_POSE_TRACK_COLOR,
     boat_self_track: FUSION_TRACK_NEUTRAL_SEA,
     xpf_track: FUSION_TRACK_NEUTRAL_SEA,
+    ku_lei_da: FUSION_TRACK_NEUTRAL_AIR,
+    tian_ao: FUSION_TRACK_NEUTRAL_SEA,
+    wu_ren_che: FUSION_TRACK_NEUTRAL_AIR,
   };
+  for (const k of getTrackLayerKeysOrdered()) {
+    if (base[k] !== undefined) continue;
+    base[k] = layerUsesAirDisplayDefaults(k) ? FUSION_TRACK_NEUTRAL_AIR : FUSION_TRACK_NEUTRAL_SEA;
+  }
+  return base;
 }
 
 /** `<input type="color">` 需要 #rrggbb；非法值会导致色盘空白 */
@@ -160,7 +170,7 @@ function migrateSecondsByLayer(
   const byRaw = p[byLayerKey];
   const by =
     byRaw && typeof byRaw === "object" ? (byRaw as Record<string, number>) : null;
-  for (const k of TRACK_LAYER_KEYS_ORDERED) {
+  for (const k of getTrackLayerKeysOrdered()) {
     if (by && by[k] != null) {
       next[k] = coerce(Number(by[k]), next[k]);
       continue;
@@ -176,7 +186,7 @@ function migrateNeutralColorByLayer(p: Record<string, unknown>): Record<TrackLay
   const byRaw = p.neutralColorByLayer;
   const by =
     byRaw && typeof byRaw === "object" ? (byRaw as Record<string, string>) : null;
-  for (const k of TRACK_LAYER_KEYS_ORDERED) {
+  for (const k of getTrackLayerKeysOrdered()) {
     if (by && typeof by[k] === "string" && by[k].trim()) {
       next[k] = normalizeCssHexColor(by[k], defaults[k]);
     }
@@ -185,7 +195,7 @@ function migrateNeutralColorByLayer(p: Record<string, unknown>): Record<TrackLay
   const sea = typeof p.seaFusionColor === "string" ? p.seaFusionColor : null;
   const air = typeof p.airFusionColor === "string" ? p.airFusionColor : null;
   const uav = typeof p.uavPoseTrackColor === "string" ? p.uavPoseTrackColor : null;
-  for (const k of TRACK_LAYER_KEYS_ORDERED) {
+  for (const k of getTrackLayerKeysOrdered()) {
     if (by && typeof by[k] === "string" && by[k].trim()) continue;
     if (k === "uav_pose_track" && uav) {
       next[k] = normalizeCssHexColor(uav, defaults[k]);
@@ -333,7 +343,7 @@ export const useTrackDisplayStore = create<TrackDisplayState>()(
       setAllTrackSubtypesVisible: (visible) =>
         set((s) => ({
           trackSubtypeVisible: Object.fromEntries(
-            TRACK_LAYER_KEYS_ORDERED.map((k) => [k, visible]),
+            getTrackLayerKeysOrdered().map((k) => [k, visible]),
           ) as Record<TrackLayerKey, boolean>,
           airFusionSubtypeVisible: { uav: visible, bird: visible },
           displayRevision: s.displayRevision + 1,

@@ -28,7 +28,7 @@ type ForceDisposition = "friendly" | "hostile" | "neutral";
 type TrackKind = "air" | "sea" | "underwater";
 
 /** 与主线程 `TRACK_LAYER_KEY_BY_DDS_SOURCE_ID` / Custombackend 接收器 id 一致（Worker 不能 import 带 @/ 的模块） */
-type LayerKey = "fuse_sea" | "fuse_air" | "bird_radar" | "auto_bird_radar" | "fanwu_car_radar" | "radar_wharf" | "radar_jingzi" | "ais_track" | "uav_pose_track" | "boat_self_track" | "xpf_track";
+type LayerKey = string;
 
 type FusionSourceItem = {
   sourceName?: string;
@@ -83,21 +83,30 @@ const DDS_TO_LAYER: Record<string, LayerKey> = {
   grpc_fusion_track_bird: "bird_radar",
   grpc_fusion_track_uav_pose: "uav_pose_track",
   grpc_fusion_track_fanwu: "fanwu_car_radar",
-  grpc_fusion_track_ku: "fanwu_car_radar",
+  grpc_fusion_track_ku: "ku_lei_da",
   grpc_fusion_track_auto_bird: "auto_bird_radar",
+  grpc_fusion_track_tian_ao: "tian_ao",
+  grpc_fusion_track_wu_ren_che: "wu_ren_che",
   dds_forward_ais_track: "ais_track",
   dds_forward_uav_pose_track: "uav_pose_track",
   dds_udp_boatself_track: "boat_self_track",
   dds_udp_xpf_track: "xpf_track",
 };
 
-const VALID_LAYER_KEYS = new Set<string>(Object.values(DDS_TO_LAYER));
+const VALID_LAYER_KEYS = new Set<string>([
+  ...Object.values(DDS_TO_LAYER),
+  "ku_lei_da",
+  "tian_ao",
+  "wu_ren_che",
+]);
 
 function _readTrackLayerKeyFromRec(rec: Record<string, unknown>): LayerKey | undefined {
   const raw = rec.track_layer_key ?? rec.trackLayerKey;
   if (typeof raw !== "string") return undefined;
   const s = raw.trim().toLowerCase().replace(/-/g, "_");
-  return VALID_LAYER_KEYS.has(s) ? (s as LayerKey) : undefined;
+  if (VALID_LAYER_KEYS.has(s)) return s;
+  if (/^[a-z][a-z0-9_]*$/.test(s)) return s;
+  return undefined;
 }
 
 function _ddsSourceStr(rec: Record<string, unknown>): string | undefined {
@@ -108,15 +117,21 @@ function _ddsSourceStr(rec: Record<string, unknown>): string | undefined {
 
 function _layerKeyFromDds(dds: string | undefined): LayerKey | undefined {
   if (!dds) return undefined;
-  return DDS_TO_LAYER[dds.trim().toLowerCase()];
+  const rid = dds.trim().toLowerCase();
+  if (DDS_TO_LAYER[rid]) return DDS_TO_LAYER[rid];
+  if (rid.startsWith("grpc_fusion_track_")) {
+    const suffix = rid.slice("grpc_fusion_track_".length);
+    if (suffix) return suffix;
+  }
+  return undefined;
 }
 
 /** 与 `ws-track-normalize.surfaceKindFromDdsOrTrackLayerKey` 一致 */
 function _surfaceKindFromDdsOrLayer(rec: Record<string, unknown>): TrackKind | undefined {
   const dds = _ddsSourceStr(rec)?.toLowerCase();
   const lk = _layerKeyFromDds(dds) ?? _readTrackLayerKeyFromRec(rec);
-  if (lk === "fuse_air" || lk === "bird_radar" || lk === "auto_bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track") return "air";
-  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track" || lk === "boat_self_track" || lk === "xpf_track") {
+  if (lk === "fuse_air" || lk === "bird_radar" || lk === "auto_bird_radar" || lk === "fanwu_car_radar" || lk === "uav_pose_track" || lk === "ku_lei_da" || lk === "wu_ren_che") return "air";
+  if (lk === "fuse_sea" || lk === "radar_wharf" || lk === "radar_jingzi" || lk === "ais_track" || lk === "boat_self_track" || lk === "xpf_track" || lk === "tian_ao") {
     return "sea";
   }
   return undefined;
@@ -373,7 +388,11 @@ function _normalize(raw: unknown): WorkerTrack | null {
       return sn && ts ? `${sn}(${ts})` : sn || ts;
     }).filter(Boolean).join(", ");
   } else {
-    sensor = String(rec.sensor ?? rec.source ?? "");
+    // 非融合雷达：优先中文来源名（后端 sensor / source_name），勿优先英文 radarId
+    const sensorRaw = String(rec.sensor ?? "").trim();
+    const sourceName = String(rec.source_name ?? rec.sourceName ?? "").trim();
+    const radarId = String(rec.radarId ?? rec.radar_id ?? "").trim();
+    sensor = sensorRaw || sourceName || radarId || String(rec.source ?? "");
   }
 
   const dsId    = rec.dataSourceId ?? rec.data_source_id;
@@ -413,9 +432,15 @@ function _normalize(raw: unknown): WorkerTrack | null {
         rv === true || rv === 1
         || (typeof rv === "string" && /^(1|true|yes|virtual)$/i.test(String(rv).trim()));
       const isVirtual = resolveTrackIsVirtual(realityType, propBag, rootVirtual || _isVirtual(propBag));
+      const rawSusp = rec.is_suspicious ?? rec.isSuspicious ?? rec.suspiciousTarget;
+      const isSuspicious =
+        rawSusp === true ||
+        rawSusp === 1 ||
+        (typeof rawSusp === "string" && /^(1|true|yes)$/i.test(String(rawSusp).trim()));
       return {
         ...(realityType !== undefined ? { realityType } : {}),
         ...(isVirtual ? { isVirtual: true as const } : {}),
+        ...(isSuspicious ? { isSuspicious: true as const } : {}),
       };
     })(),
     ...(isUav ? { isUav: true as const } : {}),

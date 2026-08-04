@@ -23,7 +23,7 @@ import {
 } from "@/lib/system-eval-track-link-api";
 
 function formatMs(v: number | undefined | null): string {
-  if (v == null || Number.isNaN(v)) return "—";
+  if (v == null || Number.isNaN(v)) return "暂无数据";
   return `${Math.round(v)} ms`;
 }
 
@@ -252,7 +252,7 @@ export function buildSystemPerfSection(input: {
   blocks.push({
     type: "paragraph",
     text:
-      "旁路采样 gRPC 航迹各段时延与更新频率。「创建→接收」可能含观测时戳滞后（对海融合可达数十秒级），以中位数为准；「接收→发送」「发送→后端」更接近近端链路时延。",
+      "system-evaluation-server 旁路采样 DDS 实时航迹各段时延与更新频率。「创建→接收」可能含观测时戳滞后，以中位数为准；无可信样本时返回暂无数据。",
   });
 
   if (input.trackLinkDurationSec != null && input.trackLinkDurationSec > 0) {
@@ -276,23 +276,31 @@ export function buildSystemPerfSection(input: {
 
     const summaryRows: string[][] = [];
     for (const row of trackLinkRows) {
+      const noData = row.has_data === false;
       summaryRows.push([
         row.label || row.track_layer_key,
-        String(row.sampled_track_count ?? 0),
-        String(row.total_updates ?? 0),
-        row.update_frequency_hz != null
-          ? `${Number(row.update_frequency_hz).toFixed(3)} Hz`
-          : "—",
+        noData ? (row.message?.trim() || "暂无数据") : String(row.sampled_track_count ?? 0),
+        noData ? "—" : String(row.total_updates ?? 0),
+        noData
+          ? "—"
+          : row.update_frequency_hz != null
+            ? `${Number(row.update_frequency_hz).toFixed(3)} Hz`
+            : "暂无数据",
       ]);
     }
     blocks.push({
       type: "table",
-      headers: ["航迹类型", "采样航迹", "更新次数", "更新频率"],
+      headers: ["航迹类型", "采样航迹 / 说明", "更新次数", "更新频率"],
       rows: summaryRows,
     });
 
     const freqChartItems: TrackChartItem[] = trackLinkRows
-      .filter((r) => r.update_frequency_hz != null && Number.isFinite(r.update_frequency_hz))
+      .filter(
+        (r) =>
+          r.has_data !== false &&
+          r.update_frequency_hz != null &&
+          Number.isFinite(r.update_frequency_hz),
+      )
       .map((r) => ({
         label: r.label || r.track_layer_key,
         value: Number(r.update_frequency_hz),
@@ -311,6 +319,13 @@ export function buildSystemPerfSection(input: {
     }
 
     for (const row of trackLinkRows) {
+      if (row.has_data === false) {
+        blocks.push({
+          type: "note",
+          text: `${row.label || row.track_layer_key}：${row.message?.trim() || "暂无数据"}`,
+        });
+        continue;
+      }
       const typeLabel = row.label || row.track_layer_key;
       const segRows: string[][] = [];
       const stageBars: Array<{ label: string; ms: number; count: number }> = [];
@@ -326,7 +341,6 @@ export function buildSystemPerfSection(input: {
           formatMs(seg.max_ms),
           String(seg.count),
         ]);
-        // 图用中位数；创建→接收可能很大，仍如实画出
         if (median != null && Number.isFinite(median) && median >= 0) {
           stageBars.push({
             label: s.label,
@@ -335,7 +349,13 @@ export function buildSystemPerfSection(input: {
           });
         }
       }
-      if (segRows.length === 0) continue;
+      if (segRows.length === 0) {
+        blocks.push({
+          type: "note",
+          text: `${typeLabel}：暂无数据（无可信链路时延样本）`,
+        });
+        continue;
+      }
       blocks.push({
         type: "heading",
         level: 3,
@@ -363,6 +383,7 @@ export function buildSystemPerfSection(input: {
     // 近端链路对比图：接收→发送 / 发送→后端 中位数
     const nearLinkItems: TrackChartItem[] = [];
     for (const row of trackLinkRows) {
+      if (row.has_data === false) continue;
       const typeLabel = row.label || row.track_layer_key;
       const r2s = row.segments?.recv_to_send;
       const s2b = row.segments?.send_to_backend;
