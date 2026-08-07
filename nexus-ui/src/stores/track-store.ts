@@ -60,6 +60,42 @@ let _shadowOnlyDirty = false;
  */
 const _lastIngestMsByShowId = new Map<string, number>();
 
+/**
+ * HIGH 告警态势蓝粘滞（与 alert-store `ALARM_STALE_MS` 同量级）。
+ * 分片空窗 / 渲染层短暂降级时仍保持蓝，避免约 1s 蓝↔白闪。
+ */
+const ALARM_BLUE_STICKY_MS = 60_000;
+const _alarmBlueUntilByShowId = new Map<string, number>();
+
+/** 刷新某航迹的告警蓝粘滞截止时间 */
+export function touchAlarmBlueSticky(showID: string, now = Date.now()): void {
+  const id = String(showID ?? "").trim();
+  if (!id) return;
+  _alarmBlueUntilByShowId.set(id, now + ALARM_BLUE_STICKY_MS);
+}
+
+/** 清除粘滞（全部或指定 showID） */
+export function clearAlarmBlueSticky(showID?: string): void {
+  if (showID == null || String(showID).trim() === "") {
+    _alarmBlueUntilByShowId.clear();
+    return;
+  }
+  _alarmBlueUntilByShowId.delete(String(showID).trim());
+}
+
+/** 粘滞期内视为仍应染告警蓝 */
+export function isAlarmBlueSticky(showID: string, now = Date.now()): boolean {
+  const id = String(showID ?? "").trim();
+  if (!id) return false;
+  const until = _alarmBlueUntilByShowId.get(id);
+  if (until == null) return false;
+  if (until <= now) {
+    _alarmBlueUntilByShowId.delete(id);
+    return false;
+  }
+  return true;
+}
+
 /** 导出 renderCache 只读访问（供 image polling 等外部模块用） */
 export function getRenderCache(): ReadonlyMap<string, Track> {
   return _renderCache;
@@ -74,11 +110,12 @@ export function isTrackAlarmLinked(track: Track): boolean {
 }
 
 /**
- * 地图 / 列表 / 标牌用敌我：仅告警关联（渲染层）显示为敌方；其余显示为中立（不采用报文缺省 hostile）。
+ * 地图 / 列表 / 标牌用敌我：告警渲染层或 HIGH 蓝粘滞期内显示为敌方；其余中立。
  * 纯可疑标记会被告警入口过滤，不进入渲染层；地图黄标见 resolveTrackMapHighlightFill。
  */
 export function getEffectiveTrackDisposition(track: Track): ForceDisposition {
-  return isTrackAlarmLinked(track) ? "hostile" : "neutral";
+  if (isTrackAlarmLinked(track) || isAlarmBlueSticky(track.showID)) return "hostile";
+  return "neutral";
 }
 
 /**
@@ -234,12 +271,18 @@ export const useTrackStore = create<TrackState>((set, get) => ({
           ? { ...t, historyTrail, historyTrailAtMs: historyTrailAtMs?.length ? historyTrailAtMs : undefined }
           : { ...t };
 
+      const matched = isTrackMatchedByAlarm(t, alarmTrackIds, shadow);
+      if (matched) touchAlarmBlueSticky(t.showID);
+      const keepAlarmBlue = matched || isAlarmBlueSticky(t.showID);
+
       if (inRender) {
         // 已在渲染层 → 更新坐标并累积 historyTrail，不动影子
+        if (keepAlarmBlue) touchAlarmBlueSticky(t.showID);
         _renderCache.set(t.showID, nextTrack);
         needsRenderUpdate = true;
-      } else if (isTrackMatchedByAlarm(t, alarmTrackIds, shadow)) {
-        // 不在渲染层但匹配告警 → 提升到渲染层，从影子移除（保留 historyTrail）
+      } else if (keepAlarmBlue) {
+        // 匹配告警，或粘滞期内：留在/提升到渲染层，避免分片空窗蓝白闪
+        touchAlarmBlueSticky(t.showID);
         _renderCache.set(t.showID, nextTrack);
         if (shadow.delete(t.showID)) shadowMutated = true;
         needsRenderUpdate = true;
@@ -287,25 +330,29 @@ export const useTrackStore = create<TrackState>((set, get) => ({
     const disposedStore = useDisposedStore.getState();
     let changed = false;
 
-    // 1. 渲染缓存优先：不匹配的降级到影子
+    // 1. 渲染缓存优先：不匹配且粘滞已过期 → 降级到影子
     for (const [key, track] of _renderCache) {
-      if (!isTrackMatchedByAlarm(track, alarmTrackIds, shadow)) {
-        shadow.set(key, { ...track });
-        _renderCache.delete(key);
-        changed = true;
+      if (isTrackMatchedByAlarm(track, alarmTrackIds, shadow)) {
+        touchAlarmBlueSticky(key);
+        continue;
       }
+      if (isAlarmBlueSticky(key)) continue;
+      shadow.set(key, { ...track });
+      _renderCache.delete(key);
+      changed = true;
     }
 
-    // 2. 影子补充：匹配的提升到渲染（_renderCache.has 跳过已在渲染层的）
+    // 2. 影子补充：匹配告警或粘滞期内 → 提升到渲染
     for (const [key, shadowTrack] of shadow) {
       if (_renderCache.has(key)) continue;
       // 已处置的不提升
       if (disposedStore.isTrackDisposed(key)) continue;
-      if (isTrackMatchedByAlarm(shadowTrack, alarmTrackIds, shadow)) {
-        _renderCache.set(key, { ...shadowTrack });
-        shadow.delete(key);
-        changed = true;
-      }
+      const matched = isTrackMatchedByAlarm(shadowTrack, alarmTrackIds, shadow);
+      if (!matched && !isAlarmBlueSticky(key)) continue;
+      if (matched) touchAlarmBlueSticky(key);
+      _renderCache.set(key, { ...shadowTrack });
+      shadow.delete(key);
+      changed = true;
     }
 
     if (changed) {
@@ -402,6 +449,7 @@ export const useTrackStore = create<TrackState>((set, get) => ({
   clearAllTracks: () => {
     _renderCache.clear();
     _lastIngestMsByShowId.clear();
+    clearAlarmBlueSticky();
     _shadowOnlyDirty = false;
     get().shadowTracks.clear();
     set({ tracks: [], manualAffiliationByShowId: {}, mapManualAffiliationRev: 0 });

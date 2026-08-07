@@ -20,8 +20,8 @@
  *   - 航迹层订阅此数字变化来触发 syncWithAlarms（提升/降级渲染层航迹）
  *
  * 【过期清理】
- *   - removeStaleAlarms：超过 ALARM_STALE_MS（25s）未更新的告警移除
- *   - MAX_ALERTS：最多保留 200 条告警
+ *   - removeStaleAlarms：超过 ALARM_STALE_MS（60s）未更新的告警移除
+ *   - MAX_SYSTEM_ALERTS：系统告警单独上限 200；航迹告警不被系统快照/upsert 封顶挤掉
  */
 
 import { create } from "zustand";
@@ -104,7 +104,22 @@ export interface AlertData {
  * 超过 20s，导致快照中断。60s 窗口可容忍更长的处理延迟，避免告警误判过期后闪烁消失。
  */
 const ALARM_STALE_MS = 60_000;
-const MAX_ALERTS = 200;
+/** 仅限制 SystemAlarm 条数；航迹等非系统告警不得被 200 封顶挤掉 */
+const MAX_SYSTEM_ALERTS = 200;
+
+/**
+ * GetActiveAlarms 常满员 ~200。若对整表 slice(0, 200)，随后任意航迹 upsert
+ * 会把「200 系统 + 航迹」裁回 200，航迹告警被挤出 → 告警中心消失再出现。
+ */
+function capAlertsPreservingNonSystem(alerts: AlertData[]): AlertData[] {
+  const nonSystem: AlertData[] = [];
+  const system: AlertData[] = [];
+  for (const a of alerts) {
+    if (a.source === "SystemAlarm") system.push(a);
+    else nonSystem.push(a);
+  }
+  return [...nonSystem, ...system.slice(0, MAX_SYSTEM_ALERTS)];
+}
 
 /** 合并同航迹告警：NewTrackStruct 主要带证据链；严重度只升不降，避免 Top5 排名跳变导致严重↔信息闪烁 */
 const SEVERITY_RANK: Record<AlertData["severity"], number> = {
@@ -270,7 +285,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
           next = [{ ...alarm, alarmType: "alert", firstSeenTime: now, lastUpdateTime: now }, ...s.alerts];
         }
       }
-      next = next.slice(0, MAX_ALERTS);
+      next = capAlertsPreservingNonSystem(next);
       return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });
     }),
 
@@ -298,7 +313,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       } else {
         next = [{ ...threat, alarmType: "threat", firstSeenTime: now, lastUpdateTime: now }, ...s.alerts];
       }
-      next = next.slice(0, MAX_ALERTS);
+      next = capAlertsPreservingNonSystem(next);
       return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });
     }),
 
@@ -352,6 +367,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
   syncSystemAlarms: (systemAlerts) =>
     set((s) => {
+      // 航迹告警必须保留：GetActiveAlarms≈200 满员时，若对整表 slice(0,200)，
+      // sync 或后续 upsertThreat 都会把 NewTrackStruct HIGH 挤掉 → 列表闪空、态势蓝白抖。
       const keep = s.alerts.filter((a) => a.source !== "SystemAlarm");
       const now = Date.now();
       // 全量替换系统告警，保留上报方最新 timestamp / 描述 / 级别（勿锁死首次时间）
@@ -362,7 +379,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
         firstSeenTime: a.firstSeenTime ?? now,
         lastUpdateTime: now,
       }));
-      const next = [...incoming, ...keep].slice(0, MAX_ALERTS);
+      const next = capAlertsPreservingNonSystem([...incoming, ...keep]);
       return applyRevision({ ...s, alerts: next, alarmFlashing: next.length > 0 });
     }),
 

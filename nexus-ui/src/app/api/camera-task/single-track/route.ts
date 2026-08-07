@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-
-const BACKEND_URL = process.env.BACKEND_URL?.trim() ?? "";
+import {
+  custombackendProxyHeaders,
+  resolveCustombackendBase,
+} from "@/lib/server/custombackend-proxy";
 
 /**
  * 转发到 Custombackend（若存在 `POST /api/camera-tasks/single-track`）。
  */
 export async function POST(req: NextRequest) {
-  if (!BACKEND_URL) {
-    return NextResponse.json({ error: "missing BACKEND_URL" }, { status: 500 });
-  }
+  const backendBase = resolveCustombackendBase();
 
   let body: unknown;
   try {
@@ -18,9 +18,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(`${BACKEND_URL.replace(/\/$/, "")}/api/camera-tasks/single-track`, {
+    const res = await fetch(`${backendBase}/api/camera-tasks/single-track`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: custombackendProxyHeaders(req, {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      }),
       body: JSON.stringify(body),
       cache: "no-store",
     });
@@ -33,6 +36,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: "backend proxy failed", backend: BACKEND_URL, detail: msg }, { status: 502 });
+    return NextResponse.json(
+      { error: "backend proxy failed", backend: backendBase, detail: msg },
+      { status: 502 },
+    );
   }
 }

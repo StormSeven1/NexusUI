@@ -305,8 +305,9 @@ export function AlertPanel() {
 
   const allAlerts = useMemo(() => {
     return alerts
-      // 告警中心仅展示 ThreatLevel HIGH（critical）
-      .filter((a) => isHighThreatAlert(a))
+      // 航迹威胁：仅 ThreatLevel HIGH；系统告警（装备/通信/任务…）按自身级别进列表，
+      // 由下方「级别」筛选控制。否则 GetActiveAlarms 多为 MEDIUM 时告警中心只剩航迹 HIGH。
+      .filter((a) => isSystemAlarm(a) || isHighThreatAlert(a))
       .filter((a) =>
         alertMatchesFilters(a, selectedFilters, selectedSeverities, selectedSystems),
       )

@@ -1,12 +1,16 @@
-const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8001";
+import {
+  custombackendProxyHeaders,
+  resolveCustombackendBase,
+} from "@/lib/server/custombackend-proxy";
 
 export async function POST(req: Request) {
   const body = await req.json();
+  const backendBase = resolveCustombackendBase();
 
   try {
-    const res = await fetch(`${BACKEND_URL}/api/chat/approve`, {
+    const res = await fetch(`${backendBase}/api/chat/approve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: custombackendProxyHeaders(req, { "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     });
     const data = await res.json();
