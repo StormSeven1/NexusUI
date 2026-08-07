@@ -2,6 +2,7 @@ import type { TaskStatusChatPayload } from "@/lib/task-status-types";
 import type { FileUIPart } from "ai";
 import { enrichTaskStatusPayloadForVerifyUi } from "@/lib/task-status-track-enrich";
 import { buildVerifySessionKey } from "@/lib/task-status-verify-entity-ref";
+import { STABLE_TARGET_ID_THRESHOLD } from "@/lib/task-status-verify-target-id";
 
 export function pickTaskStatusImageUrl(p: TaskStatusChatPayload): string | null {
   const u = p.downloadUrl?.trim();
@@ -89,7 +90,18 @@ export function formatTaskStatusVerificationMarkdown(p: TaskStatusChatPayload): 
   if (entityLabel) lines.push(`- **实体**：\`${entityLabel}\``);
   lines.push("");
   if (targetId != null && Number.isFinite(Number(targetId))) {
-    lines.push(`正在查证ID为${targetId}的目标，航迹信息：`);
+    const archive = p.shipArchiveInfo?.trim() ?? "";
+    const selfPosHint =
+      Number(targetId) > 0 &&
+      Number(targetId) < STABLE_TARGET_ID_THRESHOLD &&
+      archive.includes("自报位")
+        ? "自报位"
+        : "";
+    lines.push(
+      selfPosHint
+        ? `正在查证${selfPosHint}ID为${targetId}的目标，航迹信息：`
+        : `正在查证ID为${targetId}的目标，航迹信息：`,
+    );
   } else {
     lines.push("正在查证目标，航迹信息：");
   }

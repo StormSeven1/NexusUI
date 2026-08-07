@@ -93,7 +93,7 @@ def evaluate_track_quality(
     sea_fusion_filter: Optional[str] = None,
     air_fusion_filter: Optional[str] = None,
     display_sensor_ids: Optional[List[int]] = None,
-    timeout_sec: float = 120.0,
+    timeout_sec: float = 300.0,
 ) -> Dict[str, Any]:
     try:
         import grpc
@@ -240,5 +240,48 @@ def evaluate_track_quality(
             "error_message": str(e),
             "grpc_target": target,
         }
+    finally:
+        channel.close()
+
+
+def cancel_track_quality_eval(
+    target: str,
+    *,
+    timeout_sec: float = 10.0,
+) -> Dict[str, Any]:
+    try:
+        import grpc
+    except Exception as e:
+        return {"ok": False, "error_message": str(e), "grpc_target": target}
+
+    _ensure_generated()
+    gen_path = str(_GEN_ROOT)
+    if gen_path not in sys.path:
+        sys.path.insert(0, gen_path)
+
+    from track.v1 import track_evaluation_pb2 as track_pb2
+    from track.v1 import track_evaluation_pb2_grpc as track_grpc
+
+    channel = grpc.insecure_channel(target)
+    try:
+        stub = track_grpc.TrackEvaluationServiceStub(channel)
+        resp = stub.CancelTrackQualityEval(track_pb2.CancelTrackQualityEvalRequest(), timeout=timeout_sec)
+        return {
+            "ok": True,
+            "cancelled_count": int(resp.cancelled_count or 0),
+            "message": (resp.message or None),
+            "grpc_target": target,
+        }
+    except grpc.RpcError as e:
+        logger.warning("track-eval cancel gRPC 失败: {} {}", target, e)
+        return {
+            "ok": False,
+            "cancelled_count": 0,
+            "error_message": f"gRPC 错误: {e.code().name} {e.details()}",
+            "grpc_target": target,
+        }
+    except Exception as e:
+        logger.exception("track-eval cancel 异常")
+        return {"ok": False, "cancelled_count": 0, "error_message": str(e), "grpc_target": target}
     finally:
         channel.close()

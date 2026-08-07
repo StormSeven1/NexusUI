@@ -6,6 +6,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useAssetStore } from "@/stores/asset-store";
 import { useTrackStore } from "@/stores/track-store";
 import { useAlertStore } from "@/stores/alert-store";
+import { isHighThreatAlert } from "@/lib/alarm-threat-level";
 import { cn } from "@/lib/utils";
 import {
   buildDataLayerPanelRows,
@@ -476,7 +477,7 @@ export function WorkspaceDetails() {
   const situationLiveStats = useMemo((): StatRow[] => {
     return [
       { label: "跟踪航迹", value: String(tracks.length), icon: Route, color: "text-green-400" },
-      { label: "告警事件", value: String(alerts.length), icon: BarChart3, color: "text-orange-400" },
+      { label: "告警事件", value: String(alerts.filter(isHighThreatAlert).length), icon: BarChart3, color: "text-orange-400" },
       {
         label: "活跃无人机",
         value: String(activeDroneItems.length),

@@ -2,6 +2,7 @@
 
 import { useAppStore } from "@/stores/app-store";
 import { useAlertStore } from "@/stores/alert-store";
+import { isHighThreatAlert } from "@/lib/alarm-threat-level";
 import { cn } from "@/lib/utils";
 import {
   Crosshair,
@@ -23,7 +24,7 @@ const TABS = [
 
 export function LeftSidebar() {
   const { leftSidebarOpen, toggleLeftSidebar, leftPanelTab, setLeftPanelTab } = useAppStore();
-  const alertTotal = useAlertStore((s) => s.alerts.length);
+  const alertTotal = useAlertStore((s) => s.alerts.reduce((n, a) => n + (isHighThreatAlert(a) ? 1 : 0), 0));
 
   const handleTabClick = (tabId: typeof leftPanelTab) => {
     if (leftPanelTab === tabId && leftSidebarOpen) {

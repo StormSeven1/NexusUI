@@ -3,7 +3,7 @@
 /**
  * GIS 右下角图例：折叠按钮 → 展开两列
  * - 左：各航迹类型中立色（对空融合拆鸟/无人机）
- * - 右：目标属性高亮色（重点关注/威胁）
+ * - 右：目标属性高亮色（预警 MEDIUM / 告警 HIGH）
  */
 
 import { useMemo, useState } from "react";
@@ -23,8 +23,8 @@ import {
 type LegendSwatch = { key: string; label: string; color: string };
 
 const ATTR_LEGEND: LegendSwatch[] = [
-  { key: "suspicious", label: "重点关注", color: SUSPICIOUS_TRACK_MAP_COLOR },
-  { key: "threat", label: "威胁目标", color: FORCE_COLORS.hostile },
+  { key: "prewarning", label: "预警目标", color: SUSPICIOUS_TRACK_MAP_COLOR },
+  { key: "alarm", label: "告警目标", color: FORCE_COLORS.hostile },
 ];
 
 function SwatchRow({ label, color }: { label: string; color: string }) {

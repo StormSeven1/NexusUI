@@ -69,7 +69,19 @@ message GetTrackLinkEvalResultResponse {
   double ended_at_unix = 12;
 }
 
+message CancelTrackLinkEvalRequest {
+  string task_id = 1;  // 空则取消当前 collecting 任务
+}
+
+message CancelTrackLinkEvalResponse {
+  bool cancelled = 1;
+  string task_id = 2;
+  string status = 3;  // cancelled | idle
+  string message = 4;
+}
+
 service TrackLinkEvaluationService {
   rpc TriggerTrackLinkEval(TriggerTrackLinkEvalRequest) returns (TriggerTrackLinkEvalResponse);
   rpc GetTrackLinkEvalResult(GetTrackLinkEvalResultRequest) returns (GetTrackLinkEvalResultResponse);
+  rpc CancelTrackLinkEval(CancelTrackLinkEvalRequest) returns (CancelTrackLinkEvalResponse);
 }

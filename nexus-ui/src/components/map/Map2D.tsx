@@ -9,6 +9,7 @@ import { useMapPointerStore } from "@/stores/map-pointer-store";
 import { metersPerPixelMapLibre } from "@/lib/map-scale-bar";
 import { useTrackStore } from "@/stores/track-store";
 import { useAlertStore } from "@/stores/alert-store";
+import { isHighThreatAlert, isMediumThreatAlert } from "@/lib/alarm-threat-level";
 import { computeTopThreatRankByShowId } from "@/lib/alarm-track-threat-rank";
 import { useVerifiedTrackStore } from "@/stores/verified-track-store";
 import { useSuspiciousTrackStore } from "@/stores/suspicious-track-store";
@@ -1541,7 +1542,7 @@ export function Map2D() {
     return unsub;
   }, []);
 
-  /** 重点关注：unique_id 标黄后刷新航迹 GeoJSON */
+  /** 重点关注 unique_id 集合变化（历史路径；态势黄已改读 ThreatLevel MEDIUM） */
   useEffect(() => {
     const unsub = useSuspiciousTrackStore.subscribe((s, p) => {
       if (s.mapSuspiciousRev === p.mapSuspiciousRev) return;
@@ -1549,6 +1550,23 @@ export function Map2D() {
       tracksRef.current.setTracks(DISABLE_MAP_TRACK_RENDERING ? [] : useTrackStore.getState().tracks);
     });
     return unsub;
+  }, []);
+
+  /** MEDIUM 预警 / HIGH 告警变化 → 刷新航迹黄/蓝染色（MEDIUM 不进 alarmTrackIds） */
+  useEffect(() => {
+    let prevLen = useAlertStore.getState().alerts.length;
+    let prevHigh = useAlertStore.getState().alerts.filter(isHighThreatAlert).length;
+    let prevMed = useAlertStore.getState().alerts.filter(isMediumThreatAlert).length;
+    return useAlertStore.subscribe((s) => {
+      const high = s.alerts.filter(isHighThreatAlert).length;
+      const med = s.alerts.filter(isMediumThreatAlert).length;
+      if (s.alerts.length === prevLen && high === prevHigh && med === prevMed) return;
+      prevLen = s.alerts.length;
+      prevHigh = high;
+      prevMed = med;
+      if (!tracksRef.current || DISABLE_MAP_TRACK_RENDERING) return;
+      tracksRef.current.setTracks(useTrackStore.getState().tracks);
+    });
   }, []);
 
   /** 告警航迹威胁度 Top5 → 地图航迹上方红底序号 1–5（位置跟随由 setTracksAsync 分源刷新，勿订阅 tracks 全量） */

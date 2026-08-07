@@ -1,6 +1,6 @@
 /**
- * 判断告警条目是否为「可疑/重点关注」标记（非真实威胁告警）。
- * 标记只应走黄色重点关注，不得进入威胁蓝 / alarmTrackIds。
+ * 判断告警条目是否为「可疑」标记（非区域告警事件）。
+ * 标记只应走黄色预警，不得进入告警蓝 / alarmTrackIds / 告警中心。
  */
 export function isSuspiciousAlarmMarker(raw: Record<string, unknown> | null | undefined): boolean {
   if (!raw || typeof raw !== "object") return false;

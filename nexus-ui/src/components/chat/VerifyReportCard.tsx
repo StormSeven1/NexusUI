@@ -6,6 +6,7 @@ import {
   isPathishVerifyDisplayText,
   type VerifyReportViewModel,
 } from "@/lib/task-status-verify-report-model";
+import { STABLE_TARGET_ID_THRESHOLD } from "@/lib/task-status-verify-target-id";
 import { cn } from "@/lib/utils";
 /** 查证标题栏：在原色相基础上去饱和、压暗，避免刺眼 */
 const COLOR_TOP = "#3B6580";
@@ -90,7 +91,18 @@ export function VerifyReportCard({ report }: { report: VerifyReportViewModel }) 
         <PanelHeader title={title} color={COLOR_TOP} />
         <div className="flex flex-col gap-2 bg-[#1a2332]/90 p-2 sm:flex-row sm:items-stretch">
           <div className="min-w-0 flex-1 space-y-0 sm:pr-2">
-            <FieldRow label="航迹信息" value={report.trackId} />
+            <FieldRow
+              label="航迹信息"
+              value={
+                report.trackId != null &&
+                Number.isFinite(report.trackId) &&
+                report.trackId > 0 &&
+                report.trackId < STABLE_TARGET_ID_THRESHOLD &&
+                Boolean(report.shipArchiveInfo?.includes("自报位"))
+                  ? `自报位 ${report.trackId}`
+                  : report.trackId
+              }
+            />
             <FieldRow label="实体" value={report.entityId} />
             <FieldRow
               label="位置"

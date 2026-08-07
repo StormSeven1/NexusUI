@@ -225,10 +225,13 @@ function migrateAirFusionNeutralColors(
     by && typeof by.bird === "string" && by.bird.trim()
       ? normalizeCssHexColor(by.bird, defaults.bird)
       : normalizeCssHexColor(birdFromLayer, defaults.bird);
-  const uav =
+  const uavRaw =
     by && typeof by.uav === "string" && by.uav.trim()
       ? normalizeCssHexColor(by.uav, defaults.uav)
       : defaults.uav;
+  /** 旧默认黄 `#facc15` / 短暂白 `#ffffff` → 新默认浅绿，避免 localStorage 残留 */
+  const uav =
+    uavRaw === "#facc15" || uavRaw === "#ffffff" ? defaults.uav : uavRaw;
   return { bird, uav };
 }
 

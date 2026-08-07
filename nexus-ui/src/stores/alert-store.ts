@@ -377,7 +377,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
 /**
  * 重算 alarmTrackIds Set，仅在 Set 真正变化时递增 alarmTrackRevision。
- * 同时剔除误入的可疑标记（不得占威胁蓝）。
+ * 同时剔除误入的可疑标记；仅 HIGH 写入 alarmTrackIds（态势蓝）。
  */
 function applyRevision<T extends { alerts: AlertData[]; alarmTrackIds: Set<string>; alarmTrackRevision: number }>(
   state: T,

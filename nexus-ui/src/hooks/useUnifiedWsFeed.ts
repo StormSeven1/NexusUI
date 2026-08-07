@@ -156,6 +156,7 @@ import type { TrackWorkerConfig, TrackWorkerResult } from "@/lib/track-parse-wor
 import { normalizeIncomingTrack, normalizeIncomingTrackList } from "@/lib/ws-track-normalize";
 import { normalizeWsAlertItem } from "@/lib/ws-alert-normalize";
 import { isSuspiciousAlarmMarker } from "@/lib/suspicious-alarm-marker";
+import { resolveAlertThreatLevel } from "@/lib/alarm-threat-level";
 import { normalizeAssetType, LYR_TRACKS, type PublicMapAssetType, type Track } from "@/lib/map-entity-model";
 import { recordTrackReceived, recordAlertReceived, recordEntityReceived, recordCameraReceived, recordDockReceived, recordDroneReceived, recordDroneFlightPathReceived, recordHighFreqReceived, recordWsHeartbeat, recordEntityStatusFrame, recordAssetBatchReceived, recordAssetEventReceived } from "@/stores/network-stats-store";
 import { parseForceDisposition } from "@/lib/theme-colors";
@@ -991,16 +992,19 @@ function isVerifySuccessAlarmRaw(raw: Record<string, unknown>): boolean {
 function handleAlarmItem(raw: Record<string, unknown>) {
   // 航迹类告警只吃 NewTrackStruct 目标.alarms（证据链同源）；丢弃 DDS AlarmEvent
   if (isDdsAlarmEventPayload(raw)) return;
-  // 可疑/重点关注标记不得进威胁蓝（黄标走航迹 isSuspicious）
+  // 纯可疑标记不进告警通道（态势只认 ThreatLevel MEDIUM/HIGH）
   if (isSuspiciousAlarmMarker(raw)) return;
   const normalized = normalizeWsAlertItem(raw);
   if (!normalized) return;
   if (isSuspiciousAlarmMarker(normalized as unknown as Record<string, unknown>)) return;
   const alertStore = useAlertStore.getState();
   if (isVerifySuccessAlarmRaw(raw)) {
-    // 右键设为蓝方 → VERIFY_SUCCESS：告警中心级别固定为严重
-    alertStore.upsertAlarm({ ...normalized, severity: "critical" });
+    // 右键设为蓝方 → VERIFY_SUCCESS：告警中心级别固定为 HIGH
+    alertStore.upsertAlarm({ ...normalized, severity: "critical", alarmLevel: 2 });
   } else {
+    // LOW 不上色不进列表；MEDIUM 仅态势黄；HIGH 态势蓝 + 告警中心
+    const level = resolveAlertThreatLevel(normalized);
+    if (level === 0) return;
     alertStore.upsertThreat(normalized);
   }
 }

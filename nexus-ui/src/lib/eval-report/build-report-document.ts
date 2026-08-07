@@ -252,7 +252,7 @@ export function buildSystemPerfSection(input: {
   blocks.push({
     type: "paragraph",
     text:
-      "system-evaluation-server 旁路采样 DDS 实时航迹各段时延与更新频率。「创建→接收」可能含观测时戳滞后，以中位数为准；无可信样本时返回暂无数据。",
+      "Custombackend 旁路采样进站航迹各段时延与更新频率。「创建→接收」可能含观测时戳滞后，以中位数为准；无可信样本时返回暂无数据。",
   });
 
   if (input.trackLinkDurationSec != null && input.trackLinkDurationSec > 0) {

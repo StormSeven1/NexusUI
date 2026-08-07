@@ -22,7 +22,10 @@ import {
   assetFriendlyColorFromProperties,
   resolveTrackPointFill,
 } from "@/lib/map-icons";
-import { resolveTrackMapHighlightFill } from "@/lib/track-map-highlight-color";
+import {
+  formatTrackAlarmThreatParen,
+  resolveTrackMapHighlightFill,
+} from "@/lib/track-map-highlight-color";
 import { useTrackMarkerSymbolUrl } from "@/components/military/TrackMarkerIcon";
 import { FORCE_COLORS, type ForceDisposition } from "@/lib/theme-colors";
 import {
@@ -35,6 +38,7 @@ import {
 } from "@/lib/map-entity-model";
 import { dispositionFromAssetData, getTrackRenderingConfig, getAssetFriendlyColorForAssetType, formatCameraTowerMapLabel, formatTowerMapLabel } from "@/lib/map-app-config";
 import { formatTrackUnitTypeZh } from "@/lib/track-category-id-parse";
+import { useAlertStore } from "@/stores/alert-store";
 import { useAssetStore } from "@/stores/asset-store";
 import {
   useTrackStore,
@@ -153,7 +157,14 @@ export function TargetPlacard(props: TargetPlacardProps) {
 
   const title = mapDisplayName;
   const subtitle = kind === "track" ? "航迹" : "资产";
-  const trackTypeZh = kind === "track" && track ? formatTrackUnitTypeZh(track) : "-";
+  /** 订阅告警变更，黄/蓝目标类型后缀随 ThreatLevel / threatScore 更新 */
+  const alerts = useAlertStore((s) => s.alerts);
+  const trackTypeZh = useMemo(() => {
+    if (kind !== "track" || !track) return "-";
+    const base = formatTrackUnitTypeZh(track);
+    const paren = formatTrackAlarmThreatParen(track);
+    return paren ? `${base} ${paren}` : base;
+  }, [kind, track, alerts]);
   const trackTargetId = kind === "track" && track ? trackTargetIdDisplay(track) : id;
 
   const trackSymbolUrl = useTrackMarkerSymbolUrl(kind === "track" ? track : null);

@@ -51,29 +51,93 @@ function formatTimeForQuery(datetimeLocal: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/** 报告生成时限制查询窗口，降低 DEADLINE_EXCEEDED 概率（与前端默认半小时窗对齐） */
+const REPORT_TRACK_EVAL_MAX_WINDOW_MS = 30 * 60 * 1000;
+
+function resolveReportTrackTimeRange(startLocal: string, endLocal: string): {
+  startFmt: string;
+  endFmt: string;
+  clipped: boolean;
+} {
+  const endMs = Date.parse(endLocal);
+  const startMs = Date.parse(startLocal);
+  if (Number.isNaN(endMs) || Number.isNaN(startMs)) {
+    return {
+      startFmt: formatTimeForQuery(startLocal),
+      endFmt: formatTimeForQuery(endLocal),
+      clipped: false,
+    };
+  }
+  let s = startMs;
+  let e = endMs;
+  if (e < s) {
+    const t = s;
+    s = e;
+    e = t;
+  }
+  let clipped = false;
+  if (e - s > REPORT_TRACK_EVAL_MAX_WINDOW_MS) {
+    s = e - REPORT_TRACK_EVAL_MAX_WINDOW_MS;
+    clipped = true;
+  }
+  const toLocal = (ms: number) => {
+    const d = new Date(ms);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  return {
+    startFmt: formatTimeForQuery(toLocal(s)),
+    endFmt: formatTimeForQuery(toLocal(e)),
+    clipped,
+  };
+}
+
 function sensorLabels(ids: number[]): string[] {
   return ids.map(
     (id) => TRACK_EVAL_SENSOR_OPTIONS.find((o) => o.id === id)?.label ?? `传感器 ${id}`,
   );
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const t = window.setTimeout(() => resolve(), ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        window.clearTimeout(t);
+        reject(new DOMException("Aborted", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
 }
 
 /** 触发并等待航迹链路评估完成（约 30s） */
 async function collectTrackLinkForReport(
   onProgress?: EvalReportProgressCallback,
   preferredDurationSec = 30,
+  signal?: AbortSignal,
 ): Promise<{
   results: TrackLinkTypeResult[] | null;
   error: string | null;
   durationSec: number | null;
 }> {
+  throwIfAborted(signal);
   onProgress?.({ phase: "system", message: "正在启动航迹链路评估…" });
   const trigger = await triggerTrackLinkEval({
     durationSec: preferredDurationSec,
     maxTracksPerType: 10,
+    signal,
   });
   if (trigger.error && !trigger.conflict) {
     return { results: null, error: trigger.error, durationSec: null };
@@ -86,13 +150,14 @@ async function collectTrackLinkForReport(
   const deadline = Date.now() + (durationSec + 20) * 1000;
 
   while (Date.now() < deadline) {
-    const r = await fetchTrackLinkResult(tid);
+    throwIfAborted(signal);
+    const r = await fetchTrackLinkResult(tid, { signal });
     if (r.error) {
       return { results: null, error: r.error, durationSec };
     }
     const data = r.data;
     if (!data) {
-      await sleep(2000);
+      await sleep(2000, signal);
       continue;
     }
     if (data.status === "collecting") {
@@ -101,18 +166,23 @@ async function collectTrackLinkForReport(
         phase: "system",
         message: `航迹链路采集中…剩余约 ${rem}s`,
       });
-      await sleep(2000);
+      await sleep(2000, signal);
       continue;
     }
     if (data.status === "done" || data.status === "cancelled") {
       const results = data.results ?? [];
+      const emptyHint =
+        data.message?.trim() ||
+        (results.length === 0
+          ? "未采到航迹：请确认 Custombackend 有进站航迹（gRPC/融合）且采集期内有≥2帧更新"
+          : null);
       return {
         results,
-        error: data.error?.trim() || (results.length === 0 ? "未采到带链路时间戳的航迹" : null),
+        error: data.error?.trim() || emptyHint,
         durationSec: Number(data.duration_sec ?? durationSec),
       };
     }
-    await sleep(2000);
+    await sleep(2000, signal);
   }
   return { results: null, error: "航迹链路评估超时", durationSec };
 }
@@ -193,6 +263,8 @@ export interface RunEvalReportOptions {
   reuseExistingResults?: boolean;
   /** 系统评估页当前结果快照（reuse 时优先使用） */
   cachedSystem?: CachedSystemForReport | null;
+  /** 停止生成时 abort */
+  signal?: AbortSignal;
 }
 
 /**
@@ -210,6 +282,7 @@ export async function runEvalReportGeneration(
     throw new Error("请至少勾选一种评估类型");
   }
   const reuse = options?.reuseExistingResults === true;
+  const signal = options?.signal;
 
   const trackState = useTrackEvaluationStore.getState();
   const displayGrpc = buildDisplayFilterGrpcPayload(trackState.displayFilter);
@@ -218,8 +291,9 @@ export async function runEvalReportGeneration(
       ? [...trackState.sensorIdsForQuery]
       : [...DEFAULT_TRACK_EVAL_SENSOR_IDS];
   const sensorIds = enrichSensorsForDisplayIdFilters(baseSensorIds, displayGrpc);
-  const startFmt = formatTimeForQuery(trackState.startTime);
-  const endFmt = formatTimeForQuery(trackState.endTime);
+  const trackTime = resolveReportTrackTimeRange(trackState.startTime, trackState.endTime);
+  const startFmt = trackTime.startFmt;
+  const endFmt = trackTime.endFmt;
   const labels = sensorLabels(sensorIds);
 
   const needSystem = kindSet.has("system");
@@ -268,7 +342,7 @@ export async function runEvalReportGeneration(
       if (!needTrack) {
         onProgress?.({ phase: "system", message: "正在执行系统评估…" });
       }
-      const systemResult = await fetchSystemPerfStats(10);
+      const systemResult = await fetchSystemPerfStats(10, { signal });
       return {
         stats: systemResult.stats,
         error: systemResult.error,
@@ -287,7 +361,7 @@ export async function runEvalReportGeneration(
           durationSec: trackLinkDurationSec,
         };
       }
-      return collectTrackLinkForReport(linkProgress, 30);
+      return collectTrackLinkForReport(linkProgress, 30, signal);
     };
 
     // 告警耗时拉取与航迹链路采集也并行
@@ -331,21 +405,29 @@ export async function runEvalReportGeneration(
       onProgress?.({
         phase: "track",
         message: needSystem
-          ? "【航迹】正在执行航迹质量评估…"
-          : "正在执行航迹评估（当前勾选）…",
+          ? trackTime.clipped
+            ? "【航迹】正在执行航迹质量评估（报告窗口已限制为最近 30 分钟）…"
+            : "【航迹】正在执行航迹质量评估…"
+          : trackTime.clipped
+            ? "正在执行航迹评估（报告窗口已限制为最近 30 分钟）…"
+            : "正在执行航迹评估（当前勾选）…",
       });
 
       if (isTrackEvalGrpcEnabled() && !trackState.directDownload) {
         try {
-          const r = await fetchTrackEvalQuality({
-            start_time: startFmt,
-            end_time: endFmt,
-            sensor_ids: sensorIds,
-            region_type: (trackState.regionType as "" | "rect" | "polygon") || "",
-            bounding_box: trackState.bounding_box ?? undefined,
-            polygon: trackState.polygon ?? undefined,
-            ...displayGrpc,
-          });
+          throwIfAborted(signal);
+          const r = await fetchTrackEvalQuality(
+            {
+              start_time: startFmt,
+              end_time: endFmt,
+              sensor_ids: sensorIds,
+              region_type: (trackState.regionType as "" | "rect" | "polygon") || "",
+              bounding_box: trackState.bounding_box ?? undefined,
+              polygon: trackState.polygon ?? undefined,
+              ...displayGrpc,
+            },
+            { signal },
+          );
           trackMetrics = r.metrics
             ? filterGrpcTrackMetrics(r.metrics, trackState.displayFilter)
             : null;
@@ -367,6 +449,9 @@ export async function runEvalReportGeneration(
             });
           }
         } catch (e) {
+          if (signal?.aborted || (e instanceof DOMException && e.name === "AbortError")) {
+            throw e instanceof Error ? e : new DOMException("Aborted", "AbortError");
+          }
           trackError = e instanceof Error ? e.message : String(e);
         }
       } else if (trackState.directDownload) {
@@ -393,11 +478,13 @@ export async function runEvalReportGeneration(
 
   let cameraSection: ReportSection | null = null;
   if (needCamera) {
+    throwIfAborted(signal);
     onProgress?.({ phase: "camera", message: "光电评估占位…" });
-    await sleep(80);
+    await sleep(80, signal);
     cameraSection = buildCameraEvalPlaceholderSection();
   }
 
+  throwIfAborted(signal);
   onProgress?.({ phase: "assembling", message: "正在组装评估报告…" });
   return assembleReportDocument({
     system: systemSection,

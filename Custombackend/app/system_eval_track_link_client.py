@@ -201,3 +201,50 @@ def get_track_link_eval_result_grpc(
         return {"ok": False, "error_message": str(e), "grpc_target": target}
     finally:
         channel.close()
+
+
+def cancel_track_link_eval_grpc(
+    target: str,
+    *,
+    task_id: Optional[str] = None,
+    timeout_sec: float = 10.0,
+) -> Dict[str, Any]:
+    try:
+        import grpc
+    except Exception as e:
+        return {"ok": False, "error_message": str(e), "grpc_target": target}
+
+    _ensure_generated()
+    gen_path = str(_GEN_ROOT)
+    if gen_path not in sys.path:
+        sys.path.insert(0, gen_path)
+
+    from track.v1 import track_link_evaluation_pb2 as pb2
+    from track.v1 import track_link_evaluation_pb2_grpc as pb2_grpc
+
+    channel = grpc.insecure_channel(target)
+    try:
+        stub = pb2_grpc.TrackLinkEvaluationServiceStub(channel)
+        req = pb2.CancelTrackLinkEvalRequest(task_id=(task_id or "").strip())
+        resp = stub.CancelTrackLinkEval(req, timeout=timeout_sec)
+        return {
+            "ok": True,
+            "cancelled": bool(resp.cancelled),
+            "task_id": resp.task_id or None,
+            "status": resp.status or ("cancelled" if resp.cancelled else "idle"),
+            "message": (resp.message or None),
+            "grpc_target": target,
+        }
+    except grpc.RpcError as e:
+        logger.warning("track-link cancel gRPC 失败: {} {}", target, e)
+        return {
+            "ok": False,
+            "cancelled": False,
+            "error_message": f"gRPC 错误: {e.code().name} {e.details()}",
+            "grpc_target": target,
+        }
+    except Exception as e:
+        logger.exception("track-link cancel 异常")
+        return {"ok": False, "cancelled": False, "error_message": str(e), "grpc_target": target}
+    finally:
+        channel.close()

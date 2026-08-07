@@ -96,6 +96,7 @@ function formatHttpError(res: Response, raw: string, json: ApiJson | null): stri
 export async function triggerTrackLinkEval(opts?: {
   durationSec?: number;
   maxTracksPerType?: number;
+  signal?: AbortSignal;
 }): Promise<{ taskId: string; durationSec: number; error: string | null; conflict?: boolean }> {
   const res = await fetch("/api/system-eval/track-link/trigger", {
     method: "POST",
@@ -105,6 +106,7 @@ export async function triggerTrackLinkEval(opts?: {
       max_tracks_per_type: opts?.maxTracksPerType ?? 10,
     }),
     cache: "no-store",
+    signal: opts?.signal,
   });
   const raw = await res.text();
   let json: ApiJson | null = null;
@@ -135,13 +137,17 @@ export async function triggerTrackLinkEval(opts?: {
   };
 }
 
-export async function fetchTrackLinkResult(taskId?: string): Promise<{
+export async function fetchTrackLinkResult(
+  taskId?: string,
+  opts?: { signal?: AbortSignal },
+): Promise<{
   data: TrackLinkEvalData | null;
   error: string | null;
 }> {
   const qs = taskId ? `?task_id=${encodeURIComponent(taskId)}` : "";
   const res = await fetch(`/api/system-eval/track-link/result${qs}`, {
     cache: "no-store",
+    signal: opts?.signal,
   });
   const raw = await res.text();
   let json: ApiJson | null = null;

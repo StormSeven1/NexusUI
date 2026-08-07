@@ -44,6 +44,11 @@ class TrackEvaluationServiceStub:
                 request_serializer=track_dot_v1_dot_track__evaluation__pb2.EvaluateTrackQualityRequest.SerializeToString,
                 response_deserializer=track_dot_v1_dot_track__evaluation__pb2.EvaluateTrackQualityEvent.FromString,
                 _registered_method=True)
+        self.CancelTrackQualityEval = channel.unary_unary(
+                '/track.eval.v1.TrackEvaluationService/CancelTrackQualityEval',
+                request_serializer=track_dot_v1_dot_track__evaluation__pb2.CancelTrackQualityEvalRequest.SerializeToString,
+                response_deserializer=track_dot_v1_dot_track__evaluation__pb2.CancelTrackQualityEvalResponse.FromString,
+                _registered_method=True)
 
 
 class TrackEvaluationServiceServicer:
@@ -61,6 +66,13 @@ class TrackEvaluationServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CancelTrackQualityEval(self, request, context):
+        """停止当前进行中的航迹质量评估（TryCancel 已登记的 gRPC 调用）
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_TrackEvaluationServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -73,6 +85,11 @@ def add_TrackEvaluationServiceServicer_to_server(servicer, server):
                     servicer.EvaluateTrackQualityStream,
                     request_deserializer=track_dot_v1_dot_track__evaluation__pb2.EvaluateTrackQualityRequest.FromString,
                     response_serializer=track_dot_v1_dot_track__evaluation__pb2.EvaluateTrackQualityEvent.SerializeToString,
+            ),
+            'CancelTrackQualityEval': grpc.unary_unary_rpc_method_handler(
+                    servicer.CancelTrackQualityEval,
+                    request_deserializer=track_dot_v1_dot_track__evaluation__pb2.CancelTrackQualityEvalRequest.FromString,
+                    response_serializer=track_dot_v1_dot_track__evaluation__pb2.CancelTrackQualityEvalResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -129,6 +146,33 @@ class TrackEvaluationService:
             '/track.eval.v1.TrackEvaluationService/EvaluateTrackQualityStream',
             track_dot_v1_dot_track__evaluation__pb2.EvaluateTrackQualityRequest.SerializeToString,
             track_dot_v1_dot_track__evaluation__pb2.EvaluateTrackQualityEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CancelTrackQualityEval(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/track.eval.v1.TrackEvaluationService/CancelTrackQualityEval',
+            track_dot_v1_dot_track__evaluation__pb2.CancelTrackQualityEvalRequest.SerializeToString,
+            track_dot_v1_dot_track__evaluation__pb2.CancelTrackQualityEvalResponse.FromString,
             options,
             channel_credentials,
             insecure,

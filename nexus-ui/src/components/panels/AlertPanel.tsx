@@ -27,6 +27,7 @@ import {
   buildAlarmConfirmTrackHint,
 } from "@/lib/alarm-confirm-api";
 import { resolveAlertFuseType } from "@/lib/alarm-track-match";
+import { isHighThreatAlert } from "@/lib/alarm-threat-level";
 import { sendSystemAlarmCancelRequest } from "@/lib/system-alarm-cancel-api";
 import {
   ALERT_FILTER_OPTIONS,
@@ -304,6 +305,8 @@ export function AlertPanel() {
 
   const allAlerts = useMemo(() => {
     return alerts
+      // 告警中心仅展示 ThreatLevel HIGH（critical）
+      .filter((a) => isHighThreatAlert(a))
       .filter((a) =>
         alertMatchesFilters(a, selectedFilters, selectedSeverities, selectedSystems),
       )

@@ -61,12 +61,18 @@ function formatPerfHttpError(
 
 type SystemPerfJson = SystemPerfApiResponse & { error?: string; detail?: string; backend?: string };
 
-export async function fetchSystemPerfStats(limit = 10): Promise<{
+export async function fetchSystemPerfStats(
+  limit = 10,
+  opts?: { signal?: AbortSignal },
+): Promise<{
   stats: SystemResponseTimeStats | null;
   error: string | null;
   fetchedAt: string;
 }> {
-  const res = await fetch(`/api/system-eval/perf?limit=${limit}`, { cache: "no-store" });
+  const res = await fetch(`/api/system-eval/perf?limit=${limit}`, {
+    cache: "no-store",
+    signal: opts?.signal,
+  });
   const raw = await res.text();
   let json: SystemPerfJson | null = null;
   try {

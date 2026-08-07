@@ -2,11 +2,12 @@
 
 import { useEffect, useRef } from "react";
 import { announceAlarmOnce, seedSpokenAlarmIds, unlockAlarmSpeech } from "@/lib/alarm-speech";
+import { isHighThreatAlert } from "@/lib/alarm-threat-level";
 import { useAlertStore } from "@/stores/alert-store";
 import { useTrackStore } from "@/stores/track-store";
 
 /**
- * 订阅 alert-store：每条告警（alarm_id = AlertData.id）仅语音播报一次。
+ * 订阅 alert-store：每条 HIGH 告警（alarm_id = AlertData.id）仅语音播报一次。
  * 文案：「距离xx海里，方位xx度发现威胁目标，目标尾号xxxx」
  */
 export function AlarmSpeechAnnouncer() {
@@ -25,13 +26,14 @@ export function AlarmSpeechAnnouncer() {
   }, []);
 
   useEffect(() => {
+    const highAlerts = alerts.filter((a) => isHighThreatAlert(a));
     if (!bootstrappedRef.current) {
-      seedSpokenAlarmIds(alerts.map((a) => a.id));
+      seedSpokenAlarmIds(highAlerts.map((a) => a.id));
       bootstrappedRef.current = true;
       return;
     }
 
-    for (const alert of alerts) {
+    for (const alert of highAlerts) {
       announceAlarmOnce(alert, tracks);
     }
   }, [alerts, tracks]);

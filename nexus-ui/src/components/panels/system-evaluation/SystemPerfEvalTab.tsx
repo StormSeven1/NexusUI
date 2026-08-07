@@ -272,7 +272,7 @@ function TrackLinkEvalSection({
         <div>
           <p className="text-[11px] font-medium text-nexus-text-secondary">航迹链路评估</p>
           <p className="text-[9px] text-nexus-text-muted">
-            system-evaluation-server 旁路采样 DDS 实时航迹（对海/对空融合）· 仅统计≥2
+            Custombackend 旁路采样进站航迹（gRPC/融合等）· 仅统计≥2
             帧 · 每类最多 10 条 · 采集 30s
           </p>
         </div>

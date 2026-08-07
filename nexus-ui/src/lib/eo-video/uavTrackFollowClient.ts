@@ -12,17 +12,21 @@ export type UavTrackFollowResult = {
 };
 
 /**
- * WatchSys `PtzMainWidget::SendUavFlightTask`（`rectID`/`rectType` 为 -1、`targetSourceId` 0/9）→ `MultiDroneTracking`。
- * `targetId` 为新 DDS `target_id`（与航迹 `uniqueID` / 相机 POS 一致）→ `trackID_List`。
+ * WatchSys `PtzMainWidget::SendUavFlightTask`（`rectID`/`rectType` 为 -1）：
+ * - 对海 `domain=sea` → `MultiDroneTracking`（`trackID_List`）
+ * - 对空 `domain=air` → `DroneTracking`（`trackID`）
+ * `targetId` 为新 DDS `target_id`（与航迹 `uniqueID` / 相机 POS 一致）。
  */
 export async function postUavTrackFollowTask(args: {
   /** 机巢 / 机场 gateway SN（任务 JSON `specification.deviceSn`） */
   airportSN: string;
-  /** 新 DDS `target_id` → `trackID_List` */
+  /** 新 DDS `target_id` → 对海 `trackID_List` / 对空 `trackID` */
   targetId: number;
   latitude: number;
   longitude: number;
   targetSourceId: number;
+  /** sea=对海 MultiDroneTracking；air=对空 DroneTracking */
+  domain?: "sea" | "air";
   mode?: number;
   rectID?: number;
   rectType?: number;
@@ -36,6 +40,7 @@ export async function postUavTrackFollowTask(args: {
     latitude: args.latitude,
     longitude: args.longitude,
     targetSourceId: args.targetSourceId,
+    domain: args.domain ?? "sea",
     mode: args.mode ?? 1,
     rectID: args.rectID ?? -1,
     rectType: args.rectType ?? -1,

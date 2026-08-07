@@ -16,7 +16,10 @@ import {
   buildImportantTrackTargetFromTrack,
   numericTargetIdForCameraTask,
 } from "@/lib/map-gis-camera-task";
-import { uavFlightTaskTargetSourceId } from "@/lib/map-gis-uav-track-task";
+import {
+  uavFlightTaskTargetSourceId,
+  uavTrackFollowDomain,
+} from "@/lib/map-gis-uav-track-task";
 import { fetchMapGisEoMenuContext, type MapGisEoMenuContext } from "@/lib/map-gis-eo-menu-context";
 import {
   buildMapGisCameraMenuRows,
@@ -108,7 +111,7 @@ async function spotFlyRecon(latitude: number, longitude: number, airportSN: stri
   return r.ok === true;
 }
 
-/** WatchSys `PtzMainWidget::SendUavFlightTask`：`MultiDroneTracking`，`mode=1`、`rectID`/`rectType=-1`、`traceMode=0` */
+/** WatchSys `PtzMainWidget::SendUavFlightTask`：对海 MultiDroneTracking / 对空 DroneTracking */
 async function uavTrackFollowOnTrack(track: Track, airportSN: string) {
   const ap = airportSN.trim();
   if (!ap) {
@@ -129,6 +132,7 @@ async function uavTrackFollowOnTrack(track: Track, airportSN: string) {
     latitude: track.lat,
     longitude: track.lng,
     targetSourceId: uavFlightTaskTargetSourceId(track),
+    domain: uavTrackFollowDomain(track),
     mode: 1,
     rectID: -1,
     rectType: -1,

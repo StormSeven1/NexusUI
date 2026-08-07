@@ -40,8 +40,8 @@ export type UavCamIntrinsics = {
 
 export type LonLatPoint = { lon: number; lat: number };
 
-/** 航点经纬 + 显示序号（优先载荷 index） */
-export type FlightPathWaypoint = LonLatPoint & { index: number };
+/** 航点经纬 + 显示序号（优先载荷 index）+ 可选高度（米，优先 ASL/载荷 height） */
+export type FlightPathWaypoint = LonLatPoint & { index: number; heightM: number | null };
 
 export type ProjectedPixel = {
   lon: number;
@@ -77,7 +77,9 @@ export function resolveWideCamIntrinsics(width: number, height: number): UavCamI
 
 /**
  * 已知目标经纬与无人机姿态，反算像素坐标。
- * valid=false 表示目标在相机后方。
+ * valid=false 表示目标在镜头后方。
+ * @param planeH 回退水平面高度（米）；未传 targetHeightM 时 mz = planeH − heightM
+ * @param targetHeightM 目标点高度（米，与 pose.heightM 同基准）；传入时 mz = targetHeightM − heightM
  */
 export function lonLatToPixel(
   intr: Pick<UavCamIntrinsics, "fx" | "fy" | "cx" | "cy">,
@@ -85,6 +87,7 @@ export function lonLatToPixel(
   targetLon: number,
   targetLat: number,
   planeH = DEFAULT_UAV_PROJECT_PLANE_H_M,
+  targetHeightM?: number | null,
 ): { u: number | null; v: number | null; valid: boolean } {
   const deltaLat = targetLat - pose.latitude;
   const deltaLon = targetLon - pose.longitude;
@@ -107,7 +110,9 @@ export function lonLatToPixel(
 
   const wx = detX;
   const wy = detY;
-  const wz = planeH - pose.heightM;
+  const targetH =
+    targetHeightM != null && Number.isFinite(targetHeightM) ? targetHeightM : planeH;
+  const wz = targetH - pose.heightM;
   // P_c = R^T @ world_point
   const pcx = R[0][0] * wx + R[1][0] * wy + R[2][0] * wz;
   const pcy = R[0][1] * wx + R[1][1] * wy + R[2][1] * wz;
@@ -433,7 +438,7 @@ export function extractFlightPathWaypoints(
   }
   if (!raw) return [];
 
-  const parsed: Array<LonLatPoint & { rawIndex: number | null }> = [];
+  const parsed: Array<LonLatPoint & { rawIndex: number | null; heightM: number | null }> = [];
   for (const wp of raw) {
     if (!wp || typeof wp !== "object") continue;
     const o = wp as Record<string, unknown>;
@@ -450,7 +455,13 @@ export function extractFlightPathWaypoints(
     }
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
     const ri = Number(o.index ?? o.wpIndex ?? o.waypointIndex);
-    parsed.push({ lon, lat, rawIndex: Number.isFinite(ri) ? Math.floor(ri) : null });
+    const hRaw = Number(o.height ?? o.altitude ?? o.alt ?? o.heightM);
+    parsed.push({
+      lon,
+      lat,
+      rawIndex: Number.isFinite(ri) ? Math.floor(ri) : null,
+      heightM: Number.isFinite(hRaw) ? hRaw : null,
+    });
   }
   if (parsed.length === 0) return [];
 
@@ -461,8 +472,13 @@ export function extractFlightPathWaypoints(
     const zeroBased = minIdx === 0;
     return parsed.map((p, i) => {
       const base = p.rawIndex != null ? p.rawIndex : i + (zeroBased ? 0 : 1);
-      return { lon: p.lon, lat: p.lat, index: zeroBased ? base + 1 : base };
+      return {
+        lon: p.lon,
+        lat: p.lat,
+        index: zeroBased ? base + 1 : base,
+        heightM: p.heightM,
+      };
     });
   }
-  return parsed.map((p, i) => ({ lon: p.lon, lat: p.lat, index: i + 1 }));
+  return parsed.map((p, i) => ({ lon: p.lon, lat: p.lat, index: i + 1, heightM: p.heightM }));
 }

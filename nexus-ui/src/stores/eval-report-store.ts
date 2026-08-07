@@ -8,6 +8,7 @@ import {
   generateWordReportFromDocument,
   triggerWordFileDownload,
 } from "@/lib/eval-report/word-report-api";
+import { stopAllEvalTasks } from "@/lib/system-eval-stop-api";
 import type {
   EvalReportPhase,
   EvalReportSectionKind,
@@ -16,6 +17,9 @@ import type {
 } from "@/lib/eval-report/types";
 import { DEFAULT_EVAL_REPORT_SECTION_KINDS } from "@/lib/eval-report/types";
 import type { SystemResponseTimeStats } from "@/lib/system-eval-perf-api";
+
+/** 当前报告生成的取消令牌（不进 zustand 持久化） */
+let reportAbort: AbortController | null = null;
 
 export type CachedSystemPerfSnapshot = {
   stats: SystemResponseTimeStats | null;
@@ -45,6 +49,8 @@ interface EvalReportState {
   wordError: string | null;
   /** 用户点击「下载 Word」后才生成/拉取 Word */
   wordDownloading: boolean;
+  /** 停止全部任务进行中 */
+  stopping: boolean;
   toggleKind: (kind: EvalReportSectionKind) => void;
   setSelectedKinds: (kinds: EvalReportSectionKind[]) => void;
   prepareOpen: (opts?: {
@@ -53,6 +59,8 @@ interface EvalReportState {
     cachedSystem?: CachedSystemPerfSnapshot | null;
   }) => void;
   generate: () => Promise<void>;
+  /** 停止报告生成 + 后端评估任务 */
+  stopAllTasks: () => Promise<void>;
   /** 仅在用户点击下载时调用：生成 Word 并触发浏览器下载 */
   downloadWord: () => Promise<void>;
   reset: () => void;
@@ -70,6 +78,7 @@ export const useEvalReportStore = create<EvalReportState>((set, get) => ({
   wordDownload: null,
   wordError: null,
   wordDownloading: false,
+  stopping: false,
 
   toggleKind: (kind) => {
     const cur = get().selectedKinds;
@@ -113,6 +122,7 @@ export const useEvalReportStore = create<EvalReportState>((set, get) => ({
       document: null,
       error: null,
       generating: false,
+      stopping: false,
       wordDownload: null,
       wordError: null,
       wordDownloading: false,
@@ -121,7 +131,7 @@ export const useEvalReportStore = create<EvalReportState>((set, get) => ({
     }),
 
   generate: async () => {
-    if (get().generating || get().wordDownloading) return;
+    if (get().generating || get().wordDownloading || get().stopping) return;
     const kinds = get().selectedKinds;
     if (kinds.length === 0) {
       toast.message("请至少勾选一种评估类型");
@@ -129,6 +139,9 @@ export const useEvalReportStore = create<EvalReportState>((set, get) => ({
     }
 
     const reuse = get().reuseExistingResults;
+    reportAbort?.abort();
+    const abort = new AbortController();
+    reportAbort = abort;
     set({
       generating: true,
       phase: kinds[0] ?? "system",
@@ -144,6 +157,7 @@ export const useEvalReportStore = create<EvalReportState>((set, get) => ({
     try {
       const doc = await runEvalReportGeneration(
         (info) => {
+          if (abort.signal.aborted) return;
           set({
             phase: info.phase,
             progressMessage: info.message,
@@ -153,8 +167,18 @@ export const useEvalReportStore = create<EvalReportState>((set, get) => ({
           kinds,
           reuseExistingResults: reuse,
           cachedSystem: get().cachedSystem,
+          signal: abort.signal,
         },
       );
+
+      if (abort.signal.aborted) {
+        set({
+          phase: "idle",
+          progressMessage: "已停止生成",
+          generating: false,
+        });
+        return;
+      }
 
       set({
         document: doc,
@@ -163,6 +187,15 @@ export const useEvalReportStore = create<EvalReportState>((set, get) => ({
       });
 
       const previewDoc = await attachChartPreviewsToDocument(doc);
+      if (abort.signal.aborted) {
+        set({
+          phase: "idle",
+          progressMessage: "已停止生成",
+          generating: false,
+          document: null,
+        });
+        return;
+      }
       set({
         document: previewDoc,
         phase: "done",
@@ -173,6 +206,15 @@ export const useEvalReportStore = create<EvalReportState>((set, get) => ({
         description: "可预览；需要文件时请点击「下载 Word」",
       });
     } catch (e) {
+      if (abort.signal.aborted) {
+        set({
+          phase: "idle",
+          progressMessage: "已停止生成",
+          generating: false,
+          error: null,
+        });
+        return;
+      }
       const msg = e instanceof Error ? e.message : String(e);
       set({
         phase: "error",
@@ -182,6 +224,40 @@ export const useEvalReportStore = create<EvalReportState>((set, get) => ({
         wordDownload: null,
       });
       toast.error("评估报告生成失败", { description: msg });
+    } finally {
+      if (reportAbort === abort) reportAbort = null;
+    }
+  },
+
+  stopAllTasks: async () => {
+    if (get().stopping) return;
+    set({ stopping: true, progressMessage: "正在停止全部评估任务…" });
+
+    reportAbort?.abort();
+    reportAbort = null;
+
+    try {
+      const r = await stopAllEvalTasks();
+      set({
+        generating: false,
+        stopping: false,
+        phase: get().document ? "done" : "idle",
+        progressMessage: r.message || "已请求停止全部任务",
+        error: null,
+      });
+      if (r.ok) {
+        toast.success("已停止全部任务", { description: r.message });
+      } else {
+        toast.message("已中断前端生成", { description: r.message || "后端停止可能未完全成功" });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      set({
+        generating: false,
+        stopping: false,
+        progressMessage: "停止请求失败",
+      });
+      toast.error("停止任务失败", { description: msg });
     }
   },
 

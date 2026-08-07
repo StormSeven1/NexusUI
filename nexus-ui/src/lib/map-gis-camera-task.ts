@@ -262,7 +262,7 @@ function parseSelfReportIdFromSensor(sensor: string | undefined): number | null 
 }
 
 /**
- * 无人机跟踪任务 `MultiDroneTracking.trackID_List` 用新 DDS `target_id`（前端 `uniqueID` / `showID`）。
+ * 无人机跟踪任务：对海 `MultiDroneTracking.trackID_List` / 对空 `DroneTracking.trackID`，用新 DDS `target_id`（前端 `uniqueID` / `showID`）。
  * @deprecated 请用 `numericTargetIdForCameraTask`；保留别名避免遗漏引用。
  */
 export function numericTrackIdForDroneTask(track: Pick<Track, "uniqueID" | "showID">): number {

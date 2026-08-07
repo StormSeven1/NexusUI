@@ -138,7 +138,7 @@ interface TrackEvaluationState {
   setQualityTab: (tab: QualityMetricTabId) => void;
   setStartTime: (v: string) => void;
   setEndTime: (v: string) => void;
-  /** 按当前时间窗长度滚动：结束=现在，开始=现在−原时长（默认 1 小时） */
+  /** 按当前时间窗长度滚动：结束=现在，开始=现在−原时长（默认 30 分钟） */
   refreshTimeWindow: () => void;
   toggleSensorForQuery: (id: number) => void;
   setDirectDownload: (v: boolean) => void;
@@ -352,8 +352,8 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
   mainTab: "filter",
   qualityTab: "accuracy",
 
-  startTime: defaultDatetimeLocal(-1),
-  endTime: defaultDatetimeLocal(0),
+  startTime: defaultDatetimeLocalFromMinutes(-30),
+  endTime: defaultDatetimeLocalFromMinutes(0),
   sensorIdsForQuery: [...DEFAULT_TRACK_EVAL_SENSOR_IDS],
   directDownload: false,
   autoAnalysisEnabled: false,
@@ -388,7 +388,7 @@ export const useTrackEvaluationStore = create<TrackEvaluationState>((set, get) =
     const s = get();
     const startMs = Date.parse(s.startTime);
     const endMs = Date.parse(s.endTime);
-    let durationMin = 60;
+    let durationMin = 30;
     if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
       durationMin = Math.max(1, Math.round((endMs - startMs) / 60_000));
     }

@@ -61,6 +61,7 @@ export function trackEvalHistoryQueryNeedsWs(directDownload: boolean): boolean {
 
 export async function fetchTrackEvalQuality(
   body: TrackEvalGrpcRequest,
+  opts?: { signal?: AbortSignal },
 ): Promise<{
   metrics: TrackEvalMetricsResult | null;
   status: string;
@@ -89,6 +90,7 @@ export async function fetchTrackEvalQuality(
       display_sensor_ids: body.display_sensor_ids,
     }),
     cache: "no-store",
+    signal: opts?.signal,
   });
 
   const raw = await res.text();

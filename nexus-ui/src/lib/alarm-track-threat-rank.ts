@@ -2,6 +2,7 @@ import type { AlertData } from "@/stores/alert-store";
 import type { Track } from "@/lib/map-entity-model";
 import { getRenderCache } from "@/stores/track-store";
 import { resolveShowIdFromAlarm } from "@/lib/alarm-track-match";
+import { isHighThreatAlert } from "@/lib/alarm-threat-level";
 import { THIRD_PARTY_DETECT_ALERT_TYPE } from "@/lib/third-party-ptz-fov";
 
 /** 告警 WS 中 `alarmLevel` 在 AlarmSys 侧实为 `threatScore`（威胁度） */
@@ -33,6 +34,7 @@ export function computeTopThreatRankByShowId(
   const best = new Map<string, { score: number; trackId: string }>();
 
   for (const a of alerts) {
+    if (!isHighThreatAlert(a)) continue;
     if (!a.trackId?.trim()) continue;
     if (a.type === THIRD_PARTY_DETECT_ALERT_TYPE) continue;
     const showId = resolveShowIdForAlarm(a, shadowTracks);

@@ -220,7 +220,7 @@ export function isSeaTrackReefGlyph(
  */
 /** 光电查证完成：军标 id 后缀（态势已不再用查证标黄，后缀保留兼容缓存键） */
 export const OPTICALLY_VERIFIED_SYMBOL_SUFFIX = "-ov";
-/** 重点关注目标：军标 id 后缀（态势黄色） */
+/** 重点关注/预警目标：军标 id 后缀（态势黄色 MEDIUM） */
 export const SUSPICIOUS_TARGET_SYMBOL_SUFFIX = "-sp";
 /** COASTING 预测目标：军标虚线外框 */
 export const COASTING_TARGET_SYMBOL_SUFFIX = "-co";
@@ -261,10 +261,10 @@ export function getMarkerSymbolId(
   return opticallyVerified ? `${id}${OPTICALLY_VERIFIED_SYMBOL_SUFFIX}` : id;
 }
 
-/** 融合航迹中立态配色：对海/水下白、对空浅紫、对空无人机黄 */
+/** 融合航迹中立态配色：对海/水下白、对空浅紫、对空融合无人机浅绿 */
 export const FUSION_TRACK_NEUTRAL_SEA = "#ffffff";
 export const FUSION_TRACK_NEUTRAL_AIR = "#d8b4fe";
-export const FUSION_TRACK_NEUTRAL_UAV = "#facc15";
+export const FUSION_TRACK_NEUTRAL_UAV = "#86efac";
 
 export function getFusionTrackMarkerFill(track: Pick<Track, "type" | "isUav">): string {
   if (track.type === "sea" || track.type === "underwater") return FUSION_TRACK_NEUTRAL_SEA;

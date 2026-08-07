@@ -6,6 +6,7 @@ import { useDockStore } from "@/stores/dock-store";
 import type { PanelId } from "@/stores/dock-store";
 import { useAppStore, type LeftPanelTab } from "@/stores/app-store";
 import { useAlertStore } from "@/stores/alert-store";
+import { isHighThreatAlert } from "@/lib/alarm-threat-level";
 import { cn } from "@/lib/utils";
 import { getWindowConfig } from "@/components/dock/windowRegistry";
 import { dockedPanelsInPartition, LEFT_DOCK_TOOL_IDS } from "@/components/layout/dock-sidebar-utils";
@@ -41,7 +42,7 @@ export function DockLeftSidebar(props: DockLeftSidebarProps = {}) {
   const handlePanelClick = useDockStore((s) => s.handlePanelClick);
   const panels = useDockStore((s) => s.panels);
   const panelRegistry = useDockStore((s) => s.panelRegistry);
-  const alertTotal = useAlertStore((s) => s.alerts.length);
+  const alertTotal = useAlertStore((s) => s.alerts.reduce((n, a) => n + (isHighThreatAlert(a) ? 1 : 0), 0));
   const eoFocusedDockId = useEoVideoPanelFocusStore((s) => s.focusedDockPanelId);
   const setEoFocusedDockPanel = useEoVideoPanelFocusStore((s) => s.setFocusedDockPanel);
   const contentRef = useRef<HTMLDivElement>(null);

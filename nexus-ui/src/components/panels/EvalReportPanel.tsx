@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, FileText, Loader2, Play } from "lucide-react";
+import { Download, FileText, Loader2, Play, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEvalReportStore } from "@/stores/eval-report-store";
 import {
@@ -327,8 +327,10 @@ export function EvalReportPanel() {
   const wordDownload = useEvalReportStore((s) => s.wordDownload);
   const wordError = useEvalReportStore((s) => s.wordError);
   const wordDownloading = useEvalReportStore((s) => s.wordDownloading);
+  const stopping = useEvalReportStore((s) => s.stopping);
   const toggleKind = useEvalReportStore((s) => s.toggleKind);
   const generate = useEvalReportStore((s) => s.generate);
+  const stopAllTasks = useEvalReportStore((s) => s.stopAllTasks);
   const downloadWord = useEvalReportStore((s) => s.downloadWord);
 
   return (
@@ -344,11 +346,13 @@ export function EvalReportPanel() {
               <p className="truncate text-[9px] text-nexus-text-muted">
                 {generating || wordDownloading
                   ? progressMessage
-                  : document
-                    ? "可预览；点击「下载 Word」才会生成并下载文件"
-                    : reuseExistingResults
-                      ? "将使用当前评估结果生成报告（不重新评估）"
-                      : "勾选类型后点击「开始生成」"}
+                  : stopping
+                    ? progressMessage
+                    : document
+                      ? "可预览；点击「下载 Word」才会生成并下载文件"
+                      : reuseExistingResults
+                        ? "将使用当前评估结果生成报告（不重新评估）"
+                        : "勾选类型后点击「开始生成」"}
               </p>
             </div>
           </div>
@@ -357,7 +361,7 @@ export function EvalReportPanel() {
               <button
                 type="button"
                 onClick={() => void downloadWord()}
-                disabled={generating || wordDownloading}
+                disabled={generating || wordDownloading || stopping}
                 className={cn(
                   "inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px]",
                   "text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50",
@@ -378,8 +382,21 @@ export function EvalReportPanel() {
             ) : null}
             <button
               type="button"
+              onClick={() => void stopAllTasks()}
+              disabled={stopping}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px]",
+                "text-red-200 hover:bg-red-500/20 disabled:opacity-50",
+              )}
+              title="停止报告生成，并取消系统评估侧当前全部任务（链路采集 / 航迹质量）"
+            >
+              {stopping ? <Loader2 size={12} className="animate-spin" /> : <Square size={12} />}
+              {stopping ? "停止中…" : "停止全部任务"}
+            </button>
+            <button
+              type="button"
               onClick={() => void generate()}
-              disabled={generating || wordDownloading || selectedKinds.length === 0}
+              disabled={generating || wordDownloading || stopping || selectedKinds.length === 0}
               className={cn(
                 "inline-flex items-center gap-1 rounded-md border border-nexus-accent/50 bg-nexus-accent/15 px-2 py-1 text-[10px]",
                 "text-nexus-text-primary hover:bg-nexus-accent/25 disabled:opacity-50",

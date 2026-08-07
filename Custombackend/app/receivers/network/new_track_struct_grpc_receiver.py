@@ -90,7 +90,8 @@ class NewTrackStructGrpcReceiver:
                 )
             if self._stop.wait(backoff_sec):
                 break
-            backoff_sec = min(backoff_sec * 2, 30.0)
+            # 上游不可达时上限拉长，避免频繁建 channel（仍依赖 finally 防泄漏）
+            backoff_sec = min(backoff_sec * 2, 120.0)
 
     def _subscribe_once(self) -> None:
         options = [
@@ -99,24 +100,33 @@ class NewTrackStructGrpcReceiver:
             ("grpc.keepalive_timeout_ms", 5000),
             ("grpc.keepalive_permit_without_calls", 1),
         ]
-        self._channel = grpc.insecure_channel(self.target, options=options)
-        grpc.channel_ready_future(self._channel).result(timeout=10)
-        stub = NewTrackStructStreamServiceStub(self._channel)
-        # 服务端约 200ms 推一帧；不设短 timeout，由 keepalive / 断线触发重连
-        stream = stub.Subscribe(SubscribeNewTrackStructRequest())
-        logger.info(f"NewTrackStruct gRPC 已连接 [{self.receiver_id}] {self.target}")
-        for resp in stream:
-            if self._stop.is_set():
-                break
-            try:
-                tracks = parse_target_output_set_pb(resp)
-            except Exception as e:
-                logger.error(f"NewTrackStruct gRPC 解析失败 [{self.receiver_id}]: {e}")
-                continue
-            if tracks is None:
-                continue
-            if self.data_callback:
-                self.data_callback(tracks)
-        if self._channel is not None:
-            self._channel.close()
-            self._channel = None
+        channel = None
+        try:
+            channel = grpc.insecure_channel(self.target, options=options)
+            self._channel = channel
+            grpc.channel_ready_future(channel).result(timeout=10)
+            stub = NewTrackStructStreamServiceStub(channel)
+            # 服务端约 200ms 推一帧；不设短 timeout，由 keepalive / 断线触发重连
+            stream = stub.Subscribe(SubscribeNewTrackStructRequest())
+            logger.info(f"NewTrackStruct gRPC 已连接 [{self.receiver_id}] {self.target}")
+            for resp in stream:
+                if self._stop.is_set():
+                    break
+                try:
+                    tracks = parse_target_output_set_pb(resp)
+                except Exception as e:
+                    logger.error(f"NewTrackStruct gRPC 解析失败 [{self.receiver_id}]: {e}")
+                    continue
+                if tracks is None:
+                    continue
+                if self.data_callback:
+                    self.data_callback(tracks)
+        finally:
+            # ready 超时 / RpcError 也必须 close，否则 completion-queue 线程泄漏
+            if channel is not None:
+                try:
+                    channel.close()
+                except Exception:
+                    pass
+            if self._channel is channel:
+                self._channel = None

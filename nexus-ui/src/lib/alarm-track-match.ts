@@ -11,6 +11,7 @@
 import type { AlertData } from "@/stores/alert-store";
 import type { Track } from "@/lib/map-entity-model";
 import type { AlarmFilterFuseType } from "@/lib/alarm-filter-api";
+import { isHighThreatAlert } from "@/lib/alarm-threat-level";
 import { getTrackIdModeConfig } from "@/lib/map-app-config";
 import { getRenderCache } from "@/stores/track-store";
 import { isSuspiciousAlarmMarker } from "@/lib/suspicious-alarm-marker";
@@ -60,12 +61,14 @@ function trimId(v: string | undefined | null): string {
   return v != null ? String(v).trim() : "";
 }
 
-/** 由当前告警列表生成匹配键集合（写入 alert-store.alarmTrackIds） */
+/** 由当前告警列表生成匹配键集合（写入 alert-store.alarmTrackIds；仅 HIGH→态势蓝） */
 export function buildAlarmMatchKeysFromAlerts(alerts: readonly AlertData[]): Set<string> {
   const keys = new Set<string>();
   for (const a of alerts) {
     // 可疑标记不得参与威胁蓝匹配
     if (isSuspiciousAlarmMarker(a as unknown as Record<string, unknown>)) continue;
+    // 仅 HIGH 进 alarmTrackIds（MEDIUM 预警走黄色，LOW 同普通航迹）
+    if (!isHighThreatAlert(a)) continue;
     const uid = trimId(a.uniqueID);
     if (uid) keys.add(`u:${uid}`);
 

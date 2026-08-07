@@ -268,7 +268,16 @@ message EvaluateTrackQualityEvent {
   }
 }
 
+message CancelTrackQualityEvalRequest {}
+
+message CancelTrackQualityEvalResponse {
+  uint32 cancelled_count = 1;
+  string message = 2;
+}
+
 service TrackEvaluationService {
   rpc EvaluateTrackQuality(EvaluateTrackQualityRequest) returns (EvaluateTrackQualityResponse);
   rpc EvaluateTrackQualityStream(EvaluateTrackQualityRequest) returns (stream EvaluateTrackQualityEvent);
+  // 停止当前进行中的航迹质量评估（TryCancel 已登记的 gRPC 调用）
+  rpc CancelTrackQualityEval(CancelTrackQualityEvalRequest) returns (CancelTrackQualityEvalResponse);
 }

@@ -358,7 +358,12 @@ class WebSocketManager:
         except Exception as e:
             logger.debug("雷达训练真值采集跳过: {}", e)
 
-        # 航迹链路评估已迁至 system-evaluation-server（DDS 实时航迹旁路），此处不再采样
+        # 航迹链路评估：旁路采样进站航迹时间戳（仅 collecting 时有开销）
+        try:
+            from track_link_evaluator import feed_track_link_evaluator
+            feed_track_link_evaluator(track_data)
+        except Exception:
+            pass
 
         message = {
             "type": "Track",

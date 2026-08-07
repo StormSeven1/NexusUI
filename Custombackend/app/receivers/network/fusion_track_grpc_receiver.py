@@ -18,10 +18,38 @@ _BRIDGE_DIR = Path(__file__).resolve().parents[2] / "bridge" / "grpc_generated"
 if str(_BRIDGE_DIR) not in sys.path:
     sys.path.insert(0, str(_BRIDGE_DIR))
 
-from fusion_track_stream_pb2 import SubscribeFusionTrackRequest  # noqa: E402
-from fusion_track_stream_pb2_grpc import FusionTrackStreamServiceStub  # noqa: E402
-
+from fusion_track_stream_pb2 import (  # noqa: E402
+    SubscribeFusionTrackRequest,
+    TrackDataClassBatch,
+)
 from parsers.fusion_track_grpc_parser import track_data_class_to_radar_track  # noqa: E402
+
+_FUSION_SUBSCRIBE_PATH = (
+    "/trackmanager.grpc.fusion_track.FusionTrackStreamService/Subscribe"
+)
+
+
+def _safe_deserialize_batch(raw: bytes) -> Optional[TrackDataClassBatch]:
+    """手工反序列化：坏帧跳过，避免 grpc 默认 deserializer 抛 INTERNAL 掐断整段流。
+
+    上游偶发一帧 wire 与本地 proto 不兼容时，官方 unary_stream 会直接
+    StatusCode.INTERNAL Exception deserializing response! 并结束流，
+    表现为 NEXUS_RADAR_TRACK_TRANSPORT=grpc 下雷达/自报位等旁路航迹全部消失、
+    仅剩 :60055 对空/对海融合。跳过坏帧后流可继续。
+    """
+    if not raw:
+        return TrackDataClassBatch()
+    batch = TrackDataClassBatch()
+    try:
+        batch.ParseFromString(raw)
+        return batch
+    except Exception as e:
+        logger.warning(
+            "FusionTrack 跳过无法反序列化的帧 len={} err={}",
+            len(raw),
+            e,
+        )
+        return None
 
 
 class FusionTrackGrpcReceiver:
@@ -99,7 +127,8 @@ class FusionTrackGrpcReceiver:
                 )
             if self._stop.wait(backoff_sec):
                 break
-            backoff_sec = min(backoff_sec * 2, 30.0)
+            # 上游不可达时上限拉长，避免频繁建 channel（仍依赖 finally 防泄漏）
+            backoff_sec = min(backoff_sec * 2, 120.0)
 
     def _subscribe_once(self) -> None:
         options = [
@@ -108,28 +137,46 @@ class FusionTrackGrpcReceiver:
             ("grpc.keepalive_timeout_ms", 5000),
             ("grpc.keepalive_permit_without_calls", 1),
         ]
-        self._channel = grpc.insecure_channel(self.target, options=options)
-        grpc.channel_ready_future(self._channel).result(timeout=10)
-        stub = FusionTrackStreamServiceStub(self._channel)
-        stream = stub.Subscribe(SubscribeFusionTrackRequest())
-        logger.info(f"FusionTrack gRPC 已连接 [{self.receiver_id}] {self.target}")
-        for batch in stream:
-            if self._stop.is_set():
-                break
-            tracks = getattr(batch, "tracks", None)
-            sources = getattr(batch, "sources", None)
-            if not tracks:
-                continue
-            parsed: List[Dict[str, Any]] = []
-            for i, track in enumerate(tracks):
-                source = sources[i] if sources is not None and i < len(sources) else None
-                row = track_data_class_to_radar_track(
-                    track, source, datasource_layer_map=self.datasource_layer_map
-                )
-                if row is not None:  # 非旁路源返回 None，跳过（防与 DDS/:60055 重复）
-                    parsed.append(row)
-            if parsed and self.data_callback:
-                self.data_callback(parsed)
-        if self._channel is not None:
-            self._channel.close()
-            self._channel = None
+        channel = None
+        try:
+            channel = grpc.insecure_channel(self.target, options=options)
+            self._channel = channel
+            grpc.channel_ready_future(channel).result(timeout=10)
+            # 不用 stub.Subscribe 的默认 deserializer：坏帧会 INTERNAL 掐流。
+            # 改为 raw bytes + 手工 Parse，失败则跳过该帧。
+            call = channel.unary_stream(
+                _FUSION_SUBSCRIBE_PATH,
+                request_serializer=SubscribeFusionTrackRequest.SerializeToString,
+                response_deserializer=lambda b: b,
+            )
+            stream = call(SubscribeFusionTrackRequest())
+            logger.info(f"FusionTrack gRPC 已连接 [{self.receiver_id}] {self.target}")
+            for raw in stream:
+                if self._stop.is_set():
+                    break
+                batch = _safe_deserialize_batch(raw if isinstance(raw, (bytes, bytearray)) else bytes(raw or b""))
+                if batch is None:
+                    continue
+                tracks = getattr(batch, "tracks", None)
+                sources = getattr(batch, "sources", None)
+                if not tracks:
+                    continue
+                parsed: List[Dict[str, Any]] = []
+                for i, track in enumerate(tracks):
+                    source = sources[i] if sources is not None and i < len(sources) else None
+                    row = track_data_class_to_radar_track(
+                        track, source, datasource_layer_map=self.datasource_layer_map
+                    )
+                    if row is not None:  # 非旁路源返回 None，跳过（防与 DDS/:60055 重复）
+                        parsed.append(row)
+                if parsed and self.data_callback:
+                    self.data_callback(parsed)
+        finally:
+            # ready 超时 / RpcError 也必须 close，否则 completion-queue 线程泄漏
+            if channel is not None:
+                try:
+                    channel.close()
+                except Exception:
+                    pass
+            if self._channel is channel:
+                self._channel = None

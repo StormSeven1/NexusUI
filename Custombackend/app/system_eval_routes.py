@@ -1,8 +1,11 @@
 """
 系统评估 HTTP 转发（对接 system-evaluation-server gRPC）。
 """
+from __future__ import annotations
+
+import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Query
 from fastapi.responses import JSONResponse
@@ -11,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from config import get_settings
 from system_eval_perf_client import fetch_system_response_time_stats
-from system_eval_track_client import evaluate_track_quality
+from system_eval_track_client import cancel_track_quality_eval, evaluate_track_quality
 from system_eval_camera_client import (
     get_sharpness,
     get_true_north_pointing_result,
@@ -19,16 +22,23 @@ from system_eval_camera_client import (
     trigger_true_north_pointing_eval,
     trigger_visibility_check,
 )
-from system_eval_track_link_client import (
-    get_track_link_eval_result_grpc,
-    trigger_track_link_eval_grpc,
-)
 from track_link_evaluator import (
     DEFAULT_DURATION_SEC,
     DEFAULT_MAX_TRACKS_PER_TYPE,
+    cancel_track_link_eval,
+    get_track_link_eval_result,
+    start_track_link_eval,
 )
 
 router = APIRouter(prefix="/system-eval", tags=["system-eval"])
+
+
+async def _grpc_to_thread(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    """
+    同步 gRPC 客户端放到线程池执行，避免阻塞 asyncio 事件循环。
+    否则评估期间航迹 WebSocket 停播，前端 prune 后地图航迹会全部消失。
+    """
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 class TrackEvalRequest(BaseModel):
@@ -49,8 +59,13 @@ class TrackEvalRequest(BaseModel):
     display_sensor_ids: Optional[List[int]] = None
 
 
+class TrackLinkEvalCancelRequest(BaseModel):
+    """停止当前（或指定）航迹链路评估任务。"""
+    task_id: Optional[str] = None
+
+
 class TrackLinkEvalTriggerRequest(BaseModel):
-    """航迹链路评估触发（Custombackend 本地采集，不经 system-evaluation-server）。"""
+    """航迹链路评估触发（Custombackend 本地旁路采样进站航迹）。"""
     duration_sec: int = Field(default=DEFAULT_DURATION_SEC, ge=5, le=300)
     max_tracks_per_type: int = Field(default=DEFAULT_MAX_TRACKS_PER_TYPE, ge=1, le=50)
 
@@ -99,7 +114,7 @@ async def get_system_perf_stats(limit: int = Query(10, ge=1, le=100)):
                 },
             )
 
-        result = fetch_system_response_time_stats(target=target, limit=limit)
+        result = await _grpc_to_thread(fetch_system_response_time_stats, target=target, limit=limit)
         if not result.get("ok") and not result.get("stats"):
             return JSONResponse(
                 status_code=502,
@@ -139,25 +154,12 @@ async def get_system_perf_stats(limit: int = Query(10, ge=1, le=100)):
 @router.post("/track-link/trigger")
 async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerRequest] = Body(None)):
     """
-    触发航迹链路评估：转发 system-evaluation-server TrackLinkEvaluationService。
-    评估服务独立线程旁路采样 DDS 实时航迹（对海/对空融合），不依赖 NexusUI 进站路径。
+    触发航迹链路评估：Custombackend 本地旁路采样进站航迹（gRPC/融合等 queue_track_data 路径）。
+    不依赖 system-evaluation-server DDS。
     """
     try:
-        settings = get_settings()
-        target = (settings.SYSTEM_EVAL_GRPC_TARGET or "").strip()
-        if not target:
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "code": 503,
-                    "message": "未配置 SYSTEM_EVAL_GRPC_TARGET",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-
         req = body or TrackLinkEvalTriggerRequest()
-        result = trigger_track_link_eval_grpc(
-            target,
+        result = start_track_link_eval(
             duration_sec=req.duration_sec,
             max_tracks_per_type=req.max_tracks_per_type,
         )
@@ -166,7 +168,7 @@ async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerReques
                 status_code=409,
                 content={
                     "code": 409,
-                    "message": result.get("message") or result.get("error_message") or "已有评估在进行中",
+                    "message": result.get("message") or "已有评估在进行中",
                     "data": result,
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -176,7 +178,7 @@ async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerReques
                 status_code=502,
                 content={
                     "code": 502,
-                    "message": result.get("error_message") or result.get("message") or "触发失败",
+                    "message": result.get("message") or "触发失败",
                     "data": result,
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -191,7 +193,7 @@ async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerReques
                     "status": result.get("status"),
                     "duration_sec": result.get("duration_sec"),
                     "max_tracks_per_type": result.get("max_tracks_per_type"),
-                    "grpc_target": result.get("grpc_target"),
+                    "source": "custombackend_ingress",
                 },
                 "timestamp": datetime.now().isoformat(),
             },
@@ -211,29 +213,17 @@ async def post_track_link_eval_trigger(body: Optional[TrackLinkEvalTriggerReques
 @router.get("/track-link/result")
 async def get_track_link_eval_result_api(task_id: Optional[str] = Query(None)):
     """
-    查询航迹链路评估进度/结果（system-evaluation-server）。
+    查询航迹链路评估进度/结果（Custombackend 本地采集）。
     collecting → 返回 elapsed/remaining；done → 返回 results。
     """
     try:
-        settings = get_settings()
-        target = (settings.SYSTEM_EVAL_GRPC_TARGET or "").strip()
-        if not target:
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "code": 503,
-                    "message": "未配置 SYSTEM_EVAL_GRPC_TARGET",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-
-        result = get_track_link_eval_result_grpc(target, task_id=task_id)
+        result = get_track_link_eval_result(task_id=task_id)
         if result.get("not_found"):
             return JSONResponse(
                 status_code=404,
                 content={
                     "code": 404,
-                    "message": result.get("error_message") or result.get("message") or "未找到评估任务",
+                    "message": result.get("message") or "未找到评估任务",
                     "timestamp": datetime.now().isoformat(),
                 },
             )
@@ -242,7 +232,7 @@ async def get_track_link_eval_result_api(task_id: Optional[str] = Query(None)):
                 status_code=502,
                 content={
                     "code": 502,
-                    "message": result.get("error_message") or "查询失败",
+                    "message": result.get("message") or "查询失败",
                     "data": result,
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -265,7 +255,7 @@ async def get_track_link_eval_result_api(task_id: Optional[str] = Query(None)):
                     "error": result.get("error"),
                     "started_at": result.get("started_at"),
                     "ended_at": result.get("ended_at"),
-                    "grpc_target": result.get("grpc_target"),
+                    "source": "custombackend_ingress",
                 },
                 "timestamp": datetime.now().isoformat(),
             },
@@ -282,6 +272,149 @@ async def get_track_link_eval_result_api(task_id: Optional[str] = Query(None)):
         )
 
 
+@router.post("/track-link/cancel")
+async def post_track_link_eval_cancel(body: Optional[TrackLinkEvalCancelRequest] = Body(None)):
+    """停止当前（或指定 task_id）航迹链路评估（Custombackend 本地）。"""
+    try:
+        req = body or TrackLinkEvalCancelRequest()
+        result = cancel_track_link_eval(task_id=req.task_id)
+        if not result.get("ok"):
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "code": 502,
+                    "message": result.get("message") or "停止失败",
+                    "data": result,
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "code": 200,
+                "message": "ok",
+                "data": {
+                    "cancelled": result.get("cancelled"),
+                    "task_id": result.get("task_id"),
+                    "status": result.get("status"),
+                    "message": result.get("message"),
+                    "source": "custombackend_ingress",
+                },
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+    except Exception as e:
+        logger.exception("track-link cancel 失败")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": 500,
+                "message": f"停止航迹链路评估异常: {e}",
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+@router.post("/track/cancel")
+async def post_track_quality_cancel():
+    """停止当前进行中的航迹质量评估（system-evaluation-server）。"""
+    try:
+        target, err_resp = _system_eval_target_or_503()
+        if err_resp:
+            return err_resp
+        result = await _grpc_to_thread(cancel_track_quality_eval, target)
+        if not result.get("ok"):
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "code": 502,
+                    "message": result.get("error_message") or "停止失败",
+                    "data": result,
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "code": 200,
+                "message": "ok",
+                "data": {
+                    "cancelled_count": result.get("cancelled_count"),
+                    "message": result.get("message"),
+                    "grpc_target": result.get("grpc_target"),
+                },
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+    except Exception as e:
+        logger.exception("track cancel 失败")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": 500,
+                "message": f"停止航迹质量评估异常: {e}",
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
+
+@router.post("/tasks/stop-all")
+async def post_stop_all_eval_tasks():
+    """
+    停止全部可取消评估任务：
+    - 航迹链路采集（Custombackend 本地）
+    - 航迹质量评估（system-evaluation-server gRPC，若已配置）
+    """
+    try:
+        link = cancel_track_link_eval()
+        parts = []
+        if link.get("cancelled"):
+            parts.append(f"链路任务 {link.get('task_id') or ''} 已停止".strip())
+        else:
+            parts.append(link.get("message") or "链路：无进行中任务")
+
+        quality: Dict[str, Any] = {
+            "ok": True,
+            "cancelled_count": 0,
+            "message": "未配置 SYSTEM_EVAL_GRPC_TARGET，跳过质量评估停止",
+        }
+        target = (get_settings().SYSTEM_EVAL_GRPC_TARGET or "").strip()
+        if target:
+            quality = await _grpc_to_thread(cancel_track_quality_eval, target)
+            if quality.get("ok"):
+                n = int(quality.get("cancelled_count") or 0)
+                parts.append(
+                    quality.get("message")
+                    or (f"质量评估：已请求停止 {n} 个" if n else "质量评估：无进行中任务")
+                )
+            else:
+                parts.append(f"质量评估停止失败: {quality.get('error_message') or 'unknown'}")
+        else:
+            parts.append(quality["message"])
+
+        ok = bool(link.get("ok")) and bool(quality.get("ok"))
+        return JSONResponse(
+            status_code=200 if ok else 502,
+            content={
+                "code": 200 if ok else 502,
+                "message": "；".join(parts),
+                "data": {
+                    "track_link": link,
+                    "track_quality": quality,
+                    "grpc_target": target or None,
+                },
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+    except Exception as e:
+        logger.exception("stop-all eval tasks 失败")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": 500,
+                "message": f"停止全部评估任务异常: {e}",
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
 @router.post("/track/evaluate")
 async def post_track_evaluate(body: TrackEvalRequest = Body(...)):
     """
@@ -304,7 +437,8 @@ async def post_track_evaluate(body: TrackEvalRequest = Body(...)):
         if body.region_type == "polygon" and body.polygon:
             polygon_points = body.polygon.get("points") or []
 
-        result = evaluate_track_quality(
+        result = await _grpc_to_thread(
+            evaluate_track_quality,
             target=target,
             start_time=body.start_time,
             end_time=body.end_time,
@@ -321,6 +455,7 @@ async def post_track_evaluate(body: TrackEvalRequest = Body(...)):
             sea_fusion_filter=body.sea_fusion_filter,
             air_fusion_filter=body.air_fusion_filter,
             display_sensor_ids=body.display_sensor_ids,
+            timeout_sec=300.0,
         )
         if result.get("resource_exhausted"):
             return JSONResponse(
@@ -391,7 +526,8 @@ async def post_camera_sharpness(body: CameraSharpnessRequest = Body(...)):
         if err_resp:
             return err_resp
 
-        result = get_sharpness(
+        result = await _grpc_to_thread(
+            get_sharpness,
             target=target,
             camera_entity_id=body.camera_entity_id,
             return_components=body.return_components,
@@ -438,7 +574,8 @@ async def post_camera_visibility_trigger(body: CameraVisibilityTriggerRequest = 
     if err_resp:
         return err_resp
 
-    result = trigger_visibility_check(
+    result = await _grpc_to_thread(
+        trigger_visibility_check,
         target=target,
         camera_entity_id=body.camera_entity_id,
         task_id=body.task_id,
@@ -476,7 +613,7 @@ async def get_camera_visibility(camera_entity_id: str = Query(..., min_length=1)
     if err_resp:
         return err_resp
 
-    result = get_visibility(target=target, camera_entity_id=camera_entity_id)
+    result = await _grpc_to_thread(get_visibility, target=target, camera_entity_id=camera_entity_id)
     if not result.get("ok") and not result.get("visibility"):
         return JSONResponse(
             status_code=502,
@@ -509,7 +646,8 @@ async def post_camera_pointing_accuracy_trigger(body: CameraPointingAccuracyTrig
     if err_resp:
         return err_resp
 
-    result = trigger_true_north_pointing_eval(
+    result = await _grpc_to_thread(
+        trigger_true_north_pointing_eval,
         target=target,
         camera_entity_id=body.camera_entity_id,
         task_id=body.task_id,
@@ -560,7 +698,8 @@ async def get_camera_pointing_accuracy(
     if err_resp:
         return err_resp
 
-    result = get_true_north_pointing_result(
+    result = await _grpc_to_thread(
+        get_true_north_pointing_result,
         target=target,
         camera_entity_id=camera_entity_id,
         task_id=task_id,

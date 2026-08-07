@@ -966,7 +966,7 @@ export function EoVideoFloatingTools({
               ? "起飞后可用：在画面投影航线与对海融合航迹"
               : uavTrackProjectVisible
                 ? "隐藏航线/对海融合航迹投影"
-                : "显示航线/对海融合航迹投影（1s 刷新）"
+                : "显示航线/对海融合航迹投影"
           }
           aria-label="航迹投影显隐"
           aria-pressed={uavTrackProjectVisible}

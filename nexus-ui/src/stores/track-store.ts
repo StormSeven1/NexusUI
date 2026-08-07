@@ -67,7 +67,7 @@ export function getRenderCache(): ReadonlyMap<string, Track> {
 
 /**
  * 是否与当前有效告警关联并在渲染层（`_renderCache`）。
- * 与影子层互斥：在本层表示当前告警集合匹配，业务上与「告警目标」一致。
+ * 与影子层互斥：在本层表示当前 HIGH 告警集合匹配，业务上与「告警目标」一致。
  */
 export function isTrackAlarmLinked(track: Track): boolean {
   return _renderCache.has(track.showID);

@@ -92,8 +92,7 @@ export interface Track {
   /** 虚兵：航迹符号外框为虚线样式（与资产 `virtual_troop` 一致） */
   isVirtual?: boolean;
   /**
-   * 可疑/重点关注：来自主航迹 TargetObject.alarms 中 rule_id=suspicious_target 标记，
-   * 与真实告警（告警中心）区分。
+   * @deprecated 态势染色已改为 ThreatLevel（MEDIUM 黄 / HIGH 蓝），不再读本字段。
    */
   isSuspicious?: boolean;
   /**

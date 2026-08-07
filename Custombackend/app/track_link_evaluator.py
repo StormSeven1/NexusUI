@@ -620,3 +620,37 @@ def get_track_link_eval_result(task_id: Optional[str] = None) -> Dict[str, Any]:
             _last_finished = ev
             _active = None
         return {"ok": True, **snap}
+
+
+def cancel_track_link_eval(task_id: Optional[str] = None) -> Dict[str, Any]:
+    """停止当前 collecting 任务；task_id 非空时须匹配。"""
+    global _active, _last_finished
+    with _mgr_lock:
+        if _active is None or _active._status != "collecting":
+            return {
+                "ok": True,
+                "cancelled": False,
+                "task_id": (_last_finished.task_id if _last_finished else None),
+                "status": "idle",
+                "message": "当前无进行中的航迹链路评估任务",
+            }
+        if task_id and _active.task_id != task_id:
+            return {
+                "ok": True,
+                "cancelled": False,
+                "task_id": _active.task_id,
+                "status": "collecting",
+                "message": "task_id 与当前任务不匹配",
+            }
+        tid = _active.task_id
+        _active.cancel()
+        snap = _active.snapshot()
+        _last_finished = _active
+        _active = None
+        return {
+            "ok": True,
+            "cancelled": True,
+            "task_id": tid,
+            "status": snap.get("status") or "cancelled",
+            "message": "已停止航迹链路评估",
+        }

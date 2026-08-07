@@ -25,8 +25,9 @@ function tsFlightsubtask(): string {
 }
 
 /**
- * WatchSys `PtzMainWidget::SendUavFlightTask`：`rectID`/`rectType`≤0 且 `radarid` 非 7/8 时
- * `type.casia.tasks.v1.MultiDroneTracking`（`trackID_List` 为新 DDS `target_id`）。
+ * WatchSys `PtzMainWidget::SendUavFlightTask`（`rectID`/`rectType`≤0）：
+ * - 对海 → `type.casia.tasks.v1.MultiDroneTracking`（`trackID_List`）
+ * - 对空 → `type.casia.tasks.v1.DroneTracking`（`trackID`；C++ 对 radarid 7/8 同型）
  */
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
@@ -53,6 +54,17 @@ export async function POST(req: NextRequest) {
   const rectID = typeof body.rectID === "number" ? body.rectID : Number(body.rectID ?? -1);
   const rectType = typeof body.rectType === "number" ? body.rectType : Number(body.rectType ?? -1);
   const traceMode = typeof body.traceMode === "number" ? body.traceMode : Number(body.traceMode ?? 0);
+  const domainRaw = typeof body.domain === "string" ? body.domain.trim().toLowerCase() : "";
+  /**
+   * 显式 `domain=air|sea` 优先（地图右键按航迹 type）。
+   * 未传 domain 时兜底：C++ radarid 7/8 → DroneTracking；targetSourceId=9（空中融合）亦按对空。
+   */
+  const isAirFollow =
+    domainRaw === "air" ||
+    (domainRaw !== "sea" &&
+      (Math.trunc(targetSourceId) === 7 ||
+        Math.trunc(targetSourceId) === 8 ||
+        Math.trunc(targetSourceId) === 9));
 
   if (!airportSN || airportSN === "whzdh01") {
     return NextResponse.json({ ok: false, error: "invalid_or_skipped_airport_sn" }, { status: 400 });
@@ -81,22 +93,43 @@ export async function POST(req: NextRequest) {
   const latR = Math.round(lat * 1e6) / 1e6;
   const lonR = Math.round(lon * 1e6) / 1e6;
   const taskId = `flightsubtask_${tsFlightsubtask()}`;
+  const tid = Math.trunc(targetId);
+  const modeN = Number.isFinite(mode) ? mode : 1;
+  const rectIdN = Number.isFinite(rectID) ? rectID : -1;
+  const traceModeN = Number.isFinite(traceMode) ? traceMode : 0;
+  const srcId = Math.trunc(targetSourceId);
 
-  const specification: Record<string, unknown> = {
-    "@type": "type.casia.tasks.v1.MultiDroneTracking",
-    transition_distance: 200,
-    trackID_List: [Math.trunc(targetId)],
-    lon: lonR,
-    lat: latR,
-    deviceSn: airportSN,
-    height,
-    mode: Number.isFinite(mode) ? mode : 1,
-    rectID: Number.isFinite(rectID) ? rectID : -1,
-    rectType: Number.isFinite(rectType) ? rectType : -1,
-    traceMode: Number.isFinite(traceMode) ? traceMode : 0,
-    targetSourceId: Math.trunc(targetSourceId),
-    taskWorkMode,
-  };
+  const specification: Record<string, unknown> = isAirFollow
+    ? {
+        "@type": "type.casia.tasks.v1.DroneTracking",
+        transition_distance: 20,
+        trackID: tid,
+        isAutoImgTrace: 1,
+        traceMode: traceModeN,
+        lon: lonR,
+        lat: latR,
+        deviceSn: airportSN,
+        height,
+        mode: modeN,
+        rectID: rectIdN,
+        targetSourceId: srcId,
+        taskWorkMode,
+      }
+    : {
+        "@type": "type.casia.tasks.v1.MultiDroneTracking",
+        transition_distance: 200,
+        trackID_List: [tid],
+        lon: lonR,
+        lat: latR,
+        deviceSn: airportSN,
+        height,
+        mode: modeN,
+        rectID: rectIdN,
+        rectType: Number.isFinite(rectType) ? rectType : -1,
+        traceMode: traceModeN,
+        targetSourceId: srcId,
+        taskWorkMode,
+      };
 
   const taskJson: Record<string, unknown> = {
     taskId,
