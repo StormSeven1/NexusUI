@@ -1,37 +1,25 @@
 import { NextResponse } from "next/server";
 
 import { buildCatalogFromEntitiesPayload } from "@/lib/asset-panel-catalog";
-
-const DEFAULT_LIST_URL = "http://192.168.18.141:8090/api/v1/entities?page=1&size=500";
+import { fetchNexusEntitiesList } from "@/lib/server/nexus-entities-fetch";
 
 /** 资产列表侧边栏：8090 全量实体（不做地图 id 黑名单、不要求坐标） */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const listUrl = (
-    searchParams.get("url")?.trim() ||
-    process.env.NEXUS_ENTITIES_LIST_URL?.trim() ||
-    DEFAULT_LIST_URL
-  ).trim();
+  const listUrlOverride = searchParams.get("url")?.trim() || null;
 
   try {
-    const res = await fetch(listUrl, {
-      headers: { Accept: "application/json", "Cache-Control": "no-cache" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(8000),
-    });
-    const text = await res.text();
-    let payload: unknown;
-    try {
-      payload = JSON.parse(text) as unknown;
-    } catch {
+    const upstream = await fetchNexusEntitiesList({ listUrl: listUrlOverride });
+    const { listUrl, status, text, payload } = upstream;
+    if (payload == null) {
       return NextResponse.json(
-        { ok: false, error: "上游返回非 JSON", status: res.status, snippet: text.slice(0, 200) },
+        { ok: false, error: "上游返回非 JSON", status, snippet: text.slice(0, 200) },
         { status: 502 },
       );
     }
-    if (!res.ok) {
+    if (!upstream.ok) {
       return NextResponse.json(
-        { ok: false, error: `上游 HTTP ${res.status}`, listUrl, snippet: text.slice(0, 400) },
+        { ok: false, error: `上游 HTTP ${status}`, listUrl, snippet: text.slice(0, 400) },
         { status: 502 },
       );
     }
@@ -59,6 +47,16 @@ export async function GET(req: Request) {
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, error: msg, listUrl }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: msg,
+        listUrl:
+          listUrlOverride ||
+          process.env.NEXUS_ENTITIES_LIST_URL?.trim() ||
+          "http://192.168.18.141:8090/api/v1/entities?page=1&size=500",
+      },
+      { status: 500 },
+    );
   }
 }

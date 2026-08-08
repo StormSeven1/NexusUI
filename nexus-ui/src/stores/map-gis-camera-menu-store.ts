@@ -36,7 +36,8 @@ export const useMapGisCameraMenuStore = create<MapGisCameraMenuState>((set, get)
         useOptoDeviceLayerStore.getState().syncCameraIds(next.map((r) => r.entityId));
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        set({ loading: false, loaded: false, lastError: msg });
+        /* 失败也标记 loaded，避免「加载中/暂无」空转；可 force 再拉 */
+        set({ rows: [], loading: false, loaded: true, lastError: msg });
       } finally {
         inflight = null;
       }

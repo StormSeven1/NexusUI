@@ -7,6 +7,7 @@ import {
 import type { EoCameraRegistryRow } from "@/lib/eo-video/cameraRegistryTypes";
 import { normThirdPartyEntityId } from "@/lib/eo-video/thirdPartyEntityId";
 import { isStandardOptoCameraAllowedOnMap } from "@/lib/map-display-filters";
+import { fetchCameraRegistryFromPublic } from "@/lib/eo-video/mergeEoVideoRegistry";
 import { fetchMapGisEoMenuContext, type MapGisEoMenuContext } from "@/lib/map-gis-eo-menu-context";
 import { loadResolvedAppConfig } from "@/lib/map-app-config";
 
@@ -70,9 +71,41 @@ export function buildMapGisCameraMenuRows(
 /** 预拉实体快照 + eo 注册表/第三方相机，返回右键同源菜单行 */
 export async function fetchMapGisCameraMenuRows(): Promise<MapGisCameraMenuRow[]> {
   await loadResolvedAppConfig();
-  await ensureEntitiesTrackTaskCache();
+  try {
+    await ensureEntitiesTrackTaskCache();
+  } catch {
+    /* 8090 鉴权失败时仍走注册表回退，避免图层面板空转 */
+  }
   const eoCtx = await fetchMapGisEoMenuContext();
-  return buildMapGisCameraMenuRows(listTrackTaskOwnerRows(), eoCtx);
+  const fromSnapshot = buildMapGisCameraMenuRows(listTrackTaskOwnerRows(), eoCtx);
+  if (fromSnapshot.length > 0) return fromSnapshot;
+
+  /* 与光电右键菜单一致：8090 空/失败时用静态 camera-registry */
+  const registry = await fetchCameraRegistryFromPublic();
+  const seen = new Set<string>();
+  const out: MapGisCameraMenuRow[] = [];
+  for (const c of registry) {
+    const id = canonicalEntityId(String(c.entityId ?? "").trim());
+    if (!id || seen.has(id)) continue;
+    if (!isStandardOptoCameraAllowedOnMap(id)) continue;
+    seen.add(id);
+    out.push({
+      entityId: id,
+      label: cameraMenuLabel(id, String(c.label ?? ""), eoCtx),
+      kind: "opto",
+    });
+  }
+  for (const tp of eoCtx.thirdPartyCameras) {
+    const id = normThirdPartyEntityId(String(tp.entityId ?? "").trim());
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      entityId: id,
+      label: cameraMenuLabel(id, String(tp.label ?? ""), eoCtx),
+      kind: "thirdParty",
+    });
+  }
+  return out.sort((a, b) => a.entityId.localeCompare(b.entityId, undefined, { numeric: true }));
 }
 
 /** 图层面板「光电装备」子树：PTZ 主相机 + 8090 第三方相机（与右键「选择光电」同源） */
