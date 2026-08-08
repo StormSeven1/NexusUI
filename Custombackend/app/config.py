@@ -791,7 +791,11 @@ def _ensure_app_dotenv() -> None:
             continue
         try:
             for key, value in dotenv_values(env_path).items():
-                if value is None or key in os.environ:
+                if value is None:
+                    continue
+                # docker -e KEY= 会留下空串；视为未设置，允许 .env.local 覆盖
+                existing = os.environ.get(key)
+                if existing is not None and str(existing).strip() != "":
                     continue
                 os.environ[key] = value
         except Exception as e:
