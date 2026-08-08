@@ -214,7 +214,6 @@ export function mergeRegistryStreams(
   thirdPartyCameras: EoCameraRegistryRow[] | ThirdPartyCamerasRegistryInput = [],
 ): EoVideoStreamsConfig {
   const thirdParty = normalizeThirdPartyRegistryInput(thirdPartyCameras);
-  const apiCameraIdSet = new Set(apiCameras.map((c) => c.entityId));
 
   const thirdPartyMulticast = getThirdPartyCameraMulticastUdp();
   const apiThirdPartyUdpStreams: EoVideoStreamEntry[] = thirdParty.udp.map((c) => ({
