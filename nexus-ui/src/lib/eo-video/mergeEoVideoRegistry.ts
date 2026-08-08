@@ -49,46 +49,48 @@ async function fetchCameraRegistryFromStaticFile(): Promise<EoCameraRegistryRow[
   }
 }
 
+type LiveCameraRegistryResult =
+  | { ok: true; cameras: EoCameraRegistryRow[] }
+  | { ok: false; cameras: [] };
+
 /** 8090 实时光电相机列表（`NEXUS_ENTITIES_LIST_URL`） */
-export async function fetchCameraRegistryFromApi(): Promise<EoCameraRegistryRow[]> {
+export async function fetchCameraRegistryFromApi(): Promise<LiveCameraRegistryResult> {
   try {
     const r = await fetch("/api/nexus-entities/opto-cameras", {
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });
-    if (!r.ok) return [];
+    if (!r.ok) return { ok: false, cameras: [] };
     const j = (await r.json()) as { ok?: boolean; cameras?: EoCameraRegistryRow[] };
-    if (j.ok !== true || !Array.isArray(j.cameras)) return [];
-    return j.cameras;
+    if (j.ok !== true || !Array.isArray(j.cameras)) return { ok: false, cameras: [] };
+    return { ok: true, cameras: j.cameras };
   } catch {
-    return [];
+    return { ok: false, cameras: [] };
   }
 }
 
 /**
- * 光电右键菜单相机列表：优先 8090 实时列表（含 `camera-cs-*` 等非 `camera_XXX` 的 CAMERA 实体），
- * 静态 `eo-video.camera-registry.json` 作回退与标签补全。
+ * 光电右键菜单相机列表：
+ * - 8090 **成功**：只用实时列表（含空列表）；静态 JSON 仅补全同 id 的 label
+ * - 8090 **失败**：才回退 `eo-video.camera-registry.json`
+ * 避免 18.36 等现场只有少量实体时仍被 141 同步的静态 registry 灌满菜单。
  */
 export async function fetchCameraRegistryFromPublic(): Promise<EoCameraRegistryRow[]> {
   const [live, staticRows] = await Promise.all([
     fetchCameraRegistryFromApi(),
     fetchCameraRegistryFromStaticFile(),
   ]);
-  if (!live.length) return staticRows;
+  if (!live.ok) return staticRows;
 
-  const byId = new Map<string, EoCameraRegistryRow>();
-  for (const c of staticRows) byId.set(c.entityId, c);
-  for (const c of live) {
-    const prev = byId.get(c.entityId);
-    byId.set(c.entityId, {
-      ...prev,
-      ...c,
-      label: c.label?.trim() || prev?.label || c.entityId,
-    });
-  }
-  return [...byId.values()].sort((a, b) =>
-    a.entityId.localeCompare(b.entityId, undefined, { numeric: true }),
+  const labelById = new Map(
+    staticRows.map((c) => [c.entityId, (c.label ?? "").trim()] as const),
   );
+  return live.cameras
+    .map((c) => ({
+      ...c,
+      label: c.label?.trim() || labelById.get(c.entityId) || c.entityId,
+    }))
+    .sort((a, b) => a.entityId.localeCompare(b.entityId, undefined, { numeric: true }));
 }
 
 async function fetchDroneDevicesFromStaticFile(): Promise<EoDroneDeviceRow[]> {
@@ -102,19 +104,23 @@ async function fetchDroneDevicesFromStaticFile(): Promise<EoDroneDeviceRow[]> {
   }
 }
 
+type LiveDroneDevicesResult =
+  | { ok: true; devices: EoDroneDeviceRow[] }
+  | { ok: false; devices: [] };
+
 /** 8090 实时无人机列表（`NEXUS_ENTITIES_LIST_URL`，`indicators.simulated === false`） */
-export async function fetchDroneDevicesFromApi(): Promise<EoDroneDeviceRow[]> {
+export async function fetchDroneDevicesFromApi(): Promise<LiveDroneDevicesResult> {
   try {
     const r = await fetch("/api/nexus-entities/drones", {
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });
-    if (!r.ok) return [];
+    if (!r.ok) return { ok: false, devices: [] };
     const j = (await r.json()) as { ok?: boolean; devices?: EoDroneDeviceRow[] };
-    if (j.ok !== true || !Array.isArray(j.devices)) return [];
-    return j.devices;
+    if (j.ok !== true || !Array.isArray(j.devices)) return { ok: false, devices: [] };
+    return { ok: true, devices: j.devices };
   } catch {
-    return [];
+    return { ok: false, devices: [] };
   }
 }
 
@@ -135,30 +141,26 @@ export async function fetchDroneDevicesForAssetPanel(): Promise<EoDroneDeviceRow
 }
 
 /**
- * 光电右键「无人机」：优先 8090 实时列表（排除 `indicators.simulated !== false`），
- * 静态 `eo-video.drone-devices.json` 作回退。
+ * 光电右键「无人机」：
+ * - 8090 **成功**：只用实时列表（可为空）；静态 JSON 仅补全同 id 名称
+ * - 8090 **失败**：才回退 `eo-video.drone-devices.json`
  */
 export async function fetchDroneDevicesFromPublic(): Promise<EoDroneDeviceRow[]> {
   const [live, staticRows] = await Promise.all([
     fetchDroneDevicesFromApi(),
     fetchDroneDevicesFromStaticFile(),
   ]);
-  if (live.length) {
-    const byId = new Map<string, EoDroneDeviceRow>();
-    for (const d of staticRows) byId.set(d.entityId, d);
-    for (const d of live) {
-      const prev = byId.get(d.entityId);
-      byId.set(d.entityId, {
-        ...prev,
-        ...d,
-        name: d.name?.trim() || prev?.name || d.entityId,
-      });
-    }
-    return [...byId.values()].sort((a, b) =>
-      a.entityId.localeCompare(b.entityId, undefined, { numeric: true }),
-    );
-  }
-  return staticRows;
+  if (!live.ok) return staticRows;
+
+  const nameById = new Map(
+    staticRows.map((d) => [d.entityId, (d.name ?? "").trim()] as const),
+  );
+  return live.devices
+    .map((d) => ({
+      ...d,
+      name: d.name?.trim() || nameById.get(d.entityId) || d.entityId,
+    }))
+    .sort((a, b) => a.entityId.localeCompare(b.entityId, undefined, { numeric: true }));
 }
 
 /** 服务端走 `NEXUS_ENTITIES_LIST_URL`（见 `/api/nexus-entities/third-party-cameras`） */
@@ -239,12 +241,12 @@ export function mergeRegistryStreams(
 
   const stripped = stripRegistryStreams(base);
   /**
-   * 有实时列表时丢弃静态/记忆占位，避免与 API 流同 id 重复。
-   * 刷新记忆的 camera-hs-00x 常以无 registrySource 的 seed 进 streams；若不剔除，
-   * findStreamById 会命中 seed → 不走 UDP 栈 → 黑屏。
+   * 丢弃静态/记忆占位里的 camera_*：光电菜单以 8090/`apiCameras` 为准，
+   * 避免 141 同步的 streams/registry 残留把 18.36 菜单灌满。
+   * 第三方/无人机记忆占位仍按下方规则剔除以免抢流黑屏。
    */
   const staticStreams = stripped.streams.filter((s) => {
-    if (isCameraEntityId(s.id) && apiCameraIdSet.has(s.id)) return false;
+    if (isCameraEntityId(s.id)) return false;
     if (thirdPartyIdSet.has(s.id)) return false;
     const norm = normThirdPartyEntityId(s.id);
     if (norm && thirdPartyNormSet.has(norm)) return false;
