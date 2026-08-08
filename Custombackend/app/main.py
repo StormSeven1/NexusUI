@@ -36,7 +36,7 @@ from config import (
     TRACK_ALARM_TRANSPORT,
     FUSION_TRACK_STREAM_GRPC_RECEIVERS,
     RADAR_TRACK_TRANSPORT,
-    HTTP_POLLERS,
+    build_http_pollers,
     WORK_MODE_DDS_PUBLISHER,
 )
 from database import DatabaseManager
@@ -390,9 +390,9 @@ async def lifespan(app: FastAPI):
         if get_track_bridge().is_running:
             _dds_track_bridge_task = asyncio.create_task(track_bridge_poll_loop(get_track_bridge()))
     
-    # 启动HTTP轮询器
+    # 启动HTTP轮询器（地址见 NEXUS_ENTITIES_LIST_URL，勿写死现场 IP）
     logger.info("正在启动HTTP轮询器...")
-    await receiver_manager.start_http_pollers(HTTP_POLLERS)
+    await receiver_manager.start_http_pollers(build_http_pollers())
 
     if _RECEIVER_STATS_LOG_INTERVAL_SEC > 0:
         _receiver_stats_task = asyncio.create_task(_receiver_stats_log_loop())

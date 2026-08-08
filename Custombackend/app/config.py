@@ -762,23 +762,155 @@ WORK_MODE_DDS_PUBLISHER: Dict[str, Any] = {
     "type_name": "casia::system::workmode::WorkModeStatus",
 }
 
-# HTTP轮询配置
-HTTP_POLLERS: List[Dict[str, Any]] = [
-    {
-        "id": "entity_status_poller",
-        "name": "实体状态轮询",
-        "url": "http://192.168.18.141:8090/api/v1/entities",
-        "method": "GET",
-        "poll_interval": 5.0,
-        "enabled": True,
-        "data_format": "EntityStatus",
-        "headers": {},
-        "params": {"page": 1, "size": 100},
-        # 8090 实体总数 >100 时分页；合并全部页后再发 entity_status（含 uav-011 等第 2 页无人机）
-        "fetch_all_pages": True,
-        "auth": None
-    },
-]
+# 8090 实体列表默认值（与 nexus-ui `NEXUS_ENTITIES_LIST_URL` 同键；现场用 .env 覆盖）
+DEFAULT_NEXUS_ENTITIES_LIST_URL = (
+    "http://192.168.18.141:8090/api/v1/entities?page=1&size=100"
+)
+
+
+def _ensure_app_dotenv() -> None:
+    """
+    把现场配置补进 os.environ（不覆盖已有环境变量，便于 docker -e）。
+    顺序：Custombackend/app/.env → 仓库 site-host.env → nexus-ui/.env.local
+    这样 18.36 只需 git pull + 本机已有 site-host/.env.local，不必两边改代码。
+    """
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(app_dir, "..", ".."))
+    candidates = (
+        os.path.join(app_dir, ".env"),
+        os.path.join(repo_root, "site-host.env"),
+        os.path.join(repo_root, "nexus-ui", ".env.local"),
+    )
+    try:
+        from dotenv import dotenv_values
+    except Exception as e:
+        logger.debug("python-dotenv unavailable: {}", e)
+        return
+    for env_path in candidates:
+        if not os.path.isfile(env_path):
+            continue
+        try:
+            for key, value in dotenv_values(env_path).items():
+                if value is None or key in os.environ:
+                    continue
+                os.environ[key] = value
+        except Exception as e:
+            logger.debug("load env {} skipped: {}", env_path, e)
+
+
+def _env_truthy(name: str, default: str = "false") -> bool:
+    return (os.environ.get(name) or default).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def build_http_pollers() -> List[Dict[str, Any]]:
+    """
+    构建 HTTP 轮询器列表。
+
+    实体状态轮询地址读环境变量 ``NEXUS_ENTITIES_LIST_URL``（与前端同键），
+    勿再写死 141/36 IP。8090 若开 Keycloak，设：
+      NEXUS_ENTITIES_AUTH_ENABLED=true
+      NEXUS_ENTITIES_KEYCLOAK_USERNAME / PASSWORD
+      （URL/realm 默认同 KEYCLOAK_*；client 默认 entity_management）
+    """
+    from urllib.parse import parse_qs, urlparse, urlunparse
+
+    _ensure_app_dotenv()
+    raw = (os.environ.get("NEXUS_ENTITIES_LIST_URL") or "").strip()
+    if not raw:
+        site = (os.environ.get("SITE_LAN_HOST") or "").strip()
+        if site:
+            raw = f"http://{site}:8090/api/v1/entities?page=1&size=100"
+        else:
+            raw = DEFAULT_NEXUS_ENTITIES_LIST_URL
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        logger.warning(
+            "NEXUS_ENTITIES_LIST_URL 无效 [{}]，回退默认 {}",
+            raw,
+            DEFAULT_NEXUS_ENTITIES_LIST_URL,
+        )
+        raw = DEFAULT_NEXUS_ENTITIES_LIST_URL
+        parsed = urlparse(raw)
+
+    qs = parse_qs(parsed.query, keep_blank_values=False)
+    try:
+        page = int((qs.get("page") or ["1"])[0] or 1)
+    except ValueError:
+        page = 1
+    try:
+        size = int((qs.get("size") or ["100"])[0] or 100)
+    except ValueError:
+        size = 100
+    base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
+    auth: Dict[str, Any] | None = None
+    static_token = (os.environ.get("NEXUS_ENTITIES_BEARER_TOKEN") or "").strip()
+    if static_token:
+        auth = {"type": "bearer", "token": static_token}
+    elif _env_truthy("NEXUS_ENTITIES_AUTH_ENABLED"):
+        kc_url = (
+            os.environ.get("NEXUS_ENTITIES_KEYCLOAK_URL")
+            or os.environ.get("KEYCLOAK_URL")
+            or ""
+        ).strip().rstrip("/")
+        realm = (
+            os.environ.get("NEXUS_ENTITIES_KEYCLOAK_REALM")
+            or os.environ.get("KEYCLOAK_REALM")
+            or "airia"
+        ).strip()
+        client_id = (
+            os.environ.get("NEXUS_ENTITIES_KEYCLOAK_CLIENT_ID") or "entity_management"
+        ).strip()
+        username = (os.environ.get("NEXUS_ENTITIES_KEYCLOAK_USERNAME") or "").strip()
+        password = os.environ.get("NEXUS_ENTITIES_KEYCLOAK_PASSWORD") or ""
+        if kc_url and username and password:
+            auth = {
+                "type": "keycloak_password",
+                "token_url": f"{kc_url}/realms/{realm}/protocol/openid-connect/token",
+                "client_id": client_id,
+                "username": username,
+                "password": password,
+            }
+        else:
+            logger.warning(
+                "NEXUS_ENTITIES_AUTH_ENABLED=true 但缺少 "
+                "KEYCLOAK_URL / NEXUS_ENTITIES_KEYCLOAK_USERNAME|PASSWORD；"
+                "将无鉴权请求 {}",
+                base_url,
+            )
+
+    logger.info(
+        "entity_status_poller URL={} page={} size={} auth={}",
+        base_url,
+        page,
+        size,
+        (auth or {}).get("type") or "none",
+    )
+    return [
+        {
+            "id": "entity_status_poller",
+            "name": "实体状态轮询",
+            "url": base_url,
+            "method": "GET",
+            "poll_interval": 5.0,
+            "enabled": True,
+            "data_format": "EntityStatus",
+            "headers": {},
+            "params": {"page": page, "size": size},
+            # 8090 实体总数 >100 时分页；合并全部页后再发 entity_status
+            "fetch_all_pages": True,
+            "auth": auth,
+        },
+    ]
+
+
+# 兼容旧 import；启动时请用 build_http_pollers() 以读取最新环境变量
+HTTP_POLLERS: List[Dict[str, Any]] = build_http_pollers()
 
 
 def get_settings() -> Settings:

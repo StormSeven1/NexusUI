@@ -3,6 +3,7 @@ HTTP轮询器 - 定时轮询HTTP接口获取数据
 """
 import asyncio
 import json
+import time
 import aiohttp
 from typing import Callable, Optional, Dict, Any, List
 from loguru import logger
@@ -34,6 +35,8 @@ class HTTPPoller:
         self.running = False
         self.task: Optional[asyncio.Task] = None
         self.session: Optional[aiohttp.ClientSession] = None
+        self._bearer_token: str = ""
+        self._token_expires_at: float = 0.0
     
     async def start(self):
         """启动轮询器"""
@@ -69,23 +72,68 @@ class HTTPPoller:
                 logger.error(f"HTTP轮询出错 [{self.id}]: {e}")
             await asyncio.sleep(self.poll_interval)
     
-    def _build_auth_headers(self) -> Dict[str, str]:
+    async def _refresh_keycloak_token(self) -> bool:
+        """password grant 取 access_token；失败返回 False。"""
+        if not self.session or not self.auth:
+            return False
+        token_url = (self.auth.get("token_url") or "").strip()
+        if not token_url:
+            return False
+        data = {
+            "grant_type": "password",
+            "client_id": self.auth.get("client_id") or "entity_management",
+            "username": self.auth.get("username") or "",
+            "password": self.auth.get("password") or "",
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=self.timeout)
+            async with self.session.post(token_url, data=data, timeout=timeout) as resp:
+                body = await resp.read()
+                if resp.status != 200:
+                    logger.warning(
+                        f"Keycloak token 失败 [{self.id}]: status={resp.status} "
+                        f"body={body[:200]!r}"
+                    )
+                    return False
+                payload = json.loads(body.decode("utf-8"))
+                token = (payload.get("access_token") or "").strip()
+                if not token:
+                    logger.warning(f"Keycloak token 响应无 access_token [{self.id}]")
+                    return False
+                expires_in = int(payload.get("expires_in") or 300)
+                self._bearer_token = token
+                self._token_expires_at = time.time() + max(60, expires_in)
+                return True
+        except Exception as e:
+            logger.warning(f"Keycloak token 请求异常 [{self.id}]: {e}")
+            return False
+
+    async def _ensure_auth_headers(self) -> Dict[str, str]:
         headers = dict(self.headers)
-        if self.auth:
-            auth_type = self.auth.get('type', '').lower()
-            if auth_type == 'bearer':
-                headers['Authorization'] = f"Bearer {self.auth.get('token', '')}"
-            elif auth_type == 'basic':
-                import base64
-                credentials = f"{self.auth.get('username', '')}:{self.auth.get('password', '')}"
-                encoded = base64.b64encode(credentials.encode()).decode()
-                headers['Authorization'] = f"Basic {encoded}"
+        if not self.auth:
+            return headers
+        auth_type = (self.auth.get("type") or "").lower()
+        if auth_type == "bearer":
+            token = (self.auth.get("token") or "").strip()
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+        elif auth_type == "keycloak_password":
+            if not self._bearer_token or time.time() >= (self._token_expires_at - 30):
+                ok = await self._refresh_keycloak_token()
+                if not ok:
+                    return headers
+            headers["Authorization"] = f"Bearer {self._bearer_token}"
+        elif auth_type == "basic":
+            import base64
+            credentials = f"{self.auth.get('username', '')}:{self.auth.get('password', '')}"
+            encoded = base64.b64encode(credentials.encode()).decode()
+            headers["Authorization"] = f"Basic {encoded}"
         return headers
 
     async def _request_json(self, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not self.session:
             return None
-        headers = self._build_auth_headers()
+        headers = await self._ensure_auth_headers()
         try:
             timeout = aiohttp.ClientTimeout(total=self.timeout)
             async with self.session.request(
@@ -95,6 +143,33 @@ class HTTPPoller:
                 params=params,
                 timeout=timeout,
             ) as response:
+                # 401 时强制刷新 Keycloak token 再试一次
+                if (
+                    response.status == 401
+                    and self.auth
+                    and (self.auth.get("type") or "").lower() == "keycloak_password"
+                ):
+                    await response.read()
+                    self._token_expires_at = 0.0
+                    headers = await self._ensure_auth_headers()
+                    async with self.session.request(
+                        self.method,
+                        self.url,
+                        headers=headers,
+                        params=params,
+                        timeout=timeout,
+                    ) as retry:
+                        if retry.status != 200:
+                            logger.warning(
+                                f"HTTP请求失败 [{self.id}]: status={retry.status} (retry after 401)"
+                            )
+                            return None
+                        raw = await retry.read()
+                        if not raw:
+                            return None
+                        payload = json.loads(raw.decode("utf-8"))
+                        return payload if isinstance(payload, dict) else None
+
                 if response.status != 200:
                     logger.warning(f"HTTP请求失败 [{self.id}]: status={response.status}")
                     return None
