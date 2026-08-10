@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveNexusEntityApiBase } from "@/lib/nexus-entity-api.server";
+import { nexusEntitiesAuthHeaders } from "@/lib/server/nexus-entities-fetch";
 
 /** 上游实测 ping 约 7–15s，给足余量 */
 export const maxDuration = 60;
@@ -11,8 +12,12 @@ export const maxDuration = 60;
 export async function GET() {
   const pingUrl = `${resolveNexusEntityApiBase()}/api/v1/ping`;
   try {
+    const headers = await nexusEntitiesAuthHeaders({
+      Accept: "application/json",
+      "Cache-Control": "no-cache",
+    });
     const res = await fetch(pingUrl, {
-      headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+      headers,
       cache: "no-store",
       signal: AbortSignal.timeout(55_000),
     });

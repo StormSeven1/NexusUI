@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { nexusDeleteEntityUrl } from "@/lib/nexus-entity-api.server";
+import { nexusEntitiesAuthHeaders, invalidateNexusEntitiesAccessToken } from "@/lib/server/nexus-entities-fetch";
 
 type Ctx = { params: Promise<{ entityId: string }> };
 
-/** 代理 `DELETE {host}/api/v1/entities/<entityId>` */
+/** 代理 `DELETE {host}/api/v1/entities/<entityId>`（8090 开鉴权时带 Bearer） */
 export async function DELETE(_req: NextRequest, ctx: Ctx) {
   const { entityId } = await ctx.params;
   const id = decodeURIComponent(entityId ?? "").trim();
@@ -13,11 +14,20 @@ export async function DELETE(_req: NextRequest, ctx: Ctx) {
 
   const url = nexusDeleteEntityUrl(id);
   try {
-    const res = await fetch(url, {
-      method: "DELETE",
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
+    const doFetch = async () => {
+      const headers = await nexusEntitiesAuthHeaders({ Accept: "application/json" });
+      return fetch(url, {
+        method: "DELETE",
+        headers,
+        cache: "no-store",
+      });
+    };
+
+    let res = await doFetch();
+    if (res.status === 401) {
+      invalidateNexusEntitiesAccessToken();
+      res = await doFetch();
+    }
     const text = await res.text();
     let upstream: unknown = null;
     try {

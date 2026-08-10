@@ -22,7 +22,8 @@ export function resolveNexusEntitiesListUrl(override?: string | null): string {
   return raw;
 }
 
-async function fetchKeycloakAccessToken(): Promise<string | null> {
+/** 8090 实体服务鉴权：静态 token 或 Keycloak password grant（与列表轮询同键）。 */
+export async function fetchNexusEntitiesAccessToken(): Promise<string | null> {
   const staticTok = (process.env.NEXUS_ENTITIES_BEARER_TOKEN ?? "").trim();
   if (staticTok) return staticTok;
 
@@ -104,14 +105,28 @@ async function requestEntitiesUrl(
     });
   };
 
-  let bearer = await fetchKeycloakAccessToken();
+  let bearer = await fetchNexusEntitiesAccessToken();
   let res = await doFetch(bearer);
   if (res.status === 401 && envTruthy("NEXUS_ENTITIES_AUTH_ENABLED")) {
     tokenCache = null;
-    bearer = await fetchKeycloakAccessToken();
+    bearer = await fetchNexusEntitiesAccessToken();
     if (bearer) res = await doFetch(bearer);
   }
   return { res, bearer };
+}
+
+/** 供 publishEntity / DELETE entities 等写接口附加 `Authorization`。 */
+export async function nexusEntitiesAuthHeaders(
+  extra?: Record<string, string>,
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { ...(extra ?? {}) };
+  const bearer = await fetchNexusEntitiesAccessToken();
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
+  return headers;
+}
+
+export function invalidateNexusEntitiesAccessToken(): void {
+  tokenCache = null;
 }
 
 /** GET 实体列表；按需附加 Bearer；401 时刷新 token 再试一次。 */

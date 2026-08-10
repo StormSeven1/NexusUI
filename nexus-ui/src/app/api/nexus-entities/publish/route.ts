@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { nexusPublishEntityUrl } from "@/lib/nexus-entity-api.server";
 import { parsePublishEntityUpstream } from "@/lib/parse-publish-entity-response";
+import { nexusEntitiesAuthHeaders, invalidateNexusEntitiesAccessToken } from "@/lib/server/nexus-entities-fetch";
 
-/** 代理 `POST {host}/api/v1/publishEntity` */
+/** 代理 `POST {host}/api/v1/publishEntity`（8090 开鉴权时带 Bearer） */
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {
@@ -13,12 +14,24 @@ export async function POST(req: NextRequest) {
 
   const url = nexusPublishEntityUrl();
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(body),
-      cache: "no-store",
-    });
+    const doFetch = async () => {
+      const headers = await nexusEntitiesAuthHeaders({
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      });
+      return fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+    };
+
+    let res = await doFetch();
+    if (res.status === 401) {
+      invalidateNexusEntitiesAccessToken();
+      res = await doFetch();
+    }
     const text = await res.text();
     let upstream: unknown = null;
     try {
