@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { buildCatalogFromEntitiesPayload } from "@/lib/asset-panel-catalog";
-import { fetchNexusEntitiesList } from "@/lib/server/nexus-entities-fetch";
+import { fetchNexusEntitiesListAllPages } from "@/lib/server/nexus-entities-fetch";
 
 /** 资产列表侧边栏：8090 全量实体（不做地图 id 黑名单、不要求坐标） */
 export async function GET(req: Request) {
@@ -9,7 +9,8 @@ export async function GET(req: Request) {
   const listUrlOverride = searchParams.get("url")?.trim() || null;
 
   try {
-    const upstream = await fetchNexusEntitiesList({ listUrl: listUrlOverride });
+    /* 须分页拉全量：size=100 时雷达等常在第 2 页，单页会导致刷新后雷达数为 0 */
+    const upstream = await fetchNexusEntitiesListAllPages({ listUrl: listUrlOverride });
     const { listUrl, status, text, payload } = upstream;
     if (payload == null) {
       return NextResponse.json(
